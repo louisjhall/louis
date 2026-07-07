@@ -1992,6 +1992,234 @@ async def coach_analytics(days: int = 30, _: dict = Depends(require_role("coach"
 
 
 # ------------------------------------------------------------------
+# §26 — Embedded Exercise Video System (Phase A: in-app YouTube playback)
+# ------------------------------------------------------------------
+YOUTUBE_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+
+# Channels well-known to allow embedding — prefer these when picking demo videos
+EMBED_FRIENDLY_CHANNELS = [
+    "athlean-x", "athleanx", "jeff nippard", "renaissance periodization",
+    "built with science", "juggernaut training systems", "hybrid athletics",
+    "calisthenicmovement", "buffdudes", "buff dudes", "team evolve",
+    "james smith", "jeremy ethier", "mind pump",
+]
+# Channels known to have embedding disabled — deprioritise
+EMBED_BLOCKED_CHANNELS = ["squat university"]
+
+PREFERRED_CHANNELS = [
+    "Athlean-X", "Jeff Nippard", "Built With Science",
+    "Renaissance Periodization", "Jeremy Ethier",
+]
+
+
+def _pick_channel_hint(name: str) -> str:
+    n = (name or "").lower()
+    if re.search(r"(run|zone 2|walk|cardio|z2|incline|jog|sprint)", n):
+        return "Athlean-X"
+    if re.search(r"(mobility|stretch|90/90|world|foam)", n):
+        return "Jeremy Ethier"
+    if re.search(r"(press|bench|row|pull-up|push-up|curl|db |dumbbell|shoulder)", n):
+        return "Jeff Nippard"
+    if re.search(r"(squat|deadlift|hinge|lunge|split|hip thrust|glute)", n):
+        return "Athlean-X"  # Squat U blocks embeds — use Athlean-X for legs
+    return PREFERRED_CHANNELS[0]
+
+
+def _normalize_ex_key(name: str) -> str:
+    key = re.sub(r"\s+", " ", (name or "").strip().lower())
+    key = re.sub(r"[^a-z0-9 /-]", "", key)
+    return key
+
+
+async def _youtube_search_first_video(query: str) -> Optional[dict]:
+    """Scrape YouTube search results and pick the best embed-friendly video (no API key)."""
+    from urllib.parse import quote_plus
+    url = f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp=EgIQAQ%253D%253D"  # filter: videos only
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as hc:
+            r = await hc.get(
+                url,
+                headers={
+                    "User-Agent": YOUTUBE_UA,
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+            )
+            if r.status_code != 200:
+                logger.warning(f"YT search HTTP {r.status_code} for '{query}'")
+                return None
+            html = r.text
+    except Exception as e:
+        logger.warning(f"YT scrape error for '{query}': {e}")
+        return None
+    # Extract up to 10 candidate videos from the HTML
+    candidates: list[dict] = []
+    seen: set[str] = set()
+    for m in re.finditer(r'"videoRenderer":\{"videoId":"([a-zA-Z0-9_-]{11})"(.{0,6000}?)(?="videoRenderer"|"reelShelfRenderer"|"shelfRenderer"|"playlistRenderer"|"radioRenderer"|$)', html, re.DOTALL):
+        vid = m.group(1)
+        if vid in seen:
+            continue
+        seen.add(vid)
+        block = m.group(2)
+        # title
+        title = None
+        tm = re.search(r'"title":\{"runs":\[\{"text":"([^"]+)"', block)
+        if tm:
+            title = tm.group(1)
+        # channel name
+        channel = None
+        cm = re.search(r'"ownerText":\{"runs":\[\{"text":"([^"]+)"', block)
+        if not cm:
+            cm = re.search(r'"longBylineText":\{"runs":\[\{"text":"([^"]+)"', block)
+        if cm:
+            channel = cm.group(1)
+        candidates.append({"video_id": vid, "title": title, "channel": channel})
+        if len(candidates) >= 10:
+            break
+    if not candidates:
+        # Last resort: naive first videoId in HTML
+        m = re.search(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+        if not m:
+            return None
+        vid = m.group(1)
+        candidates.append({"video_id": vid, "title": None, "channel": None})
+
+    def channel_score(c: Optional[str]) -> int:
+        cl = (c or "").lower()
+        if any(b in cl for b in EMBED_BLOCKED_CHANNELS):
+            return -10
+        if any(f in cl for f in EMBED_FRIENDLY_CHANNELS):
+            return 10
+        return 0
+
+    # Sort with stable order (search rank) but push friendly channels to top and blocked to bottom
+    ranked = sorted(enumerate(candidates), key=lambda t: (-channel_score(t[1].get("channel")), t[0]))
+    best = ranked[0][1]
+    return {
+        "video_id": best["video_id"],
+        "title": best.get("title"),
+        "channel": best.get("channel"),
+        "thumbnail_url": f"https://img.youtube.com/vi/{best['video_id']}/mqdefault.jpg",
+        "candidates": [c["video_id"] for _, c in ranked[:5]],
+    }
+
+
+async def _lookup_or_fetch_video(exercise_name: str) -> Optional[dict]:
+    """Return a cached exercise_video doc; if none, scrape YouTube and cache."""
+    key = _normalize_ex_key(exercise_name)
+    if not key:
+        return None
+    existing = await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+    if existing and existing.get("primary", {}).get("video_id"):
+        p = existing["primary"]
+        # Client must only see approved (or auto-fetched not-yet-rejected) videos
+        if p.get("approval_status") == "rejected":
+            return None
+        return existing
+    # Fetch fresh
+    channel_hint = _pick_channel_hint(exercise_name)
+    query = f"{channel_hint} {exercise_name} tutorial"
+    result = await _youtube_search_first_video(query)
+    if not result:
+        # Try again without channel qualifier
+        result = await _youtube_search_first_video(f"{exercise_name} exercise tutorial")
+    if not result:
+        return None
+    doc = {
+        "id": str(uuid.uuid4()),
+        "key": key,
+        "display_name": exercise_name,
+        "primary": {
+            "source": "youtube_search",
+            "video_id": result["video_id"],
+            "title": result.get("title"),
+            "channel": result.get("channel") or channel_hint,
+            "channel_hint": channel_hint,
+            "thumbnail_url": result["thumbnail_url"],
+            "approval_status": "auto",
+            "added_by": None,
+            "added_at": datetime.now(timezone.utc).isoformat(),
+            "search_query": query,
+        },
+        "alternatives": [],
+        "last_reviewed_at": None,
+        "reviewed_by": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        await db.exercise_videos.update_one({"key": key}, {"$set": doc}, upsert=True)
+    except Exception as e:
+        logger.warning(f"cache write failed for '{key}': {e}")
+    return doc
+
+
+@api.get("/exercises/video")
+async def get_exercise_video(name: str, user: dict = Depends(current_user)):
+    """Return the current video record for an exercise. Fetches from YouTube on miss."""
+    doc = await _lookup_or_fetch_video(name)
+    if not doc:
+        return {"exercise": name, "video": None, "message": "Demo coming soon. Follow the written coaching cues."}
+    p = doc.get("primary") or {}
+    # Clients: hide rejected; approved & auto are visible
+    if user.get("role") == "client" and p.get("approval_status") == "rejected":
+        return {"exercise": name, "video": None, "message": "Demo coming soon. Follow the written coaching cues."}
+    return {"exercise": name, "video": p, "key": doc.get("key"), "id": doc.get("id")}
+
+
+class VideoBatchReq(BaseModel):
+    exercises: list[str]
+
+
+@api.post("/exercises/videos-batch")
+async def batch_exercise_videos(req: VideoBatchReq, user: dict = Depends(current_user)):
+    """Return video records for a batch of exercise names in one call.
+
+    For fast rendering: returns cached results immediately; missing entries are
+    kicked off as concurrent lookups (bounded)."""
+    import asyncio
+    unique_names = list({(n or "").strip(): n for n in req.exercises if n and n.strip()}.values())
+    # Fetch cached first
+    keys = [_normalize_ex_key(n) for n in unique_names]
+    cached = {}
+    if keys:
+        async for d in db.exercise_videos.find({"key": {"$in": keys}}, {"_id": 0}):
+            cached[d["key"]] = d
+    out: dict[str, Any] = {}
+    to_fetch: list[str] = []
+    for n in unique_names:
+        k = _normalize_ex_key(n)
+        d = cached.get(k)
+        if d and d.get("primary", {}).get("video_id"):
+            p = d["primary"]
+            if p.get("approval_status") == "rejected" and user.get("role") == "client":
+                out[n] = None
+            else:
+                out[n] = {"key": k, "video": p, "id": d.get("id")}
+        else:
+            to_fetch.append(n)
+    # Fetch up to 8 uncached in parallel to keep latency low
+    sem = asyncio.Semaphore(4)
+
+    async def one(nm: str):
+        async with sem:
+            d = await _lookup_or_fetch_video(nm)
+            if not d:
+                return nm, None
+            p = d.get("primary") or {}
+            if p.get("approval_status") == "rejected" and user.get("role") == "client":
+                return nm, None
+            return nm, {"key": d.get("key"), "video": p, "id": d.get("id")}
+
+    if to_fetch:
+        results = await asyncio.gather(*(one(n) for n in to_fetch[:8]))
+        for nm, val in results:
+            out[nm] = val
+        for nm in to_fetch[8:]:
+            out[nm] = None  # caller may retry
+    return {"results": out, "fetched": len(to_fetch)}
+
+
+# ------------------------------------------------------------------
 # Seed
 # ------------------------------------------------------------------
 DEFAULT_EXERCISES = [

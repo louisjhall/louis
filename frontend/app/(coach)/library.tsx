@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, RefreshControl, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 
 const CATS = ["push", "pull", "legs", "core", "mobility", "cardio"];
 
@@ -39,6 +40,11 @@ export default function Library() {
   };
 
   const filtered = cat ? items.filter((i) => i.category === cat) : items;
+
+  useEffect(() => {
+    const names = filtered.map((e: any) => e?.name).filter(Boolean).slice(0, 20);
+    if (names.length) preloadExerciseVideos(names);
+  }, [filtered]);
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
@@ -79,10 +85,15 @@ export default function Library() {
         {filtered.map((e) => (
           <View key={e.id} style={styles.row} testID={`lib-row-${e.id}`}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.name}>{e.name}</Text>
-              <Text style={styles.meta}>{e.category?.toUpperCase()} · {(e.equipment || []).join(", ")}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.name}>{e.name}</Text>
+                  <Text style={styles.meta}>{e.category?.toUpperCase()} · {(e.equipment || []).join(", ")}</Text>
+                </View>
+                <Pressable onPress={() => remove(e.id)} testID={`lib-remove-${e.id}`}><Ionicons name="trash" size={20} color={theme.color.textDim} /></Pressable>
+              </View>
+              <ExerciseVideoPlayer exerciseName={e.name} testIDPrefix={`lib-video-${e.id}`} compact />
             </View>
-            <Pressable onPress={() => remove(e.id)} testID={`lib-remove-${e.id}`}><Ionicons name="trash" size={20} color={theme.color.textDim} /></Pressable>
           </View>
         ))}
       </ScrollView>
@@ -102,7 +113,7 @@ const styles = StyleSheet.create({
   input: { backgroundColor: theme.color.surface3, borderRadius: theme.radius.md, color: theme.color.text, padding: 12, borderWidth: 1, borderColor: theme.color.border },
   cta: { backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: theme.radius.md, alignItems: "center", marginTop: theme.space.md },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2 },
-  row: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, borderWidth: 1, borderColor: theme.color.border },
+  row: { padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, borderWidth: 1, borderColor: theme.color.border },
   name: { color: theme.color.text, fontSize: 15, fontWeight: "700" },
   meta: { color: theme.color.textDim, fontSize: 11, marginTop: 2, letterSpacing: 1 },
 });

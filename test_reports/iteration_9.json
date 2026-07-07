@@ -1,0 +1,46 @@
+{
+  "summary": "§26 Phase A (Embedded Exercise Video System) tested end-to-end. Backend: 16/16 tests PASS in /app/backend/tests/test_exercise_videos.py — GET /api/exercises/video returns valid 11-char video_id + thumbnail_url starting with img.youtube.com/vi/ + approval_status='auto' for 6 common exercises (Push-Up, Deadlift, Bench Press, Bulgarian Split Squat, Plank, Goblet Squat); channel_hint is embed-friendly (Athlean-X/Jeff Nippard); Goblet Squat correctly SKIPS Squat University (which blocks embeds); second call within 3s confirms Mongo cache write to exercise_videos; unauthenticated → 403 (via HTTPBearer). POST /api/exercises/videos-batch returns all names in results dict, dedupes blanks/repeats, and post-batch single GET is a cache hit. Regression endpoints (/auth/login, /coach/dashboard, /coach/calendar, /coach/analytics, /roster/current, /workouts/{id}) still green. Frontend @1440x900: CLIENT login → START TODAY'S WORKOUT → workout detail renders 6 ExerciseVideoPlayer thumbnails, all with img.youtube.com CDN URLs, orange play button, TAP TO PLAY hint, channel label with red YouTube icon (Athlean-X / Jeff Nippard) — NO Squat University found. Legacy ex-demo-* testIDs count = 0 (old external link removed). Tapping first thumb opens ex-video-0-modal containing an iframe with src=https://www.youtube.com/embed/BZ1TUVr4LFk?rel=0&modestbranding=1&playsinline=1 (Athlean-X Goblet Squat, NOT 'Video unavailable' — visible player thumbnail rendered). OPEN ON YOUTUBE btn present, X close btn removes iframe and thumb remains visible. COACH login → /overview (sidebar with 8 nav items) → clicked Library → 20 lib-video-*-thumb + 6 lib-video-*-empty (empty state text = 'Demo coming soon. Follow the written coaching cues.' verified). Library thumbnails render Jeff Nippard/Athlean-X channel labels; modal iframe URL correct. Frontend @420x900: CLIENT workout renders 6 responsive thumbnails; modal iframe fits within viewport (iframeW=394px vs vw=420px, 13px each side); iframe URL correct. COACH mobile lands on /clients (NOT /overview); bottom tabs = CLIENTS/APPROVALS/LIBRARY/MESSAGES/PROFILE only (Overview/Calendar/Analytics correctly hidden — regression from previous iteration intact). One low-priority React warning noted (see frontend_issues).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "ExerciseVideoPlayer (or parent JSX inside workout/[id]/index.tsx)",
+        "issue": "Console warning on both desktop & mobile: 'Unexpected text node: . A text node cannot be a child of a <View>.' — likely a stray space/newline between JSX tags inside a <View>. Not user-visible but should be cleaned up. Reference: /app/frontend/src/components/ExerciseVideoPlayer.tsx or /app/frontend/app/workout/[id]/index.tsx (single occurrence, could not pinpoint via stack trace)."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_exercise_videos.py",
+    "/app/test_reports/pytest/exercise_videos_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/LOW: Track down the 'Unexpected text node' React warning — likely `{' '}` or newline inside a <View> in ExerciseVideoPlayer.tsx (thumbnail overlay area) or in workout/[id]/index.tsx around the <ExerciseVideoPlayer /> insertion. Does not affect user flow.",
+    "OPTIONAL/LOW: Pre-existing carry-over from iteration_8 — Coach mobile /clients 'Active' KPI still shows -13 due to `total - expired - no_roster` without clamp at /app/frontend/app/(coach)/clients.tsx:41. Not in §26 scope."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py:2034-2104 (_youtube_search_first_video): correctly parses YouTube search HTML for up to 10 videoRenderer candidates, extracts title + channel, scores channels via EMBED_BLOCKED_CHANNELS/EMBED_FRIENDLY_CHANNELS, and picks best. Squat University correctly given score=-10 so Athlean-X wins for squats — verified: Goblet Squat resolves to BZ1TUVr4LFk (Athlean-X).",
+    "backend/server.py:2107-2153 (_lookup_or_fetch_video): cache-first read from db.exercise_videos, MongoDB upsert on miss, hides only 'rejected' status from clients (auto/approved visible). Correct schema shape returned by GET.",
+    "backend/server.py:2200-2219 (batch endpoint): correctly caps parallel fetches at 8 with semaphore of 4; caller-safe (extras beyond 8 set to null with hint to retry).",
+    "frontend/src/components/ExerciseVideoPlayer.tsx:64: iframe URL uses plain www.youtube.com/embed/ (not nocookie), WITHOUT autoplay=1 — good, as autoplay=1 without user gesture causes 'Video unavailable' error in embedded iframes.",
+    "frontend/src/components/ExerciseVideoPlayer.tsx:46-60 (preloadExerciseVideos): correctly warms in-memory cache via batch endpoint; individual card fetches fall back to single GET if batch missed.",
+    "frontend/app/workout/[id]/index.tsx:145 and library.tsx:95 correctly wire ExerciseVideoPlayer with per-index/per-id testIDPrefix — enables reliable test targeting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_exercise_videos.py (NEW — 16 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "16/16 = 100% for §26 endpoints + regression (~4s runtime)",
+    "frontend": "100% for §26 flows on both desktop 1440x900 and mobile 420x900 — thumbnails render with YouTube CDN images, modal opens with correct iframe URL, empty state message correct, no legacy ex-demo elements, coach mobile tabs regression intact."
+  },
+  "seed_data_creation": "None. Tests are read-only against seeded db. YouTube video docs are cached into db.exercise_videos on first fetch (side effect of test).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/test_exercise_videos.py -v` — expect 16/16 in ~4s. All video tests hit real youtube.com via httpx scrape (no API key). Cache lives in db.exercise_videos collection keyed by normalized exercise name. Frontend testIDs for §26: ex-video-{idx}-{thumb|modal|close|open-yt|backdrop|empty|loading} on workout detail; gt-video on guided timer work phase; lib-video-{id}-{thumb|modal|close|...} on coach library. First video load takes ~1-3s per uncached name; batch preload starts on screen mount so opening a workout has thumbs ready within 8s. On coach mobile the tab bar hides overview/calendar/analytics via href:null — verified still working.",
+  "rca_of_issue": "No blocking bugs. Minor React warning 'Unexpected text node' likely from whitespace between JSX siblings inside a <View> in ExerciseVideoPlayer.tsx thumbnail overlay area. React-native-web renders <View> as <div> which cannot host bare text nodes. Non-blocking; suppresses without visual impact."
+}

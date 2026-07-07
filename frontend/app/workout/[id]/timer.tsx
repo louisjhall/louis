@@ -25,6 +25,8 @@ export default function GuidedTimer() {
       try {
         const data = await api<any>(`/workouts/${id}`);
         setW(data);
+        const names = (data?.exercises || []).map((e: any) => e?.name).filter(Boolean);
+        if (names.length) preloadExerciseVideos(names);
         // seed timer with first warmup
         const wu = data.warmup?.[0];
         setRemaining(wu?.duration_sec || 30);
@@ -171,7 +173,12 @@ export default function GuidedTimer() {
 
         <Text style={styles.currentName} testID="gt-current-name">{currentLabel}</Text>
         {phase === "work" && ex && (
-          <Text style={styles.exMeta}>{ex.sets} × {ex.reps} · RPE {ex.rpe || "-"}{ex.notes ? `\n${ex.notes}` : ""}</Text>
+          <>
+            <Text style={styles.exMeta}>{ex.sets} × {ex.reps} · RPE {ex.rpe || "-"}{ex.notes ? `\n${ex.notes}` : ""}</Text>
+            <View style={styles.videoWrap}>
+              <ExerciseVideoPlayer exerciseName={ex.name} testIDPrefix="gt-video" compact />
+            </View>
+          </>
         )}
 
         {phase !== "done" ? (
@@ -217,6 +224,7 @@ const styles = StyleSheet.create({
   phaseLabel: { color: theme.color.textMuted, letterSpacing: 4, fontSize: 11, fontWeight: "800", marginTop: 4 },
   currentName: { color: theme.color.text, fontSize: 24, fontWeight: "900", marginTop: theme.space.lg, textAlign: "center" },
   exMeta: { color: theme.color.textMuted, marginTop: theme.space.sm, textAlign: "center", fontSize: 13, lineHeight: 19 },
+  videoWrap: { width: 320, maxWidth: "92%", marginTop: theme.space.md },
   controls: { flexDirection: "row", alignItems: "center", gap: theme.space.xl, marginTop: theme.space.xl },
   iconBtn: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
   playBtn: { width: 84, height: 84, borderRadius: 42, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },

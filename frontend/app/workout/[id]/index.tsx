@@ -1,30 +1,17 @@
-import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Linking } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
+import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 
 const PREFERRED_CHANNELS = [
   "Jeff Nippard", "Squat University", "Renaissance Periodization",
   "Athlean-X", "Built With Science",
 ];
-
-function pickChannel(name: string): string {
-  const n = name.toLowerCase();
-  if (/(squat|deadlift|hinge|lunge|split)/.test(n)) return "Squat University";
-  if (/(run|zone 2|walk|cardio|z2|incline)/.test(n)) return "Athlean-X";
-  if (/(mobility|stretch|90\/90|world)/.test(n)) return "Squat University";
-  if (/(press|bench|row|pull-up|push-up|curl|db )/.test(n)) return "Jeff Nippard";
-  return PREFERRED_CHANNELS[0];
-}
-function ytSearch(exerciseName: string) {
-  const ch = pickChannel(exerciseName);
-  const q = `${ch} ${exerciseName}`.replace(/\s+/g, "+");
-  return { url: `https://www.youtube.com/results?search_query=${q}`, channel: ch };
-}
 
 export default function WorkoutDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -42,6 +29,12 @@ export default function WorkoutDetail() {
     try { setW(await api<any>(`/workouts/${id}`)); } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Preload video demos in the background for all exercises
+  useEffect(() => {
+    const names = (w?.exercises || []).map((e: any) => e?.name).filter(Boolean);
+    if (names.length) preloadExerciseVideos(names);
+  }, [w?.exercises]);
 
   const updateEx = (idx: number, key: string, val: any) => {
     setW((prev: any) => ({ ...prev, exercises: prev.exercises.map((e: any, i: number) => (i === idx ? { ...e, [key]: val } : e)) }));
@@ -149,20 +142,7 @@ export default function WorkoutDetail() {
                 <Text style={styles.exName}>{ex.name}</Text>
                 <Text style={styles.exMeta}>{ex.sets} × {ex.reps} · rest {ex.rest_sec}s{ex.rpe ? ` · RPE ${ex.rpe}` : ""}</Text>
                 {ex.notes && <Text style={styles.exNotes}>{ex.notes}</Text>}
-                {(() => {
-                  const yt = ytSearch(ex.name);
-                  return (
-                    <Pressable
-                      testID={`ex-demo-${idx}`}
-                      onPress={() => Linking.openURL(yt.url)}
-                      style={styles.demoBtn}
-                    >
-                      <Ionicons name="logo-youtube" size={14} color={theme.color.red} />
-                      <Text style={styles.demoText}>Watch demo · {yt.channel}</Text>
-                      <Ionicons name="open-outline" size={12} color={theme.color.textMuted} />
-                    </Pressable>
-                  );
-                })()}
+                <ExerciseVideoPlayer exerciseName={ex.name} testIDPrefix={`ex-video-${idx}`} />
               </>
             )}
           </View>

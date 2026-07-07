@@ -1887,6 +1887,110 @@ async def coach_pending(_: dict = Depends(require_role("coach"))):
     return rows
 
 
+@api.get("/coach/calendar")
+async def coach_calendar(days: int = 14, _: dict = Depends(require_role("coach"))):
+    """Return a per-client roster/workout grid for the next N days from today."""
+    from datetime import datetime, timedelta
+    start = datetime.utcnow().date()
+    dates: list[str] = [(start + timedelta(days=i)).isoformat() for i in range(days)]
+    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(500)
+    rows: list[dict] = []
+    for u in users:
+        r = await db.rosters.find_one({"user_id": u["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+        day_map: dict[str, dict] = {d["date"]: d for d in (r or {}).get("days", []) if d.get("date")}
+        wkts = await db.workouts.find({"user_id": u["id"], "date": {"$in": dates}}, {"_id": 0}).to_list(500)
+        wkt_map: dict[str, dict] = {}
+        for w in wkts:
+            wkt_map[w["date"]] = w
+        cells = []
+        for d in dates:
+            rd = day_map.get(d, {})
+            wk = wkt_map.get(d)
+            cells.append({
+                "date": d,
+                "load": rd.get("load") or (wk.get("day_load") if wk else None),
+                "duty_type": rd.get("duty_type"),
+                "workout_id": (wk or {}).get("id"),
+                "title": (wk or {}).get("title"),
+                "completed": bool((wk or {}).get("completed")),
+                "key_session": bool((wk or {}).get("key_session")),
+                "approved": bool((wk or {}).get("approved", True)),
+                "duration_min": (wk or {}).get("duration_min"),
+                "location": (wk or {}).get("location"),
+            })
+        rows.append({
+            "client_id": u["id"],
+            "client_name": u.get("name") or u.get("email"),
+            "email": u.get("email"),
+            "days": cells,
+            "has_roster": bool(r),
+        })
+    return {"start_date": dates[0], "end_date": dates[-1], "dates": dates, "clients": rows}
+
+
+@api.get("/coach/analytics")
+async def coach_analytics(days: int = 30, _: dict = Depends(require_role("coach"))):
+    """Aggregate per-client and global compliance/RPE metrics for the last N days."""
+    from datetime import datetime, timedelta
+    cutoff_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
+    today = today_str()
+    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(500)
+    per_client: list[dict] = []
+    tot_scheduled = 0
+    tot_completed = 0
+    all_rpes: list[int] = []
+    load_totals: dict[str, int] = {"green": 0, "amber": 0, "red": 0, "blue": 0, "purple": 0, "grey": 0}
+    for u in users:
+        wkts = await db.workouts.find(
+            {"user_id": u["id"], "date": {"$gte": cutoff_date, "$lte": today}}, {"_id": 0}
+        ).to_list(500)
+        scheduled_past = [w for w in wkts if w.get("date", "") <= today]
+        completed = [w for w in scheduled_past if w.get("completed")]
+        rpes = [int(w.get("rpe")) for w in completed if isinstance(w.get("rpe"), (int, float))]
+        avg_rpe = round(sum(rpes) / len(rpes), 1) if rpes else None
+        compliance = round(100 * len(completed) / len(scheduled_past)) if scheduled_past else 0
+        # count loads
+        c_loads: dict[str, int] = {}
+        for w in wkts:
+            lo = w.get("day_load") or "grey"
+            c_loads[lo] = c_loads.get(lo, 0) + 1
+            if lo in load_totals:
+                load_totals[lo] += 1
+        # key sessions completed
+        key_done = sum(1 for w in completed if w.get("key_session"))
+        key_total = sum(1 for w in scheduled_past if w.get("key_session"))
+        per_client.append({
+            "client_id": u["id"],
+            "client_name": u.get("name") or u.get("email"),
+            "email": u.get("email"),
+            "scheduled": len(scheduled_past),
+            "completed": len(completed),
+            "compliance": compliance,
+            "avg_rpe": avg_rpe,
+            "loads": c_loads,
+            "key_sessions_completed": key_done,
+            "key_sessions_total": key_total,
+        })
+        tot_scheduled += len(scheduled_past)
+        tot_completed += len(completed)
+        all_rpes.extend(rpes)
+    global_compliance = round(100 * tot_completed / tot_scheduled) if tot_scheduled else 0
+    global_avg_rpe = round(sum(all_rpes) / len(all_rpes), 1) if all_rpes else None
+    per_client.sort(key=lambda x: -x["compliance"])
+    return {
+        "days": days,
+        "start_date": cutoff_date,
+        "end_date": today,
+        "total_clients": len(users),
+        "total_scheduled": tot_scheduled,
+        "total_completed": tot_completed,
+        "global_compliance": global_compliance,
+        "global_avg_rpe": global_avg_rpe,
+        "load_distribution": load_totals,
+        "clients": per_client,
+    }
+
+
 # ------------------------------------------------------------------
 # Seed
 # ------------------------------------------------------------------

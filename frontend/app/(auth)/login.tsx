@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform,
-  ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator, useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -15,6 +15,8 @@ const HERO = "https://images.unsplash.com/photo-1687992176093-6417a93fa3d0?crop=
 export default function Login() {
   const { login } = useAuth();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === "web" && width >= 1024;
   const [email, setEmail] = useState("client@crewfit.com");
   const [password, setPassword] = useState("Client123!");
   const [loading, setLoading] = useState(false);
@@ -25,7 +27,7 @@ export default function Login() {
     setLoading(true);
     try {
       const u = await login(email.trim(), password);
-      if (u.role === "coach") router.replace("/(coach)/clients");
+      if (u.role === "coach") router.replace(isDesktopWeb ? "/(coach)/overview" : "/(coach)/clients");
       else if (!u.onboarded) router.replace("/(auth)/onboarding");
       else router.replace("/(client)/home");
     } catch (e: any) {

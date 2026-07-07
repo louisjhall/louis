@@ -1,8 +1,20 @@
-import { Tabs } from "expo-router";
+import { Tabs, Slot } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
+import { useIsDesktop } from "@/src/lib/responsive";
+import { DesktopShell } from "@/src/desktop/DesktopShell";
 
 export default function CoachLayout() {
+  const isDesktop = useIsDesktop();
+
+  if (isDesktop) {
+    return (
+      <DesktopShell>
+        <Slot />
+      </DesktopShell>
+    );
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -18,6 +30,10 @@ export default function CoachLayout() {
       <Tabs.Screen name="library" options={{ title: "LIBRARY", tabBarIcon: ({ color }) => <Ionicons name="barbell" size={22} color={color} /> }} />
       <Tabs.Screen name="messages" options={{ title: "MESSAGES", tabBarIcon: ({ color }) => <Ionicons name="chatbubble-ellipses" size={22} color={color} /> }} />
       <Tabs.Screen name="profile" options={{ title: "PROFILE", tabBarIcon: ({ color }) => <Ionicons name="person" size={22} color={color} /> }} />
+      {/* Desktop-only screens hidden from mobile tabs */}
+      <Tabs.Screen name="overview" options={{ href: null }} />
+      <Tabs.Screen name="calendar" options={{ href: null }} />
+      <Tabs.Screen name="analytics" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -1,0 +1,146 @@
+import React from "react";
+import { View, Text, Pressable, StyleSheet, ScrollView } from "react-native";
+import { useRouter, usePathname } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { theme } from "@/src/lib/theme";
+import { useAuth } from "@/src/lib/auth";
+
+const NAV: { path: string; label: string; icon: any; testId: string }[] = [
+  { path: "/(coach)/overview", label: "Overview", icon: "home-outline", testId: "desktop-nav-overview" },
+  { path: "/(coach)/clients", label: "Clients", icon: "people-outline", testId: "desktop-nav-clients" },
+  { path: "/(coach)/calendar", label: "Calendar", icon: "calendar-outline", testId: "desktop-nav-calendar" },
+  { path: "/(coach)/approvals", label: "Approvals", icon: "checkmark-circle-outline", testId: "desktop-nav-approvals" },
+  { path: "/(coach)/library", label: "Library", icon: "barbell-outline", testId: "desktop-nav-library" },
+  { path: "/(coach)/messages", label: "Messages", icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
+  { path: "/(coach)/analytics", label: "Analytics", icon: "bar-chart-outline", testId: "desktop-nav-analytics" },
+  { path: "/(coach)/profile", label: "Profile", icon: "person-outline", testId: "desktop-nav-profile" },
+];
+
+function isActive(pathname: string, target: string): boolean {
+  // target looks like "/(coach)/clients" — match on the segment after ")/"
+  const seg = target.split(")/")[1] || target;
+  if (!seg) return false;
+  return pathname.endsWith("/" + seg) || pathname === "/" + seg;
+}
+
+export function DesktopShell({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { user, logout } = useAuth();
+
+  return (
+    <View style={styles.root} testID="desktop-shell">
+      <View style={styles.sidebar}>
+        <View style={styles.brandRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.brand}>CREWFIT</Text>
+            <Text style={styles.tagline}>COACH DESKTOP</Text>
+          </View>
+        </View>
+
+        <View style={styles.userBlock}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{(user?.name || "C").charAt(0).toUpperCase()}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.userName} numberOfLines={1}>{user?.name || "Coach"}</Text>
+            <Text style={styles.userEmail} numberOfLines={1}>{user?.email || ""}</Text>
+          </View>
+        </View>
+
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 8 }} showsVerticalScrollIndicator={false}>
+          {NAV.map((item) => {
+            const active = isActive(pathname, item.path);
+            return (
+              <Pressable
+                key={item.path}
+                testID={item.testId}
+                onPress={() => router.push(item.path as any)}
+                style={[styles.navItem, active && styles.navItemActive]}
+              >
+                <Ionicons
+                  name={item.icon}
+                  size={20}
+                  color={active ? theme.color.brand : theme.color.textMuted}
+                />
+                <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>
+                {active && <View style={styles.activeBar} />}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        <Pressable testID="desktop-logout" onPress={logout} style={styles.logout}>
+          <Ionicons name="log-out-outline" size={18} color={theme.color.textMuted} />
+          <Text style={styles.logoutText}>SIGN OUT</Text>
+        </Pressable>
+      </View>
+      <View style={styles.content}>{children}</View>
+    </View>
+  );
+}
+
+const SIDEBAR_WIDTH = 260;
+
+const styles = StyleSheet.create({
+  root: { flex: 1, flexDirection: "row", backgroundColor: theme.color.surface },
+  sidebar: {
+    width: SIDEBAR_WIDTH,
+    backgroundColor: theme.color.surface2,
+    borderRightWidth: 1,
+    borderRightColor: theme.color.border,
+    paddingVertical: 20,
+  },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.color.border,
+  },
+  brand: { color: theme.color.text, fontSize: 20, fontWeight: "900", letterSpacing: 3 },
+  tagline: { color: theme.color.brand, fontSize: 9, fontWeight: "800", letterSpacing: 2, marginTop: 2 },
+  userBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.color.border,
+  },
+  avatar: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: theme.color.brandTint,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  avatarText: { color: theme.color.brand, fontWeight: "900", fontSize: 15 },
+  userName: { color: theme.color.text, fontWeight: "800", fontSize: 13 },
+  userEmail: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
+  navItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    marginHorizontal: 8,
+    borderRadius: 8,
+    position: "relative",
+  },
+  navItemActive: { backgroundColor: theme.color.brandTint },
+  navLabel: { color: theme.color.textMuted, fontSize: 13, fontWeight: "600", letterSpacing: 0.5 },
+  navLabelActive: { color: theme.color.text, fontWeight: "800" },
+  activeBar: {
+    position: "absolute", left: 0, top: 8, bottom: 8, width: 3,
+    backgroundColor: theme.color.brand, borderRadius: 2,
+  },
+  logout: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingHorizontal: 20, paddingVertical: 14,
+    borderTopWidth: 1, borderTopColor: theme.color.border,
+  },
+  logoutText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  content: { flex: 1, backgroundColor: theme.color.surface },
+});

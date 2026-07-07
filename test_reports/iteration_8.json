@@ -1,0 +1,49 @@
+{
+  "summary": "Coach Web Dashboard (Option C) tested end-to-end. Backend: 20/20 tests PASS in /app/backend/tests/test_coach_dashboard.py — GET /coach/calendar (days=7/14/28, 403 for client, 401 no-auth, sequential dates, seeded Alex present) and GET /coach/analytics (days=7/30/90, 403/401 guards, sorted by compliance desc, per-client totals sum to global totals, load_distribution 6 buckets). Regression checks (/coach/dashboard, /coach/pending-approvals, /coach/clients, /auth/login, /roster/current) still green. Frontend @1440x900: coach login lands on /overview with sidebar (8 nav items, orange active bar), 6 KPI cards render, ACTIVE CLIENTS=1 (non-negative), 'Attention Required' alerts, WEEKLY CALENDAR + ANALYTICS header buttons route correctly. Calendar page: 7D/14D/28D chips, 6-color legend, 210 grid cells rendered, today column highlighted, workout cell click routes to /workout/{id}. Analytics page: 5 KPIs (CLIENTS 15, SCHEDULED 20, COMPLETED 1, COMPLIANCE 5%, AVG RPE), LAST 7D/30D/90D chips all re-fetch and update subtitle. Load Distribution stacked bar + legend with % renders correctly. Mobile @390x844: coach lands on /clients (NOT /overview), no desktop-shell, bottom tabs = CLIENTS/APPROVALS/LIBRARY/MESSAGES/PROFILE (Overview/Calendar/Analytics correctly hidden with href:null). Client mobile experience unchanged (lands on /home). ONE BUG FOUND: mobile Coach clients tab KPI 'Active' shows -13 because formula `total - expired - no_roster` isn't clamped (unlike overview.tsx which uses Math.max(0, ...)). Not in the new dashboard scope but affects the same 'must be >= 0' constraint.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Coach Clients (mobile) — 'Active' KPI",
+        "issue": "Displays negative value (-13) when many clients have expired rosters + no roster. Formula at frontend/app/(coach)/clients.tsx:41 is `(data.total || 0) - (c.expired || 0) - (c.no_roster || 0)` — should be wrapped in Math.max(0, ...) like overview.tsx:40 (`Math.max(0, total - Math.max(counts.no_roster || 0, counts.expired || 0))`). Also, expired and no_roster likely overlap (an EXPIRED roster still counts as 'no active roster'), so subtracting BOTH double-subtracts and produces the negative.",
+        "testID": "n/a (widget label 'Active')",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coach_dashboard.py",
+    "/app/test_reports/pytest/coach_dashboard_results.xml"
+  ],
+  "action_items": [
+    "Fix negative 'Active' KPI in /app/frontend/app/(coach)/clients.tsx:41 — replace `(data.total || 0) - (c.expired || 0) - (c.no_roster || 0)` with `Math.max(0, (data.total || 0) - Math.max(c.expired || 0, c.no_roster || 0))` (mirror overview.tsx line 40).",
+    "OPTIONAL/LOW: Consider adding an auth-guard redirect to /login after `logout()` in src/lib/auth.tsx or in DesktopShell — currently `useAuth().logout()` clears state but the coach layout continues to render with null user until the next navigation (I observed URL staying at /analytics for ~1.5s after clicking SIGN OUT during rapid automation). Not blocking; a slower interactive user would not notice.",
+    "OPTIONAL/LOW: The public preview URL currently has 15 client rows (14 are stale 'Test User' signups from previous iterations — TestAuth::test_signup_and_extended_onboarding creates one per run). Consider cleaning db.users of role=client rows with test_* email prefixes on startup, or excluding email like 'test_%' from /coach/dashboard. This makes the Overview/Calendar/Analytics screenshots noisy but does not indicate a defect."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py:1890-1928 (/coach/calendar): correct shape — dates length matches `days` param, per-client cells populated from active roster day_map + workouts date_map, correctly booleanised completed/key_session/approved fields, defaults `approved` to True (existing schema convention). Runs one Mongo call per client (N+1) — fine at seed scale (15 clients) but worth batching via $in query when clients grow past ~200.",
+    "backend/server.py:1931-1991 (/coach/analytics): correctly scopes scheduled to date <= today (excluding future) so compliance % is meaningful; rpe averaged only over completed workouts; per-client sorted DESC by compliance; load_distribution buckets fixed to the 6 canonical colors. `key_sessions_total` counts scheduled-past key sessions, `key_sessions_completed` counts completed key sessions — correct denominator/numerator for key-session ratio.",
+    "frontend/app/(coach)/_layout.tsx: correct pattern — Slot inside DesktopShell for desktop, Tabs with `href: null` on overview/calendar/analytics to hide them from mobile tab-bar. Verified visually: mobile only shows 5 tabs; desktop shows sidebar with 8 nav items.",
+    "frontend/src/desktop/DesktopShell.tsx: 8 nav items with testIDs `desktop-nav-{overview,clients,calendar,approvals,library,messages,analytics,profile}`, active state via `isActive(pathname, target)` matches the segment after ')/'. Active state includes orange left `activeBar` at position:absolute — visually confirmed in screenshots.",
+    "frontend/app/(coach)/overview.tsx:40 uses `Math.max(0, total - Math.max(no_roster, expired))` to prevent negative ACTIVE CLIENTS — GOOD. Mirror this fix to /app/frontend/app/(coach)/clients.tsx:41.",
+    "frontend/app/(auth)/login.tsx: desktop-vs-mobile redirect uses `Platform.OS==='web' && width>=1024` — matches useIsDesktop() so behavior is consistent. Verified: coach lands on /overview @1440x900 and /clients @390x844."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coach_dashboard.py (NEW — 20 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "20/20 = 100% (new coach dashboard endpoints) — runtime 2.55s",
+    "frontend": "Desktop shell / overview / calendar / analytics / mobile tab-bar hiding: ALL PASS. One pre-existing bug on Coach Mobile Clients screen (Active KPI negative) — outside new scope but reported."
+  },
+  "seed_data_creation": "None. Backend tests are read-only against seeded db (coach@crewfit.com + client@crewfit.com + 14 test_* signup remnants).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/test_coach_dashboard.py -v` — expect 20/20 in ~3s. Frontend testIDs for the new screens: ov-goto-calendar, ov-goto-analytics, ov-client-{id}, ov-pending-{id}, cal-range-{7|14|28}, cal-client-{id}, cal-cell-{clientId}-{YYYY-MM-DD}, an-range-{7|30|90}, an-row-{id}, desktop-nav-{overview|clients|calendar|approvals|library|messages|analytics|profile}, desktop-logout, desktop-shell. The public preview has 15 client rows because previous auth tests leave TEST_ signup users behind — Overview 'Attention Required' will show many 'EXPIRED' entries as a result.",
+  "rca_of_issue": "Coach mobile 'Active' KPI negative: db has 15 client-role users (14 test_* remnants with no roster). c.expired=14 (all test users have no roster and their expiry.coverage='expired' — the coach dashboard counts groups them under both `expired` and `no_roster`). Formula subtracts both counts from total: 15 - 14 - 14 = -13. Fix is to (a) clamp with Math.max(0, ...) AND (b) subtract only max(expired, no_roster) since a client without a roster IS by definition also expired. Reproduction: login as coach@crewfit.com on mobile viewport 390x844, land on /(coach)/clients tab, look at the widgets row above the filter chips."
+}

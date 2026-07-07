@@ -1,0 +1,59 @@
+{
+  "summary": "CrewFit V1 comprehensive backend + frontend test complete. Backend: 26/26 pytest tests PASS covering auth, roster extract/confirm/current, workouts generate/get/patch/complete, exercises RBAC, checkins, nutrition (with & without photo → real Gemini AI feedback), progress, messages (client↔coach), and all coach endpoints incl. RBAC 403s. Frontend: client and coach login flows verified end-to-end on mobile viewport (390x844). Client home renders HELLO ALEX / GREEN DAY / REST & RECOVER hero, THIS WEEK list of 5 AI-generated workouts, UPLOAD ROSTER CTA, tab bar. Coach clients screen renders Alex Rivera with 4 PENDING approvals + color-coded roster strip + tab bar (CLIENTS/APPROVALS/LIBRARY/MESSAGES/PROFILE). Two backend robustness gaps found around /api/roster/extract fallback (see backend_issues).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/roster/extract",
+        "issue": "Endpoint 500s when the Gemini call itself raises (e.g. rate-limit / budget error from litellm). The LLM call `raw = await call_gemini_with_file(...)` in server.py:385 is NOT wrapped in try/except; only the JSON-parse step has fallback. Per the review request the endpoint must gracefully return a 7-day off-week when LLM fails. Fix: wrap call in try/except and reuse the existing fallback block. Reproduced backend log: 'ChatError: Failed to generate chat completion: ... Budget has been exceeded ... Max budget: 0.0'.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/roster/extract",
+        "issue": "When Gemini returns valid JSON with empty days (e.g. for a 1x1 pixel image), backend persists a roster with days=[] instead of the documented 7-day off-week fallback. server.py:408 does `days = parsed.get('days', [])` but never re-hydrates when the array is empty. Client-side UI shows 'No days provided'. Fix: if `not days`, build the 7-day off-week from body.week_start (same logic as the parse-fail branch).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "client home /(client)/home",
+       "issues": ["A stale workout with title 'TEST edited' and 0min · 0 exercises renders as 'No days provided' when day/exercises fields are empty — cosmetic, may need empty-state guard in workout card"]}
+    ],
+    "react_native_issues": [
+      {"component": "Pressable/View",
+       "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — likely coming from LinearGradient or an internal RN Web component. Cosmetic; RN 0.74+ deprecated the prop in favor of the style variant. Reference: emitted on both /login and /home in web preview."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_crewfit_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Wrap the Gemini call in /api/roster/extract with try/except so ChatError (LLM budget/rate-limit/network) triggers the same 7-day off-week fallback instead of 500.",
+    "In /api/roster/extract, when parsed JSON returns days=[] treat it identically to a parse failure and generate the 7-day off-week fallback (currently persists empty roster).",
+    "Add an empty-state guard in the workout card / (client)/home so workouts with 0 exercises don't render as 'No days provided'.",
+    "Investigate the 'props.pointerEvents is deprecated' RN warning; migrate to `style.pointerEvents` (likely originates from expo-linear-gradient or a wrapping Pressable style)."
+  ],
+  "critical_code_review_comments": [
+    "server.py exceeds ~880 lines — consider splitting into routers/ (auth, roster, workouts, nutrition, coach) for maintainability.",
+    "All routes correctly use uuid string ids and exclude MongoDB _id via `{'_id': 0}` — good.",
+    "score_day rules are simple/deterministic and testable — verified with test_confirm (green/amber/red for off/standby/multi-flight/red-eye).",
+    "EMERGENT_LLM_KEY, MONGO_URL, DB_NAME, JWT_SECRET all sourced from env — good.",
+    "call_gemini_with_file and call_claude are not retried and not budgeted for failure — recommend a shared with-fallback wrapper.",
+    "workouts.PATCH lets ANY authenticated user (including a client on someone else's workout) mutate — server.py:524 has no ownership check for role=='client'. Coach can edit anyone (intended). Consider: `if user['role']=='client' and w['user_id'] != user['id']: 403`."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new)",
+    "/app/backend/tests/test_crewfit_api.py (new)"
+  ],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "100% for login+home+clients flows; deeper flows (upload, nutrition, checkin) covered indirectly via backend tests"},
+  "seed_data_creation": "Signup test creates 3 disposable users prefixed test_*@crewfit.com; test_confirm creates one roster + confirmation; workout PATCH modifies one workout title to 'TEST edited'. No production data touched.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend suite lives in /app/backend/tests/test_crewfit_api.py — reuse; set env EXPO_PUBLIC_BACKEND_URL. All 26 tests pass. If retesting the roster fallback fix: use the 1x1 PNG constant TINY_PNG_B64 and assert `len(days) == 7 and all(d['type']=='off' ...)` OR add a test with a mocked LLM ChatError. Coach RBAC 403 checks are already covered. LLM Emergent key currently has intermittent 'budget exceeded' issues from litellm on Gemini calls — the fallback fix is what makes the endpoint resilient to that.",
+  "rca_of_issue": "Roster/extract 500 RCA: Gemini call via emergentintegrations raised ChatError('Budget has been exceeded! Current cost: 0.0, Max budget: 0.0'). The exception propagated out of server.py:385 uncaught because only parse_json_from_text has a try/except. Repro: POST /api/roster/extract with a 1x1 base64 PNG while the LLM proxy returns a budget/quota error → 500 Internal Server Error. Mitigation: wrap call_gemini_with_file in try/except and reuse the empty-week fallback."
+}

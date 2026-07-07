@@ -36,6 +36,13 @@ export default function ClientDetail() {
         <Text style={styles.name}>{client.name}</Text>
         <Text style={styles.email}>{client.email}</Text>
 
+        <View style={styles.actionRow}>
+          <Pressable testID="cd-script-btn" onPress={() => router.push(`/coach/scripts/${client.id}`)} style={styles.actionBtn}>
+            <Ionicons name="videocam" size={16} color="#fff" />
+            <Text style={styles.actionText}>WEEKLY SCRIPT</Text>
+          </Pressable>
+        </View>
+
         <View style={styles.card}>
           <Text style={styles.sect}>PROFILE</Text>
           <Row label="Airline" value={p.airline || "—"} />
@@ -104,6 +111,9 @@ const styles = StyleSheet.create({
   headerT: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900" },
   name: { color: theme.color.text, fontSize: 26, fontWeight: "900" },
   email: { color: theme.color.textMuted, marginTop: 2 },
+  actionRow: { flexDirection: "row", gap: 8, marginTop: theme.space.md },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.brand, paddingVertical: 10, paddingHorizontal: 14, borderRadius: theme.radius.md },
+  actionText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 11 },
   card: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, padding: theme.space.md, marginTop: theme.space.md },
   sect: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 10, fontWeight: "800", marginBottom: theme.space.sm },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.color.divider },

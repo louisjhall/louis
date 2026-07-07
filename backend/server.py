@@ -292,6 +292,60 @@ class RegisterPushBody(BaseModel):
 
 
 # ------------------------------------------------------------------
+# Workout Intelligence + Weekly Video Script models
+# ------------------------------------------------------------------
+COACH_STYLES = [
+    "professional", "friendly", "high_performance", "military",
+    "encouraging", "direct", "humorous",
+]
+
+PREFERRED_CHANNELS = [
+    "Jeff Nippard", "Squat University", "Renaissance Periodization",
+    "Mind Pump", "Athlean-X", "N1 Education", "Built With Science",
+]
+
+
+class ExerciseVideoBody(BaseModel):
+    video_url: str
+    video_channel: Optional[str] = None
+    video_length_sec: Optional[int] = None
+    is_coach_video: bool = False
+
+
+class CheckinQuestionsBody(BaseModel):
+    context: Optional[str] = None  # optional free hint from client
+
+
+class CheckinAdaptiveBody(BaseModel):
+    week_start: str
+    answers: dict  # question_id -> answer (string or int)
+    energy: int = Field(ge=1, le=10)
+    sleep: int = Field(ge=1, le=10)
+    soreness: int = Field(ge=1, le=10)
+    stress: int = Field(ge=1, le=10)
+    weight_kg: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class ScriptGenerateBody(BaseModel):
+    client_id: str
+    style: Optional[str] = None  # override
+
+
+class ScriptUpdateBody(BaseModel):
+    script: Optional[str] = None
+    summary_bullets: Optional[list[str]] = None
+    whatsapp: Optional[str] = None
+    push_text: Optional[str] = None
+    approved: Optional[bool] = None
+    sent_at: Optional[str] = None
+
+
+class CoachStyleBody(BaseModel):
+    style: str  # one of COACH_STYLES
+
+
+# ------------------------------------------------------------------
 # Event Training Mode
 # ------------------------------------------------------------------
 EVENT_TYPES = [
@@ -1189,6 +1243,259 @@ async def exercises_create(body: ExerciseBody, _: dict = Depends(require_role("c
 async def exercises_delete(eid: str, _: dict = Depends(require_role("coach"))):
     await db.exercises.delete_one({"id": eid})
     return {"ok": True}
+
+
+def youtube_search_url(name: str, channel: Optional[str] = None) -> str:
+    q = f"{channel} {name}" if channel else name
+    return "https://www.youtube.com/results?search_query=" + q.replace(" ", "+")
+
+
+@api.patch("/exercises/{eid}/video")
+async def exercises_set_video(eid: str, body: ExerciseVideoBody, coach: dict = Depends(require_role("coach"))):
+    ex = await db.exercises.find_one({"id": eid})
+    if not ex:
+        raise HTTPException(404, "Exercise not found")
+    updates: dict = {
+        "video_last_verified_at": now_iso(),
+    }
+    if body.is_coach_video:
+        # Coach uploads always win
+        updates["coach_video_url"] = body.video_url
+    else:
+        # Only set the YT video if a coach video isn't already set
+        if not ex.get("coach_video_url"):
+            updates["video_url"] = body.video_url
+            updates["video_channel"] = body.video_channel
+            updates["video_length_sec"] = body.video_length_sec
+    await db.exercises.update_one({"id": eid}, {"$set": updates})
+    return await db.exercises.find_one({"id": eid}, {"_id": 0})
+
+
+@api.get("/exercises/{eid}/video-suggestion")
+async def exercises_video_suggestion(eid: str, user: dict = Depends(current_user)):
+    ex = await db.exercises.find_one({"id": eid}, {"_id": 0})
+    if not ex:
+        raise HTTPException(404, "Exercise not found")
+    # Preference order: coach_video → stored yt → search-url fallback
+    if ex.get("coach_video_url"):
+        return {"url": ex["coach_video_url"], "source": "coach", "channel": "CrewFit"}
+    if ex.get("video_url"):
+        return {"url": ex["video_url"], "source": "youtube", "channel": ex.get("video_channel")}
+    # Fallback: build a channel-scoped YouTube search URL, prefer channel by movement pattern
+    channel = PREFERRED_CHANNELS[0]
+    return {
+        "url": youtube_search_url(ex["name"], channel),
+        "source": "search",
+        "channel": channel,
+        "note": "no video linked yet — this is a YouTube search fallback",
+    }
+
+
+# ------------------------------------------------------------------
+# Adaptive check-in questions (AI-generated per client)
+# ------------------------------------------------------------------
+QUESTIONS_SYSTEM = """You are CrewFit's coaching AI. Given a client's profile + active event (if any) + latest roster snapshot, produce a personalised 6-question weekly check-in.
+Rules:
+ - Questions must be relevant to their goal, event and aviation context. Marathoner? Ask about long run. Long-haul pilot? Ask about jet lag & sleep on layovers. Fat loss client? Ask about hunger & adherence. Ironman? Ask separately about swim, bike, run.
+ - Mix numeric scales (1-10) with 1-2 short free-text questions.
+ - Every set must include one 1-10 question for RECOVERY.
+Return STRICT JSON:
+{"questions":[{"id":"snake_case_id","label":"...","type":"scale|text","scale_max":10,"placeholder":"..."}]}"""
+
+
+@api.post("/checkins/questions")
+async def checkin_questions(body: CheckinQuestionsBody, user: dict = Depends(current_user)):
+    profile = user.get("profile", {}) or {}
+    ev = await db.events.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    roster = await db.rosters.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    roster_snap = None
+    if roster:
+        roster_snap = {
+            "start_date": roster.get("start_date"),
+            "end_date": roster.get("end_date"),
+            "types": list({d.get("day_type") for d in (roster.get("days", []) or []) if d.get("day_type")}),
+        }
+    prompt = (
+        f"Profile: {json.dumps(profile)[:1500]}\n"
+        f"Event: {json.dumps(ev)[:600] if ev else 'None'}\n"
+        f"Roster: {json.dumps(roster_snap)[:600] if roster_snap else 'None'}\n"
+        f"Extra: {body.context or ''}\nGenerate the questions now."
+    )
+    try:
+        raw = await call_claude(QUESTIONS_SYSTEM, prompt)
+        parsed = parse_json_from_text(raw)
+        qs = parsed.get("questions", []) if isinstance(parsed, dict) else []
+    except Exception as e:
+        logger.warning("checkin questions fail: %s", e)
+        qs = []
+    if not qs:
+        qs = [
+            {"id": "recovery", "label": "How's your overall recovery?", "type": "scale", "scale_max": 10},
+            {"id": "sleep_quality", "label": "How was sleep this week?", "type": "scale", "scale_max": 10},
+            {"id": "adherence", "label": "How many planned sessions did you hit?", "type": "scale", "scale_max": 10},
+            {"id": "wins", "label": "One win from this week?", "type": "text", "placeholder": "e.g. hit protein 6/7 days"},
+            {"id": "challenges", "label": "Biggest challenge next week?", "type": "text"},
+            {"id": "time_available", "label": "Hours available for training next week", "type": "scale", "scale_max": 10},
+        ]
+    return {"questions": qs}
+
+
+@api.post("/checkins/adaptive")
+async def checkin_adaptive(body: CheckinAdaptiveBody, user: dict = Depends(current_user)):
+    doc = {
+        "id": new_id(), "user_id": user["id"], "created_at": now_iso(),
+        "week_start": body.week_start,
+        "energy": body.energy, "sleep": body.sleep, "soreness": body.soreness, "stress": body.stress,
+        "weight_kg": body.weight_kg, "notes": body.notes,
+        "answers": body.answers,
+    }
+    await db.checkins.insert_one(doc)
+    # Fire-and-forget: generate weekly script for the coach
+    if user.get("coach_id"):
+        try:
+            import asyncio as _asyncio
+            _asyncio.create_task(_generate_script_for(user["id"], user["coach_id"]))
+        except Exception as e:
+            logger.warning("script gen kickoff failed: %s", e)
+    return clean_doc(doc)
+
+
+# ------------------------------------------------------------------
+# Coach Weekly Video Script Generator
+# ------------------------------------------------------------------
+SCRIPT_SYSTEM = """You are ghostwriting a weekly personal coaching video script for CrewFit's head coach to record and send to an aviation-crew client.
+
+Requirements:
+ - Length: 45-120 seconds spoken (roughly 120-260 words).
+ - Sound natural and conversational, never robotic. Use the client's first name.
+ - Structure: greeting → celebrate specific win → recovery comment → nutrition/adherence comment → roster/travel comment → this week's focus → highlight KEY session or a challenge → motivational close.
+ - Reference concrete facts from the data (specific numbers, dates, layover cities, session titles).
+
+Also produce:
+ - summary_bullets: 5-7 short bullet points for the coach's own use (numbers first)
+ - whatsapp: 3-5 sentence WhatsApp-friendly version
+ - push_text: ONE motivational push notification, ≤80 chars
+
+Coach style: {style}
+
+Return STRICT JSON:
+{{"script":"...","summary_bullets":["..."],"whatsapp":"...","push_text":"..."}}"""
+
+
+async def _generate_script_for(client_id: str, coach_id: str, style_override: Optional[str] = None) -> dict:
+    client_user = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    coach_user = await db.users.find_one({"id": coach_id}, {"_id": 0, "password_hash": 0})
+    if not client_user or not coach_user:
+        raise HTTPException(404, "Client or coach not found")
+    style = style_override or (coach_user.get("profile", {}) or {}).get("style") or "friendly"
+    if style not in COACH_STYLES:
+        style = "friendly"
+
+    # gather data
+    roster = await db.rosters.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    ev = await db.events.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if ev:
+        ev["phase_info"] = _event_phase(ev.get("event_date", ""))
+    checkin = await db.checkins.find_one({"user_id": client_id}, {"_id": 0}, sort=[("created_at", -1)])
+    recent_workouts = await db.workouts.find({"user_id": client_id}, {"_id": 0}).sort("date", -1).to_list(20)
+    completed = [w for w in recent_workouts if w.get("completed")]
+    missed = [w for w in recent_workouts if not w.get("completed") and w.get("date", "") < today_str()]
+
+    payload = {
+        "client_first_name": (client_user.get("name") or "").split(" ")[0] or "there",
+        "goal": client_user.get("profile", {}).get("goal"),
+        "position": client_user.get("profile", {}).get("position"),
+        "airline": client_user.get("profile", {}).get("airline"),
+        "event": ev,
+        "last_checkin": checkin,
+        "recent_completed_titles": [w.get("title") for w in completed[:5]],
+        "recent_missed_titles": [w.get("title") for w in missed[:5]],
+        "upcoming_days": (roster.get("days", []) if roster else [])[:7],
+    }
+
+    try:
+        raw = await call_claude(SCRIPT_SYSTEM.format(style=style), json.dumps(payload)[:6000])
+        parsed = parse_json_from_text(raw)
+    except Exception as e:
+        logger.warning("script gen fail: %s", e)
+        parsed = {
+            "script": f"Hi {payload['client_first_name']}, great work this week. Keep the consistency going.",
+            "summary_bullets": ["auto-fallback — LLM failed"],
+            "whatsapp": "Great effort this week — keep going!",
+            "push_text": "Your weekly plan is ready.",
+        }
+
+    doc = {
+        "id": new_id(),
+        "client_id": client_id,
+        "coach_id": coach_id,
+        "created_at": now_iso(),
+        "style": style,
+        "script": parsed.get("script", ""),
+        "summary_bullets": parsed.get("summary_bullets", []),
+        "whatsapp": parsed.get("whatsapp", ""),
+        "push_text": parsed.get("push_text", ""),
+        "approved": False,
+        "sent_at": None,
+        "edit_history": [],
+    }
+    await db.coach_scripts.insert_one(doc)
+    return clean_doc(doc)
+
+
+@api.post("/coach/scripts/generate")
+async def coach_script_generate(body: ScriptGenerateBody, coach: dict = Depends(require_role("coach"))):
+    return await _generate_script_for(body.client_id, coach["id"], body.style)
+
+
+@api.get("/coach/scripts")
+async def coach_scripts_list(client_id: Optional[str] = None, coach: dict = Depends(require_role("coach"))):
+    q: dict = {"coach_id": coach["id"]}
+    if client_id:
+        q["client_id"] = client_id
+    return await db.coach_scripts.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
+
+
+@api.get("/coach/scripts/{sid}")
+async def coach_script_get(sid: str, coach: dict = Depends(require_role("coach"))):
+    s = await db.coach_scripts.find_one({"id": sid, "coach_id": coach["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Not found")
+    return s
+
+
+@api.patch("/coach/scripts/{sid}")
+async def coach_script_update(sid: str, body: ScriptUpdateBody, coach: dict = Depends(require_role("coach"))):
+    s = await db.coach_scripts.find_one({"id": sid, "coach_id": coach["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Not found")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Track edit history when script text changed (learning input)
+    if "script" in updates and updates["script"] != s.get("script"):
+        s.setdefault("edit_history", []).append({"at": now_iso(), "prev": s.get("script"), "new": updates["script"]})
+        updates["edit_history"] = s["edit_history"][-10:]
+    if updates.get("sent_at") is None and body.approved and not s.get("sent_at"):
+        # Mark send-time when coach approves + push
+        updates["sent_at"] = now_iso()
+        try:
+            await send_push([s["client_id"]], {
+                "title": (coach.get("name") or "Coach"),
+                "message": s.get("push_text") or "Your weekly plan is ready.",
+                "deeplink": "/(client)/messages",
+            })
+        except Exception as e:
+            logger.warning("script push fail: %s", e)
+    updates["updated_at"] = now_iso()
+    await db.coach_scripts.update_one({"id": sid}, {"$set": updates})
+    return await db.coach_scripts.find_one({"id": sid}, {"_id": 0})
+
+
+@api.patch("/auth/coach-style")
+async def set_coach_style(body: CoachStyleBody, coach: dict = Depends(require_role("coach"))):
+    if body.style not in COACH_STYLES:
+        raise HTTPException(400, f"style must be one of {COACH_STYLES}")
+    await db.users.update_one({"id": coach["id"]}, {"$set": {"profile.style": body.style}})
+    return {"style": body.style}
 
 
 # ------------------------------------------------------------------

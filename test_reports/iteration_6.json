@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 6 validates the additive V1.5 §22 + §23 layer — Workout Intelligence (exercise video store + video-suggestion fallback chain) and Weekly Coach Video Script Generator (Claude Sonnet 4.5 personalisation) plus adaptive check-in AI questions. 22 new tests added in /app/backend/tests/test_scripts_video.py. Full suite (regression + new): 85/85 PASS in 238s on preview URL (Claude-heavy endpoints use localhost:8001 due to Cloudflare's ~60s edge timeout — noted in iter_5 already). No functional bugs found. All 9 features listed in the review request validated end-to-end including edit_history append, approved→sent_at + non-blocking push, coach→youtube→search fallback chain, style default/invalid handling, and background script kickoff (verified within 60s poll window).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scripts_video.py",
+    "/app/backend/tests/test_crewfit_api.py",
+    "/app/backend/tests/test_events.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/scripts_video_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Feature is complete; all 85 tests green.",
+    "OPTIONAL / LOW (repeat from iter_5): server.py is now 1795 lines — well past the 700-line guideline. Consider splitting into routers (events/, workouts/, coach/scripts/, exercises/, checkins/, roster/, hotels/, nutrition/, messages/). Coach Weekly Script generator + Adaptive Check-in are natural first extractions.",
+    "OPTIONAL / LOW: SCRIPT_SYSTEM prompt asks the LLM for push_text ≤80 chars but the review spec allows ≤120. Current outputs comply with ≤80 and pass the ≤120 assertion. If the coach ever wants longer push copy, relax the prompt to match.",
+    "OPTIONAL / LOW: PATCH /coach/scripts/{id} appends to edit_history only when the 'script' field itself changes (server.py:1474). Edits to summary_bullets / whatsapp / push_text are NOT recorded in history. Consider tracking those too for coach 'learning input' analytics."
+  ],
+  "critical_code_review_comments": [
+    "PATCH /exercises/{id}/video (server.py:1253-1271): coach-only guard correct; is_coach_video=true sets coach_video_url unconditionally; is_coach_video=false ONLY writes video_url if no coach_video_url already exists (server.py:1266). This prevents a YouTube link from silently overriding a coach video — validated by dedicated regression test.",
+    "GET /exercises/{id}/video-suggestion (server.py:1274-1291): correct priority coach → yt → search-URL fallback. Fallback uses PREFERRED_CHANNELS[0]='Jeff Nippard' and builds a channel-scoped YouTube search URL. All three branches asserted.",
+    "POST /checkins/questions (server.py:1306-1340): safe default fallback with 6 questions (1 required 'recovery' scale, 3 more scales, 2 text) is returned when LLM fails. Non-empty questions list guaranteed by design. Verified.",
+    "POST /checkins/adaptive (server.py:1343-1360): correctly persists check-in with answers dict, then fires script generation as asyncio.create_task (fire-and-forget). Endpoint returned in <2s during test even though Claude call is 15-25s — kickoff is truly async. New coach_scripts row appeared within 60s poll window. Verified.",
+    "_generate_script_for (server.py:1385-1443): correct style resolution — override → profile.style → 'friendly'; invalid style is normalized to 'friendly' via `if style not in COACH_STYLES: style = 'friendly'`. Validated with override='made_up_style_xyz' returning style='friendly'.",
+    "Script generator payload (server.py:1404-1414) correctly gathers profile+event(with phase_info)+last_checkin+recent_workouts (completed/missed titles)+upcoming_days for personalisation. Recent workouts limited to 20; titles limited to 5 each; roster days limited to 7 — good token budgeting.",
+    "PATCH /coach/scripts/{id} (server.py:1467-1490): edit_history is a list of {at, prev, new} appended only on script field change, capped at last 10 (server.py:1476) — good bounded growth. approved=true triggers send_push wrapped in try/except so a push failure never blocks the coach's edit. sent_at is written idempotently (only if not already set — server.py:1477). Verified.",
+    "GET /coach/scripts (server.py:1451-1456): scoped to coach_id + optional client_id filter, DESC sort on created_at, projection strips _id. GET /coach/scripts/{id} (server.py:1459-1464) matches on both id AND coach_id → 404 for wrong coach (validated).",
+    "PATCH /auth/coach-style (server.py:1493-1498): validates style against COACH_STYLES list (400 on mismatch), persists to profile.style, coach-only via require_role. All 7 styles round-tripped.",
+    "MongoDB _id stripped consistently via {'_id': 0} projections and clean_doc() — good. No _id leakage observed in any response."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scripts_video.py (NEW — 22 tests for §22 Workout Intelligence + §23 Weekly Video Script)"
+  ],
+  "success_rate": {
+    "backend": "85/85 = 100% (42 base regression + 21 event tests + 22 new §22+§23 tests). Runtime 238s.",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "No seed changes. Video tests create throwaway TEST_ exercises (deleted or ignored). Coach style tests leave coach.profile.style='humorous'. Script tests create real coach_scripts rows (bounded by 50-limit on list endpoint). Adaptive check-in inserts a real check-in row with 'TEST adaptive checkin' note.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/ --ignore=backend/tests/test_preview_specific.py` — expect 85/85 green in ~4 min. Claude-dependent endpoints (POST /coach/scripts/generate, POST /checkins/questions, POST /workouts/generate-month, POST /workouts/regenerate) all target LOCAL=http://localhost:8001 in tests because the Cloudflare-fronted preview URL has a ~60s edge timeout and Claude latency ranges 15-90s. Coach's coach.profile.style persists across the test session — expect 'humorous' after TestCoachStyle.test_valid_style_persists runs. If regression fails at TestAdaptiveCheckin.test_adaptive_submit_and_kickoff, verify the client user (client@crewfit.com) has coach_id set — this is the trigger for the fire-and-forget script gen.",
+  "rca_of_issue": "N/A — no bug. Only implementation note: the review says 'push_text ≤120 chars' but the SCRIPT_SYSTEM prompt (server.py:1377) asks the LLM for ≤80 chars. Test asserts ≤120 to match the spec — outputs are ≤80 in practice so the test is safe. Fine to leave as-is."
+}

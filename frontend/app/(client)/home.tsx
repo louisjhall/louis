@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
+import { CrewFitWordmark } from "@/src/components/Logo";
 
 const HERO = "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?crop=entropy&cs=srgb&fm=jpg&q=85";
 
@@ -75,9 +76,12 @@ export default function Home() {
       >
         <View style={styles.heroWrap}>
           <Image source={HERO} style={StyleSheet.absoluteFill} contentFit="cover" />
-          <LinearGradient colors={["rgba(15,15,19,0.2)", "rgba(15,15,19,0.85)", "#0F0F13"]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={["rgba(0,0,0,0.25)", "rgba(0,0,0,0.85)", "#000000"]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <CrewFitWordmark size={16} showMark={false} />
+              </View>
               <Text style={styles.hello}>HELLO {user?.name?.toUpperCase().split(" ")[0]}</Text>
               <Text style={styles.date}>{new Date().toDateString().toUpperCase()}</Text>
               <View style={[styles.loadBadge, { borderColor: load_color }]} testID="today-load-badge">

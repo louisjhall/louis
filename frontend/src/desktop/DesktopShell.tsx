@@ -4,6 +4,7 @@ import { useRouter, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { useAuth } from "@/src/lib/auth";
+import { CrewFitLogo } from "@/src/components/Logo";
 
 const NAV: { path: string; label: string; icon: any; testId: string }[] = [
   { path: "/(coach)/overview", label: "Overview", icon: "home-outline", testId: "desktop-nav-overview" },
@@ -33,6 +34,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
     <View style={styles.root} testID="desktop-shell">
       <View style={styles.sidebar}>
         <View style={styles.brandRow}>
+          <CrewFitLogo size={44} style={{ marginRight: 4 }} />
           <View style={{ flex: 1 }}>
             <Text style={styles.brand}>CREWFIT</Text>
             <Text style={styles.tagline}>COACH DESKTOP</Text>

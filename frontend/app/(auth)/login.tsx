@@ -9,6 +9,7 @@ import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
+import { CrewFitLogo } from "@/src/components/Logo";
 
 const HERO = "https://images.unsplash.com/photo-1687992176093-6417a93fa3d0?crop=entropy&cs=srgb&fm=jpg&q=85";
 
@@ -41,7 +42,7 @@ export default function Login() {
     <View style={styles.root}>
       <Image source={HERO} style={styles.bg} contentFit="cover" />
       <LinearGradient
-        colors={["rgba(15,15,19,0.35)", "rgba(15,15,19,0.9)", "#0F0F13"]}
+        colors={["rgba(0,0,0,0.55)", "rgba(0,0,0,0.92)", "#000000"]}
         locations={[0, 0.55, 1]}
         style={StyleSheet.absoluteFill}
       />
@@ -52,7 +53,7 @@ export default function Login() {
         >
           <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
             <View style={styles.top}>
-              <Text style={styles.brand}>CREWFIT</Text>
+              <CrewFitLogo size={140} style={{ alignSelf: "center" }} />
               <Text style={styles.tag}>TRAIN AROUND THE ROSTER</Text>
             </View>
 
@@ -126,9 +127,9 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   bg: { position: "absolute", top: 0, left: 0, right: 0, height: 380 },
   scroll: { flexGrow: 1, padding: theme.space.lg, justifyContent: "space-between" },
-  top: { marginTop: theme.space.xl },
+  top: { marginTop: theme.space.xl, alignItems: "center" },
   brand: { color: theme.color.text, fontSize: 40, fontWeight: "900", letterSpacing: 4 },
-  tag: { color: theme.color.brand, letterSpacing: 3, marginTop: 4, fontSize: 11, fontWeight: "700" },
+  tag: { color: theme.color.brand, letterSpacing: 3, marginTop: 8, fontSize: 11, fontWeight: "700", textAlign: "center" },
   card: {
     backgroundColor: theme.color.surface2,
     borderRadius: theme.radius.lg,

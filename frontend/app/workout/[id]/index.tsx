@@ -141,7 +141,7 @@ export default function WorkoutDetail() {
               <>
                 <Text style={styles.exName}>{ex.name}</Text>
                 <Text style={styles.exMeta}>{ex.sets} × {ex.reps} · rest {ex.rest_sec}s{ex.rpe ? ` · RPE ${ex.rpe}` : ""}</Text>
-                {ex.notes && <Text style={styles.exNotes}>{ex.notes}</Text>}
+                {ex.notes ? <Text style={styles.exNotes}>{ex.notes}</Text> : null}
                 <ExerciseVideoPlayer exerciseName={ex.name} testIDPrefix={`ex-video-${idx}`} />
               </>
             )}

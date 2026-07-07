@@ -1,0 +1,173 @@
+{
+  "app_name": "CrewFit V1",
+  "personality": "7 Dark-First Utility",
+  "personality_one_liner": "A sharp, tactical, high-performance command center built for aviation professionals, prioritizing instant clarity, training load visibility, and disciplined execution over decorative softness.",
+  "color": {
+    "surface": "#0F0F13",
+    "onSurface": "#F3F4F6",
+    "surfaceSecondary": "#1C1C22",
+    "onSurfaceSecondary": "#D1D5DB",
+    "surfaceTertiary": "#272730",
+    "onSurfaceTertiary": "#9CA3AF",
+    "surfaceInverse": "#F9FAFB",
+    "onSurfaceInverse": "#111827",
+    "brand": "#E85D04",
+    "brandPrimary": "#E85D04",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#DC4F00",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#361D0C",
+    "onBrandTertiary": "#FCA567",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#6B7280",
+    "onInfo": "#FFFFFF",
+    "border": "#272730",
+    "borderStrong": "#3F3F4E",
+    "divider": "#1C1C22"
+  },
+  "typography": {
+    "displayFontFamily": "Barlow Condensed",
+    "textFontFamily": "IBM Plex Sans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Dense and intentional. Use spacing to group tactical data (reps, load, flights) tightly, with clear structural dividers between disparate sections.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 4,
+    "md": 8,
+    "lg": 12,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [
+      "Use only for the bottom tab bar and sticky headers if absolute necessity arises"
+    ],
+    "dont's": [
+      "No glass on data cards, list rows, or workout execution panels. Solid surfaces prioritize readability."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Client Home / Today's Workout",
+      "purpose": "A live operational surface showing today's flight duty status (if any), current training load (Green/Amber/Red), and the core workout action.",
+      "states": {
+        "loading": "Centered sleek spinner in brand color",
+        "empty": "No workout scheduled today. Show airplane window view tinted dark with a 'Rest & Recover' message.",
+        "error": "Error fetching today's plan. Retry button."
+      },
+      "layout": "Header: Large Barlow Condensed date with a status indicator (Green/Amber/Red) denoting today's Training Load. Hero section: An image card (gym workout) overlaid with gradient scrim and the main CTA 'Start Today's Workout'. Below: Duty Roster snapshot (e.g., 'Flight LHR -> JFK'). Bottom: horizontally scrolling snapshot of the week's load. Use strict dividers, high contrast."
+    },
+    {
+      "name": "Weekly Training Calendar",
+      "purpose": "Visualize the synergy between upcoming flight rosters and the AI-planned workouts, color-coded for fatigue.",
+      "states": {
+        "loading": "Skeleton grid representing calendar days",
+        "empty": "No roster uploaded. Show 'Upload Roster' CTA.",
+        "error": "Failed to load calendar. Retry button."
+      },
+      "layout": "Top: Month selector. Grid or Vertical list layout (Vertical preferred for mobile tracking). Each day row displays: Date, Roster icon (plane for flight day, house for off day), Training Load color bar (Green/Amber/Red on the left edge), and scheduled Workout title. Actionable rows lead to workout details."
+    },
+    {
+      "name": "Roster Upload & Confirmation",
+      "purpose": "Allows clients to upload PDF/Image of roster and confirms the AI-extracted flight duties.",
+      "states": {
+        "loading": "Animated scanning overlay on the uploaded document",
+        "empty": "Upload slot ready. Display an aviation-styled upload box.",
+        "error": "AI failed to parse roster. Prompt manual entry or re-upload."
+      },
+      "layout": "Upload Screen: Large dashed-border drop zone. Confirmation Screen: A structured list of extracted duties. 'Flight', 'Layover', 'Timezone Shift'. Use surfaceSecondary for list items with strict text alignment. Sticky primary CTA 'Confirm Roster' anchored at the bottom."
+    },
+    {
+      "name": "Coach Dashboard (Client List)",
+      "purpose": "Command center for the coach to see which clients need plan approvals or have flagged red-load days.",
+      "states": {
+        "loading": "Skeleton list of client cards",
+        "empty": "No clients assigned. 'Invite Client' button.",
+        "error": "Failed to load clients."
+      },
+      "layout": "Top: Segmented control (Needs Review / Active / Off-Track). List of dynamic client cards. Each card: Client Name, upcoming flight status, current week load (bar graph or colored pills), and a 'Review AI Plan' quick action. Use surfaceSecondary cards with 0 shadow and stark dividers."
+    },
+    {
+      "name": "Nutrition Tracker",
+      "purpose": "Log meals via photos and view AI feedback on macro alignment.",
+      "states": {
+        "loading": "Skeleton of macro rings",
+        "empty": "No meals logged. Show a faded meal prep background image with 'Log First Meal' CTA.",
+        "error": "Unable to save nutrition log."
+      },
+      "layout": "Top: Stacked macro progress bars (not soft rings, sharp linear progress bars). Middle: Meal list categorized by time. Each meal features a thumbnail (photo) and macro breakdown. Floating Action Button (FAB) or sticky bottom CTA to 'Add Meal / Snap Photo'."
+    }
+  ],
+  "images": {
+    "hero_gym": {
+      "url": "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwyfHxtYW4lMjB3b3JraW5nJTIwb3V0JTIwaGVhdnklMjB3ZWlnaHRzJTIwZ3ltJTIwZGFya3xlbnwwfHx8fDE3ODM0MTIxNjh8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwyfHxtYW4lMjB3b3JraW5nJTIwb3V0JTIwaGVhdnklMjB3ZWlnaHRzJTIwZ3ltJTIwZGFya3xlbnwwfHx8fDE3ODM0MTIxNjh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Man lifting heavy weights in a dark gym"
+    },
+    "hero_gym_secondary": {
+      "url": "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwxfHxtYW4lMjB3b3JraW5nJTIwb3V0JTIwaGVhdnklMjB3ZWlnaHRzJTIwZ3ltJTIwZGFya3xlbnwwfHx8fDE3ODM0MTIxNjh8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Man holding a heavy dumbbell in a dark gym"
+    },
+    "onboarding_aviation": {
+      "url": "https://images.unsplash.com/photo-1687992176093-6417a93fa3d0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHxhaXJsaW5lJTIwcGlsb3QlMjB3YWxraW5nJTIwYWlycG9ydHxlbnwwfHx8fDE3ODM0MTIxNjd8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1687992176093-6417a93fa3d0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHxhaXJsaW5lJTIwcGlsb3QlMjB3YWxraW5nJTIwYWlycG9ydHxlbnwwfHx8fDE3ODM0MTIxNjd8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Pilots walking through an airport terminal"
+    },
+    "empty_roster_upload": {
+      "url": "https://images.unsplash.com/photo-1527605158555-853f200063e9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwyfHxhaXJwbGFuZSUyMHdpbmRvdyUyMHZpZXclMjBzdW5zZXR8ZW58MHx8fHwxNzgzNDEyMTgxfDA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1527605158555-853f200063e9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwyfHxhaXJwbGFuZSUyMHdpbmRvdyUyMHZpZXclMjBzdW5zZXR8ZW58MHx8fHwxNzgzNDEyMTgxfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Airplane window view at sunset"
+    },
+    "empty_nutrition": {
+      "url": "https://images.pexels.com/photos/4929677/pexels-photo-4929677.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "dark": "https://images.pexels.com/photos/4929677/pexels-photo-4929677.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Healthy meal prep boxes"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Design specifically for the '7 Dark-First Utility' personality. Absolutely no soft rounded cards, no glassmorphism abuse, and no pastel shades.",
+    "The primary action color is Rust/Amber (#E85D04). Use it for primary CTAs and active states.",
+    "Crucial Feature: The Green/Amber/Red day scoring must use the exact status colors provided (success/warning/error). Display these as structural tags, vertical left-borders on list items, or solid pills.",
+    "All text on imagery MUST have a top-to-bottom gradient scrim (transparent to #111827) overlay to ensure readability. See the <Imagery_and_Texture> rules.",
+    "Implement persistent sticky bottom CTAs wrapped in SafeArea for all form submissions (e.g. 'Confirm Roster', 'Approve Plan').",
+    "Use solid dividers (1px solid #1C1C22) instead of shadows to separate modules.",
+    "Both Client and Coach roles exist. Provide role-based tab navigation arrays.",
+    "Coach Dashboard client list should prioritize rapid scanning: align numerical and status data cleanly to the right edge of rows.",
+    "Haptics: Provide haptic feedback configuration mappings in your JSON for interactions like starting a workout, logging a meal, or approving a plan."
+  ]
+}

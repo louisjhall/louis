@@ -2154,31 +2154,27 @@ async def _lookup_or_fetch_video(exercise_name: str) -> Optional[dict]:
 
 
 @api.get("/exercises/video")
-async def get_exercise_video(name: str, user: dict = Depends(current_user)):
+async def get_exercise_video(name: str, variant: str = "default", user: dict = Depends(current_user)):
     """Return the current video record for an exercise. Fetches from YouTube on miss."""
     doc = await _lookup_or_fetch_video(name)
     if not doc:
         return {"exercise": name, "video": None, "message": "Demo coming soon. Follow the written coaching cues."}
-    p = doc.get("primary") or {}
-    # Clients: hide rejected; approved & auto are visible
-    if user.get("role") == "client" and p.get("approval_status") == "rejected":
+    resolved = _resolve_display_video(doc, variant=variant)
+    if not resolved:
         return {"exercise": name, "video": None, "message": "Demo coming soon. Follow the written coaching cues."}
-    return {"exercise": name, "video": p, "key": doc.get("key"), "id": doc.get("id")}
+    return {"exercise": name, "video": resolved, "key": doc.get("key"), "id": doc.get("id")}
 
 
 class VideoBatchReq(BaseModel):
     exercises: list[str]
+    variant: Optional[str] = "default"
 
 
 @api.post("/exercises/videos-batch")
 async def batch_exercise_videos(req: VideoBatchReq, user: dict = Depends(current_user)):
-    """Return video records for a batch of exercise names in one call.
-
-    For fast rendering: returns cached results immediately; missing entries are
-    kicked off as concurrent lookups (bounded)."""
+    """Return video records for a batch of exercise names in one call."""
     import asyncio
     unique_names = list({(n or "").strip(): n for n in req.exercises if n and n.strip()}.values())
-    # Fetch cached first
     keys = [_normalize_ex_key(n) for n in unique_names]
     cached = {}
     if keys:
@@ -2186,18 +2182,15 @@ async def batch_exercise_videos(req: VideoBatchReq, user: dict = Depends(current
             cached[d["key"]] = d
     out: dict[str, Any] = {}
     to_fetch: list[str] = []
+    variant = req.variant or "default"
     for n in unique_names:
         k = _normalize_ex_key(n)
         d = cached.get(k)
-        if d and d.get("primary", {}).get("video_id"):
-            p = d["primary"]
-            if p.get("approval_status") == "rejected" and user.get("role") == "client":
-                out[n] = None
-            else:
-                out[n] = {"key": k, "video": p, "id": d.get("id")}
+        if d:
+            resolved = _resolve_display_video(d, variant=variant)
+            out[n] = {"key": k, "video": resolved, "id": d.get("id")} if resolved else None
         else:
             to_fetch.append(n)
-    # Fetch up to 8 uncached in parallel to keep latency low
     sem = asyncio.Semaphore(4)
 
     async def one(nm: str):
@@ -2205,18 +2198,338 @@ async def batch_exercise_videos(req: VideoBatchReq, user: dict = Depends(current
             d = await _lookup_or_fetch_video(nm)
             if not d:
                 return nm, None
-            p = d.get("primary") or {}
-            if p.get("approval_status") == "rejected" and user.get("role") == "client":
-                return nm, None
-            return nm, {"key": d.get("key"), "video": p, "id": d.get("id")}
+            resolved = _resolve_display_video(d, variant=variant)
+            return nm, ({"key": d.get("key"), "video": resolved, "id": d.get("id")} if resolved else None)
 
     if to_fetch:
         results = await asyncio.gather(*(one(n) for n in to_fetch[:8]))
         for nm, val in results:
             out[nm] = val
         for nm in to_fetch[8:]:
-            out[nm] = None  # caller may retry
+            out[nm] = None
     return {"results": out, "fetched": len(to_fetch)}
+
+
+def _parse_youtube_url(url: Optional[str]) -> Optional[str]:
+    """Extract 11-char video ID from various YouTube URL formats."""
+    if not url:
+        return None
+    m = re.search(r"(?:youtube\.com/(?:watch\?v=|embed/|shorts/|v/)|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
+    return m.group(1) if m else None
+
+
+def _resolve_display_video(record: dict, variant: str = "default") -> Optional[dict]:
+    """Given a record, resolve which slot to show, honoring variants, preferred slot, and approvals."""
+    if not record:
+        return None
+    v = variant if variant in ("home", "hotel", "gym") else None
+    if v:
+        vslot = (record.get("variants") or {}).get(v)
+        if vslot and (vslot.get("video_id") or vslot.get("video_url")) and vslot.get("approval_status") != "rejected":
+            return {**vslot, "slot": f"variant.{v}"}
+    order: list[str] = []
+    pref = record.get("preferred_slot")
+    if pref and pref in ("primary", "alternative", "custom_url", "custom_upload", "youtube_backup", "ai_image"):
+        order.append(pref)
+    for s in ("custom_upload", "custom_url", "youtube_backup", "primary", "alternative", "ai_image"):
+        if s not in order:
+            order.append(s)
+    for slot_name in order:
+        slot = record.get(slot_name)
+        if not slot:
+            continue
+        if slot.get("approval_status") == "rejected":
+            continue
+        if slot.get("video_id") or slot.get("video_url"):
+            return {**slot, "slot": slot_name}
+    return None
+
+
+# ------------------------------------------------------------------
+# §26 Phase B — Coach Video CRUD Management
+# ------------------------------------------------------------------
+VALID_SLOTS = {"primary", "alternative", "custom_url", "custom_upload", "youtube_backup", "ai_image"}
+VALID_VARIANTS = {"home", "hotel", "gym"}
+
+
+class VideoSlotBody(BaseModel):
+    slot: str
+    video_id: Optional[str] = None
+    video_url: Optional[str] = None
+    title: Optional[str] = None
+    channel: Optional[str] = None
+    notes: Optional[str] = None
+    source: Optional[str] = None
+
+
+class VideoApprovalBody(BaseModel):
+    slot: str
+    status: str
+
+
+class VideoPreferredBody(BaseModel):
+    slot: str
+
+
+class VideoVariantBody(BaseModel):
+    variant: str
+    video_id: Optional[str] = None
+    video_url: Optional[str] = None
+    title: Optional[str] = None
+    channel: Optional[str] = None
+    delete: bool = False
+
+
+class VideoUpsertBody(BaseModel):
+    display_name: str
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _touch_review(key: str, coach_id: Optional[str]) -> None:
+    await db.exercise_videos.update_one(
+        {"key": key},
+        {"$set": {"last_reviewed_at": _now_iso(), "reviewed_by": coach_id, "updated_at": _now_iso()}},
+    )
+
+
+@api.get("/coach/videos")
+async def coach_videos_list(search: Optional[str] = None, coach: dict = Depends(require_role("coach"))):
+    q: dict = {}
+    if search:
+        q["$or"] = [
+            {"key": {"$regex": re.escape(search.lower())}},
+            {"display_name": {"$regex": re.escape(search), "$options": "i"}},
+        ]
+    rows = await db.exercise_videos.find(q, {"_id": 0}).sort("display_name", 1).to_list(500)
+    have_keys = {r["key"] for r in rows}
+    lib = await db.exercises.find({}, {"_id": 0, "name": 1, "category": 1}).to_list(1000)
+    for ex in lib:
+        k = _normalize_ex_key(ex["name"])
+        if k and k not in have_keys and (not search or search.lower() in k or search.lower() in ex["name"].lower()):
+            rows.append({
+                "id": None, "key": k, "display_name": ex["name"], "category": ex.get("category"),
+                "primary": None, "alternative": None, "custom_url": None,
+                "custom_upload": None, "youtube_backup": None, "ai_image": None,
+                "variants": {}, "preferred_slot": None,
+                "last_reviewed_at": None, "reviewed_by": None,
+            })
+            have_keys.add(k)
+
+    def sort_key(r: dict):
+        primary = r.get("primary") or {}
+        needs = 0
+        if not primary.get("video_id"):
+            needs = 3
+        elif primary.get("approval_status") == "rejected":
+            needs = 2
+        elif not r.get("last_reviewed_at"):
+            needs = 1
+        return (-needs, (r.get("display_name") or "").lower())
+
+    rows.sort(key=sort_key)
+    items = []
+    for r in rows:
+        primary = r.get("primary") or {}
+        custom = r.get("custom_url") or {}
+        custom_up = r.get("custom_upload") or {}
+        variants = r.get("variants") or {}
+        approval = primary.get("approval_status") if primary.get("video_id") else "missing"
+        items.append({
+            "id": r.get("id"), "key": r.get("key"), "display_name": r.get("display_name"),
+            "category": r.get("category"),
+            "primary_video_id": primary.get("video_id"),
+            "primary_channel": primary.get("channel") or primary.get("channel_hint"),
+            "primary_thumbnail": primary.get("thumbnail_url"),
+            "has_custom_url": bool(custom.get("video_id") or custom.get("video_url")),
+            "has_custom_upload": bool(custom_up.get("video_id") or custom_up.get("video_url")),
+            "variants_configured": [v for v in ("home", "hotel", "gym") if variants.get(v, {}).get("video_id") or variants.get(v, {}).get("video_url")],
+            "preferred_slot": r.get("preferred_slot") or "primary",
+            "approval_state": approval,
+            "last_reviewed_at": r.get("last_reviewed_at"),
+        })
+    return {"items": items, "total": len(items)}
+
+
+@api.get("/coach/videos/detail")
+async def coach_video_detail(key: str, coach: dict = Depends(require_role("coach"))):
+    doc = await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+    if not doc:
+        lib_row = None
+        for ex in await db.exercises.find({}, {"_id": 0}).to_list(1000):
+            if _normalize_ex_key(ex["name"]) == key:
+                lib_row = ex
+                break
+        if not lib_row:
+            raise HTTPException(404, "No such exercise")
+        doc = {
+            "id": str(uuid.uuid4()), "key": key, "display_name": lib_row["name"],
+            "primary": None, "created_at": _now_iso(), "updated_at": _now_iso(),
+        }
+        await db.exercise_videos.update_one({"key": key}, {"$set": doc}, upsert=True)
+    return doc
+
+
+@api.post("/coach/videos/upsert")
+async def coach_video_upsert(body: VideoUpsertBody, coach: dict = Depends(require_role("coach"))):
+    key = _normalize_ex_key(body.display_name)
+    if not key:
+        raise HTTPException(400, "Invalid display_name")
+    existing = await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+    if existing:
+        return existing
+    doc = {
+        "id": str(uuid.uuid4()), "key": key, "display_name": body.display_name.strip(),
+        "primary": None, "created_at": _now_iso(), "updated_at": _now_iso(),
+    }
+    await db.exercise_videos.update_one({"key": key}, {"$set": doc}, upsert=True)
+    return doc
+
+
+@api.post("/coach/videos/slot")
+async def coach_video_set_slot(key: str, body: VideoSlotBody, coach: dict = Depends(require_role("coach"))):
+    if body.slot not in VALID_SLOTS:
+        raise HTTPException(400, f"Invalid slot. Allowed: {sorted(VALID_SLOTS)}")
+    vid = body.video_id or _parse_youtube_url(body.video_url)
+    if not vid and not body.video_url:
+        raise HTTPException(400, "Provide either video_id or video_url")
+    doc = await db.exercise_videos.find_one({"key": key}, {"_id": 0}) or {
+        "id": str(uuid.uuid4()), "key": key, "display_name": key.title(),
+        "created_at": _now_iso(),
+    }
+    slot_doc: dict[str, Any] = {
+        "source": body.source or ("youtube_manual" if vid else "custom_url"),
+        "approval_status": "approved",
+        "added_by": coach.get("id"),
+        "added_at": _now_iso(),
+    }
+    if vid:
+        slot_doc["video_id"] = vid
+        slot_doc["thumbnail_url"] = f"https://img.youtube.com/vi/{vid}/mqdefault.jpg"
+    if body.video_url and not vid:
+        slot_doc["video_url"] = body.video_url
+    if body.title:
+        slot_doc["title"] = body.title
+    if body.channel:
+        slot_doc["channel"] = body.channel
+    if body.notes:
+        slot_doc["notes"] = body.notes
+    doc[body.slot] = slot_doc
+    doc["updated_at"] = _now_iso()
+    await db.exercise_videos.update_one({"key": key}, {"$set": doc}, upsert=True)
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+@api.post("/coach/videos/approve")
+async def coach_video_approve(key: str, body: VideoApprovalBody, coach: dict = Depends(require_role("coach"))):
+    if body.slot not in VALID_SLOTS:
+        raise HTTPException(400, "Invalid slot")
+    if body.status not in ("approved", "rejected", "auto", "pending"):
+        raise HTTPException(400, "Invalid status")
+    doc = await db.exercise_videos.find_one({"key": key})
+    if not doc:
+        raise HTTPException(404, "No such exercise video")
+    slot = doc.get(body.slot)
+    if not slot:
+        raise HTTPException(404, f"Slot {body.slot} is empty")
+    slot["approval_status"] = body.status
+    slot["reviewed_by"] = coach.get("id")
+    slot["reviewed_at"] = _now_iso()
+    await db.exercise_videos.update_one({"key": key}, {"$set": {body.slot: slot, "updated_at": _now_iso()}})
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+@api.post("/coach/videos/preferred")
+async def coach_video_set_preferred(key: str, body: VideoPreferredBody, coach: dict = Depends(require_role("coach"))):
+    if body.slot not in VALID_SLOTS:
+        raise HTTPException(400, "Invalid slot")
+    doc = await db.exercise_videos.find_one({"key": key})
+    if not doc:
+        raise HTTPException(404, "No such exercise video")
+    if not doc.get(body.slot):
+        raise HTTPException(400, f"Slot {body.slot} has no video")
+    await db.exercise_videos.update_one({"key": key}, {"$set": {"preferred_slot": body.slot, "updated_at": _now_iso()}})
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+@api.post("/coach/videos/variant")
+async def coach_video_set_variant(key: str, body: VideoVariantBody, coach: dict = Depends(require_role("coach"))):
+    if body.variant not in VALID_VARIANTS:
+        raise HTTPException(400, f"Invalid variant. Allowed: {sorted(VALID_VARIANTS)}")
+    doc = await db.exercise_videos.find_one({"key": key})
+    if not doc:
+        raise HTTPException(404, "No such exercise video")
+    variants = doc.get("variants") or {}
+    if body.delete:
+        variants.pop(body.variant, None)
+    else:
+        vid = body.video_id or _parse_youtube_url(body.video_url)
+        if not vid and not body.video_url:
+            raise HTTPException(400, "Provide video_id or video_url")
+        variants[body.variant] = {
+            "source": "coach_variant",
+            "approval_status": "approved",
+            "video_id": vid,
+            "video_url": body.video_url if not vid else None,
+            "thumbnail_url": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg" if vid else None,
+            "title": body.title,
+            "channel": body.channel,
+            "added_by": coach.get("id"),
+            "added_at": _now_iso(),
+        }
+    await db.exercise_videos.update_one({"key": key}, {"$set": {"variants": variants, "updated_at": _now_iso()}})
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+@api.delete("/coach/videos/slot")
+async def coach_video_delete_slot(key: str, slot: str, coach: dict = Depends(require_role("coach"))):
+    if slot not in VALID_SLOTS:
+        raise HTTPException(400, "Invalid slot")
+    doc = await db.exercise_videos.find_one({"key": key})
+    if not doc:
+        raise HTTPException(404, "No such exercise video")
+    updates: dict = {slot: None, "updated_at": _now_iso()}
+    if doc.get("preferred_slot") == slot:
+        updates["preferred_slot"] = None
+    await db.exercise_videos.update_one({"key": key}, {"$set": updates})
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+@api.post("/coach/videos/rescan")
+async def coach_video_rescan(key: str, coach: dict = Depends(require_role("coach"))):
+    doc = await db.exercise_videos.find_one({"key": key})
+    if not doc:
+        raise HTTPException(404, "No such exercise video")
+    name = doc.get("display_name") or key
+    channel_hint = _pick_channel_hint(name)
+    query = f"{channel_hint} {name} tutorial"
+    result = await _youtube_search_first_video(query)
+    if not result:
+        result = await _youtube_search_first_video(f"{name} exercise tutorial")
+    if not result:
+        raise HTTPException(502, "Could not find a video for this exercise")
+    primary = {
+        "source": "youtube_search",
+        "video_id": result["video_id"],
+        "title": result.get("title"),
+        "channel": result.get("channel") or channel_hint,
+        "channel_hint": channel_hint,
+        "thumbnail_url": result["thumbnail_url"],
+        "approval_status": "auto",
+        "added_by": coach.get("id"),
+        "added_at": _now_iso(),
+        "search_query": query,
+    }
+    await db.exercise_videos.update_one({"key": key}, {"$set": {"primary": primary, "updated_at": _now_iso()}})
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
 
 
 # ------------------------------------------------------------------

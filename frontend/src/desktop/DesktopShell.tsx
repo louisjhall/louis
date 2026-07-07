@@ -11,6 +11,7 @@ const NAV: { path: string; label: string; icon: any; testId: string }[] = [
   { path: "/(coach)/calendar", label: "Calendar", icon: "calendar-outline", testId: "desktop-nav-calendar" },
   { path: "/(coach)/approvals", label: "Approvals", icon: "checkmark-circle-outline", testId: "desktop-nav-approvals" },
   { path: "/(coach)/library", label: "Library", icon: "barbell-outline", testId: "desktop-nav-library" },
+  { path: "/(coach)/videos", label: "Videos", icon: "videocam-outline", testId: "desktop-nav-videos" },
   { path: "/(coach)/messages", label: "Messages", icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
   { path: "/(coach)/analytics", label: "Analytics", icon: "bar-chart-outline", testId: "desktop-nav-analytics" },
   { path: "/(coach)/profile", label: "Profile", icon: "person-outline", testId: "desktop-nav-profile" },

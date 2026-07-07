@@ -288,3 +288,175 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Added Coach Web Dashboard (Option C). Two new backend endpoints (/api/coach/calendar and /api/coach/analytics) + three new desktop screens (overview, calendar, analytics) + DesktopShell wrapper. Please test both backend endpoints (auth required: coach@crewfit.com / Coach123!) and the frontend desktop shell at viewport >=1024px on web. Verify sidebar navigation, KPI accuracy on overview, calendar grid clickthrough to /workout/[id], and analytics compliance bars. Mobile experience for coach (viewport 390x844) should still show existing Tabs layout with 5 tabs — please confirm nothing broke on mobile."
+
+##====================================================================
+## §26 Phase B — Coach Video CRUD Dashboard
+##====================================================================
+
+backend:
+  - task: "GET /api/coach/videos — list with search + smart sort"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Returns {items:[{id,key,display_name,category,primary_video_id,primary_channel,primary_thumbnail,has_custom_url,has_custom_upload,variants_configured,preferred_slot,approval_state,last_reviewed_at}], total}. Optional ?search= param. Includes library exercises without records (materialised on demand). Sort: needs-attention first (missing > rejected > un-reviewed), then alphabetical."
+  - task: "GET /api/coach/videos/detail?key=... — full record (query-param keyed to handle '/' in keys)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Uses ?key= query param (not path) because some exercise keys contain '/' (e.g. '90/90 hip rotation'). If no record exists for a library exercise, materialises a stub. 200 returns full doc with all slots + variants."
+  - task: "POST /api/coach/videos/upsert — create new exercise video record"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Creates an empty record for arbitrary exercise names."
+  - task: "POST /api/coach/videos/slot?key=... — set slot with YouTube URL parsing"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Body: {slot, video_id?, video_url?, title?, channel?, notes?, source?}. Slots: primary|alternative|custom_url|custom_upload|youtube_backup|ai_image. Auto-parses YouTube URLs (youtube.com/watch, youtu.be, shorts, embed, /v/) to extract 11-char video ID. Sets approval_status='approved' by default (coach action). Updates last_reviewed_at."
+  - task: "POST /api/coach/videos/approve?key=... — approve/reject a slot"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Body: {slot, status: approved|rejected|auto|pending}. Rejected slots are excluded by _resolve_display_video."
+  - task: "POST /api/coach/videos/preferred?key=... — set preferred slot"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Client display resolution honors this preferred slot when the target slot is not rejected."
+  - task: "POST /api/coach/videos/variant?key=... — per-location override (home/hotel/gym)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Body: {variant: home|hotel|gym, video_id?, video_url?, delete?}. Overrides default video when a client resolution passes matching variant."
+  - task: "DELETE /api/coach/videos/slot?key=...&slot=... — delete a slot"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Removes slot. If preferred slot was deleted, resets preferred to null."
+  - task: "POST /api/coach/videos/rescan?key=... — force re-scrape primary from YouTube"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Re-picks a fresh video ignoring cache. Useful when the current primary is broken or embed-blocked."
+  - task: "_resolve_display_video — priority resolver honoring variants + preferred + approval"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Priority: variant override > preferred slot > (custom_upload>custom_url>youtube_backup>primary>alternative>ai_image). Excludes rejected slots. Used by GET /exercises/video and POST /exercises/videos-batch (both accept ?variant=home|hotel|gym|default)."
+
+frontend:
+  - task: "Coach Videos screen — master/detail layout with 6 slots + 3 variants"
+    implemented: true
+    working: true
+    file: "frontend/app/(coach)/videos.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Verified visually with screenshots. Master panel: search bar, add-exercise button, list of exercises with thumbnails and status dots (MISSING / AUTO / APPROVED / REJECTED), badges for URL/UP/V<n>. Detail panel: header with preferred slot + last-reviewed date + RE-SCAN YOUTUBE button, live preview using <ExerciseVideoPlayer>, 6 slot cards (PRIMARY / CUSTOM URL / CREWFIT UPLOAD (Phase C stub) / ALTERNATIVE / YOUTUBE BACKUP / AI IMAGE (Phase C stub)) with APPROVE / REJECT / MARK PREFERRED / DELETE buttons + PREFERRED badge on the chosen slot. Add-or-replace section: slot chip selector + YouTube URL input + SAVE. Per-location variants section: HOME / HOTEL / GYM with dedicated URL inputs. Add-exercise modal for arbitrary names. Successfully tested: (1) auto-select first item on load, (2) click item with '/' in key ('90/90 hip rotation') loads detail (uses ?key= query param to bypass FastAPI path-slash issue), (3) MARK PREFERRED flips header state from PRIMARY to CUSTOM_URL, (4) status dots + badges render correctly."
+  - task: "Sidebar 'Videos' nav item on desktop"
+    implemented: true
+    working: true
+    file: "frontend/src/desktop/DesktopShell.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added 'Videos' with videocam-outline icon after 'Library' in sidebar."
+  - task: "Route hidden from mobile Tabs (href: null)"
+    implemented: true
+    working: true
+    file: "frontend/app/(coach)/_layout.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "videos route registered with href:null to keep mobile tab bar at 5 items."
+
+test_plan:
+  current_focus:
+    - "GET /api/coach/videos"
+    - "GET /api/coach/videos/detail?key=..."
+    - "POST /api/coach/videos/slot?key=..."
+    - "POST /api/coach/videos/approve?key=..."
+    - "POST /api/coach/videos/preferred?key=..."
+    - "POST /api/coach/videos/variant?key=..."
+    - "DELETE /api/coach/videos/slot?key=...&slot=..."
+    - "POST /api/coach/videos/rescan?key=..."
+    - "Coach Videos frontend screen (master/detail + slots + variants + resolution)"
+    - "Client resolution honors preferred_slot and variants (GET /exercises/video?variant=)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "§26 Phase B complete. Coach video CRUD dashboard delivered as /(coach)/videos screen with sidebar nav. 8 new backend endpoints (list, detail, upsert, slot, approve, preferred, variant, delete, rescan). Detail + mutation endpoints use ?key= query param (not path) because some exercise keys contain '/'. Client-facing GET /exercises/video and POST /exercises/videos-batch now accept ?variant=home|hotel|gym|default and use _resolve_display_video for priority (variant > preferred slot > custom_upload > custom_url > youtube_backup > primary > alternative > ai_image), excluding rejected slots. Please test all 8 backend endpoints (coach role required; client role must get 403 on all coach endpoints) AND the frontend flow (open Videos in sidebar, click item with '/' in key, paste a YouTube URL, mark preferred, set a hotel variant, verify the client's workout screen picks up the change). Phase C (custom uploads via base64) and Phase D (YouTube search via general web search) still pending."
+

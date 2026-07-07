@@ -34,6 +34,7 @@ export default function CoachLayout() {
       <Tabs.Screen name="overview" options={{ href: null }} />
       <Tabs.Screen name="calendar" options={{ href: null }} />
       <Tabs.Screen name="analytics" options={{ href: null }} />
+      <Tabs.Screen name="videos" options={{ href: null }} />
     </Tabs>
   );
 }

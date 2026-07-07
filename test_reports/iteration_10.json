@@ -1,0 +1,50 @@
+{
+  "summary": "§26 Phase B — Coach Video CRUD Dashboard tested end-to-end. Wrote /app/backend/tests/test_coach_videos_phase_b.py with 31 tests covering list/detail/upsert/slot/approve/preferred/variant/delete/rescan + 403 client-role checks + regression. Initial run: 8/31 FAILED — 6 due to a critical route-signature bug (POST /coach/videos/slot and DELETE /coach/videos/slot were defined with path params `{key}`/`{slot}` while spec + frontend call them with `?key=` query-param, causing 404), 2 due to a resolver early-return bug in `_lookup_or_fetch_video`. I FIXED the route mismatch by changing both `@api.post('/coach/videos/{key}/slot')` → `@api.post('/coach/videos/slot')` and `@api.delete('/coach/videos/{key}/slot/{slot}')` → `@api.delete('/coach/videos/slot')` at server.py:2391 and 2490 (function signature already read `key: str` and `slot: str` from query). After fix + backend restart: 29/31 PASS. Remaining 2 failures both trace to a single business-logic bug — `_lookup_or_fetch_video` (server.py:2113-2117) returns `None` early when `primary.approval_status == 'rejected'`, completely discarding the record and bypassing `_resolve_display_video`. This defeats the spec: after coach rejects primary, `/api/exercises/video?name=Goblet Squat` MUST return next-priority slot (custom_url/variant/preferred), not video:null. Same bug also makes hotel/home variants unresolvable once primary is rejected. Frontend @1440x900: coach login → sidebar renders 9 nav items in exact spec order (overview/clients/calendar/approvals/library/videos/messages/analytics/profile) — `desktop-nav-videos` present. Videos screen renders correctly: master panel with `videos-search`, `videos-add-btn`, 39 alphabetically-sorted `videos-item-<key>` rows (Turkish Get-Up first as MISSING, then AUTO items). Slash-key `videos-item-90/90 hip rotation` present AND clickable — detail panel loads with real Jeremy Ethier thumbnail. Goblet Squat detail: preferred/last-reviewed header, RE-SCAN YOUTUBE btn, live preview (Athlean-X BZ1TUVr4LFk), 6 slot cards (PRIMARY / CUSTOM URL / CREWFIT UPLOAD (Phase C dimmed) / ALTERNATIVE / YOUTUBE BACKUP / AI IMAGE (Phase C dimmed)). URL paste + save flow works: pasted `https://www.youtube.com/watch?v=6xwGFn-J_Qw` into `detail-url-input` with `slot-target-custom_url` selected → `detail-url-submit` → custom_url slot re-rendered with `slot-custom_url-prefer` + `slot-custom_url-delete` visible. `slot-custom_url-prefer` click flipped header 'Preferred:' to CUSTOM_URL. Add-modal opens correctly via `videos-add-btn` (input testID is `videos-add-name`, submit is `videos-add-submit` — matched screen source). Mobile hidden route: verified in code /app/frontend/app/(coach)/_layout.tsx registers 'videos' with `href: null` so bottom tabs on 420x900 stay at 5 items — not re-tested since already validated in iteration_9.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/exercises/video?name=… (variant=… or after primary rejection)",
+        "issue": "`_lookup_or_fetch_video` (server.py:2113-2117) returns None immediately when `existing.primary.approval_status == 'rejected'`, discarding the entire record — bypassing custom_url, variants, preferred_slot. RESULT: After a coach rejects primary, client sees `{video:null, message:'Demo coming soon…'}` even when custom_url or a variant is set and approved. FIX: replace the `if p.get('approval_status') == 'rejected': return None` short-circuit with `existing` return so `_resolve_display_video` can pick the next-priority non-rejected slot. Reproduces via test_client_resolves_hotel_variant + test_client_resolves_home_uses_preferred in test_coach_videos_phase_b.py.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coach_videos_phase_b.py",
+    "/app/test_reports/pytest/coach_videos_phase_b_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix `_lookup_or_fetch_video` in /app/backend/server.py lines 2113-2117 — do NOT short-circuit to None when primary is rejected. Return the existing record and let `_resolve_display_video` (already excludes rejected slots) pick the correct fallback. This will restore custom_url/variant/preferred_slot resolution for clients.",
+    "OPTIONAL (LOW): Consider revisiting the semantics of `approval_state` in the list endpoint — currently items with a rejected primary but a valid custom_url will show `approval_state='rejected'` even though the client-visible slot is 'approved'. Not blocking.",
+    "OPTIONAL (LOW): Modal add-exercise input testIDs are `videos-add-name` / `videos-add-submit` — main-agent may want to align to spec's suggested `add-name-input` naming, or update spec."
+  ],
+  "critical_code_review_comments": [
+    "server.py:2391 & 2490 — I fixed a critical route-signature bug: two coach video endpoints were declared with path params `{key}` / `{slot}` while every caller (frontend + docs) uses query-param `?key=...`, causing 404s that silently disabled custom_url CRUD from the coach dashboard. Fix confirmed by 8 additional tests now passing.",
+    "server.py:2113-2117 — `_lookup_or_fetch_video` early-returns None when primary is rejected, defeating the whole point of custom_url / variants / preferred_slot in Phase B. Must be fixed before Phase B is shippable end-to-end.",
+    "server.py:2221-2245 — `_resolve_display_video` is otherwise correct: variant override > preferred > (custom_upload > custom_url > youtube_backup > primary > alternative > ai_image), with rejected slots excluded. Priority order matches spec.",
+    "server.py:2213-2218 — `_parse_youtube_url` correctly handles youtube.com/watch, youtu.be, shorts, embed, /v/ — verified test_set_custom_url_slot extracts `6xwGFn-J_Qw` from the watch URL.",
+    "frontend/app/(coach)/videos.tsx — master/detail architecture is well organised, all mutations use `?key=encodeURIComponent(key)` correctly so slash-keys work. Selectors (slot-target-*, slot-*-{approve,reject,prefer,delete}, variant-*-{input,submit,delete}, detail-url-{input,submit}, videos-{search,add-btn,add-name,add-submit,item-<key>}) are consistent with the review spec (tiny naming variance on add-name).",
+    "frontend/src/desktop/DesktopShell.tsx — Videos nav item correctly ordered after Library. `desktop-nav-videos` testID present and clickable. 9 items total match spec.",
+    "frontend/app/(coach)/_layout.tsx — videos route uses `href: null` for the Tab, correctly hiding it on mobile bottom-tab shell. No regression to 5-tab mobile bar expected."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (route path fix: /coach/videos/slot POST + DELETE now use query params)",
+    "/app/backend/tests/test_coach_videos_phase_b.py (NEW — 31 tests)"
+  ],
+  "success_rate": {
+    "backend": "29/31 = 93.5% (2 failing tests both trace to the same `_lookup_or_fetch_video` bug documented above)",
+    "frontend": "100% for tested flows on desktop 1440x900 — sidebar/master/detail/slot cards/URL paste/prefer flip/slash-key click all working"
+  },
+  "seed_data_creation": "Turkish Get-Up video record created via upsert during test run (harmless — appears at top of list as MISSING). Goblet Squat record was mutated (custom_url set/deleted, hotel variant set/deleted, primary re-approved via rescan). db.exercise_videos also received cached scrapes for regression exercises (Push-Up, Plank).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/test_coach_videos_phase_b.py -v` — expect 29/31 pass unless the resolver early-return bug is fixed (in which case all 31 should pass). The two failures are TestVariant::test_client_resolves_hotel_variant and TestVariant::test_client_resolves_home_uses_preferred; both are downstream of the same server.py:2113-2117 short-circuit. Frontend testIDs verified working: desktop-nav-videos, videos-{search,add-btn,add-name,add-submit,item-<key>}, slot-{primary,custom_url,alternative,youtube_backup,custom_upload,ai_image}-{approve,reject,prefer,delete}, slot-target-{primary,alternative,custom_url,youtube_backup}, detail-{url-input,url-submit}, variant-{home,hotel,gym}-{input,submit,delete}. Coach video routes ALL now use query-param key (?key=…) — no path-param variants remain.",
+  "rca_of_issue": "Two independent bugs identified, one already fixed. (1) Route-signature mismatch (FIXED): main agent registered POST /coach/videos/{key}/slot + DELETE /coach/videos/{key}/slot/{slot} while frontend + spec use ?key= query-param. Every save/delete from the coach dashboard returned 404 silently. Fixed by removing the path template so FastAPI reads `key`/`slot` as query params (function signatures were already correct). (2) Resolver early-return (NOT fixed — needs main agent): _lookup_or_fetch_video returns None when primary is rejected, discarding the whole record. This makes it impossible for a rejected-primary exercise to serve its custom_url or variant videos to clients. Reproduction: 1) POST /coach/videos/slot?key=goblet+squat body {slot:custom_url, video_url:youtube-url}, 2) POST /coach/videos/approve?key=goblet+squat body {slot:primary, status:rejected}, 3) GET /api/exercises/video?name=Goblet Squat as client → returns video:null instead of custom_url slot. Mitigation: remove the `if p.get('approval_status')=='rejected': return None` block; the downstream `_resolve_display_video` already filters rejected slots per-slot."
+}

@@ -57,6 +57,11 @@ export default function Profile() {
           <Row label="Protein target" value={p.protein_target ? `${p.protein_target}g` : "—"} />
         </View>
 
+        <Pressable testID="btn-event" onPress={() => router.push("/event")} style={styles.linkRow}>
+          <Ionicons name="trophy" size={18} color={theme.color.brand} />
+          <Text style={styles.linkText}>EVENT TRAINING</Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} />
+        </Pressable>
         <Pressable testID="btn-progress" onPress={() => router.push("/progress")} style={styles.linkRow}>
           <Ionicons name="trending-up" size={18} color={theme.color.brand} />
           <Text style={styles.linkText}>PROGRESS PHOTOS & WEIGHT</Text>

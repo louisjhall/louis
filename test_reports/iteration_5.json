@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 5 validates the additive V1.5 'Event Training Mode' feature layer. 21 new tests added in /app/backend/tests/test_events.py covering full CRUD, coach-on-behalf, 7-branch phase computation, coach client detail 'event' field, and PATCH /workouts/{id} key_session+event_phase. All 63 tests PASS on preview URL (42 regression + 21 new) in 177s. Also fixed one regression fixture: POST /workouts/generate-month was converted (since iteration_4) to an async job pattern returning {job_id} — updated TestWorkouts.gen_result to poll GET /workouts/job/{id} until status='done'. This is a test-only correction; the async-job pattern is the exact iteration_4 recommendation, correctly implemented in server.py:999-1073.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_events.py",
+    "/app/backend/tests/test_crewfit_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/events_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Feature is complete and regression is fully green (63/63).",
+    "OPTIONAL / LOW: /app/backend/server.py is now 1487 lines — still exceeds 700-line guideline. Consider splitting into feature routers (events/, workouts/, coach/, roster/, hotels/, nutrition/, messages/).",
+    "OPTIONAL: PATCH /events/{id} currently requires the full EventBody (event_type/event_name/event_date mandatory). Consider a partial-update model (all Optional) for true PATCH semantics; current shape works because the tests always send the required fields."
+  ],
+  "critical_code_review_comments": [
+    "Event phase computation (server.py:325-348) is correct and deterministic across all 7 branches — validated with parametrized dates: base(+200d), build(+70d), peak(+40d), taper(+15d), race_week(+5d), recovery(-5d), post(-30d). All 7 assertions pass.",
+    "POST /events (server.py:351-366) correctly deactivates previous active events for the user via update_many({user_id, is_active:true}, {is_active:false}) BEFORE inserting the new one — history preserved, exactly one active per user enforced. Verified.",
+    "Coach on-behalf-of: server.py:354 correctly resolves owner_id = body.user_id if user.role==coach else user.id — client cannot inject user_id; coach setting user_id creates event for that client. Verified via TestEventCoachOnBehalf.",
+    "PATCH /events/{id} + DELETE /events/{id} (server.py:386-407) correctly guard: 'if user.role==client and ev.user_id != user.id → 403'. Verified with cross-user attempt. DELETE is a soft-deactivate (is_active=false), history preserved. Verified.",
+    "Coach client detail (server.py:1359-1362) correctly attaches 'event' field with phase_info when active, or None. Verified.",
+    "GET /coach/clients/{id}/event (server.py:410-416) correctly returns {} when no active event and coach-only (403 for client). Verified.",
+    "WorkoutUpdateBody now accepts key_session:bool + event_phase:str (server.py:231-232); PATCH /workouts/{id} persists both fields. Verified end-to-end.",
+    "_generate_month (server.py:907-996) now injects event_context (type/name/date/phase/weeks_to_race/…) into the Claude prompt when an active event exists — code path correct; not asserted in tests because the LLM response varies. WORKOUT_SYSTEM prompt (server.py:852-904) contains explicit EVENT TRAINING RULES section.",
+    "Async generate-month job pattern (server.py:999-1073) is now implemented — POST returns {status:queued, job_id, total}; GET /workouts/job/{id} returns status + workouts when done. This resolves the iteration_4 CF-edge-timeout HIGH-priority action item.",
+    "MongoDB _id stripped consistently via projections and clean_doc(). Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_events.py (NEW — 21 tests for Event Training Mode)",
+    "/app/backend/tests/test_crewfit_api.py (fixed TestWorkouts.gen_result fixture to poll async job endpoint — no functional coverage changed)"
+  ],
+  "success_rate": {
+    "backend": "63/63 = 100% (42 regression + 21 new event tests). Runtime 177s.",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "No seed changes. Event tests self-clean by creating throwaway TEST events; POST semantics guarantee only one active per user. Old test events remain in history collection (by design).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Event Training Mode fully validated. Run `pytest backend/tests/ --ignore=backend/tests/test_preview_specific.py` — expect 63/63 green in ~3 min (dominated by workouts async job polling, ~140s). Phase branch boundary values (in server.py _event_phase) tested at +200d/+70d/+40d/+15d/+5d/-5d/-30d covering base/build/peak/taper/race_week/recovery/post respectively.",
+  "rca_of_issue": "N/A — no bug. Only note: /workouts/generate-month API contract changed (sync workouts body → async job_id) between iteration_4 and iteration_5, so the pre-existing TestWorkouts fixture was updated to poll /workouts/job/{id}. This matches the iteration_4 recommendation."
+}

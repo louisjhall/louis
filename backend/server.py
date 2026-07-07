@@ -228,6 +228,8 @@ class WorkoutUpdateBody(BaseModel):
     approved: Optional[bool] = None
     coach_locked: Optional[bool] = None
     location: Optional[str] = None
+    key_session: Optional[bool] = None
+    event_phase: Optional[str] = None
 
 class WorkoutCompleteBody(BaseModel):
     completed_exercises: list[dict]
@@ -287,6 +289,131 @@ class RegisterPushBody(BaseModel):
     user_id: str
     platform: str
     device_token: str
+
+
+# ------------------------------------------------------------------
+# Event Training Mode
+# ------------------------------------------------------------------
+EVENT_TYPES = [
+    "5K", "10K", "half marathon", "marathon", "ultramarathon",
+    "sprint triathlon", "Olympic triathlon", "Ironman 70.3", "full Ironman",
+    "cycling event", "swimming event", "HYROX",
+    "strength goal", "military/police/fire test", "custom",
+]
+
+class EventBody(BaseModel):
+    user_id: Optional[str] = None            # coach may set on behalf of a client
+    event_type: str
+    event_name: str
+    event_date: str                          # YYYY-MM-DD
+    current_ability: Optional[str] = None
+    previous_time: Optional[str] = None
+    target_time: Optional[str] = None
+    weekly_availability_min: Optional[int] = None
+    longest_recent: Optional[str] = None
+    injury_history: Optional[str] = None
+    preferred_days: list[str] = []
+    access_gym: bool = False
+    access_pool: bool = False
+    access_bike: bool = False
+    access_treadmill: bool = False
+    include_strength: bool = True
+    include_mobility: bool = True
+    notes: Optional[str] = None
+
+
+def _event_phase(event_date_iso: str) -> dict:
+    """Compute weeks-to-race + training phase for the given race date."""
+    try:
+        ed = datetime.fromisoformat(event_date_iso).date()
+    except Exception:
+        return {"weeks_to_race": None, "phase": "unknown", "days_to_race": None}
+    today = date.today()
+    days = (ed - today).days
+    weeks = days // 7 if days >= 0 else -((-days) // 7)
+    if days < 0 and abs(days) <= 14:
+        phase = "recovery"
+    elif days < 0:
+        phase = "post"
+    elif days <= 7:
+        phase = "race_week"
+    elif days <= 21:
+        phase = "taper"
+    elif weeks <= 8:
+        phase = "peak"
+    elif weeks <= 14:
+        phase = "build"
+    else:
+        phase = "base"
+    return {"weeks_to_race": weeks, "days_to_race": days, "phase": phase}
+
+
+@api.post("/events")
+async def event_upsert(body: EventBody, user: dict = Depends(current_user)):
+    # coach may set on behalf of a client; client only for themselves
+    owner_id = body.user_id if (user["role"] == "coach" and body.user_id) else user["id"]
+    doc = {
+        "id": new_id(),
+        "user_id": owner_id,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "is_active": True,
+        **body.model_dump(exclude={"user_id"}),
+    }
+    # deactivate previous events for this user (never delete — history)
+    await db.events.update_many({"user_id": owner_id, "is_active": True}, {"$set": {"is_active": False}})
+    await db.events.insert_one(doc)
+    return clean_doc(doc)
+
+
+@api.get("/events/current")
+async def event_current(user: dict = Depends(current_user)):
+    ev = await db.events.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if not ev:
+        return {}
+    ev["phase_info"] = _event_phase(ev.get("event_date", ""))
+    return ev
+
+
+@api.get("/events/history")
+async def event_history(user: dict = Depends(current_user)):
+    rows = await db.events.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    for e in rows:
+        e["phase_info"] = _event_phase(e.get("event_date", ""))
+    return rows
+
+
+@api.patch("/events/{eid}")
+async def event_update(eid: str, body: EventBody, user: dict = Depends(current_user)):
+    ev = await db.events.find_one({"id": eid})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if user["role"] == "client" and ev["user_id"] != user["id"]:
+        raise HTTPException(403, "Forbidden")
+    updates = body.model_dump(exclude={"user_id"})
+    updates["updated_at"] = now_iso()
+    await db.events.update_one({"id": eid}, {"$set": updates})
+    return await db.events.find_one({"id": eid}, {"_id": 0})
+
+
+@api.delete("/events/{eid}")
+async def event_delete(eid: str, user: dict = Depends(current_user)):
+    ev = await db.events.find_one({"id": eid})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if user["role"] == "client" and ev["user_id"] != user["id"]:
+        raise HTTPException(403, "Forbidden")
+    await db.events.update_one({"id": eid}, {"$set": {"is_active": False}})
+    return {"ok": True}
+
+
+@api.get("/coach/clients/{client_id}/event")
+async def coach_client_event(client_id: str, _: dict = Depends(require_role("coach"))):
+    ev = await db.events.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if not ev:
+        return {}
+    ev["phase_info"] = _event_phase(ev.get("event_date", ""))
+    return ev
 
 
 # ------------------------------------------------------------------
@@ -723,7 +850,7 @@ async def hotels_get(hid: str, user: dict = Depends(current_user)):
 # Workouts: monthly generation & regenerate
 # ------------------------------------------------------------------
 WORKOUT_SYSTEM = """You are CrewFit's elite S&C coach for airline crew.
-Given a client profile with home equipment + preferences AND a chronological month of roster days (each with day_type, load, home/away, hotel info if any), produce a full month training plan.
+Given a client profile with home equipment + preferences, a chronological month of roster days (each with day_type, load, home/away, hotel info if any), AND (optionally) an EVENT the client is training for (with target date, phase and remaining weeks), produce a full month training plan.
 
 Aviation coaching rules (STRICT):
  - No heavy lower body within 24h of Long-Haul Duty / Night Flight arrival.
@@ -741,19 +868,37 @@ Aviation coaching rules (STRICT):
  - If hotel equipment is unknown, ONLY prescribe bodyweight/dumbbell-safe options.
  - Respect training_days_per_week — insert Rest Day sessions on other days.
 
+EVENT TRAINING RULES (apply only if an event is provided):
+ - Long runs / long rides / long swims should preferably land on home or off-duty days.
+ - Hard intervals must NOT be scheduled after night flights, layover arrivals, or poor sleep.
+ - Heavy lower-body strength must NOT be placed within 48h before a long run.
+ - Phase-aware volume:
+     base phase → gradual aerobic build, 1 key long session/week, add strength.
+     build phase → intervals + tempo + long session; strength maintained.
+     peak phase → highest specific work; still respect roster fatigue.
+     taper phase → sharply reduce volume, keep intensity brief and crisp.
+     race_week → minimal volume, one short opener 2-3 days out, else mobility/rest.
+     recovery → mobility + easy aerobic only for 1-2 weeks post race.
+ - If a key session must move because of roster, MOVE it to the best day, do NOT double up.
+ - Mark the week's most important session in each workout's `key_session: true`.
+ - For triathlon: rotate swim / bike / run and include one brick/week when possible.
+ - Balance: if the roster forces cutting volume, prefer to keep the KEY session and drop optional sessions.
+
 For EACH day in the roster, output one workout object:
   date (YYYY-MM-DD)
   day_load — green | amber | red | blue | purple | grey (mirror the input where possible)
-  title (short, e.g. "Home Push + Core")
+  title (short, e.g. "Home Push + Core" or "Long Run — 22km easy")
   location — one of: "Home Workout", "Commercial Gym Workout", "Hotel Gym Workout",
     "Bodyweight Layover Workout", "Flight Recovery Mobility", "Pre-Flight Mobility",
     "Post-Flight Mobility", "Turnaround Recovery", "Outdoor Run", "Pool Swim", "Bike Session", "Rest Day"
   duration_min (int, integer minutes)
-  focus (push|pull|legs|full|mobility|zone2|recovery)
+  focus (push|pull|legs|full|mobility|zone2|recovery|long_run|intervals|tempo|swim|bike|brick|race_prep)
   warmup: [ {name, duration_sec} ]  (2-4 short items)
   exercises: [ {name, sets:int, reps:string, rest_sec:int, rpe:int (1-10), notes:string} ]
   alternatives: {home:string, hotel:string, no_equipment:string, easier:string, harder:string}
-  rationale (2-3 sentences: WHY this day, WHY this location, WHY this intensity — reference the roster explicitly)
+  key_session: bool  (true only for the week's most important session, at most 1-2 per week)
+  event_phase: string  (mirror the phase from event_context if provided, else null)
+  rationale (2-3 sentences: WHY this day, WHY this location, WHY this intensity — reference the roster AND the event phase if provided)
 
 Return STRICT JSON only:
 {"workouts":[{...}]}"""
@@ -768,6 +913,33 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
     all_days = roster.get("days", []) or []
     if not all_days:
         return []
+
+    # Fetch active event for the user (if any) and build event_context
+    event_context: Optional[dict] = None
+    ev = await db.events.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if ev:
+        pi = _event_phase(ev.get("event_date", ""))
+        event_context = {
+            "type": ev.get("event_type"),
+            "name": ev.get("event_name"),
+            "date": ev.get("event_date"),
+            "target_time": ev.get("target_time"),
+            "current_ability": ev.get("current_ability"),
+            "longest_recent": ev.get("longest_recent"),
+            "weekly_availability_min": ev.get("weekly_availability_min"),
+            "include_strength": ev.get("include_strength", True),
+            "include_mobility": ev.get("include_mobility", True),
+            "access": {
+                "gym": ev.get("access_gym"),
+                "pool": ev.get("access_pool"),
+                "bike": ev.get("access_bike"),
+                "treadmill": ev.get("access_treadmill"),
+            },
+            "phase": pi.get("phase"),
+            "weeks_to_race": pi.get("weeks_to_race"),
+            "days_to_race": pi.get("days_to_race"),
+            "injury_history": ev.get("injury_history"),
+        }
 
     # Attach hotel info once for the whole prompt set
     hotel_cache: dict[str, dict] = {}
@@ -796,6 +968,7 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
     async def _run_chunk(chunk: list[dict]) -> list[dict]:
         prompt = (
             f"Client profile: {json.dumps(profile)[:2500]}\n"
+            f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
             f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:8000]}\n"
             "Design exactly one workout per date in this chunk. Return JSON."
         )
@@ -864,6 +1037,8 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                     "exercises": w.get("exercises", []),
                     "alternatives": w.get("alternatives", {}),
                     "rationale": w.get("rationale", ""),
+                    "key_session": bool(w.get("key_session", False)),
+                    "event_phase": w.get("event_phase"),
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
                     "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -945,6 +1120,8 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
             "exercises": w.get("exercises", []),
             "alternatives": w.get("alternatives", {}),
             "rationale": w.get("rationale", ""),
+            "key_session": bool(w.get("key_session", False)),
+            "event_phase": w.get("event_phase"),
             "approved": False,
             "completed": False,
             "coach_notes": existing.get("coach_notes", "") if existing else "",
@@ -1179,7 +1356,10 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
     workouts = await db.workouts.find({"user_id": client_id}, {"_id": 0}).sort("date", 1).to_list(500)
     checkins = await db.checkins.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(10)
     history = await db.rosters.find({"user_id": client_id}, {"_id": 0, "raw_response": 0}).sort("created_at", -1).to_list(20)
-    return {"client": c, "roster": r, "workouts": workouts, "checkins": checkins, "roster_history": history}
+    ev = await db.events.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if ev:
+        ev["phase_info"] = _event_phase(ev.get("event_date", ""))
+    return {"client": c, "roster": r, "workouts": workouts, "checkins": checkins, "roster_history": history, "event": ev or None}
 
 
 @api.get("/coach/pending-approvals")

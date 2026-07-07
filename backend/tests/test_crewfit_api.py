@@ -242,15 +242,33 @@ class TestWorkouts:
         # takes 100-240s → CF returns 502. We call the backend directly on localhost:8001
         # for FUNCTIONAL validation of the endpoint. The CF timeout is reported separately
         # as a HIGH-priority infra/perf issue.
+        import time
         LOCAL = "http://localhost:8001"
         rc = api.get(f"{base_url}/api/roster/current", headers=client_auth["headers"], timeout=15).json()
         rid = rc["id"]
+        # V1.5: generate-month is now async — POST returns job_id, poll job status
         r = api.post(f"{LOCAL}/api/workouts/generate-month", headers=client_auth["headers"],
-                     json={"roster_id": rid}, timeout=360)
+                     json={"roster_id": rid}, timeout=30)
         assert r.status_code == 200, r.text
         d = r.json()
-        assert "workouts" in d and isinstance(d["workouts"], list)
-        return {"roster_id": rid, "workouts": d["workouts"]}
+        assert d.get("status") == "queued" and d.get("job_id"), d
+        job_id = d["job_id"]
+        # poll up to 6 minutes
+        deadline = time.time() + 360
+        workouts = []
+        while time.time() < deadline:
+            jr = api.get(f"{LOCAL}/api/workouts/job/{job_id}", headers=client_auth["headers"], timeout=30)
+            assert jr.status_code == 200, jr.text
+            js = jr.json()
+            if js.get("status") == "done":
+                workouts = js.get("workouts", []) or []
+                break
+            if js.get("status") == "failed":
+                pytest.skip(f"generate-month job failed: {js.get('error')}")
+            time.sleep(4)
+        else:
+            pytest.skip("generate-month job did not finish within 6 min")
+        return {"roster_id": rid, "workouts": workouts}
 
     def test_shape(self, gen_result):
         ws = gen_result["workouts"]

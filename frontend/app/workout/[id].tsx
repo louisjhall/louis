@@ -82,6 +82,8 @@ export default function WorkoutDetail() {
           <Text style={styles.metaChip}>📍 {w.location || "Home Workout"}</Text>
           <Text style={styles.metaChip}>⏱ {w.duration_min}min</Text>
           <Text style={styles.metaChip}>{String(w.focus || "").toUpperCase()}</Text>
+          {w.key_session && <Text style={[styles.metaChip, { color: "#fff", backgroundColor: theme.color.brand, borderColor: theme.color.brand }]}>⭐ KEY SESSION</Text>}
+          {w.event_phase && <Text style={[styles.metaChip, { color: theme.color.brand, borderColor: theme.color.brand }]}>{String(w.event_phase).toUpperCase().replace("_", " ")}</Text>}
         </View>
 
         {w.rationale && (

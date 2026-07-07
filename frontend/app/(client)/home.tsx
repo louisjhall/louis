@@ -16,14 +16,20 @@ export default function Home() {
   const router = useRouter();
   const [workouts, setWorkouts] = useState<any[]>([]);
   const [roster, setRoster] = useState<any>(null);
+  const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r] = await Promise.all([api<any[]>("/workouts/week"), api<any>("/roster/current")]);
+      const [ws, r, ev] = await Promise.all([
+        api<any[]>("/workouts/week"),
+        api<any>("/roster/current"),
+        api<any>("/events/current"),
+      ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
+      setEvent(ev && ev.id ? ev : null);
     } finally { setLoading(false); }
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -93,6 +99,25 @@ export default function Home() {
                 <Text style={styles.rBtnText}>NEW</Text>
               </Pressable>
             </View>
+          )}
+
+          {event ? (
+            <Pressable testID="event-card" onPress={() => router.push("/event")} style={styles.eventCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eTop}>{String(event.event_type || "").toUpperCase()} · {String(event.phase_info?.phase || "").toUpperCase().replace("_", " ")}</Text>
+                <Text style={styles.eName}>{event.event_name}</Text>
+                <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
+              </View>
+              <View style={{ alignItems: "flex-end" }}>
+                <Text style={styles.eBig}>{event.phase_info?.days_to_race ?? "—"}</Text>
+                <Text style={styles.eBigLbl}>DAYS TO RACE</Text>
+              </View>
+            </Pressable>
+          ) : (
+            <Pressable testID="add-event-card" onPress={() => router.push("/event")} style={styles.addEventBtn}>
+              <Ionicons name="trophy" size={16} color={theme.color.brand} />
+              <Text style={styles.addEventText}>ADD EVENT (5K, marathon, tri, HYROX…)</Text>
+            </Pressable>
           )}
 
           {todaysWorkout ? (
@@ -172,6 +197,14 @@ const styles = StyleSheet.create({
   rBigLabel: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   rBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.surface3, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border },
   rBtnText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  eventCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md },
+  eTop: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  eName: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4 },
+  eDate: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  eBig: { color: theme.color.text, fontSize: 28, fontWeight: "900" },
+  eBigLbl: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.5, fontWeight: "800" },
+  addEventBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: theme.radius.md, borderStyle: "dashed", borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md },
+  addEventText: { color: theme.color.brand, fontWeight: "800", letterSpacing: 1.5, fontSize: 11 },
   startCta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: theme.color.brand, paddingVertical: 18, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md },
   startText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
   emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },

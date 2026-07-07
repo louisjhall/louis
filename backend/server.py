@@ -2111,10 +2111,8 @@ async def _lookup_or_fetch_video(exercise_name: str) -> Optional[dict]:
         return None
     existing = await db.exercise_videos.find_one({"key": key}, {"_id": 0})
     if existing and existing.get("primary", {}).get("video_id"):
-        p = existing["primary"]
-        # Client must only see approved (or auto-fetched not-yet-rejected) videos
-        if p.get("approval_status") == "rejected":
-            return None
+        # Return the full record; caller uses _resolve_display_video to honor
+        # approval status, preferred slot, and variant overrides.
         return existing
     # Fetch fresh
     channel_hint = _pick_channel_hint(exercise_name)

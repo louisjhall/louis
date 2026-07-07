@@ -38,7 +38,7 @@ export default function Clients() {
       </View>
 
       <View style={styles.widgets}>
-        <Widget icon="🟢" label="Active" value={(data.total || 0) - (c.expired || 0) - (c.no_roster || 0)} />
+        <Widget icon="🟢" label="Active" value={Math.max(0, (data.total || 0) - Math.max(c.expired || 0, c.no_roster || 0))} />
         <Widget icon="🟠" label="Expiring" value={c.expiring_soon || 0} tint={theme.color.amber} />
         <Widget icon="🔴" label="Expired" value={c.expired || 0} tint={theme.color.red} />
         <Widget icon="⚪" label="No Roster" value={c.no_roster || 0} />

@@ -381,6 +381,8 @@ def score_day(day: dict) -> DayLoad:
 @api.post("/roster/extract")
 async def roster_extract(body: RosterExtractBody, user: dict = Depends(current_user)):
     path = await write_temp(body.file_base64, body.mime_type)
+    raw = ""
+    parsed: Any = {}
     try:
         raw = await call_gemini_with_file(
             ROSTER_SYSTEM,
@@ -388,24 +390,30 @@ async def roster_extract(body: RosterExtractBody, user: dict = Depends(current_u
             path,
             body.mime_type,
         )
+    except Exception as e:
+        logger.warning("roster gemini call failed: %s", e)
+        raw = ""
     finally:
         try:
             os.unlink(path)
         except Exception:
             pass
     try:
-        parsed = parse_json_from_text(raw)
+        parsed = parse_json_from_text(raw) if raw else {}
     except Exception as e:
         logger.warning("roster parse failed: %s", e)
-        # fallback empty week
-        base = datetime.fromisoformat(body.week_start) if body.week_start else datetime.now(timezone.utc)
-        parsed = {
-            "days": [
-                {"date": (base + timedelta(days=i)).date().isoformat(), "type": "off", "flights": [], "notes": ""}
-                for i in range(7)
-            ]
-        }
+        parsed = {}
     days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+    if not days:
+        # Fallback: 7-day off-week starting from week_start (or today)
+        try:
+            base = datetime.fromisoformat(body.week_start) if body.week_start else datetime.now(timezone.utc)
+        except Exception:
+            base = datetime.now(timezone.utc)
+        days = [
+            {"date": (base + timedelta(days=i)).date().isoformat(), "type": "off", "flights": [], "notes": ""}
+            for i in range(7)
+        ]
     for d in days:
         d["load"] = score_day(d)
     roster = {

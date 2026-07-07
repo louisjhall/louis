@@ -178,6 +178,13 @@ export default function WorkoutDetail() {
             <TextInput style={styles.exNameInput} value={rpe} onChangeText={setRpe} keyboardType="number-pad" placeholder="7" placeholderTextColor={theme.color.textDim} testID="rpe-input" />
           </View>
         )}
+
+        {!isCoach && !w.completed && (
+          <Pressable testID="open-timer" onPress={() => router.push(`/workout/${w.id}/timer`)} style={styles.timerBtn}>
+            <Ionicons name="timer" size={16} color={theme.color.brand} />
+            <Text style={styles.timerText}>OR RUN AS GUIDED TIMER (recommended for layovers/HIIT)</Text>
+          </Pressable>
+        )}
       </ScrollView>
 
       <View style={styles.sticky}>
@@ -235,6 +242,8 @@ const styles = StyleSheet.create({
   lockBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10, padding: 10, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.brand },
   lockText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   compBox: { marginTop: theme.space.lg },
+  timerBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: theme.space.lg, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand },
+  timerText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   sticky: { position: "absolute", left: 0, right: 0, bottom: 0, padding: theme.space.lg, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.border },
   cta: { backgroundColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },

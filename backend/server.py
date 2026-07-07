@@ -346,6 +346,68 @@ class CoachStyleBody(BaseModel):
 
 
 # ------------------------------------------------------------------
+# Dynamic Schedule Engine (§24) & Workout Player (§25) models
+# ------------------------------------------------------------------
+DAILY_HAPPENED_TAGS = [
+    "yes_as_planned", "flight_delayed", "called_from_standby", "slept_badly",
+    "ill", "family_plans", "hotel_changed", "workout_completed",
+    "workout_missed", "less_time", "other",
+]
+
+SCHEDULE_MODES = ["normal", "standby", "sickness", "holiday", "recovery", "paused"]
+WORKOUT_PLAYERS = ["free", "guided_strength", "guided_timer", "auto"]  # 'auto' = ask each time
+HOLIDAY_TYPES = ["business_trip", "beach", "city", "cruise", "adventure", "ski", "family", "staycation"]
+
+
+class DailyHappenedBody(BaseModel):
+    date: Optional[str] = None
+    tag: str  # one of DAILY_HAPPENED_TAGS
+    note: Optional[str] = None
+
+
+class ScheduleEventBody(BaseModel):
+    kind: str  # e.g. "standby_on", "sickness_on", "holiday_on", "roster_change"
+    details: dict = {}
+    change_type: Optional[str] = None  # minor | moderate | major
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+
+
+class StandbyBody(BaseModel):
+    active: bool
+    date: Optional[str] = None
+
+
+class SicknessBody(BaseModel):
+    active: bool
+    illness: Optional[str] = None
+    severity: Optional[int] = Field(default=None, ge=1, le=10)
+    started_at: Optional[str] = None
+    doctor_advised_rest: Optional[bool] = None
+
+
+class HolidayBody(BaseModel):
+    active: bool
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    holiday_type: Optional[str] = None
+    goal: Optional[str] = None  # maintain | improve | relax | normal | break
+    equipment: list[str] = []
+
+
+class PlayerPrefBody(BaseModel):
+    default_player: str  # one of WORKOUT_PLAYERS
+    auto_flow: Optional[bool] = None
+    rest_timer_mode: Optional[str] = None  # auto | manual | none
+
+
+class SmartReplanBody(BaseModel):
+    reason: str  # short human explanation
+    dates: Optional[list[str]] = None
+    scope: str = "affected"  # affected | week | month
+
+
+# ------------------------------------------------------------------
 # Event Training Mode
 # ------------------------------------------------------------------
 EVENT_TYPES = [
@@ -1496,6 +1558,153 @@ async def set_coach_style(body: CoachStyleBody, coach: dict = Depends(require_ro
         raise HTTPException(400, f"style must be one of {COACH_STYLES}")
     await db.users.update_one({"id": coach["id"]}, {"$set": {"profile.style": body.style}})
     return {"style": body.style}
+
+
+# ------------------------------------------------------------------
+# Dynamic Schedule Engine — daily check-in, standby, sickness, holiday, replan
+# ------------------------------------------------------------------
+async def _log_schedule_event(user_id: str, kind: str, details: dict, change_type: str = "minor") -> dict:
+    doc = {
+        "id": new_id(),
+        "user_id": user_id,
+        "kind": kind,
+        "details": details or {},
+        "change_type": change_type,
+        "created_at": now_iso(),
+        "resolved": False,
+    }
+    await db.schedule_events.insert_one(doc)
+    return clean_doc(doc)
+
+
+@api.post("/schedule/daily-happened")
+async def daily_happened(body: DailyHappenedBody, user: dict = Depends(current_user)):
+    if body.tag not in DAILY_HAPPENED_TAGS:
+        raise HTTPException(400, f"tag must be one of {DAILY_HAPPENED_TAGS}")
+    d = body.date or today_str()
+    doc = {
+        "id": new_id(), "user_id": user["id"], "date": d,
+        "tag": body.tag, "note": body.note, "created_at": now_iso(),
+    }
+    await db.daily_pulse.update_one({"user_id": user["id"], "date": d}, {"$set": doc}, upsert=True)
+    if body.tag not in ("yes_as_planned", "workout_completed"):
+        change = "minor"
+        if body.tag in ("ill", "called_from_standby"):
+            change = "moderate"
+        await _log_schedule_event(user["id"], f"daily_{body.tag}", {"date": d, "note": body.note}, change)
+    return clean_doc(doc)
+
+
+@api.get("/schedule/daily-happened")
+async def daily_happened_list(user: dict = Depends(current_user)):
+    return await db.daily_pulse.find({"user_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(30)
+
+
+@api.post("/schedule/standby")
+async def schedule_standby(body: StandbyBody, user: dict = Depends(current_user)):
+    mode = "standby" if body.active else "normal"
+    await db.users.update_one({"id": user["id"]}, {"$set": {"profile.schedule_mode": mode, "profile.standby_active": body.active}})
+    await _log_schedule_event(user["id"], "standby_on" if body.active else "standby_off", {"date": body.date or today_str()}, "minor")
+    return {"schedule_mode": mode}
+
+
+@api.post("/schedule/sickness")
+async def schedule_sickness(body: SicknessBody, user: dict = Depends(current_user)):
+    mode = "sickness" if body.active else "normal"
+    payload = {"profile.schedule_mode": mode, "profile.sickness_active": body.active}
+    if body.active:
+        payload["profile.sickness"] = {
+            "illness": body.illness, "severity": body.severity,
+            "started_at": body.started_at or now_iso(),
+            "doctor_advised_rest": body.doctor_advised_rest,
+        }
+    await db.users.update_one({"id": user["id"]}, {"$set": payload})
+    await _log_schedule_event(user["id"], "sickness_on" if body.active else "sickness_off", body.model_dump(), "moderate" if body.active else "minor")
+    return {"schedule_mode": mode}
+
+
+@api.post("/schedule/holiday")
+async def schedule_holiday(body: HolidayBody, user: dict = Depends(current_user)):
+    mode = "holiday" if body.active else "normal"
+    payload = {"profile.schedule_mode": mode, "profile.holiday_active": body.active}
+    if body.active:
+        payload["profile.holiday"] = {
+            "start_date": body.start_date, "end_date": body.end_date,
+            "holiday_type": body.holiday_type, "goal": body.goal, "equipment": body.equipment,
+        }
+    await db.users.update_one({"id": user["id"]}, {"$set": payload})
+    await _log_schedule_event(user["id"], "holiday_on" if body.active else "holiday_off", body.model_dump(), "moderate")
+    return {"schedule_mode": mode}
+
+
+@api.get("/schedule/events")
+async def schedule_events(user: dict = Depends(current_user)):
+    return await db.schedule_events.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+
+@api.post("/schedule/smart-replan")
+async def smart_replan(body: SmartReplanBody, user: dict = Depends(current_user)):
+    """Kick off a targeted regenerate driven by a schedule change. Uses the
+    existing background job model. Preserves coach_locked & completed workouts."""
+    roster = await db.rosters.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if not roster:
+        raise HTTPException(400, "No active roster to replan")
+
+    dates = body.dates or []
+    if body.scope == "week" and dates:
+        try:
+            base = datetime.fromisoformat(dates[0]).date()
+            dates = [(base + timedelta(days=i)).isoformat() for i in range(7)]
+        except Exception:
+            pass
+
+    # Reuse the regenerate flow synchronously (small scope — few days)
+    class _Body:
+        pass
+    b = _Body()
+    b.roster_id = roster["id"]
+    b.dates = dates if dates and body.scope != "month" else None
+    b.week_start = None
+    b.all = (body.scope == "month")
+
+    # Log event + rationale
+    await _log_schedule_event(user["id"], "smart_replan", {"reason": body.reason, "scope": body.scope, "dates": dates}, "moderate")
+    # Call the shared inner function
+    result = await workouts_regenerate(WorkoutRegenerateBody(roster_id=b.roster_id, dates=b.dates, week_start=b.week_start, all=b.all), user)
+    return {"reason": body.reason, "scope": body.scope, "dates": dates, **result}
+
+
+# ------------------------------------------------------------------
+# Workout Player (§25)
+# ------------------------------------------------------------------
+@api.patch("/auth/player-pref")
+async def set_player_pref(body: PlayerPrefBody, user: dict = Depends(current_user)):
+    if body.default_player not in WORKOUT_PLAYERS:
+        raise HTTPException(400, f"default_player must be one of {WORKOUT_PLAYERS}")
+    upd = {"profile.default_player": body.default_player}
+    if body.auto_flow is not None:
+        upd["profile.auto_flow"] = body.auto_flow
+    if body.rest_timer_mode:
+        upd["profile.rest_timer_mode"] = body.rest_timer_mode
+    await db.users.update_one({"id": user["id"]}, {"$set": upd})
+    return await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+
+
+class WorkoutPlayerOverrideBody(BaseModel):
+    player: str  # one of WORKOUT_PLAYERS
+
+
+@api.patch("/workouts/{wid}/player")
+async def workout_set_player(wid: str, body: WorkoutPlayerOverrideBody, user: dict = Depends(current_user)):
+    if body.player not in WORKOUT_PLAYERS:
+        raise HTTPException(400, f"player must be one of {WORKOUT_PLAYERS}")
+    w = await db.workouts.find_one({"id": wid})
+    if not w:
+        raise HTTPException(404, "Not found")
+    if user["role"] == "client" and w["user_id"] != user["id"]:
+        raise HTTPException(403, "Forbidden")
+    await db.workouts.update_one({"id": wid}, {"$set": {"player": body.player, "updated_at": now_iso()}})
+    return await db.workouts.find_one({"id": wid}, {"_id": 0})
 
 
 # ------------------------------------------------------------------

@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 7 validates CrewFit V1.5 §24 Dynamic Schedule Engine + §25 Workout Player. 32 new tests added in /app/backend/tests/test_schedule_player.py covering all 11 daily-happened tags, event log rules (trigger vs non-trigger, change_type minor/moderate), idempotent upsert per (user_id, date), standby/sickness/holiday mode toggling with profile dict persistence + event logging, GET /schedule/events DESC + scoping, smart-replan happy path + 400-no-active-roster, PATCH /auth/player-pref (4 valid + invalid + coach role), and PATCH /workouts/{id}/player (valid, invalid, 403 cross-client). FULL SUITE = 117/117 PASS in 248s (85 previous regression tests remain green + 32 new §24+§25 tests). No functional bugs found. smart-replan reuses the existing workouts_regenerate flow and correctly preserves coach_locked / completed workouts and returns {reason, scope, dates, workouts:[...]}.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_schedule_player.py",
+    "/app/backend/tests/test_scripts_video.py",
+    "/app/backend/tests/test_crewfit_api.py",
+    "/app/backend/tests/test_events.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/schedule_player_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "None blocking. All 117 tests green.",
+    "OPTIONAL / LOW (repeat from iter_6): server.py is now 2004 lines — split into routers/ for maintainability. Natural first extractions: schedule/ (§24), workouts/ (player pref + generate/regenerate), coach/ (scripts + style + dashboard), exercises/, checkins/.",
+    "OPTIONAL / LOW: POST /schedule/sickness passes body.model_dump() as details when active:false (server.py:1622) — details will show illness=None etc from the toggle-off payload. Consider trimming to {'date': today_str()} for cleaner audit trail.",
+    "OPTIONAL / LOW: POST /schedule/holiday change_type is 'moderate' even on holiday_off (server.py:1636) — semantics say ending a holiday should be 'minor'. Not blocking; the review spec just says 'moderate' on activation."
+  ],
+  "critical_code_review_comments": [
+    "POST /schedule/daily-happened (server.py:1580-1595): correct tag validation, upsert by (user_id, date), and precise event-logging gate — only NON-trigger tags (yes_as_planned, workout_completed) skip _log_schedule_event; change_type is 'moderate' only for ill + called_from_standby, 'minor' otherwise. Validated with parametrized tests for all 11 tags.",
+    "POST /schedule/standby/sickness/holiday (server.py:1603-1637): mode toggle correctly writes profile.schedule_mode + <mode>_active flag; sickness/holiday additionally persist the nested dict only on activate; deactivate leaves the dict in place (historical record) which is a reasonable design choice. Event kind naming (<mode>_on/<mode>_off) is consistent.",
+    "POST /schedule/smart-replan (server.py:1645-1674): correctly guards on active roster (400), computes dates for scope='week' via a 7-day span from dates[0], sets body.all when scope='month'; reuses workouts_regenerate which preserves coach_locked / completed. Return contract {reason, scope, dates, workouts:[...]} matches spec. Event kind='smart_replan' + change_type='moderate' is logged before the (potentially long) regenerate call — good, so the audit trail survives a slow Claude timeout.",
+    "PATCH /auth/player-pref (server.py:1680-1690): validates default_player against WORKOUT_PLAYERS (400 on invalid); auto_flow and rest_timer_mode written only when provided (nice — doesn't clobber prior settings). Returns full user doc minus password_hash — response leaks nothing sensitive.",
+    "PATCH /workouts/{id}/player (server.py:1697-1707): correct 404 → 400 → 403 order for client cross-user access; coach can patch any workout (intentional, since coaches manage clients' plans). Response strips _id via projection.",
+    "GET /schedule/events (server.py:1640-1642) + GET /schedule/daily-happened (server.py:1598-1600): both correctly scoped to user_id, DESC-sorted, strip _id via projection.",
+    "workouts_regenerate (server.py:1192-1251): the reuse path from smart-replan is safe — preserves coach_locked + completed rows (server.py:1224), keeps original id and coach_notes when rewriting. Good idempotency."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_schedule_player.py (NEW — 32 tests for §24 Dynamic Schedule Engine + §25 Workout Player)"
+  ],
+  "success_rate": {
+    "backend": "117/117 = 100% (42 base regression + 21 event + 22 §22/§23 + 32 new §24/§25). Runtime 248s.",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "No seed changes. Tests write into db.daily_pulse, db.schedule_events, and toggle client.profile.schedule_mode / sickness / holiday / default_player / auto_flow / rest_timer_mode. Standby, sickness, and holiday are all left in the 'normal' terminal state (each test cycles on→off). client.profile.default_player ends as 'auto' after the parametrized run (last value). coach.profile.default_player ends as 'free'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest backend/tests/ --ignore=backend/tests/test_preview_specific.py` — expect 117/117 green in ~4 min. Smart-replan test uses LOCAL=http://localhost:8001 because it reuses workouts_regenerate → Claude (15-90s). If TestSmartReplan::test_active_roster_replans_specific_dates times out, extend the 180s timeout — Claude Sonnet 4.5 latency drifted upward during our run but stayed under the limit. Client roster days used for smart-replan happen to be 2026-03-02..07 (seeded). client.profile.default_player will be 'auto' when the previous run finishes; the parametrized test resets to each of the 4 values so ordering doesn't matter.",
+  "rca_of_issue": "N/A — no bug found. Note that POST /schedule/sickness with active:false still emits the full body.model_dump() as event.details (server.py:1622) — cosmetic only, not a defect."
+}

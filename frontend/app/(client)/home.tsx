@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Modal } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, useFocusEffect } from "expo-router";
@@ -18,6 +18,9 @@ export default function Home() {
   const [roster, setRoster] = useState<any>(null);
   const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [happenedOpen, setHappenedOpen] = useState(false);
+  const [happenedSaving, setHappenedSaving] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<string>("normal");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -30,8 +33,28 @@ export default function Home() {
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
       setEvent(ev && ev.id ? ev : null);
+      setScheduleMode(user?.profile?.schedule_mode || "normal");
     } finally { setLoading(false); }
-  }, []);
+  }, [user]);
+
+  const submitHappened = async (tag: string) => {
+    setHappenedSaving(true);
+    try {
+      await api("/schedule/daily-happened", { method: "POST", body: { tag } });
+      if (["flight_delayed", "called_from_standby", "slept_badly", "less_time", "hotel_changed"].includes(tag)) {
+        // Trigger smart replan for tomorrow
+        const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+        api("/schedule/smart-replan", { method: "POST", body: { reason: `Daily pulse: ${tag}`, dates: [tomorrow.toISOString().slice(0, 10)], scope: "affected" } }).catch(() => {});
+      }
+      setHappenedOpen(false);
+    } finally { setHappenedSaving(false); }
+  };
+
+  const toggleStandby = async () => {
+    const active = scheduleMode !== "standby";
+    const r = await api<any>("/schedule/standby", { method: "POST", body: { active } });
+    setScheduleMode(r.schedule_mode);
+  };
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const today = new Date().toISOString().slice(0, 10);
@@ -163,6 +186,39 @@ export default function Home() {
           )}
         </View>
       </ScrollView>
+
+      <Modal visible={happenedOpen} animationType="slide" transparent>
+        <Pressable onPress={() => setHappenedOpen(false)} style={styles.modalBg}>
+          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>DID TODAY GO TO PLAN?</Text>
+            <Text style={styles.sheetSub}>We'll adjust tomorrow's plan based on your answer.</Text>
+            {[
+              ["yes_as_planned", "✅ Yes, exactly as planned"],
+              ["workout_completed", "💪 Workout completed"],
+              ["flight_delayed", "✈️ Flight delayed"],
+              ["called_from_standby", "✈️ Called from standby"],
+              ["slept_badly", "😴 Slept badly"],
+              ["ill", "🤒 I'm ill"],
+              ["family_plans", "👨‍👩‍👧 Family plans changed"],
+              ["hotel_changed", "🏨 Hotel changed"],
+              ["workout_missed", "❌ Workout missed"],
+              ["less_time", "⏳ Had less time than expected"],
+              ["other", "✍️ Something else"],
+            ].map(([tag, label]) => (
+              <Pressable
+                key={tag}
+                testID={`happened-${tag}`}
+                onPress={() => submitHappened(tag)}
+                disabled={happenedSaving}
+                style={styles.sheetRow}
+              >
+                <Text style={styles.sheetRowText}>{label}</Text>
+              </Pressable>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -221,4 +277,18 @@ const styles = StyleSheet.create({
   wTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700", paddingHorizontal: theme.space.md, marginTop: 2 },
   wMeta: { color: theme.color.textDim, fontSize: 12, padding: theme.space.md, paddingTop: 2 },
   pendPill: { color: theme.color.amber, fontSize: 9, letterSpacing: 1.5, marginRight: theme.space.md, fontWeight: "800", backgroundColor: "rgba(245,158,11,0.15)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm },
+  pulseCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand, marginTop: theme.space.md },
+  pulseTitle: { color: theme.color.text, fontSize: 12, letterSpacing: 1.5, fontWeight: "800" },
+  pulseSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  modeRow: { flexDirection: "row", gap: 6, marginTop: theme.space.md, flexWrap: "wrap" },
+  modeChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },
+  modeChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  modeText: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
+  sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: theme.space.lg, paddingBottom: theme.space.xl, gap: 4 },
+  sheetHandle: { alignSelf: "center", width: 40, height: 4, backgroundColor: theme.color.borderStrong, borderRadius: 2, marginBottom: theme.space.md },
+  sheetTitle: { color: theme.color.text, fontSize: 16, letterSpacing: 1.5, fontWeight: "900" },
+  sheetSub: { color: theme.color.textMuted, fontSize: 12, marginBottom: theme.space.md },
+  sheetRow: { padding: theme.space.md, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, marginBottom: 6 },
+  sheetRowText: { color: theme.color.text, fontSize: 14 },
 });

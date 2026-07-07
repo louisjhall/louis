@@ -35,8 +35,24 @@ export default function Calendar() {
     if (!roster) return;
     setBusy(true); setErr(null);
     try {
-      const r = await api<{ workouts: any[] }>("/workouts/generate-month", { method: "POST", body: { roster_id: roster.id } });
-      setWorkouts(r.workouts);
+      const start = await api<{ job_id: string; status: string; total: number }>("/workouts/generate-month", { method: "POST", body: { roster_id: roster.id } });
+      // Poll job status
+      const poll = async (): Promise<void> => {
+        for (let i = 0; i < 90; i++) { // up to ~3 min
+          await new Promise((r) => setTimeout(r, 2000));
+          const j = await api<any>(`/workouts/job/${start.job_id}`);
+          if (j.status === "done") {
+            setWorkouts(j.workouts || []);
+            return;
+          }
+          if (j.status === "failed") {
+            setErr(j.error || "Generation failed");
+            return;
+          }
+        }
+        setErr("Generation timed out — try refreshing.");
+      };
+      await poll();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 

@@ -1,51 +1,48 @@
-# CrewFit V1 — PRD
+# CrewFit V1.5 — PRD
 
 ## What it is
-Airline-crew fitness coaching mobile app. A client uploads their flight roster; AI extracts the week's duties and scores each day Green/Amber/Red; AI drafts a matching weekly workout plan; a coach approves/edits before the client trains.
+Airline-crew fitness coaching mobile app. Client uploads a full month of flight roster; AI extracts every duty and classifies each day into 17 aviation-specific types (Home Day, Turnaround Duty, Layover Arrival/Full/Departure Day, Long-Haul, Night Flight, Early Report, Late Finish, Rest, Recovery, Standby, Sim, Annual Leave, etc.) and colours it Green/Amber/Red (or Blue/Purple/Grey for Duty/Layover/Unknown). AI then generates a location-aware, equipment-aware monthly training plan a coach can lock/edit before the client trains.
 
-## Core promise (V1)
-**"Turn a roster into a smart weekly training plan that a coach can edit."**
+## Core promise
+**"Turn a full aviation roster into a smart monthly training plan that respects fatigue, location, and available equipment — and a coach controls."**
 
-## Users (roles)
-- **Client** – airline crew (pilot / cabin crew) training around rotations.
-- **Coach** – reviews/edits AI plans and messages clients.
-
-## V1 feature set (built)
+## V1.5 Phase A feature set (this iteration)
 ### Client
-- Login / Signup / Onboarding form
-- Upload roster (PDF or photo) → AI extraction (Gemini 2.5 Flash) → confirm & edit
-- Weekly training calendar with Green/Amber/Red day loads
-- Today's workout hero + full weekly plan
-- Workout detail: swap exercises, edit sets/reps, complete workout with RPE
-- Weekly check-in (energy, sleep, soreness, stress, weight, notes)
-- Nutrition tracker (calorie + protein targets, meal log, photo → AI feedback via Gemini)
-- Progress photos + weight
-- Messaging with coach
-- Profile / settings + integration placeholders (Apple Health, Garmin, Strava, Oura, Google Health Connect)
+- Extended onboarding: home equipment picklist (20 items) + training location + max home minutes + preferred days + goal + injuries + cardio equipment + will_run_outside + level + body & targets.
+- Roster upload (PDF/image/screenshot) → **full-month Gemini 2.5 Flash extraction** (17 day types, confidence scores, home/away, report/finish times, flights, layover_city/nights, hotel).
+- **Roster confirm** — per-day editable card (day type / load / flights) + hotel section for every layover with community-DB lookup + equipment checklist.
+- **Roster expiry tracking** — Home hero shows a Roster Remaining card and a warning banner at ≤7 / ≤3 / expired. Historical rosters are never overwritten.
+- **Monthly Calendar** — month grid, week list, day drill-down. Colour tags: green/amber/red/blue/purple/grey. Click day → regenerate this day. Sticky "Regenerate Month" bar.
+- **AI Monthly Plan** — via Claude Sonnet 4.5, chunked into concurrent 7-day windows and dispatched as a background job (`POST /workouts/generate-month` returns instantly with `job_id`; client polls). Each workout carries: location, duration, focus, warm-up steps, exercises (sets/reps/rest/RPE/notes), alternatives (home/hotel/no-equipment/easier/harder), and a plain-English rationale.
+- Aviation coaching rules baked into the AI prompt: no heavy legs within 24h of long-haul arrival; layover arrival = mobility/walk only; layover full day = strongest training opportunity; 3+ consecutive duty days = reduce load; no exercise the client has no equipment for; if hotel gym unknown → bodyweight only.
+- Workout detail: shows location & warm-up & AI rationale & alternatives; complete with RPE; coach lock protects a workout from AI regeneration.
+- V1 features retained: nutrition tracker with meal-photo AI feedback, weekly check-ins, progress photos + weight, messaging.
 
 ### Coach
-- Coach login (role-based routing)
-- All clients list with pending-approval badges + latest roster preview
-- Client detail (profile, roster, all workouts, latest check-in)
-- Approvals queue for AI-generated workouts
-- Workout builder / editor (edit title, exercises, cycle Green/Amber/Red, add coach notes)
-- Approve / reject AI plans
-- Exercise library (CRUD, category filter)
-- Messaging with clients
+- Dashboard: 4 widgets (Active / Expiring / Expired / No Roster) + 8 filter chips (all, expiring_soon, expired, no_roster, needs_confirmation, pending_approval, red_days, missed).
+- Client list — enriched with `latest_roster`, `roster_expiry`, `pending_approvals`, `red_days`, `missed_workouts` and a colour-coded 14-day roster strip.
+- Client detail — roster (with expiry), full workout list, latest check-in, full roster history.
+- Workout builder & edit — cycle day-load, edit title/exercises/warm-up, coach notes, approve / reject, lock/unlock.
+- Exercise library — CRUD with full V1.5 metadata (movement pattern, muscle group, home_ok, hotel_ok, bodyweight_ok, level, joint scores, fatigue cost, pre/post-flight).
 
-### AI
-- Roster reader: extracts flights / layovers / duties / off days from PDF or image
-- Green/Amber/Red day scorer (rule-based on top of extracted data)
-- Weekly workout generator (Claude Sonnet 4.5) — respects load per day
-- Meal photo AI feedback (calories, protein, quality, tip)
+### Community Hotel DB
+- `POST /hotels` upserts by (name, city); `submissions` count + `confidence` grow each time the same hotel is confirmed. Two hotels seeded (Marina Bay Sands, Sofitel LAX).
+- `POST /roster/{id}/hotel` attaches a hotel to a specific layover date.
+
+### Push notifications
+- `POST /register-push` (non-blocking) + `send_push()` helper wired for Emergent-managed push. `EMERGENT_PUSH_KEY=placeholder` in `.env` — real key is injected by the Emergent Publish/deploy pipeline. Works on real device builds only.
+
+## Test status
+- 42/42 backend pytest tests green (iteration_4).
+- All 3 previously-failing tests (`register-push`, exercises seed, generate-month timeout) fixed.
 
 ## Stack
-- Frontend: Expo 54, Expo Router, React Native, expo-image, expo-image-picker, expo-document-picker
-- Backend: FastAPI + Motor (MongoDB), JWT auth, bcrypt
-- LLM: emergentintegrations (Claude Sonnet 4.5 text, Gemini 2.5 Flash file/image), EMERGENT_LLM_KEY
+- Frontend: Expo SDK 54, Expo Router, expo-image, expo-image-picker, expo-document-picker, expo-notifications.
+- Backend: FastAPI + Motor (MongoDB), JWT auth, bcrypt, httpx.
+- LLM: emergentintegrations — Claude Sonnet 4.5 (workouts) + Gemini 2.5 Flash (roster + meal photo).
 
-## Explicitly deferred (V2)
-Payments, community, full food database, barcode scanner, live Apple Health / Garmin sync, MyFitnessPal, advanced analytics, referrals, multi-coach, corporate dashboard.
+## Explicitly deferred (Phase B & V2)
+Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 
 ## Business enhancement idea
-"Layover Coach" premium tier — auto-detect the destination airport of a red-eye layover and generate a hotel-room-only 20 min mobility+strength session, no equipment required. Adds subscription retention on the exact moment users need the app most (arriving jet-lagged in a hotel).
+**"Layover Coach"** premium — when arriving at a Layover Arrival Day, auto-generate a hotel-room 20-min mobility+strength session tailored to the destination hotel's actual equipment (pulled from the community DB) and surface it as a push notification the moment the client's flight lands. Adds subscription retention at the exact jet-lagged moment users need the app most.

@@ -331,7 +331,8 @@ def parse_json_from_text(text: str) -> Any:
         except Exception:
             pass
     for op, cl in [("{", "}"), ("[", "]")]:
-        s = text.find(op); e = text.rfind(cl)
+        s = text.find(op)
+        e = text.rfind(cl)
         if s != -1 and e > s:
             try:
                 return json.loads(text[s : e + 1])
@@ -421,7 +422,8 @@ async def signup(body: SignupBody):
     }
     await db.users.insert_one(u)
     token = make_token(u["id"], u["role"])
-    clean_doc(u); u.pop("password_hash", None)
+    clean_doc(u)
+    u.pop("password_hash", None)
     return {"token": token, "user": u}
 
 
@@ -431,7 +433,8 @@ async def login(body: LoginBody):
     if not u or not verify_pw(body.password, u["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
     token = make_token(u["id"], u["role"])
-    clean_doc(u); u.pop("password_hash", None)
+    clean_doc(u)
+    u.pop("password_hash", None)
     return {"token": token, "user": u}
 
 
@@ -523,8 +526,10 @@ async def roster_extract(body: RosterExtractBody, user: dict = Depends(current_u
     except Exception as e:
         logger.warning("Gemini roster call failed: %s", e)
     finally:
-        try: os.unlink(path)
-        except Exception: pass
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
 
     parsed: Any = {}
     try:
@@ -717,7 +722,7 @@ async def hotels_get(hid: str, user: dict = Depends(current_user)):
 # ------------------------------------------------------------------
 # Workouts: monthly generation & regenerate
 # ------------------------------------------------------------------
-WORKOUT_SYSTEM = f"""You are CrewFit's elite S&C coach for airline crew.
+WORKOUT_SYSTEM = """You are CrewFit's elite S&C coach for airline crew.
 Given a client profile with home equipment + preferences AND a chronological month of roster days (each with day_type, load, home/away, hotel info if any), produce a full month training plan.
 
 Aviation coaching rules (STRICT):
@@ -745,13 +750,13 @@ For EACH day in the roster, output one workout object:
     "Post-Flight Mobility", "Turnaround Recovery", "Outdoor Run", "Pool Swim", "Bike Session", "Rest Day"
   duration_min (int, integer minutes)
   focus (push|pull|legs|full|mobility|zone2|recovery)
-  warmup: [ {{name, duration_sec}} ]  (2-4 short items)
-  exercises: [ {{name, sets:int, reps:string, rest_sec:int, rpe:int (1-10), notes:string}} ]
-  alternatives: {{home:string, hotel:string, no_equipment:string, easier:string, harder:string}}
+  warmup: [ {name, duration_sec} ]  (2-4 short items)
+  exercises: [ {name, sets:int, reps:string, rest_sec:int, rpe:int (1-10), notes:string} ]
+  alternatives: {home:string, hotel:string, no_equipment:string, easier:string, harder:string}
   rationale (2-3 sentences: WHY this day, WHY this location, WHY this intensity — reference the roster explicitly)
 
 Return STRICT JSON only:
-{{"workouts":[{{...}}]}}"""
+{"workouts":[{...}]}"""
 
 
 async def _generate_month(user: dict, roster: dict) -> list[dict]:
@@ -820,50 +825,77 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
 
 @api.post("/workouts/generate-month")
 async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = Depends(current_user)):
+    """Kick off month generation in the background and return a job id immediately.
+    The client polls /workouts/job/{id} until status='done'."""
+    import asyncio as _asyncio
+
     r = await db.rosters.find_one({"id": body.roster_id, "user_id": user["id"]}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Roster not found")
-    workouts = await _generate_month(user, r)
-    # Preserve coach-locked or completed workouts on regeneration
-    existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": body.roster_id}, {"_id": 0}).to_list(500)}
-    saved = []
-    for w in workouts:
-        d = w.get("date")
-        if not d:
-            continue
-        prev = existing.get(d)
-        if prev and (prev.get("coach_locked") or prev.get("completed")):
-            saved.append(prev)
-            continue
-        doc = {
-            "id": prev["id"] if prev else new_id(),
-            "user_id": user["id"], "roster_id": body.roster_id,
-            "date": d,
-            "day_load": w.get("day_load", "green"),
-            "title": w.get("title", "Session"),
-            "location": w.get("location", "Home Workout"),
-            "duration_min": w.get("duration_min", 40),
-            "focus": w.get("focus", "full"),
-            "warmup": w.get("warmup", []),
-            "exercises": w.get("exercises", []),
-            "alternatives": w.get("alternatives", {}),
-            "rationale": w.get("rationale", ""),
-            "approved": prev.get("approved", False) if prev else False,
-            "completed": False,
-            "coach_notes": prev.get("coach_notes", "") if prev else "",
-            "coach_locked": False,
-            "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
-            "updated_at": now_iso(),
-        }
-        # remove existing then insert (upsert)
-        await db.workouts.delete_one({"id": doc["id"]})
-        await db.workouts.insert_one(doc)
-        saved.append(clean_doc(doc))
-    # remove workouts whose date is no longer in roster
-    dates_now = {w["date"] for w in workouts}
-    await db.workouts.delete_many({"user_id": user["id"], "roster_id": body.roster_id, "date": {"$nin": list(dates_now)}, "coach_locked": {"$ne": True}, "completed": {"$ne": True}})
-    saved.sort(key=lambda x: x.get("date") or "")
-    return {"workouts": saved}
+
+    job_id = new_id()
+    total = len(r.get("days", []))
+    await db.gen_jobs.insert_one({
+        "id": job_id, "user_id": user["id"], "roster_id": body.roster_id,
+        "status": "running", "created_at": now_iso(),
+        "total": total, "done": 0, "errors": [],
+    })
+
+    async def _worker():
+        try:
+            workouts = await _generate_month(user, r)
+            existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": body.roster_id}, {"_id": 0}).to_list(500)}
+            for w in workouts:
+                d = w.get("date")
+                if not d:
+                    continue
+                prev = existing.get(d)
+                if prev and (prev.get("coach_locked") or prev.get("completed")):
+                    continue
+                doc = {
+                    "id": prev["id"] if prev else new_id(),
+                    "user_id": user["id"], "roster_id": body.roster_id, "date": d,
+                    "day_load": w.get("day_load", "green"),
+                    "title": w.get("title", "Session"),
+                    "location": w.get("location", "Home Workout"),
+                    "duration_min": w.get("duration_min", 40),
+                    "focus": w.get("focus", "full"),
+                    "warmup": w.get("warmup", []),
+                    "exercises": w.get("exercises", []),
+                    "alternatives": w.get("alternatives", {}),
+                    "rationale": w.get("rationale", ""),
+                    "approved": prev.get("approved", False) if prev else False,
+                    "completed": False,
+                    "coach_notes": prev.get("coach_notes", "") if prev else "",
+                    "coach_locked": False,
+                    "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
+                    "updated_at": now_iso(),
+                }
+                await db.workouts.delete_one({"id": doc["id"]})
+                await db.workouts.insert_one(doc)
+            dates_now = {w["date"] for w in workouts}
+            await db.workouts.delete_many({
+                "user_id": user["id"], "roster_id": body.roster_id,
+                "date": {"$nin": list(dates_now)},
+                "coach_locked": {"$ne": True}, "completed": {"$ne": True},
+            })
+            await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
+        except Exception as e:
+            logger.exception("gen_job %s failed", job_id)
+            await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e), "finished_at": now_iso()}})
+
+    _asyncio.create_task(_worker())
+    return {"status": "queued", "job_id": job_id, "total": total}
+
+
+@api.get("/workouts/job/{job_id}")
+async def workouts_job_status(job_id: str, user: dict = Depends(current_user)):
+    j = await db.gen_jobs.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
+    if not j:
+        raise HTTPException(404, "Job not found")
+    if j.get("status") == "done":
+        j["workouts"] = await db.workouts.find({"user_id": user["id"], "roster_id": j["roster_id"]}, {"_id": 0}).sort("date", 1).to_list(500)
+    return j
 
 
 @api.post("/workouts/regenerate")
@@ -988,7 +1020,8 @@ async def exercises_delete(eid: str, _: dict = Depends(require_role("coach"))):
 @api.post("/checkins")
 async def checkin_create(body: CheckInBody, user: dict = Depends(current_user)):
     doc = {"id": new_id(), "user_id": user["id"], "created_at": now_iso(), **body.model_dump()}
-    await db.checkins.insert_one(doc); return clean_doc(doc)
+    await db.checkins.insert_one(doc)
+    return clean_doc(doc)
 
 @api.get("/checkins")
 async def checkin_list(user: dict = Depends(current_user)):
@@ -1008,20 +1041,26 @@ async def meal_create(body: MealBody, user: dict = Depends(current_user)):
             try:
                 fb = parse_json_from_text(raw)
                 doc["ai_feedback"] = fb
-                if not doc.get("calories") and fb.get("calories"): doc["calories"] = fb["calories"]
-                if not doc.get("protein_g") and fb.get("protein_g"): doc["protein_g"] = fb["protein_g"]
+                if not doc.get("calories") and fb.get("calories"):
+                    doc["calories"] = fb["calories"]
+                if not doc.get("protein_g") and fb.get("protein_g"):
+                    doc["protein_g"] = fb["protein_g"]
             except Exception:
                 doc["ai_feedback"] = {"summary": raw[:400]}
         finally:
-            try: os.unlink(p)
-            except Exception: pass
-    await db.meals.insert_one(doc); return clean_doc(doc)
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+    await db.meals.insert_one(doc)
+    return clean_doc(doc)
 
 
 @api.get("/nutrition/meals")
 async def meal_list(user: dict = Depends(current_user), date_filter: Optional[str] = None):
     q = {"user_id": user["id"]}
-    if date_filter: q["created_at"] = {"$regex": f"^{date_filter}"}
+    if date_filter:
+        q["created_at"] = {"$regex": f"^{date_filter}"}
     return await db.meals.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
 
 @api.get("/nutrition/summary")
@@ -1039,7 +1078,8 @@ async def nutrition_summary(user: dict = Depends(current_user)):
 @api.post("/progress")
 async def progress_create(body: ProgressBody, user: dict = Depends(current_user)):
     doc = {"id": new_id(), "user_id": user["id"], "created_at": now_iso(), **body.model_dump()}
-    await db.progress.insert_one(doc); return clean_doc(doc)
+    await db.progress.insert_one(doc)
+    return clean_doc(doc)
 
 @api.get("/progress")
 async def progress_list(user: dict = Depends(current_user)):
@@ -1050,7 +1090,8 @@ async def progress_list(user: dict = Depends(current_user)):
 async def msg_send(body: MessageBody, user: dict = Depends(current_user)):
     doc = {"id": new_id(), "from_user_id": user["id"], "to_user_id": body.to_user_id,
            "text": body.text, "created_at": now_iso(), "read": False}
-    await db.messages.insert_one(doc); clean_doc(doc)
+    await db.messages.insert_one(doc)
+    clean_doc(doc)
     try:
         await send_push([body.to_user_id], {"title": user.get("name", "CrewFit"), "message": body.text[:120], "action_url": "/(client)/messages"})
     except Exception as e:
@@ -1069,7 +1110,8 @@ async def msg_partners(user: dict = Depends(current_user)):
     if user["role"] == "client":
         cid = user.get("coach_id")
         c = await db.users.find_one({"id": cid}, {"_id": 0, "password_hash": 0}) if cid else None
-        if not c: c = await db.users.find_one({"role": "coach"}, {"_id": 0, "password_hash": 0})
+        if not c:
+            c = await db.users.find_one({"role": "coach"}, {"_id": 0, "password_hash": 0})
         return [c] if c else []
     rows = await db.users.find({"role": "client", "coach_id": user["id"]}, {"_id": 0, "password_hash": 0}).to_list(200)
     if not rows:
@@ -1132,7 +1174,8 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
     if not c:
         raise HTTPException(404, "Client not found")
     r = await db.rosters.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
-    if r: r["expiry"] = _roster_expiry(r)
+    if r:
+        r["expiry"] = _roster_expiry(r)
     workouts = await db.workouts.find({"user_id": client_id}, {"_id": 0}).sort("date", 1).to_list(500)
     checkins = await db.checkins.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(10)
     history = await db.rosters.find({"user_id": client_id}, {"_id": 0, "raw_response": 0}).sort("created_at", -1).to_list(20)

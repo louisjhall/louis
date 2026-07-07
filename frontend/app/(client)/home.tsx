@@ -21,23 +21,22 @@ export default function Home() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r] = await Promise.all([
-        api<any[]>("/workouts/week"),
-        api<any>("/roster/current"),
-      ]);
+      const [ws, r] = await Promise.all([api<any[]>("/workouts/week"), api<any>("/roster/current")]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, []);
-
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const today = new Date().toISOString().slice(0, 10);
   const todaysWorkout = workouts.find((w) => w.date === today);
-  const todaysDuty = roster?.days?.find((d: any) => d.date === today);
-  const load_color = loadColor(todaysWorkout?.day_load || todaysDuty?.load);
+  const todaysDay = roster?.days?.find((d: any) => d.date === today);
+  const load_color = loadColor(todaysWorkout?.day_load || todaysDay?.load);
+
+  const expiry = roster?.expiry;
+  const rDays = expiry?.days_remaining;
+  const showBanner = expiry && (expiry.expired || (rDays !== null && rDays !== undefined && rDays <= 7));
+  const bannerColor = expiry?.expired ? theme.color.red : rDays !== undefined && rDays <= 3 ? theme.color.red : theme.color.amber;
 
   return (
     <View style={styles.root}>
@@ -54,87 +53,104 @@ export default function Home() {
               <Text style={styles.date}>{new Date().toDateString().toUpperCase()}</Text>
               <View style={[styles.loadBadge, { borderColor: load_color }]} testID="today-load-badge">
                 <View style={[styles.dot, { backgroundColor: load_color }]} />
-                <Text style={styles.loadText}>{(todaysWorkout?.day_load || todaysDuty?.load || "green").toUpperCase()} DAY</Text>
+                <Text style={styles.loadText}>{(todaysWorkout?.day_load || todaysDay?.load || "green").toUpperCase()} DAY</Text>
               </View>
               <Text style={styles.hTitle}>{todaysWorkout ? todaysWorkout.title : "REST & RECOVER"}</Text>
-              {todaysDuty && (
+              {todaysDay && (
                 <Text style={styles.duty}>
-                  <Ionicons name="airplane" size={12} color={theme.color.brand} /> {todaysDuty.type.toUpperCase()}
-                  {todaysDuty.flights?.[0] ? `  ${todaysDuty.flights[0].from} → ${todaysDuty.flights[0].to}` : ""}
+                  <Ionicons name="airplane" size={12} color={theme.color.brand} />  {(todaysDay.day_type || todaysDay.type || "").toUpperCase()}
+                  {todaysDay.layover_city ? `  ${String(todaysDay.layover_city).toUpperCase()}` : ""}
+                  {todaysDay.flights?.[0] ? `  ${todaysDay.flights[0].from} → ${todaysDay.flights[0].to}` : ""}
                 </Text>
               )}
             </View>
           </SafeAreaView>
         </View>
 
-        {loading && !workouts.length ? (
-          <ActivityIndicator color={theme.color.brand} style={{ marginTop: 40 }} />
-        ) : (
-          <View style={{ padding: theme.space.lg }}>
-            {todaysWorkout ? (
-              <Pressable
-                testID="start-today-workout"
-                onPress={() => router.push(`/workout/${todaysWorkout.id}`)}
-                style={styles.startCta}
-              >
-                <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
-                <Ionicons name="arrow-forward" size={20} color="#fff" />
-              </Pressable>
-            ) : (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyTitle}>No workout scheduled for today</Text>
-                <Text style={styles.emptySub}>Upload your roster to get an AI-generated plan.</Text>
-                <Pressable
-                  testID="upload-roster-cta"
-                  onPress={() => router.push("/roster-upload")}
-                  style={styles.uploadBtn}
-                >
-                  <Text style={styles.startText}>UPLOAD ROSTER</Text>
-                </Pressable>
+        <View style={{ padding: theme.space.lg }}>
+          {showBanner && (
+            <Pressable testID="roster-banner" onPress={() => router.push("/roster-upload")} style={[styles.banner, { borderLeftColor: bannerColor }]}>
+              <Ionicons name={expiry.expired ? "warning" : "time"} size={18} color={bannerColor} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.bannerTitle}>{expiry.expired ? "ROSTER EXPIRED" : `${rDays} DAY${rDays === 1 ? "" : "S"} REMAINING`}</Text>
+                <Text style={styles.bannerSub}>
+                  {expiry.expired ? "Upload your latest roster to keep training." : "Upload your next roster now to avoid interruption."}
+                </Text>
               </View>
-            )}
+              <Text style={styles.bannerAction}>UPLOAD →</Text>
+            </Pressable>
+          )}
 
-            <Text style={styles.sectionTitle}>THIS WEEK</Text>
-            {workouts.length === 0 ? (
-              <Text style={styles.emptySub}>No plan yet.</Text>
-            ) : (
-              workouts.map((w) => (
-                <Pressable
-                  key={w.id}
-                  onPress={() => router.push(`/workout/${w.id}`)}
-                  style={styles.wRow}
-                  testID={`week-workout-${w.id}`}
-                >
-                  <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.wDate}>{w.date}</Text>
-                    <Text style={styles.wTitle}>{w.title}</Text>
-                    <Text style={styles.wMeta}>{w.duration_min}min · {w.exercises?.length || 0} exercises</Text>
-                  </View>
-                  {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} />}
-                  {!w.approved && !w.completed && <Text style={styles.pendPill}>PENDING</Text>}
-                </Pressable>
-              ))
-            )}
+          {roster && !showBanner && (
+            <View style={styles.rosterCard} testID="roster-remaining-card">
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rTop}>ROSTER · {roster.start_date} → {roster.end_date}</Text>
+                <Text style={styles.rBig}>{rDays}</Text>
+                <Text style={styles.rBigLabel}>DAYS REMAINING · {String(expiry?.coverage || "").toUpperCase()} COVERAGE</Text>
+              </View>
+              <Pressable onPress={() => router.push("/roster-upload")} style={styles.rBtn} testID="roster-card-upload">
+                <Ionicons name="cloud-upload" size={16} color={theme.color.brand} />
+                <Text style={styles.rBtnText}>NEW</Text>
+              </Pressable>
+            </View>
+          )}
 
-            <Pressable style={styles.rosterBtn} onPress={() => router.push("/roster-upload")} testID="reupload-roster">
-              <Ionicons name="cloud-upload" color={theme.color.brand} size={18} />
-              <Text style={styles.rosterBtnText}>UPLOAD NEW ROSTER</Text>
+          {todaysWorkout ? (
+            <Pressable testID="start-today-workout" onPress={() => router.push(`/workout/${todaysWorkout.id}`)} style={styles.startCta}>
+              <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
+              <Ionicons name="arrow-forward" size={20} color="#fff" />
             </Pressable>
-            <Pressable style={styles.rosterBtn} onPress={() => router.push("/checkin")} testID="weekly-checkin-btn">
-              <Ionicons name="clipboard" color={theme.color.brand} size={18} />
-              <Text style={styles.rosterBtnText}>WEEKLY CHECK-IN</Text>
-            </Pressable>
-            <Pressable style={styles.rosterBtn} onPress={() => router.push("/progress")} testID="progress-btn">
-              <Ionicons name="trending-up" color={theme.color.brand} size={18} />
-              <Text style={styles.rosterBtnText}>LOG PROGRESS</Text>
-            </Pressable>
+          ) : (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>No workout scheduled for today</Text>
+              <Text style={styles.emptySub}>Upload your roster to get an AI-generated plan.</Text>
+              <Pressable testID="upload-roster-cta" onPress={() => router.push("/roster-upload")} style={styles.uploadBtn}>
+                <Text style={styles.startText}>UPLOAD ROSTER</Text>
+              </Pressable>
+            </View>
+          )}
+
+          <View style={styles.quickRow}>
+            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
+            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
+            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
           </View>
-        )}
+
+          <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
+          {loading && !workouts.length ? (
+            <ActivityIndicator color={theme.color.brand} />
+          ) : workouts.length === 0 ? (
+            <Text style={styles.emptySub}>No plan yet. Upload roster + generate.</Text>
+          ) : (
+            workouts.slice(0, 7).map((w) => (
+              <Pressable key={w.id} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow} testID={`week-workout-${w.id}`}>
+                <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.wDate}>{w.date}</Text>
+                  <Text style={styles.wTitle}>{w.title}</Text>
+                  <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
+                </View>
+                {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} style={{ marginRight: 10 }} />}
+                {w.coach_locked && <Ionicons name="lock-closed" size={16} color={theme.color.amber} style={{ marginRight: 10 }} />}
+                {!w.approved && !w.completed && <Text style={styles.pendPill}>PENDING</Text>}
+              </Pressable>
+            ))
+          )}
+        </View>
       </ScrollView>
     </View>
   );
 }
+
+function QuickBtn({ icon, label, onPress, testID }: any) {
+  return (
+    <Pressable onPress={onPress} testID={testID} style={styles.qBtn}>
+      <Ionicons name={icon} size={18} color={theme.color.brand} />
+      <Text style={styles.qBtnText}>{label}</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   heroWrap: { height: 320, backgroundColor: theme.color.surface2 },
@@ -144,21 +160,32 @@ const styles = StyleSheet.create({
   loadBadge: { flexDirection: "row", alignItems: "center", marginTop: theme.space.md, paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, borderWidth: 1, alignSelf: "flex-start", backgroundColor: "rgba(0,0,0,0.35)" },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   loadText: { color: theme.color.text, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
-  hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 34, fontWeight: "900", letterSpacing: -0.5 },
+  hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
   duty: { color: theme.color.textMuted, marginTop: theme.space.sm, fontSize: 12, letterSpacing: 1 },
-  startCta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: theme.color.brand, paddingVertical: 18, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md, marginBottom: theme.space.lg },
+  banner: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderLeftWidth: 3, marginBottom: theme.space.md },
+  bannerTitle: { color: theme.color.text, fontSize: 12, letterSpacing: 1.5, fontWeight: "800" },
+  bannerSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  bannerAction: { color: theme.color.brand, letterSpacing: 2, fontWeight: "800", fontSize: 11 },
+  rosterCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.md },
+  rTop: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "700" },
+  rBig: { color: theme.color.text, fontSize: 36, fontWeight: "900", marginTop: 2 },
+  rBigLabel: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  rBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.surface3, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border },
+  rBtnText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  startCta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: theme.color.brand, paddingVertical: 18, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md },
   startText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
-  emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2, marginBottom: theme.space.lg },
+  emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
   emptyTitle: { color: theme.color.text, fontWeight: "700", fontSize: 15 },
   emptySub: { color: theme.color.textMuted, marginTop: 6, fontSize: 13 },
   uploadBtn: { backgroundColor: theme.color.brand, paddingVertical: 14, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md, alignSelf: "flex-start", marginTop: theme.space.md },
-  sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.md, marginBottom: theme.space.sm },
+  quickRow: { flexDirection: "row", gap: theme.space.sm, marginTop: theme.space.md },
+  qBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12 },
+  qBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 10 },
+  sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
   wRow: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, overflow: "hidden", borderWidth: 1, borderColor: theme.color.border },
   loadBar: { width: 4, alignSelf: "stretch" },
   wDate: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 2, padding: theme.space.md, paddingBottom: 0, fontWeight: "700" },
   wTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700", paddingHorizontal: theme.space.md, marginTop: 2 },
   wMeta: { color: theme.color.textDim, fontSize: 12, padding: theme.space.md, paddingTop: 2 },
   pendPill: { color: theme.color.amber, fontSize: 9, letterSpacing: 1.5, marginRight: theme.space.md, fontWeight: "800", backgroundColor: "rgba(245,158,11,0.15)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm },
-  rosterBtn: { flexDirection: "row", alignItems: "center", gap: theme.space.sm, paddingVertical: 14, paddingHorizontal: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginTop: theme.space.sm, borderWidth: 1, borderColor: theme.color.border },
-  rosterBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 12 },
 });

@@ -1,0 +1,64 @@
+{
+  "summary": "Backend-only V1.5 pytest suite executed against https://flight-fit-plans.preview.emergentagent.com. 37/41 functional tests PASSING across auth (JWT), extended onboarding (HomeEquipmentBody), roster extract/confirm/current/history with expiry buckets, hotels search + upsert + attach, workouts generate-month (33 workouts w/ full V1.5 shape incl. warmup/alternatives/rationale/location), workouts patch coach_locked+location, workouts regenerate scope=dates preserving coach_locked, coach clients/dashboard filters (7 filters + all)/client detail with roster_history, exercises CRUD auth guards, checkins, nutrition (meal + summary), progress, messages (thread + partners). 2 confirmed backend bugs: (1) POST /api/register-push returns HTTP 500 with placeholder EMERGENT_PUSH_KEY when spec requires 201 non-blocking, (2) Exercises seed carries over 12 rows from V1 — new V1.5 seed of 20 exercises is never applied because seed() only inserts when count==0. 1 infra/perf issue: POST /api/workouts/generate-month takes ~238s end-to-end which exceeds the ~60s Cloudflare edge timeout on the preview URL (returns 502). Endpoint itself is functionally correct (verified via localhost:8001). No react-native issues to report (backend only).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/register-push",
+        "issue": "Returns HTTP 500 {\"detail\":\"EMERGENT_PUSH_KEY missing or invalid\"} when upstream Emergent Push returns 401 (placeholder key). Spec: endpoint must NOT 500 and must return 201 {status: registered} in non-blocking fashion. Root cause: server.py:459-460 explicitly raises HTTPException(500,...) on resp.status_code==401, then re-raises inside the outer try/except HTTPException branch — bypassing the 'non-blocking' warning path. Fix: remove the 401→500 mapping (or wrap it in a broader except so it becomes a logger.warning) so the function falls through to `return {\"status\": \"registered\"}`.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/workouts/generate-month",
+        "issue": "Public preview URL returns 502 Bad Gateway (Cloudflare edge timeout ~60s) — endpoint takes ~238s to complete a full-month Claude Sonnet 4.5 generation. Verified functional via http://localhost:8001 (200 OK, 33 workouts, correct shape). Fix suggestions: (a) generate week-by-week and stream, (b) return a job id + poll pattern, (c) reduce prompt/output token count, (d) invoke Claude with lower max_out or chunked calls. Impact: end-user flow is broken on mobile because the app cannot wait 60+s for a response.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/exercises",
+        "issue": "DB currently returns only 12 exercises. DEFAULT_EXERCISES in server.py has 20 entries but seed() at line 1185 only inserts when count_documents({}) == 0 — since V1 already seeded 12 rows, the additional 8 rows (Bulgarian Split Squat, Dead Bug, Overhead Press, 90/90 Hip Rotation, Kettlebell Swing, Pike Push-Up, Split Squat, Farmer Carry, Glute Bridge, Bent-Over Row band, Incline Walk treadmill, Assault Bike Zone 2) are never inserted. Fix: change guard to per-name upsert (loop and `db.exercises.update_one({name:...},{upsert:True})`) so V1.5 additions materialise on existing databases."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_crewfit_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "HIGH: Rewrite /api/register-push to swallow upstream 401 as a non-blocking warning (return 201 {status:'registered'}) — currently 500s with placeholder key.",
+    "HIGH: Address /api/workouts/generate-month exceeding Cloudflare 60s edge timeout. Suggest chunked (per-week) generation, streaming, or async job pattern. Endpoint itself works — infra timeout is the blocker.",
+    "MEDIUM: Change seed() exercise guard from `if count == 0` to per-name upsert so V1.5's 20-exercise catalogue actually materialises on already-seeded DBs (currently stuck at 12).",
+    "LOW: Consider making score_load also downgrade layover-arrival to amber if it directly precedes home base (roster spec ambiguous). Current implementation returns red — tests pass with red.",
+    "STYLE ONLY (not blocking): ruff E701/E702/F541 warnings in server.py — single-line `x=1; y=2` and `if x: y` — safe to leave for later cleanup."
+  ],
+  "critical_code_review_comments": [
+    "server.py at 1211 lines exceeds the 700-line guideline — recommend splitting into routers (auth, roster, workouts, hotels, coach, nutrition, messages) + services.",
+    "seed() exercise catalogue is only inserted when the collection is empty — will silently skip V1.5 additions on any DB seeded under V1. Anti-pattern for evolving seed data.",
+    "register-push has an internal try/except but the 401→HTTPException(500) branch re-raises through the HTTPException catch, defeating the intended non-blocking behaviour.",
+    "score_load returns 'red' for 'layover arrival' with no consideration of report/duty times — acceptable per spec, but may need nuance later.",
+    "Long-running LLM endpoints (generate-month) have no timeout / job pattern — clients will time out at CDN before completion.",
+    "MongoDB _id is correctly stripped in all endpoints via clean_doc() and projection ({\"_id\":0}) — good.",
+    "All endpoints under /api and use Pydantic validation — good.",
+    "JWT verification, role guard, coach-only endpoints all verified working."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_crewfit_api.py (rewritten for V1.5 shapes: extended onboarding, roster expiry/history/is_active, hotels search+attach, workouts generate-month+regenerate+coach_locked+alternatives, coach dashboard filters, push endpoint)",
+    "/app/backend/tests/conftest.py (accepts both EXPO_PUBLIC_BACKEND_URL and EXPO_BACKEND_URL)"
+  ],
+  "success_rate": {
+    "backend": "37/41 = 90% (2 real bugs, 2 workouts sub-tests skipped due to CF 60s edge timeout on generate-month; endpoint itself verified functional via localhost)",
+    "frontend": "not tested this iteration (backend-only request)"
+  },
+  "seed_data_creation": "No new seed data mutated. Verified existing seed: coach@crewfit.com/Coach123!, client@crewfit.com/Client123! (with V1.5 extended profile incl. equipment[]), 2 hotels (Marina Bay Sands SG, Sofitel LAX US), 12 exercises (SHOULD be 20 per spec — see bug).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "V1.5 backend suite lives at /app/backend/tests/test_crewfit_api.py. Workouts tests bypass CF via http://localhost:8001 because generate-month takes ~238s. When retesting after the fixes: (1) push endpoint must return 201 for POST /api/register-push with placeholder key, (2) GET /api/exercises must return >=20 rows, (3) generate-month should either return within CF edge timeout OR be redesigned as chunked/async so preview URL doesn't 502. Note the 4 workouts tests that passed (shape/patch coach_locked/regenerate dates preserves locked) are still valid — locally executed against localhost:8001. Test data prefix: TEST_.",
+  "rca_of_issue": "Bug 1 (register-push 500): In server.py:455-468, when upstream Emergent Push returns 401 (placeholder key), code path is `if resp.status_code == 401: raise HTTPException(500, ...)`. The outer `except HTTPException: raise` re-raises it, bypassing the non-blocking `return {status:'registered'}` line. Reproduce: POST /api/register-push {user_id,platform,device_token} → 500. Fix: convert the 401 raise into a logger.warning + fall-through OR add HTTPException to the broad except so it's swallowed. Bug 2 (only 12 exercises): server.py:1185 `if await db.exercises.count_documents({}) == 0:` prevents V1.5 additions from being inserted into a DB that already had V1's 12 rows. Reproduce: fresh DB seeds 20; upgraded DB stays at 12. Fix: per-name upsert loop."
+}

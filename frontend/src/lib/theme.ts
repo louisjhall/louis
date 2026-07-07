@@ -28,14 +28,13 @@ export const theme = {
 
 export const loadColor = (l?: string) => {
   switch (l) {
-    case "green":
-      return theme.color.green;
-    case "amber":
-      return theme.color.amber;
-    case "red":
-      return theme.color.red;
-    default:
-      return theme.color.info;
+    case "green": return theme.color.green;
+    case "amber": return theme.color.amber;
+    case "red": return theme.color.red;
+    case "blue": return "#3B82F6";
+    case "purple": return "#A855F7";
+    case "grey": return theme.color.textDim;
+    default: return theme.color.info;
   }
 };
 

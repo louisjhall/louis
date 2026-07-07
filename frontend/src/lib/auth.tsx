@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
+import { registerForPush } from "./push";
 
 export type Role = "client" | "coach";
 export interface UserT {
@@ -35,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const me = await api<UserT>("/auth/me");
         setUser(me);
+        registerForPush(me.id).catch(() => {});
       } catch {
         await setToken(null);
         setUser(null);
@@ -55,6 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     await setToken(r.token);
     setUser(r.user);
+    registerForPush(r.user.id).catch(() => {});
     return r.user;
   };
 
@@ -66,6 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     await setToken(r.token);
     setUser(r.user);
+    registerForPush(r.user.id).catch(() => {});
     return r.user;
   };
 

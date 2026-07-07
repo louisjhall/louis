@@ -3,12 +3,27 @@ import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, TextI
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
+
+// Cross-platform (web + native) base64 reader. Works with blob:, file://, http(s):// URIs.
+async function uriToBase64(uri: string): Promise<string> {
+  const res = await fetch(uri);
+  const blob = await res.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const s = String(reader.result || "");
+      const comma = s.indexOf(",");
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
 
 export default function RosterUpload() {
   const router = useRouter();
@@ -34,8 +49,12 @@ export default function RosterUpload() {
     const res = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
     if (res.canceled) return;
     const a = res.assets[0];
-    const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: FileSystem.EncodingType.Base64 });
-    setFile({ base64: b64, mime: "application/pdf", name: a.name });
+    try {
+      const b64 = await uriToBase64(a.uri);
+      setFile({ base64: b64, mime: a.mimeType || "application/pdf", name: a.name });
+    } catch (e: any) {
+      setErr(e?.message || "Could not read PDF");
+    }
   };
 
   const extract = async () => {

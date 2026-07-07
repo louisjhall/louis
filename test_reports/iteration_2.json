@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only retest of the roster-upload FileSystem fix. Client login → /home renders (HELLO ALEX, THIS WEEK, UPLOAD ROSTER CTA). Roster Upload screen at /roster-upload mounts cleanly with no `expo-file-system.readAsStringAsync` / `not available on web` runtime error. Tapping PICK PDF (testID=pick-pdf) opens the native file chooser with accept=\"application/pdf\" and does NOT crash the bundle. Tapping PICK PHOTO (testID=pick-image) opens the image file chooser. All expected testIDs (pick-pdf, pick-image, extract-btn, roster-back) are present and visible. No page errors, no console errors, no red screen. Regression on other client tabs (Nutrition, Messages, Profile) — all navigate correctly; Home was reached post-login. Fix verified working on web preview.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_1.json"
+  ],
+  "action_items": [
+    "None for the reported bug — the FileSystem removal fix in /app/frontend/app/roster-upload.tsx is verified working on the web preview.",
+    "Backend HIGH-priority items from iteration_1 (roster/extract Gemini try/except + empty-days fallback) are still open and unrelated to this iteration; they should still be addressed to make the extract flow resilient when the LLM budget is exhausted."
+  ],
+  "critical_code_review_comments": [
+    "uriToBase64 in roster-upload.tsx uses the standard fetch→blob→FileReader.readAsDataURL pattern which is portable across web + native (React Native supports fetch+FileReader). Good cross-platform choice.",
+    "Note: on native, DocumentPicker returns a file:// URI which fetch() can also consume via React Native's polyfilled fetch; safe fallback.",
+    "The base64 slice at the first ',' correctly strips the data URL prefix — good."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested this iteration", "frontend": "100% for roster-upload mount + pick-pdf + pick-image; regression on nutrition/messages/profile OK"},
+  "seed_data_creation": "None (no data mutated).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Roster Upload FileSystem-on-web bug is fixed. testIDs on /roster-upload: pick-pdf, pick-image, extract-btn, roster-back, and per-day extract-day-{idx}, toggle-load-{idx}, confirm-roster. To retest the full extract→confirm flow end-to-end with a real file, use page.expect_file_chooser() then set_input_files(...) with a real PDF/PNG blob. Backend items from iteration_1 (LLM ChatError handling + empty days fallback in POST /api/roster/extract) remain open.",
+  "rca_of_issue": "Original bug RCA: roster-upload.tsx imported expo-file-system and called FileSystem.readAsStringAsync(uri, { encoding: Base64 }) which is not implemented in the web build of expo-file-system, so tapping PICK PDF threw a synchronous runtime error and unmounted the screen. Fix: removed the expo-file-system dependency and replaced with a portable uriToBase64() using fetch(uri) → blob() → FileReader.readAsDataURL(). Verified: PICK PDF now opens the web file chooser cleanly and no FileSystem/readAsStringAsync error appears in DOM or console."
+}

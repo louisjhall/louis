@@ -758,6 +758,8 @@ Return STRICT JSON only:
 
 @api.post("/roster/extract")
 async def roster_extract(body: RosterExtractBody, user: dict = Depends(current_user)):
+    """Legacy synchronous extract — kept for backwards-compat.
+    Prefer POST /roster/upload-and-generate for the new one-shot background flow."""
     path = await write_temp(body.file_base64, body.mime_type)
     raw = ""
     try:
@@ -883,6 +885,372 @@ async def roster_history(user: dict = Depends(current_user)):
     for r in rows:
         r["expiry"] = _roster_expiry(r)
     return rows
+
+
+# ------------------------------------------------------------------
+# Unified upload → parse → generate BACKGROUND JOB (fixes 504)
+# ------------------------------------------------------------------
+class RosterUploadGenerateBody(BaseModel):
+    file_base64: str
+    mime_type: str
+    filename: Optional[str] = None
+
+
+ROSTER_JOB_STAGES = [
+    ("uploading", "Uploading roster", 5),
+    ("reading", "Reading file", 15),
+    ("extracting", "Extracting duties", 30),
+    ("detecting", "Detecting layovers, turnarounds and days off", 50),
+    ("overlap", "Checking for roster overlaps", 60),
+    ("calendar", "Building your CrewFit calendar", 70),
+    ("generating", "Generating your personalised plan", 90),
+    ("coach", "Preparing coach review", 98),
+    ("complete", "Your new plan is ready", 100),
+]
+
+
+async def _set_job(job_id: str, **fields):
+    fields["updated_at"] = now_iso()
+    await db.roster_jobs.update_one({"id": job_id}, {"$set": fields})
+
+
+async def _detect_overlap(user_id: str, new_days: list[dict]) -> dict:
+    """Given new days, find overlapping active roster days for the same user."""
+    if not new_days:
+        return {"overlapping_dates": [], "changes": []}
+    new_by_date = {d["date"]: d for d in new_days if d.get("date")}
+    start, end = min(new_by_date), max(new_by_date)
+    active = await db.rosters.find({
+        "user_id": user_id, "is_active": True,
+        "start_date": {"$lte": end}, "end_date": {"$gte": start},
+    }, {"_id": 0}).to_list(20)
+    overlaps: list[str] = []
+    changes: list[dict] = []
+    for r in active:
+        for d in r.get("days") or []:
+            dt = d.get("date")
+            if not dt or dt not in new_by_date:
+                continue
+            overlaps.append(dt)
+            nd = new_by_date[dt]
+            if (d.get("day_type") != nd.get("day_type")) or (d.get("load") != nd.get("load")):
+                changes.append({
+                    "date": dt,
+                    "prev": {"day_type": d.get("day_type"), "load": d.get("load")},
+                    "new": {"day_type": nd.get("day_type"), "load": nd.get("load")},
+                })
+    return {"overlapping_dates": sorted(set(overlaps)), "changes": changes}
+
+
+@api.post("/roster/upload-and-generate")
+async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict = Depends(current_user)):
+    """One-shot background job: parse roster → detect overlap → save → generate month.
+
+    Returns {job_id} immediately. Poll GET /roster/jobs/{job_id} for progress."""
+    import asyncio as _asyncio
+    job_id = new_id()
+    await db.roster_jobs.insert_one({
+        "id": job_id, "user_id": user["id"],
+        "status": "queued", "stage": "uploading",
+        "message": "Uploading your roster...",
+        "progress": 1, "created_at": now_iso(),
+        "filename": body.filename or "roster",
+        "roster_id": None, "error": None, "overlap": None, "retry_count": 0,
+    })
+
+    async def _worker():
+        path: Optional[str] = None
+        try:
+            await _set_job(job_id, status="processing", stage="uploading", progress=5, message="Uploading your roster...")
+            path = await write_temp(body.file_base64, body.mime_type)
+            await _set_job(job_id, stage="reading", progress=15, message="Reading your duty pattern...")
+            raw = ""
+            try:
+                raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, body.mime_type)
+            except Exception as e:
+                logger.warning("Gemini roster call failed: %s", e)
+            await _set_job(job_id, stage="extracting", progress=30, message="Extracting duties...")
+            parsed: Any = {}
+            try:
+                parsed = parse_json_from_text(raw) if raw else {}
+            except Exception as e:
+                logger.warning("roster parse failed: %s", e)
+            days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+            if not days:
+                # Friendly failure — return actionable message rather than 504/stack trace
+                await _set_job(job_id, status="failed", stage="extracting", progress=30,
+                               error="We couldn't read this roster clearly. Please upload a clearer file or enter the details manually.",
+                               message="Roster could not be read")
+                return
+            await _set_job(job_id, stage="detecting", progress=50, message="Detecting layovers and turnarounds...")
+            days.sort(key=lambda d: d.get("date") or "")
+            for d in days:
+                d.setdefault("flights", [])
+                d.setdefault("day_type", "Unknown/Needs Confirmation")
+                d.setdefault("confidence", 0.5)
+                d["load"] = score_load(d)
+                d["home_or_away"] = d.get("home_or_away") or ("away" if "layover" in d["day_type"].lower() else "home" if "home" in d["day_type"].lower() else "unknown")
+            first = days[0]["date"]
+            last = days[-1]["date"]
+            await _set_job(job_id, stage="overlap", progress=60, message="Checking for roster overlaps...")
+            overlap = await _detect_overlap(user["id"], days)
+            await _set_job(job_id, overlap=overlap)
+            # Save roster (mark previous as inactive, preserving history)
+            await _set_job(job_id, stage="calendar", progress=70, message="Building your CrewFit calendar...")
+            roster = {
+                "id": new_id(),
+                "user_id": user["id"],
+                "created_at": now_iso(),
+                "week_start": first,
+                "start_date": first,
+                "end_date": last,
+                "days": days,
+                "confirmed": True,  # auto-confirmed for now; user can edit later
+                "confirmed_at": now_iso(),
+                "is_active": True,
+                "raw_response": raw[:6000] if raw else "",
+                "source_filename": body.filename,
+                "upload_job_id": job_id,
+                "day_count": len(days),
+                "confidence_avg": round(sum(d.get("confidence", 0.5) for d in days) / max(1, len(days)), 2),
+            }
+            await db.rosters.update_many({"user_id": user["id"], "is_active": True}, {"$set": {"is_active": False}})
+            await db.rosters.insert_one(roster)
+            await _set_job(job_id, roster_id=roster["id"], stage="generating", progress=80, message="Generating your personalised plan...")
+            # Generate workouts inline
+            try:
+                workouts = await _generate_month(user, roster)
+            except Exception:
+                logger.exception("generation failed in job %s", job_id)
+                # Roster is saved so user can view calendar; mark job partial
+                await _set_job(job_id, status="partial", stage="generating", progress=85,
+                               error="Your roster was saved but the training plan couldn't be generated automatically. Tap Retry to try again.",
+                               message="Plan generation failed - roster saved")
+                return
+            existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
+            for w in workouts:
+                d = w.get("date")
+                if not d:
+                    continue
+                prev = existing.get(d)
+                if prev and (prev.get("coach_locked") or prev.get("completed")):
+                    continue
+                doc = {
+                    "id": prev["id"] if prev else new_id(),
+                    "user_id": user["id"], "roster_id": roster["id"], "date": d,
+                    "day_load": w.get("day_load", "green"),
+                    "title": w.get("title", "Session"),
+                    "location": w.get("location", "Home Workout"),
+                    "duration_min": w.get("duration_min", 40),
+                    "focus": w.get("focus", "full"),
+                    "warmup": w.get("warmup", []),
+                    "exercises": w.get("exercises", []),
+                    "alternatives": w.get("alternatives", {}),
+                    "rationale": w.get("rationale", ""),
+                    "key_session": bool(w.get("key_session", False)),
+                    "event_phase": w.get("event_phase"),
+                    "approved": prev.get("approved", False) if prev else False,
+                    "completed": False,
+                    "coach_notes": prev.get("coach_notes", "") if prev else "",
+                    "coach_locked": False,
+                    "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
+                    "updated_at": now_iso(),
+                }
+                await db.workouts.delete_one({"id": doc["id"]})
+                await db.workouts.insert_one(doc)
+            await _set_job(job_id, stage="coach", progress=98, message="Preparing coach review...")
+            # Best-effort coach notification (silent-fail if push disabled)
+            try:
+                await _notify_coaches_of_new_roster(user, roster, job_id)
+            except Exception:
+                pass
+            await _set_job(job_id, status="complete", stage="complete", progress=100,
+                           message="Your new plan is ready", completed_at=now_iso(),
+                           workouts_generated=len(workouts))
+        except Exception as e:
+            logger.exception("roster upload job %s failed", job_id)
+            await _set_job(job_id, status="failed", error=str(e)[:400], message="Roster processing failed")
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except Exception:
+                    pass
+
+    _asyncio.create_task(_worker())
+    return {"job_id": job_id, "status": "queued", "poll": f"/roster/jobs/{job_id}"}
+
+
+async def _notify_coaches_of_new_roster(client: dict, roster: dict, job_id: str) -> None:
+    """Insert a coach-side alert doc so coach dashboard can highlight new roster.
+
+    Silently no-ops if push/notifications are not configured."""
+    await db.coach_alerts.insert_one({
+        "id": new_id(),
+        "client_id": client["id"],
+        "client_name": client.get("name") or client.get("email"),
+        "kind": "roster_uploaded",
+        "roster_id": roster["id"],
+        "job_id": job_id,
+        "start_date": roster.get("start_date"),
+        "end_date": roster.get("end_date"),
+        "day_count": len(roster.get("days") or []),
+        "created_at": now_iso(),
+        "read": False,
+    })
+
+
+@api.get("/roster/jobs/active")
+async def roster_active_job(user: dict = Depends(current_user)):
+    """Return the user's most recent still-running job for banner display."""
+    j = await db.roster_jobs.find_one(
+        {"user_id": user["id"], "status": {"$in": ["queued", "processing"]}},
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+    return j or {}
+
+
+@api.get("/roster/jobs/{job_id}")
+async def roster_job_status(job_id: str, user: dict = Depends(current_user)):
+    j = await db.roster_jobs.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
+    if not j:
+        raise HTTPException(404, "Job not found")
+    return j
+
+
+@api.post("/roster/jobs/{job_id}/retry")
+async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
+    j = await db.roster_jobs.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
+    if not j:
+        raise HTTPException(404, "Job not found")
+    if j.get("status") in ("queued", "processing"):
+        return {"job_id": job_id, "status": j["status"]}
+    # Reset job, but we need the original file bytes — we didn't store them.
+    # Instead, mark the job as needs-reupload and let the client re-send the file.
+    raise HTTPException(400, "Please re-upload the file to retry.")
+
+
+@api.get("/coach/roster-alerts")
+async def coach_roster_alerts(unread: bool = True, coach: dict = Depends(require_role("coach"))):
+    q: dict = {}
+    if unread:
+        q["read"] = False
+    rows = await db.coach_alerts.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return rows
+
+
+@api.post("/coach/roster-alerts/mark-read")
+async def coach_mark_alerts_read(coach: dict = Depends(require_role("coach"))):
+    await db.coach_alerts.update_many({"read": False}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------
+# Multi-month calendar timeline
+# ------------------------------------------------------------------
+@api.get("/calendar/timeline")
+async def calendar_timeline(months_back: int = 2, months_ahead: int = 4, user: dict = Depends(current_user)):
+    """Combined multi-month timeline of roster + workouts for the user.
+
+    Uses ALL active rosters (not just most recent) so overlapping / stacked
+    rosters render as a continuous timeline.
+    """
+    from datetime import date as _date
+    today = _date.today()
+    # Compute start/end range
+    y, m = today.year, today.month
+    start_m_index = m - months_back
+    while start_m_index <= 0:
+        start_m_index += 12
+        y -= 1
+    start_iso = _date(y, start_m_index, 1).isoformat()
+    ny, nm = today.year, today.month + months_ahead
+    while nm > 12:
+        nm -= 12
+        ny += 1
+    # last day of end month
+    from calendar import monthrange
+    last_day = monthrange(ny, nm)[1]
+    end_iso = _date(ny, nm, last_day).isoformat()
+
+    active_rosters = await db.rosters.find(
+        {"user_id": user["id"], "is_active": True}, {"_id": 0},
+    ).sort("start_date", 1).to_list(50)
+    all_rosters = await db.rosters.find(
+        {"user_id": user["id"]}, {"_id": 0, "raw_response": 0},
+    ).sort("start_date", 1).to_list(100)
+
+    # Merge all active roster days (latest upload wins on overlap)
+    day_map: dict[str, dict] = {}
+    for r in active_rosters:
+        for d in r.get("days") or []:
+            dt = d.get("date")
+            if not dt:
+                continue
+            if dt < start_iso or dt > end_iso:
+                continue
+            day_map[dt] = {**d, "roster_id": r["id"]}
+
+    # Also collect roster metadata for the History tab
+    rosters_meta = [
+        {
+            "id": r["id"], "start_date": r.get("start_date"), "end_date": r.get("end_date"),
+            "created_at": r.get("created_at"), "is_active": r.get("is_active", False),
+            "source_filename": r.get("source_filename"), "day_count": len(r.get("days") or []),
+            "confidence_avg": r.get("confidence_avg"),
+        }
+        for r in all_rosters
+    ]
+
+    workouts = await db.workouts.find({
+        "user_id": user["id"], "date": {"$gte": start_iso, "$lte": end_iso},
+    }, {"_id": 0}).sort("date", 1).to_list(2000)
+    wk_map = {w["date"]: w for w in workouts}
+
+    # Build month buckets covering the whole range (including blank months for future upload)
+    months: list[dict] = []
+    cy, cm = _date.fromisoformat(start_iso).year, _date.fromisoformat(start_iso).month
+    end_y, end_m = ny, nm
+    while (cy, cm) <= (end_y, end_m):
+        ldm = monthrange(cy, cm)[1]
+        days_out: list[dict] = []
+        for dd in range(1, ldm + 1):
+            iso = _date(cy, cm, dd).isoformat()
+            rday = day_map.get(iso)
+            wk = wk_map.get(iso)
+            days_out.append({
+                "date": iso,
+                "day": dd,
+                "load": (rday or {}).get("load"),
+                "duty_type": (rday or {}).get("day_type"),
+                "has_roster": bool(rday),
+                "workout_id": (wk or {}).get("id"),
+                "workout_title": (wk or {}).get("title"),
+                "completed": bool((wk or {}).get("completed")),
+                "key_session": bool((wk or {}).get("key_session")),
+                "location": (wk or {}).get("location"),
+            })
+        months.append({
+            "year": cy, "month": cm,
+            "label": _date(cy, cm, 1).strftime("%B %Y"),
+            "iso": _date(cy, cm, 1).isoformat(),
+            "days": days_out,
+            "has_data": any(d["has_roster"] or d["workout_id"] for d in days_out),
+        })
+        cm += 1
+        if cm > 12:
+            cm = 1
+            cy += 1
+
+    return {
+        "today": today.isoformat(),
+        "start_date": start_iso,
+        "end_date": end_iso,
+        "months": months,
+        "rosters": rosters_meta,
+        "active_roster_ids": [r["id"] for r in active_rosters],
+    }
 
 
 @api.post("/roster/{rid}/hotel")
@@ -1191,11 +1559,15 @@ async def workouts_job_status(job_id: str, user: dict = Depends(current_user)):
 
 @api.post("/workouts/regenerate")
 async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(current_user)):
+    """Background regeneration to avoid Cloudflare/ingress 504 timeouts.
+
+    Returns {job_id} immediately. Poll GET /workouts/job/{job_id} for progress."""
+    import asyncio as _asyncio
+
     r = await db.rosters.find_one({"id": body.roster_id, "user_id": user["id"]}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Roster not found")
 
-    # narrow the roster days to only what to regenerate
     def in_scope(d_date: str) -> bool:
         if body.all:
             return True
@@ -1210,45 +1582,58 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                 return False
         return False
 
-    sub = {**r, "days": [d for d in r.get("days", []) if in_scope(d.get("date", ""))]}
-    if not sub["days"]:
+    sub_days = [d for d in r.get("days", []) if in_scope(d.get("date", ""))]
+    if not sub_days:
         raise HTTPException(400, "No days matched the regenerate scope")
+    sub = {**r, "days": sub_days}
 
-    workouts = await _generate_month(user, sub)
-    saved = []
-    for w in workouts:
-        d = w.get("date")
-        if not d:
-            continue
-        existing = await db.workouts.find_one({"user_id": user["id"], "roster_id": body.roster_id, "date": d}, {"_id": 0})
-        if existing and (existing.get("coach_locked") or existing.get("completed")):
-            saved.append(existing)
-            continue
-        doc = {
-            "id": existing["id"] if existing else new_id(),
-            "user_id": user["id"], "roster_id": body.roster_id, "date": d,
-            "day_load": w.get("day_load", "green"),
-            "title": w.get("title", "Session"),
-            "location": w.get("location", "Home Workout"),
-            "duration_min": w.get("duration_min", 40),
-            "focus": w.get("focus", "full"),
-            "warmup": w.get("warmup", []),
-            "exercises": w.get("exercises", []),
-            "alternatives": w.get("alternatives", {}),
-            "rationale": w.get("rationale", ""),
-            "key_session": bool(w.get("key_session", False)),
-            "event_phase": w.get("event_phase"),
-            "approved": False,
-            "completed": False,
-            "coach_notes": existing.get("coach_notes", "") if existing else "",
-            "coach_locked": False,
-            "created_at": existing.get("created_at", now_iso()) if existing else now_iso(),
-            "updated_at": now_iso(),
-        }
-        await db.workouts.delete_one({"id": doc["id"]})
-        await db.workouts.insert_one(doc)
-        saved.append(clean_doc(doc))
-    return {"workouts": saved}
+    job_id = new_id()
+    await db.gen_jobs.insert_one({
+        "id": job_id, "user_id": user["id"], "roster_id": body.roster_id,
+        "status": "running", "created_at": now_iso(),
+        "total": len(sub_days), "done": 0, "errors": [], "kind": "regenerate",
+    })
+
+    async def _worker():
+        try:
+            workouts = await _generate_month(user, sub)
+            for w in workouts:
+                d = w.get("date")
+                if not d:
+                    continue
+                existing = await db.workouts.find_one({"user_id": user["id"], "roster_id": body.roster_id, "date": d}, {"_id": 0})
+                if existing and (existing.get("coach_locked") or existing.get("completed")):
+                    continue
+                doc = {
+                    "id": existing["id"] if existing else new_id(),
+                    "user_id": user["id"], "roster_id": body.roster_id, "date": d,
+                    "day_load": w.get("day_load", "green"),
+                    "title": w.get("title", "Session"),
+                    "location": w.get("location", "Home Workout"),
+                    "duration_min": w.get("duration_min", 40),
+                    "focus": w.get("focus", "full"),
+                    "warmup": w.get("warmup", []),
+                    "exercises": w.get("exercises", []),
+                    "alternatives": w.get("alternatives", {}),
+                    "rationale": w.get("rationale", ""),
+                    "key_session": bool(w.get("key_session", False)),
+                    "event_phase": w.get("event_phase"),
+                    "approved": False,
+                    "completed": False,
+                    "coach_notes": existing.get("coach_notes", "") if existing else "",
+                    "coach_locked": False,
+                    "created_at": existing.get("created_at", now_iso()) if existing else now_iso(),
+                    "updated_at": now_iso(),
+                }
+                await db.workouts.delete_one({"id": doc["id"]})
+                await db.workouts.insert_one(doc)
+            await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
+        except Exception as e:
+            logger.exception("regenerate job %s failed", job_id)
+            await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:400], "finished_at": now_iso()}})
+
+    _asyncio.create_task(_worker())
+    return {"status": "queued", "job_id": job_id, "total": len(sub_days)}
 
 
 @api.get("/workouts/week")

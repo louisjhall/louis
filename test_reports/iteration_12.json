@@ -1,0 +1,33 @@
+{
+  "summary": "Comprehensive verification of bug-fix iteration 12: (1) background roster upload flow, (2) multi-month calendar, (3) regenerate no-504 fix, (4) coach regression. Backend pytest suite (test_roster_calendar_flow.py, 16 tests) passes 16/16. Highlights: POST /api/roster/upload-and-generate returns {job_id} in <1s (no 504); polling GET /api/roster/jobs/{job_id} transitions queued->processing->failed cleanly for a 1x1 PNG with FRIENDLY error 'We couldn't read this roster clearly...' (no stack trace, no 504). POST /api/workouts/regenerate now returns {status:queued, job_id, total} in <1s (bug fix confirmed) and job worker completes async. GET /api/calendar/timeline?months_back=1&months_ahead=3 returns exactly 5 month buckets, today matches server date, seed client has non-empty rosters + active_roster_ids. GET /api/roster/history returns rosters in DESC created_at order. GET /api/roster/jobs/active returns {} when idle. Auth guards intact (calendar/upload require auth, coach-only endpoint blocks client). Regression: /api/coach/videos, /api/coach/analytics, /api/coach/dashboard, /api/exercises/video?name=..., /api/auth/login, /api/roster/current all 200. Frontend (mobile 420x900): client login -> WEEK tab routes to /calendar which renders 7 month cards (default 2 back + 4 ahead + 1 = 7), 214 day cells across months, 30 roster history rows. cal-prev/cal-next/cal-today/cal-upload all functional. Month chips (cal-month-chip-YYYY-MM) present for every month and jump scroll works. cal-upload navigates to /roster-upload showing ru-pick-image + ru-pick-pdf CTAs with NO 'Generate' button. ru-back returns to calendar. Coach desktop (1440x900): /overview loads with sidebar (Overview, Clients, Calendar, Approvals, Library, Videos, Messages, Analytics, Profile) — no regression. Zero React Native red-screen errors. Only pre-existing warnings: shadow* deprecation and expo-notifications web unsupported (already tracked, not introduced by this iteration).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_roster_calendar_flow.py",
+    "/app/test_reports/pytest/roster_calendar_flow_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 3160 lines — exceeds the 700-line guideline; consider splitting roster/calendar/workout modules into separate routers. Not blocking, but growing surface area.",
+    "roster-upload.tsx uses fetch(uri)+FileReader for base64 conversion which works on web but on native iOS/Android will be slower for large PDFs; consider expo-file-system's readAsStringAsync({encoding:'base64'}) for parity.",
+    "Calendar 'jumpToDate' is currently a stub that just calls goToday — deferred UI enhancement, but flagging since it's dead code today.",
+    "Regenerate worker in server.py uses db.workouts.delete_one then insert_one; a $set upsert would be safer against race conditions if two regenerate jobs overlap for the same date."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_roster_calendar_flow.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None. Used auto-seeded client@crewfit.com and coach@crewfit.com. Test upload used a 1x1 PNG (base64 hardcoded in test) that is expected to fail parsing, exercising the friendly-failure path.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Roster upload background flow, multi-month calendar and workouts/regenerate-as-job are all verified end-to-end. Backend tests live in /app/backend/tests/test_roster_calendar_flow.py — reuse for future regression. Client tab bar label for calendar is 'WEEK' (not 'CALENDAR'); note this if a subsequent review expects a 'CALENDAR' tab label. No mocked APIs.",
+  "rca_of_issue": "USER-REPORTED bugs: (a) 504 on plan regeneration — RCA: the previous /api/workouts/regenerate was synchronous and could exceed Cloudflare's 100s ingress timeout because /_generate_month runs an LLM call per day. FIX applied by main agent: convert to background asyncio task with gen_jobs polling, returning {job_id, status:queued} immediately. Verified: POST returns in <1s and no 504. (b) Manual 'Generate' friction after upload — RCA: two-step flow (upload -> confirm -> generate). FIX: new /api/roster/upload-and-generate + roster_jobs polling; roster-upload.tsx picks file and IMMEDIATELY posts, showing 8-stage progress. Verified: no separate 'Generate' button in code, testIDs ru-pick-image/ru-pick-pdf go straight to progress card. (c) Single-month calendar — RCA: prior calendar screen used only current month. FIX: /api/calendar/timeline aggregates months_back..months_ahead with per-month day arrays including blank future months; calendar.tsx renders month blocks with quick-jump chips + prev/next/today. Verified: 7 month cards default, 5 for months_back=1&months_ahead=3. (d) No progress feedback — RCA: sync upload gave no UI signal. FIX: job doc with stage+progress+message fields; UI polls every 2s, shows stage checklist, allows KEEP WORKING (leaves screen) with sticky cal-job-banner on calendar. Verified via testID presence and code review (in-progress UI only renders when a job is running so live progress states weren't captured in this run — friendly-error final state confirmed by backend test)."
+}

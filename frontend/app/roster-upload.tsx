@@ -1,25 +1,24 @@
-import { useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, TextInput } from "react-native";
-import { Image } from "expo-image";
+import { useEffect, useRef, useState } from "react";
+import {
+  View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert,
+} from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
-import { theme, loadColor } from "@/src/lib/theme";
+import { theme } from "@/src/lib/theme";
 
-const DAY_TYPES = [
-  "Home Day", "Home Training Day", "Turnaround Duty", "Layover Arrival Day",
-  "Layover Full Day", "Layover Departure Day", "Long-Haul Duty", "Short-Haul Duty",
-  "Night Flight", "Early Report", "Late Finish", "Rest Day", "Recovery Day",
-  "Standby", "Simulator/Training Day", "Annual Leave", "Unknown/Needs Confirmation",
-];
-const LOADS = ["green", "amber", "red", "blue", "purple", "grey"];
-const EQ_KEYS: [string, string][] = [
-  ["dumbbells", "Dumbbells"], ["treadmill", "Treadmill"], ["bike", "Bike"], ["rower", "Rower"],
-  ["cable_machine", "Cable"], ["machines", "Machines"], ["bench", "Bench"], ["squat_rack", "Squat rack"],
-  ["free_weights", "Free weights"], ["pool", "Pool"], ["outdoor_running", "Outdoor OK"],
+const STAGES = [
+  { key: "uploading", label: "Uploading roster", copy: "Uploading your roster..." },
+  { key: "reading", label: "Reading file", copy: "Reading your duty pattern..." },
+  { key: "extracting", label: "Extracting duties", copy: "Extracting duties..." },
+  { key: "detecting", label: "Detecting layovers", copy: "Detecting layovers and turnarounds..." },
+  { key: "overlap", label: "Checking overlaps", copy: "Checking for roster overlaps..." },
+  { key: "calendar", label: "Building calendar", copy: "Building your CrewFit calendar..." },
+  { key: "generating", label: "Generating plan", copy: "Generating your personalised plan..." },
+  { key: "coach", label: "Preparing coach review", copy: "Preparing coach review..." },
 ];
 
 async function uriToBase64(uri: string): Promise<string> {
@@ -39,322 +38,243 @@ async function uriToBase64(uri: string): Promise<string> {
 
 export default function RosterUpload() {
   const router = useRouter();
-  const [file, setFile] = useState<{ base64: string; mime: string; name?: string } | null>(null);
-  const [extracted, setExtracted] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [job, setJob] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const pollRef = useRef<any>(null);
 
-  const pickImage = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, base64: true, quality: 0.7 });
-    if (!res.canceled && res.assets[0]?.base64) {
-      const a = res.assets[0];
-      setFile({ base64: a.base64!, mime: a.mimeType || "image/jpeg", name: a.fileName || "roster.jpg" });
+  useEffect(() => {
+    // Resume any active in-progress job
+    (async () => {
+      try {
+        const j = await api<any>(`/roster/jobs/active`);
+        if (j && j.id) { setJob(j); startPolling(j.id); }
+      } catch { /* ignore */ }
+    })();
+    return () => pollRef.current && clearInterval(pollRef.current);
+  }, []);
+
+  const startPolling = (jobId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const j = await api<any>(`/roster/jobs/${jobId}`);
+        setJob(j);
+        if (j.status === "complete") {
+          clearInterval(pollRef.current);
+          setTimeout(() => router.replace("/(client)/calendar"), 800);
+        }
+        if (j.status === "failed" || j.status === "partial") {
+          clearInterval(pollRef.current);
+        }
+      } catch (e: any) {
+        setError(e?.message || "Failed to check status");
+      }
+    }, 2000);
+  };
+
+  const startJob = async (fileBase64: string, mimeType: string, filename: string) => {
+    setStarting(true); setError(null);
+    try {
+      const res = await api<any>(`/roster/upload-and-generate`, {
+        method: "POST",
+        body: { file_base64: fileBase64, mime_type: mimeType, filename },
+      });
+      setJob({ id: res.job_id, status: "queued", stage: "uploading", progress: 1, message: "Uploading your roster..." });
+      startPolling(res.job_id);
+    } catch (e: any) {
+      setError(e?.message || "Upload failed. Please try a different file.");
+    } finally {
+      setStarting(false);
     }
   };
+
+  const pickImage = async () => {
+    setError(null);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Permission needed", "Please allow photo library access to upload a roster image.");
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, base64: true, quality: 0.7 });
+    if (res.canceled || !res.assets?.[0]?.base64) return;
+    const a = res.assets[0];
+    await startJob(a.base64!, a.mimeType || "image/jpeg", a.fileName || "roster.jpg");
+  };
   const pickPdf = async () => {
+    setError(null);
     const res = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
-    if (res.canceled) return;
+    if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
     try {
       const b64 = await uriToBase64(a.uri);
-      setFile({ base64: b64, mime: a.mimeType || "application/pdf", name: a.name });
-    } catch (e: any) { setErr(e?.message || "Could not read PDF"); }
+      await startJob(b64, a.mimeType || "application/pdf", a.name || "roster.pdf");
+    } catch (e: any) {
+      setError(e?.message || "Could not read PDF");
+    }
   };
 
-  const extract = async () => {
-    if (!file) return;
-    setLoading(true); setErr(null);
-    try {
-      const r = await api<any>("/roster/extract", { method: "POST", body: { file_base64: file.base64, mime_type: file.mime, week_start: new Date().toISOString().slice(0, 10) } });
-      setExtracted(r);
-    } catch (e: any) { setErr(e.message); }
-    finally { setLoading(false); }
-  };
+  const retry = () => { setJob(null); setError(null); };
+  const cancel = () => { pollRef.current && clearInterval(pollRef.current); setJob(null); };
+  const leaveScreen = () => router.replace("/(client)/home");
 
-  const updateDay = (idx: number, patch: any) => {
-    setExtracted((r: any) => ({ ...r, days: r.days.map((d: any, i: number) => (i === idx ? { ...d, ...patch } : d)) }));
-  };
-
-  const confirm = async () => {
-    if (!extracted) return;
-    setLoading(true);
-    try {
-      await api(`/roster/${extracted.id}/confirm`, { method: "POST", body: { days: extracted.days } });
-      router.replace("/(client)/calendar");
-    } catch (e: any) { setErr(e.message); } finally { setLoading(false); }
-  };
+  const active = job && (job.status === "queued" || job.status === "processing");
+  const failed = job && (job.status === "failed" || job.status === "partial");
+  const done = job && job.status === "complete";
+  const currentStageIdx = STAGES.findIndex((s) => s.key === job?.stage);
+  const progress = Math.max(0, Math.min(100, job?.progress || 0));
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} testID="roster-back"><Ionicons name="chevron-back" size={26} color={theme.color.text} /></Pressable>
-        <Text style={styles.title}>{extracted ? "REVIEW ROSTER" : "ROSTER UPLOAD"}</Text>
-        <View style={{ width: 26 }} />
+        <Pressable onPress={() => router.back()} testID="ru-back"><Ionicons name="chevron-back" size={22} color={theme.color.text} /></Pressable>
+        <Text style={styles.title}>UPLOAD ROSTER</Text>
+        <View style={{ width: 22 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140 }}>
-        {!extracted ? (
+      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+        {!job ? (
           <>
-            <View style={styles.dropzone}>
-              {file ? (
-                file.mime === "application/pdf" ? (
-                  <View style={{ alignItems: "center" }}>
-                    <Ionicons name="document" size={40} color={theme.color.brand} />
-                    <Text style={styles.fileName}>{file.name}</Text>
-                  </View>
-                ) : (
-                  <Image source={{ uri: `data:${file.mime};base64,${file.base64}` }} style={{ width: "100%", height: 220, borderRadius: theme.radius.sm }} contentFit="contain" />
-                )
-              ) : (
-                <>
-                  <Ionicons name="cloud-upload" size={56} color={theme.color.brand} />
-                  <Text style={styles.dzTitle}>DROP YOUR ROSTER</Text>
-                  <Text style={styles.dzSub}>{`PDF or photo · we'll extract the whole month`}</Text>
-                </>
-              )}
-            </View>
-            <View style={styles.pickRow}>
-              <Pressable testID="pick-pdf" onPress={pickPdf} style={styles.pickBtn}>
-                <Ionicons name="document-text" size={18} color={theme.color.brand} />
-                <Text style={styles.pickText}>PICK PDF</Text>
-              </Pressable>
-              <Pressable testID="pick-image" onPress={pickImage} style={styles.pickBtn}>
-                <Ionicons name="image" size={18} color={theme.color.brand} />
-                <Text style={styles.pickText}>PICK PHOTO</Text>
-              </Pressable>
-            </View>
-            {err && <Text style={{ color: theme.color.red, marginTop: 12 }}>{err}</Text>}
-            <Pressable testID="extract-btn" onPress={extract} disabled={!file || loading} style={[styles.cta, (!file || loading) && { opacity: 0.5 }]}>
-              {loading ? <ActivityIndicator color="#fff" /> : (<><Ionicons name="scan" size={16} color="#fff" /><Text style={styles.ctaText}>  EXTRACT (AI)</Text></>)}
+            <Text style={styles.subtitle}>Upload roster and CrewFit does the rest.</Text>
+            <Text style={styles.helper}>PDF or photo of your roster — we parse it, build your calendar, and generate your training plan automatically.</Text>
+
+            <Pressable testID="ru-pick-image" onPress={pickImage} disabled={starting} style={[styles.pickBtn, starting && { opacity: 0.5 }]}>
+              <Ionicons name="image-outline" size={22} color={theme.color.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pickBtnTitle}>UPLOAD PHOTO</Text>
+                <Text style={styles.pickBtnSub}>JPEG / PNG screenshot of your roster</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.color.textMuted} />
             </Pressable>
+
+            <Pressable testID="ru-pick-pdf" onPress={pickPdf} disabled={starting} style={[styles.pickBtn, starting && { opacity: 0.5 }]}>
+              <Ionicons name="document-text-outline" size={22} color={theme.color.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pickBtnTitle}>UPLOAD PDF</Text>
+                <Text style={styles.pickBtnSub}>Full roster PDF export</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.color.textMuted} />
+            </Pressable>
+
+            {starting ? (
+              <View style={{ marginTop: 20, alignItems: "center" }}>
+                <ActivityIndicator color={theme.color.brand} />
+                <Text style={styles.helper}>Starting upload...</Text>
+              </View>
+            ) : null}
+            {error ? <Text style={styles.err}>{error}</Text> : null}
           </>
         ) : (
           <>
-            <Text style={styles.sectSub}>Tap a day to edit type, hotel or load status.</Text>
-            {extracted.days.map((d: any, idx: number) => {
-              const expanded = expandedIdx === idx;
-              const isLayover = String(d.day_type || "").toLowerCase().includes("layover");
-              return (
-                <View key={idx} style={styles.dayCard} testID={`day-${idx}`}>
-                  <Pressable onPress={() => setExpandedIdx(expanded ? null : idx)} testID={`day-toggle-${idx}`} style={styles.dayHead}>
-                    <View style={[styles.loadPill, { backgroundColor: loadColor(d.load) }]}>
-                      <Text style={styles.loadPillText}>{String(d.load || "grey").toUpperCase()}</Text>
+            <View style={styles.progressCard}>
+              <View style={styles.progressHeader}>
+                <ActivityIndicator size="large" color={theme.color.brand} animating={active} />
+                <Text style={styles.progressTitle} testID="ru-progress-message">
+                  {done ? "YOUR NEW PLAN IS READY" : failed ? "PROCESSING FAILED" : (job.message || "Processing...")}
+                </Text>
+                <Text style={styles.progressPct}>{progress}%</Text>
+              </View>
+              <View style={styles.progressBarWrap}>
+                <View testID="ru-progress-bar" style={[styles.progressBarFill, {
+                  width: `${progress}%`,
+                  backgroundColor: failed ? theme.color.red : done ? theme.color.green : theme.color.brand,
+                }]} />
+              </View>
+              <View style={{ gap: 8, marginTop: 16 }}>
+                {STAGES.map((s, i) => {
+                  const passed = currentStageIdx > i || done;
+                  const current = currentStageIdx === i && active;
+                  return (
+                    <View key={s.key} style={styles.stageRow} testID={`ru-stage-${s.key}`}>
+                      {passed ? (
+                        <Ionicons name="checkmark-circle" size={16} color={theme.color.green} />
+                      ) : current ? (
+                        <ActivityIndicator size="small" color={theme.color.brand} />
+                      ) : (
+                        <Ionicons name="ellipse-outline" size={16} color={theme.color.textDim} />
+                      )}
+                      <Text style={[styles.stageLabel, (passed || current) && { color: theme.color.text }, current && { color: theme.color.brand, fontWeight: "800" }]}>{s.label}</Text>
                     </View>
-                    <View style={{ flex: 1, marginLeft: theme.space.sm }}>
-                      <Text style={styles.dayDate}>{d.date}</Text>
-                      <Text style={styles.dayType}>{d.day_type}</Text>
-                      {d.flights?.[0] && <Text style={styles.dayFlight}>{d.flights.map((f: any) => `${f.from}→${f.to}`).join("  ")}</Text>}
-                      {d.layover_city && <Text style={styles.dayLayover}>🏨 {d.layover_city}</Text>}
-                    </View>
-                    <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={theme.color.textDim} />
+                  );
+                })}
+              </View>
+            </View>
+
+            {failed && (
+              <View style={styles.errCard}>
+                <Ionicons name="alert-circle" size={18} color={theme.color.red} />
+                <Text style={styles.errCardText}>{job.error || "We couldn't read this roster clearly. Please upload a clearer file or enter the details manually."}</Text>
+              </View>
+            )}
+
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
+              {active && (
+                <>
+                  <Pressable testID="ru-leave" onPress={leaveScreen} style={[styles.actBtn, styles.actBtnGhost]}>
+                    <Text style={styles.actBtnGhostText}>KEEP WORKING</Text>
                   </Pressable>
-                  {expanded && (
-                    <View style={styles.expandBox}>
-                      <Text style={styles.miniLabel}>DAY TYPE</Text>
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
-                        {DAY_TYPES.map((t) => (
-                          <Pressable key={t} testID={`day-${idx}-type-${t}`} onPress={() => updateDay(idx, { day_type: t })} style={[styles.chip, d.day_type === t && styles.chipActive]}>
-                            <Text style={[styles.chipText, d.day_type === t && { color: "#fff" }]}>{t}</Text>
-                          </Pressable>
-                        ))}
-                      </ScrollView>
-
-                      <Text style={styles.miniLabel}>LOAD</Text>
-                      <View style={styles.chipsWrap}>
-                        {LOADS.map((l) => (
-                          <Pressable key={l} testID={`day-${idx}-load-${l}`} onPress={() => updateDay(idx, { load: l })} style={[styles.chip, d.load === l && styles.chipActive]}>
-                            <View style={[styles.dotSm, { backgroundColor: loadColor(l) }]} />
-                            <Text style={[styles.chipText, d.load === l && { color: "#fff" }]}>  {l.toUpperCase()}</Text>
-                          </Pressable>
-                        ))}
-                      </View>
-
-                      <Text style={styles.miniLabel}>FLIGHTS (from→to)</Text>
-                      <TextInput
-                        testID={`day-${idx}-flights`}
-                        style={styles.input}
-                        value={(d.flights || []).map((f: any) => `${f.from}->${f.to}`).join(", ")}
-                        onChangeText={(v) => updateDay(idx, {
-                          flights: v.split(",").map((s: string) => {
-                            const [f, t] = s.trim().split("->").map((x: string) => x.trim());
-                            return { from: f || "", to: t || "" };
-                          }).filter((f: any) => f.from || f.to),
-                        })}
-                        placeholder="LHR->SIN, SIN->LHR"
-                        placeholderTextColor={theme.color.textDim}
-                      />
-
-                      {isLayover && <HotelSection dayIdx={idx} day={d} rosterId={extracted.id} onSaved={(hotel) => updateDay(idx, { hotel_id: hotel.id, hotel_name: hotel.name })} />}
-                    </View>
+                  <Pressable testID="ru-cancel" onPress={cancel} style={[styles.actBtn, styles.actBtnGhost]}>
+                    <Text style={styles.actBtnGhostText}>CANCEL</Text>
+                  </Pressable>
+                </>
+              )}
+              {(failed || done) && (
+                <>
+                  <Pressable testID="ru-retry" onPress={retry} style={[styles.actBtn, { backgroundColor: theme.color.brand }]}>
+                    <Text style={styles.actBtnText}>{failed ? "TRY AGAIN" : "UPLOAD ANOTHER"}</Text>
+                  </Pressable>
+                  {done && (
+                    <Pressable testID="ru-open-calendar" onPress={() => router.replace("/(client)/calendar")} style={[styles.actBtn, styles.actBtnGhost]}>
+                      <Text style={styles.actBtnGhostText}>OPEN CALENDAR</Text>
+                    </Pressable>
                   )}
-                </View>
-              );
-            })}
-            {err && <Text style={{ color: theme.color.red, marginTop: 12 }}>{err}</Text>}
+                </>
+              )}
+            </View>
+
+            {active && (
+              <Text style={styles.leaveHint} testID="ru-leave-hint">
+                You can leave this screen — we&apos;ll keep processing in the background and let you know when it&apos;s ready.
+              </Text>
+            )}
           </>
         )}
       </ScrollView>
-
-      {extracted && (
-        <View style={styles.sticky}>
-          <Pressable testID="confirm-roster" onPress={confirm} disabled={loading} style={[styles.cta, loading && { opacity: 0.6 }]}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>CONFIRM ROSTER · {extracted.days.length} DAYS</Text>}
-          </Pressable>
-        </View>
-      )}
     </SafeAreaView>
-  );
-}
-
-function HotelSection({ dayIdx, day, rosterId, onSaved }: { dayIdx: number; day: any; rosterId: string; onSaved: (h: any) => void }) {
-  const [name, setName] = useState(day.hotel_name || "");
-  const [city, setCity] = useState(day.layover_city || "");
-  const [country, setCountry] = useState(day.layover_country || "");
-  const [gym, setGym] = useState<"yes" | "no" | "unknown">(day.hotel_id ? "yes" : "unknown");
-  const [equip, setEquip] = useState<Record<string, boolean>>({});
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  const search = async () => {
-    if (!name && !city) return;
-    setBusy(true);
-    try {
-      const q = new URLSearchParams();
-      if (name) q.set("name", name);
-      if (city) q.set("city", city);
-      const rows = await api<any[]>(`/hotels/search?${q.toString()}`);
-      setSearchResults(rows);
-    } finally { setBusy(false); }
-  };
-  const applyResult = (h: any) => {
-    setName(h.name); setCity(h.city); setCountry(h.country || "");
-    setGym(h.gym_available ? "yes" : h.gym_available === false ? "no" : "unknown");
-    setEquip(h.equipment || {});
-    setSearchResults([]);
-  };
-  const save = async () => {
-    if (!name || !city) return;
-    setBusy(true);
-    try {
-      const res = await api<any>(`/roster/${rosterId}/hotel`, {
-        method: "POST",
-        body: {
-          date: day.date,
-          hotel: {
-            name, city, country: country || null,
-            gym_available: gym === "yes" ? true : gym === "no" ? false : null,
-            equipment: equip,
-            outdoor_safe: !!equip.outdoor_running,
-            pool: !!equip.pool,
-          },
-        },
-      });
-      onSaved(res.hotel);
-    } finally { setBusy(false); }
-  };
-  const toggleEq = (k: string) => setEquip((e) => ({ ...e, [k]: !e[k] }));
-
-  return (
-    <View style={styles.hotelBox}>
-      <Text style={styles.hotelHead}>🏨 HOTEL FOR LAYOVER</Text>
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <TextInput testID={`hotel-name-${dayIdx}`} style={[styles.input, { flex: 2 }]} value={name} onChangeText={setName} placeholder="Hotel name" placeholderTextColor={theme.color.textDim} />
-        <TextInput testID={`hotel-city-${dayIdx}`} style={[styles.input, { flex: 1 }]} value={city} onChangeText={setCity} placeholder="City" placeholderTextColor={theme.color.textDim} />
-      </View>
-      <TextInput testID={`hotel-country-${dayIdx}`} style={styles.input} value={country} onChangeText={setCountry} placeholder="Country (opt)" placeholderTextColor={theme.color.textDim} />
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <Pressable testID={`hotel-search-${dayIdx}`} onPress={search} style={styles.searchBtn}>
-          <Ionicons name="search" size={14} color={theme.color.brand} />
-          <Text style={styles.searchText}>SEARCH COMMUNITY DB</Text>
-        </Pressable>
-      </View>
-      {searchResults.length > 0 && (
-        <View style={styles.results}>
-          {searchResults.map((h) => (
-            <Pressable key={h.id} onPress={() => applyResult(h)} style={styles.resultRow} testID={`hotel-result-${h.id}`}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.resultName}>{h.name}</Text>
-                <Text style={styles.resultCity}>{h.city} · {h.country || "?"} · conf {(h.confidence * 100).toFixed(0)}%</Text>
-              </View>
-              <Text style={styles.resultUse}>USE</Text>
-            </Pressable>
-          ))}
-        </View>
-      )}
-
-      <Text style={styles.miniLabel}>HOTEL GYM</Text>
-      <View style={styles.chipsWrap}>
-        {(["yes", "no", "unknown"] as const).map((g) => (
-          <Pressable key={g} testID={`gym-${dayIdx}-${g}`} onPress={() => setGym(g)} style={[styles.chip, gym === g && styles.chipActive]}>
-            <Text style={[styles.chipText, gym === g && { color: "#fff" }]}>{g.toUpperCase()}</Text>
-          </Pressable>
-        ))}
-      </View>
-      {gym === "yes" && (
-        <>
-          <Text style={styles.miniLabel}>EQUIPMENT</Text>
-          <View style={styles.chipsWrap}>
-            {EQ_KEYS.map(([k, l]) => (
-              <Pressable key={k} testID={`equip-${dayIdx}-${k}`} onPress={() => toggleEq(k)} style={[styles.chip, equip[k] && styles.chipActive]}>
-                <Text style={[styles.chipText, equip[k] && { color: "#fff" }]}>{l}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </>
-      )}
-      <Pressable testID={`hotel-save-${dayIdx}`} onPress={save} disabled={busy || !name || !city} style={[styles.saveBtn, (busy || !name || !city) && { opacity: 0.5 }]}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>SAVE HOTEL</Text>}
-      </Pressable>
-      {day.hotel_id && <Text style={styles.savedText}>✓ Linked hotel: {day.hotel_name}</Text>}
-    </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
-  title: { color: theme.color.text, fontSize: 15, letterSpacing: 2, fontWeight: "900" },
-  dropzone: { alignItems: "center", justifyContent: "center", padding: theme.space.xxl, borderRadius: theme.radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.borderStrong, backgroundColor: theme.color.surface2, minHeight: 220 },
-  dzTitle: { color: theme.color.text, marginTop: theme.space.md, letterSpacing: 2, fontWeight: "800" },
-  dzSub: { color: theme.color.textMuted, marginTop: 4, textAlign: "center" },
-  fileName: { color: theme.color.text, marginTop: theme.space.sm, fontWeight: "700" },
-  pickRow: { flexDirection: "row", gap: theme.space.md, marginTop: theme.space.md },
-  pickBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 14 },
-  pickText: { color: theme.color.brand, letterSpacing: 1.5, fontWeight: "700", fontSize: 12 },
-  cta: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, marginTop: theme.space.lg },
-  ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
-  sectSub: { color: theme.color.textMuted, marginBottom: theme.space.md, fontSize: 12 },
-  dayCard: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.sm, overflow: "hidden" },
-  dayHead: { flexDirection: "row", padding: theme.space.md, alignItems: "center" },
-  loadPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm },
-  loadPillText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
-  dayDate: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "700" },
-  dayType: { color: theme.color.text, fontSize: 14, fontWeight: "800", marginTop: 2 },
-  dayFlight: { color: theme.color.brand, fontSize: 11, marginTop: 2, fontWeight: "600" },
-  dayLayover: { color: theme.color.text, fontSize: 11, marginTop: 2 },
-  expandBox: { padding: theme.space.md, borderTopWidth: 1, borderTopColor: theme.color.divider },
-  miniLabel: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", marginTop: 10, marginBottom: 6 },
-  chipsScroll: { gap: 6, paddingBottom: 4 },
-  chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  chip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },
-  chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700" },
-  dotSm: { width: 6, height: 6, borderRadius: 3 },
-  input: { backgroundColor: theme.color.surface3, borderRadius: theme.radius.sm, color: theme.color.text, padding: 10, borderWidth: 1, borderColor: theme.color.border, marginTop: 6, fontSize: 13 },
-  hotelBox: { marginTop: theme.space.md, padding: theme.space.md, borderRadius: theme.radius.md, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
-  hotelHead: { color: theme.color.brand, letterSpacing: 1.5, fontWeight: "800", fontSize: 11 },
-  searchBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.surface3, borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, marginTop: 8, borderWidth: 1, borderColor: theme.color.border },
-  searchText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
-  results: { marginTop: 8, backgroundColor: theme.color.surface3, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border },
-  resultRow: { flexDirection: "row", alignItems: "center", padding: 10, borderTopWidth: 1, borderTopColor: theme.color.divider },
-  resultName: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
-  resultCity: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
-  resultUse: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
-  saveBtn: { backgroundColor: theme.color.brand, marginTop: 10, paddingVertical: 12, borderRadius: theme.radius.md, alignItems: "center" },
-  saveText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 12 },
-  savedText: { color: theme.color.green, fontSize: 11, marginTop: 6, fontWeight: "700" },
-  sticky: { position: "absolute", left: 0, right: 0, bottom: 0, padding: theme.space.lg, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.border },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.color.border },
+  title: { color: theme.color.text, fontSize: 14, fontWeight: "800", letterSpacing: 2 },
+  subtitle: { color: theme.color.text, fontSize: 20, fontWeight: "800", marginBottom: 6 },
+  helper: { color: theme.color.textMuted, fontSize: 13, marginBottom: 20 },
+  pickBtn: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 16, backgroundColor: theme.color.surface2, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.color.border, marginBottom: 10,
+  },
+  pickBtnTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800", letterSpacing: 1.5 },
+  pickBtnSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
+  err: { color: theme.color.red, marginTop: 20 },
+
+  progressCard: { padding: 20, backgroundColor: theme.color.surface2, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border },
+  progressHeader: { alignItems: "center", gap: 10, marginBottom: 16 },
+  progressTitle: { color: theme.color.text, fontSize: 14, fontWeight: "800", letterSpacing: 1.5, textAlign: "center" },
+  progressPct: { color: theme.color.brand, fontSize: 34, fontWeight: "900" },
+  progressBarWrap: { height: 8, borderRadius: 4, backgroundColor: theme.color.border, overflow: "hidden" },
+  progressBarFill: { height: "100%", borderRadius: 4 },
+  stageRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  stageLabel: { color: theme.color.textDim, fontSize: 13 },
+
+  errCard: { flexDirection: "row", gap: 10, alignItems: "flex-start", padding: 14, backgroundColor: "rgba(239,68,68,0.12)", borderRadius: 10, borderLeftWidth: 3, borderLeftColor: theme.color.red, marginTop: 14 },
+  errCardText: { color: theme.color.text, fontSize: 13, flex: 1, lineHeight: 18 },
+
+  actBtn: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 14, borderRadius: 10 },
+  actBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.brand },
+  actBtnText: { color: "#fff", fontSize: 12, fontWeight: "800", letterSpacing: 1.5 },
+  actBtnGhostText: { color: theme.color.brand, fontSize: 12, fontWeight: "800", letterSpacing: 1.5 },
+
+  leaveHint: { color: theme.color.textMuted, fontSize: 12, marginTop: 14, textAlign: "center", fontStyle: "italic" },
 });

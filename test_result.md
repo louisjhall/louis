@@ -442,10 +442,36 @@ frontend:
 
 test_plan:
   current_focus:
-    - "POST /api/coach/exercises/{name}/generate-image — Gemini Nano Banana image generation with Louis reference"
+    - "POST /api/workouts/{wid}/sets — cardio fields (logging_type, duration_sec, distance_m, pace auto-derive, heart_rate_avg)"
+    - "GET /api/exercises/previous — progression_hint field (increase/hold with delta_kg and reason)"
+    - "POST /api/coach/exercises/{name:path}/generate-image — regression check (Nano Banana still works)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend_phase3:
+  - task: "Cardio interval logging via /workouts/{wid}/sets"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Extended WorkoutSetBody with logging_type, duration_sec, distance_m, pace_sec_per_km, heart_rate_avg, heart_rate_max, calories, warmup. Server auto-computes pace_sec_per_km when duration_sec + distance_m provided but pace is missing. Verified locally: POST with duration_sec=1800, distance_m=5000 → pace=360 sec/km (6:00/km)."
+  - task: "Smart progression_hint on /exercises/previous"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Response now includes progression_hint {action: 'increase'|'hold', delta_kg, reason}. Rule: if all last-session sets hit target reps AND RPE<=8 → increase +max(2.5, wt*0.025). If RPE>=9 → hold. Otherwise hold with 'log RPE next time'. Verified with 80kg @ RPE 7 × 2 sets → +2.5kg to 82.5kg with reason 'Hit target reps last time at RPE 7.0 — Atlas is adding +2.5kg.'"
 
 backend_new:
   - task: "Atlas Nano Banana exercise image generation (Louis reference)"

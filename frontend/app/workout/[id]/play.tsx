@@ -1,6 +1,7 @@
 /**
- * Atlas Workout Player — Phase 1 rebuild
+ * Atlas Workout Player — Phase 1-3 rebuild
  * Swipeable tile carousel per exercise: IMAGE · HOW · VIDEO · SWAP · LOG
+ * Phase 3: Warm-up mini-cards with timers, cardio interval logging, smart progression hints.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -20,6 +21,30 @@ const TILES = ["IMAGE", "HOW TO", "VIDEO", "SWAP", "LOG"] as const;
 type Tile = typeof TILES[number];
 
 /* -------------------------------------------------------------------------- */
+/*  Helpers                                                                    */
+/* -------------------------------------------------------------------------- */
+function isCardioExercise(ex: any): boolean {
+  if (!ex) return false;
+  if (ex.logging_type === "cardio" || ex.logging_type === "timer") return true;
+  const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
+  return /\b(run|running|jog|zone\s?2|zone\s?[35]|intervals?|tempo|treadmill|row|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
+}
+
+function fmtMMSS(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.max(0, sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function parseMMSS(v: string): number | null {
+  if (!v) return null;
+  const parts = v.split(":").map((p) => parseInt(p, 10));
+  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return parts[0] * 60 + parts[1];
+  const n = parseFloat(v);
+  return isNaN(n) ? null : Math.round(n * 60); // treat as minutes
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Screen                                                                    */
 /* -------------------------------------------------------------------------- */
 export default function AtlasPlayer() {
@@ -35,6 +60,8 @@ export default function AtlasPlayer() {
   const restTimer = useRef<any>(null);
   const startedAt = useRef<number>(Date.now());
   const [now, setNow] = useState(Date.now());
+  const [warmupOpen, setWarmupOpen] = useState(false);
+  const [warmupDone, setWarmupDone] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,6 +173,33 @@ export default function AtlasPlayer() {
       </View>
       <Text style={styles.exCounter}>EXERCISE {idx + 1} OF {total} · ~{remaining} MIN REMAINING</Text>
 
+      {/* Warm-up banner (Phase 3) */}
+      {Array.isArray(w.warmup) && w.warmup.length > 0 && !warmupDone && (
+        <Pressable onPress={() => setWarmupOpen(true)} style={styles.warmupBanner} testID="warmup-open">
+          <View style={styles.warmupBannerIcon}>
+            <Ionicons name="flame" size={16} color={theme.color.brand} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.warmupBannerT}>WARM-UP READY · {w.warmup.length} MOVES</Text>
+            <Text style={styles.warmupBannerS}>
+              {w.warmup.slice(0, 3).map((it: any) => it.name).join(" · ")}
+              {w.warmup.length > 3 ? " · ..." : ""}
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={theme.color.brand} />
+        </Pressable>
+      )}
+
+      {/* Warm-up modal */}
+      {Array.isArray(w.warmup) && (
+        <WarmupModal
+          visible={warmupOpen}
+          items={w.warmup}
+          onClose={() => setWarmupOpen(false)}
+          onDone={() => { setWarmupOpen(false); setWarmupDone(true); }}
+        />
+      )}
+
       {/* Rest timer overlay */}
       {restLeft > 0 && (
         <View style={styles.restBar}>
@@ -181,14 +235,24 @@ export default function AtlasPlayer() {
           Alert.alert("Swapped", `Atlas has swapped to: ${n}. Continue when ready.`);
         }} />}
         {tile === "LOG" && (
-          <TileLog
-            ex={currentEx}
-            idx={idx}
-            workoutId={String(id)}
-            existing={currentSets}
-            prev={prev}
-            onLogged={(s: any) => { setSets((all) => [...all, s]); startRest(currentEx?.rest_sec || 90); }}
-          />
+          isCardioExercise(currentEx) ? (
+            <TileLogCardio
+              ex={currentEx}
+              idx={idx}
+              workoutId={String(id)}
+              existing={currentSets}
+              onLogged={(s: any) => { setSets((all) => [...all, s]); }}
+            />
+          ) : (
+            <TileLog
+              ex={currentEx}
+              idx={idx}
+              workoutId={String(id)}
+              existing={currentSets}
+              prev={prev}
+              onLogged={(s: any) => { setSets((all) => [...all, s]); startRest(currentEx?.rest_sec || 90); }}
+            />
+          )
         )}
       </ScrollView>
 
@@ -509,9 +573,19 @@ function TileLog({ ex, idx, workoutId, existing, prev, onLogged }: {
           )}
           {prev.suggested_load && (
             <View style={styles.suggested}>
-              <Ionicons name="pulse" size={12} color={theme.color.brand} />
-              <Text style={styles.suggestedT}>ATLAS SUGGESTS TODAY: {prev.suggested_load} kg × {targetReps}</Text>
+              <Ionicons
+                name={prev.progression_hint?.action === "increase" ? "trending-up" : "pulse"}
+                size={12}
+                color={prev.progression_hint?.action === "increase" ? theme.color.green : theme.color.brand}
+              />
+              <Text style={[styles.suggestedT, prev.progression_hint?.action === "increase" && { color: theme.color.green }]}>
+                ATLAS: {prev.suggested_load} kg × {targetReps}
+                {prev.progression_hint?.delta_kg ? ` (+${prev.progression_hint.delta_kg}kg)` : ""}
+              </Text>
             </View>
+          )}
+          {prev.progression_hint?.reason && (
+            <Text style={styles.progReason}>{prev.progression_hint.reason}</Text>
           )}
         </View>
       )}
@@ -566,6 +640,214 @@ function LogField({ label, value, onChange, placeholder, testID }: {
         placeholder={placeholder} placeholderTextColor={theme.color.textDim}
         style={styles.logInput} testID={testID}
       />
+    </View>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Tile 5 (cardio variant) — Interval Logging                                 */
+/* -------------------------------------------------------------------------- */
+function TileLogCardio({ ex, idx, workoutId, existing, onLogged }: {
+  ex: any; idx: number; workoutId: string; existing: any[]; onLogged: (s: any) => void;
+}) {
+  const targetIntervals = Math.max(1, parseInt(String(ex?.sets || 1), 10));
+  const targetLabel = ex?.reps || ex?.duration || "Complete the block";
+  const [row, setRow] = useState({ time: "", distance: "", hrAvg: "", rpe: "" });
+  const [saving, setSaving] = useState(false);
+  const nextInterval = existing.length + 1;
+
+  const submit = async () => {
+    if (saving || nextInterval > targetIntervals) return;
+    const timeSec = parseMMSS(row.time);
+    const distKm = parseFloat(row.distance);
+    const distM = !isNaN(distKm) ? Math.round(distKm * 1000) : null;
+    if (!timeSec && !distM) {
+      Alert.alert("Enter time or distance", "Log at least a duration (mm:ss) or a distance (km).");
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await api<any>(`/workouts/${workoutId}/sets`, {
+        method: "POST",
+        body: {
+          workout_id: workoutId,
+          exercise_index: idx,
+          exercise_name: ex.name,
+          set_number: nextInterval,
+          target_reps: String(targetLabel),
+          logging_type: "cardio",
+          duration_sec: timeSec,
+          distance_m: distM,
+          heart_rate_avg: parseInt(row.hrAvg, 10) || null,
+          rpe: parseFloat(row.rpe) || null,
+        },
+      });
+      onLogged(r.set);
+      setRow({ time: "", distance: "", hrAvg: "", rpe: "" });
+    } catch (e: any) {
+      Alert.alert("Log failed", e?.message || "Please try again");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <View>
+      {/* Existing intervals */}
+      {existing.map((s) => {
+        const t = s.duration_sec ? fmtMMSS(s.duration_sec) : "—";
+        const d = s.distance_m ? `${(s.distance_m / 1000).toFixed(2)}km` : "";
+        const p = s.pace_sec_per_km ? `${fmtMMSS(Math.round(s.pace_sec_per_km))}/km` : "";
+        const hr = s.heart_rate_avg ? `${s.heart_rate_avg}bpm` : "";
+        return (
+          <View key={s.id} style={styles.setRowDone}>
+            <View style={styles.setNum}><Text style={styles.setNumT}>{s.set_number}</Text></View>
+            <Text style={styles.setDoneT} numberOfLines={1}>
+              {[t, d, p, hr].filter(Boolean).join(" · ")}
+              {s.rpe ? ` · RPE ${s.rpe}` : ""}
+            </Text>
+            <Ionicons name="checkmark-circle" size={18} color={theme.color.green} />
+          </View>
+        );
+      })}
+
+      {nextInterval <= targetIntervals ? (
+        <View style={styles.setActive}>
+          <View style={styles.setActiveHead}>
+            <View style={[styles.setNum, styles.setNumActive]}><Text style={[styles.setNumT, { color: "#fff" }]}>{nextInterval}</Text></View>
+            <Text style={styles.setActiveT}>
+              {targetIntervals > 1 ? `INTERVAL ${nextInterval} of ${targetIntervals} · ` : "CARDIO BLOCK · "}
+              {String(targetLabel).toUpperCase()}
+            </Text>
+          </View>
+          <View style={styles.logRow}>
+            <LogField label="TIME (mm:ss)" value={row.time} onChange={(v) => setRow({ ...row, time: v })} placeholder="30:00" testID="log-time" />
+            <LogField label="DIST (km)" value={row.distance} onChange={(v) => setRow({ ...row, distance: v })} placeholder="5.0" testID="log-distance" />
+          </View>
+          <View style={[styles.logRow, { marginTop: 8 }]}>
+            <LogField label="AVG HR" value={row.hrAvg} onChange={(v) => setRow({ ...row, hrAvg: v })} placeholder="140" testID="log-hr" />
+            <LogField label="RPE" value={row.rpe} onChange={(v) => setRow({ ...row, rpe: v })} placeholder="1-10" testID="log-cardio-rpe" />
+          </View>
+          <Pressable
+            onPress={submit}
+            disabled={saving || (!row.time && !row.distance)}
+            style={[styles.completeBtn, (saving || (!row.time && !row.distance)) && { opacity: 0.35 }]}
+            testID="log-complete-cardio"
+          >
+            {saving ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="checkmark" size={16} color="#fff" />}
+            <Text style={styles.completeBtnT}>{saving ? "LOGGING..." : "LOG INTERVAL"}</Text>
+          </Pressable>
+          <Text style={styles.cardioHint}>
+            Tip: log TIME as mm:ss (e.g. 24:15). Pace auto-calculates from time + distance.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.allDone}>
+          <Ionicons name="trophy" size={30} color={theme.color.brand} />
+          <Text style={styles.allDoneT}>ALL INTERVALS COMPLETE</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Warm-up modal — Phase 3                                                    */
+/* -------------------------------------------------------------------------- */
+function WarmupModal({ visible, items, onClose, onDone }: {
+  visible: boolean; items: any[]; onClose: () => void; onDone: () => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.wuRoot}>
+        <Pressable style={styles.wuBackdrop} onPress={onClose} />
+        <View style={styles.wuSheet}>
+          <View style={styles.wuHead}>
+            <View style={styles.wuHeadIcon}><Ionicons name="flame" size={16} color={theme.color.brand} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.wuEyebrow}>ATLAS WARM-UP</Text>
+              <Text style={styles.wuTitle}>{items.length} moves · tap to time each one</Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={12}>
+              <Ionicons name="close" size={22} color={theme.color.text} />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 20 }}>
+            {items.map((it, i) => (
+              <WarmupCard key={i} item={it} index={i + 1} />
+            ))}
+            <Pressable onPress={onDone} style={styles.wuDoneBtn} testID="warmup-done">
+              <Ionicons name="checkmark-circle" size={16} color="#fff" />
+              <Text style={styles.wuDoneBtnT}>WARM-UP DONE</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function WarmupCard({ item, index }: { item: any; index: number }) {
+  const total = Math.max(10, parseInt(String(item.duration_sec || 30), 10));
+  const [left, setLeft] = useState<number | null>(null);
+  const tick = useRef<any>(null);
+  const [done, setDone] = useState(false);
+
+  const start = () => {
+    if (left !== null && left > 0) return; // already running
+    setLeft(total); setDone(false);
+    tick.current = setInterval(() => {
+      setLeft((s) => {
+        if (s === null || s <= 1) {
+          clearInterval(tick.current);
+          Vibration.vibrate([0, 250, 100, 250]);
+          setDone(true);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  };
+  const reset = () => {
+    if (tick.current) clearInterval(tick.current);
+    setLeft(null); setDone(false);
+  };
+  useEffect(() => () => { if (tick.current) clearInterval(tick.current); }, []);
+
+  const running = left !== null && left > 0;
+  const pct = left !== null ? Math.round(((total - left) / total) * 100) : (done ? 100 : 0);
+
+  return (
+    <View style={[styles.wuCard, done && styles.wuCardDone]}>
+      <View style={styles.wuCardTop}>
+        <View style={[styles.wuNum, done && styles.wuNumDone]}>
+          {done ? <Ionicons name="checkmark" size={12} color="#fff" /> : <Text style={styles.wuNumT}>{index}</Text>}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.wuName} numberOfLines={2}>{item.name || `Warm-up ${index}`}</Text>
+          <Text style={styles.wuMeta}>{total}s</Text>
+        </View>
+        <Text style={styles.wuTimer}>{left !== null ? fmtMMSS(left) : fmtMMSS(total)}</Text>
+      </View>
+      <View style={styles.wuBarTrack}>
+        <View style={[styles.wuBarFill, { width: `${pct}%` }, done && { backgroundColor: theme.color.green }]} />
+      </View>
+      <View style={styles.wuActions}>
+        {!running ? (
+          <Pressable onPress={start} style={styles.wuBtn} testID={`warmup-start-${index}`}>
+            <Ionicons name="play" size={12} color={theme.color.brand} />
+            <Text style={styles.wuBtnT}>{done ? "AGAIN" : "START"}</Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={reset} style={styles.wuBtn}>
+            <Ionicons name="stop" size={12} color={theme.color.brand} />
+            <Text style={styles.wuBtnT}>RESET</Text>
+          </Pressable>
+        )}
+        {!done && (
+          <Pressable onPress={() => setDone(true)} style={styles.wuBtnGhost}>
+            <Text style={styles.wuBtnGhostT}>MARK DONE</Text>
+          </Pressable>
+        )}
+      </View>
     </View>
   );
 }
@@ -694,4 +976,46 @@ const styles = StyleSheet.create({
   nextBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.brand },
   finishBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.green },
   nextT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
+
+  /* --- Phase 3: warm-up + cardio --- */
+  warmupBanner: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    marginHorizontal: 16, marginTop: 10, paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 10, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  warmupBannerIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: theme.color.surface, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.brand },
+  warmupBannerT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  warmupBannerS: { color: theme.color.text, fontSize: 11, marginTop: 2, fontWeight: "600" },
+
+  cardioHint: { color: theme.color.textMuted, fontSize: 10, marginTop: 8, textAlign: "center", fontStyle: "italic" },
+  progReason: { color: theme.color.textMuted, fontSize: 10, marginTop: 6, lineHeight: 14, fontStyle: "italic" },
+
+  wuRoot: { flex: 1, justifyContent: "flex-end" },
+  wuBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)" },
+  wuSheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "85%" },
+  wuHead: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
+  wuHeadIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.brand },
+  wuEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  wuTitle: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 3 },
+  wuCard: {
+    padding: 12, marginBottom: 10, borderRadius: 12,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+  },
+  wuCardDone: { borderColor: theme.color.green, backgroundColor: theme.color.surface2 },
+  wuCardTop: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
+  wuNum: { width: 26, height: 26, borderRadius: 13, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  wuNumDone: { backgroundColor: theme.color.green, borderColor: theme.color.green },
+  wuNumT: { color: theme.color.brand, fontSize: 11, fontWeight: "900" },
+  wuName: { color: theme.color.text, fontSize: 14, fontWeight: "800" },
+  wuMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 2, fontWeight: "700", letterSpacing: 1 },
+  wuTimer: { color: theme.color.brand, fontSize: 18, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  wuBarTrack: { height: 4, borderRadius: 2, backgroundColor: theme.color.surface3, overflow: "hidden" },
+  wuBarFill: { height: 4, backgroundColor: theme.color.brand },
+  wuActions: { flexDirection: "row", gap: 8, marginTop: 10 },
+  wuBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
+  wuBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  wuBtnGhost: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
+  wuBtnGhostT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  wuDoneBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 10, padding: 14, borderRadius: 10, backgroundColor: theme.color.green },
+  wuDoneBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
 });

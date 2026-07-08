@@ -1575,6 +1575,15 @@ class WorkoutSetBody(BaseModel):
     actual_weight: Optional[float] = None
     rpe: Optional[float] = None
     notes: Optional[str] = None
+    # Cardio interval logging (Phase 3)
+    logging_type: Optional[str] = None  # "weighted"|"bodyweight"|"cardio"|"timer"|"mobility"
+    duration_sec: Optional[int] = None       # for timed sets (planks, cardio blocks)
+    distance_m: Optional[float] = None       # cardio distance in metres
+    pace_sec_per_km: Optional[float] = None  # calc or entered
+    heart_rate_avg: Optional[int] = None     # avg BPM
+    heart_rate_max: Optional[int] = None     # peak BPM
+    calories: Optional[int] = None           # burnt
+    warmup: bool = False                     # true if this was a warm-up item, not a scored set
 
 
 @api.post("/workouts/{workout_id}/sets")
@@ -1593,8 +1602,25 @@ async def log_set(workout_id: str, body: WorkoutSetBody, user: dict = Depends(cu
         "actual_weight": body.actual_weight,
         "rpe": body.rpe,
         "notes": body.notes,
+        # Cardio interval fields
+        "logging_type": body.logging_type,
+        "duration_sec": body.duration_sec,
+        "distance_m": body.distance_m,
+        "pace_sec_per_km": body.pace_sec_per_km,
+        "heart_rate_avg": body.heart_rate_avg,
+        "heart_rate_max": body.heart_rate_max,
+        "calories": body.calories,
+        "warmup": body.warmup,
         "created_at": now_iso(),
     }
+    # Auto-derive pace if missing but distance + duration provided
+    if not doc.get("pace_sec_per_km") and doc.get("duration_sec") and doc.get("distance_m"):
+        try:
+            km = doc["distance_m"] / 1000.0
+            if km > 0:
+                doc["pace_sec_per_km"] = round(doc["duration_sec"] / km, 1)
+        except Exception:
+            pass
     await db.workout_sets.insert_one(doc)
     doc.pop("_id", None)
     return {"set": doc}
@@ -1628,6 +1654,7 @@ async def exercise_previous(name: str, user: dict = Depends(current_user)):
         pb = max(weighted, key=lambda r: (r.get("actual_weight") or 0, r.get("actual_reps") or 0))
     # Suggested: if all last-session sets hit target reps with RPE <= 8, add 2.5kg (or 5%); else keep
     suggested = None
+    progression_hint = None
     if last_session:
         top_set = max(last_session, key=lambda r: r.get("actual_weight") or 0)
         wt = top_set.get("actual_weight")
@@ -1637,9 +1664,21 @@ async def exercise_previous(name: str, user: dict = Depends(current_user)):
                            for r in last_session if r.get("target_reps"))
             if hit_reps and rpe and rpe <= 8:
                 suggested = round(wt + max(2.5, wt * 0.025), 1)
+                progression_hint = {
+                    "action": "increase",
+                    "delta_kg": round(suggested - wt, 1),
+                    "reason": f"Hit target reps last time at RPE {rpe} — Atlas is adding +{round(suggested - wt, 1)}kg.",
+                }
+            elif rpe and rpe >= 9:
+                suggested = wt
+                progression_hint = {"action": "hold", "delta_kg": 0.0,
+                                    "reason": f"RPE {rpe} last time — Atlas is holding weight to consolidate."}
             else:
                 suggested = wt
-    return {"last_session": last_session, "personal_best": pb, "suggested_load": suggested}
+                progression_hint = {"action": "hold", "delta_kg": 0.0,
+                                    "reason": "Atlas held the load — log RPE next time so it can progress you."}
+    return {"last_session": last_session, "personal_best": pb, "suggested_load": suggested,
+            "progression_hint": progression_hint}
 
 
 # Deterministic alternative catalog — Atlas uses this as ground truth

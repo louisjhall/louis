@@ -1,0 +1,30 @@
+{
+  "summary": "Backend-only testing of the 7 new Coaching Headquarters endpoints (PATCH /user/profile, PR CRUD, /achievements, /notes/coach, /notes/ai). Wrote /app/backend/tests/test_hq_backend.py with 21 pytest cases covering all spec scenarios plus auth gating. Ran against live http://localhost:8001. Result: 21/21 PASS. Original client name 'Alex Rivera' verified restored after the name-change test. No issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_hq_backend.py",
+    "/app/test_reports/pytest/hq_backend_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "PATCH /api/personal-records/{pr_id} uses PersonalRecordBody which requires name/value/unit — no true partial patches possible. This matches the request ('Requires all body fields'), but the HTTP verb is misleading (should be PUT semantically). Consider documenting or renaming for consumer clarity.",
+    "GET /notes/coach reads db.list_collection_names() on every call — small overhead; consider caching or skipping the check and letting an empty find return []."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_hq_backend.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "not tested"},
+  "seed_data_creation": "None. Test creates one Personal Record and deletes it in the same class (test_06_delete). Name change is restored in the auth fixture teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "HQ endpoints fully covered by /app/backend/tests/test_hq_backend.py (21 cases including auth gating parametrised across all 8 endpoint variants). Reuse the `auth` fixture — it logs in as the seeded client and restores the original name in teardown. PR ID passes across ordered tests via pytest cache (`hq/pr_id`)."
+}

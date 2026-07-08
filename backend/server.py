@@ -1290,6 +1290,195 @@ async def assessment_history(user: dict = Depends(current_user)):
     return {"assessments": rows}
 
 
+# ==================================================================
+# Coaching Headquarters — Profile / Achievements / Personal Records / Notes
+# ==================================================================
+class UserProfilePatch(BaseModel):
+    name: Optional[str] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    dob: Optional[str] = None
+    equipment: Optional[list[str]] = None
+    home_equipment: Optional[list[str]] = None
+    max_home_minutes: Optional[int] = None
+    experience_level: Optional[str] = None
+    goal: Optional[str] = None
+    training_days_per_week: Optional[int] = None
+    preferred_time: Optional[str] = None
+    timezone: Optional[str] = None
+
+
+@api.patch("/user/profile")
+async def user_profile_patch(body: UserProfilePatch, user: dict = Depends(current_user)):
+    """Patch simple profile fields on the user document (legacy profile bag)."""
+    updates: dict[str, Any] = {}
+    root_updates: dict[str, Any] = {}
+    dump = body.model_dump(exclude_none=True)
+    if "name" in dump:
+        root_updates["name"] = dump.pop("name")
+    for k, v in dump.items():
+        updates[f"profile.{k}"] = v
+    if updates or root_updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": {**root_updates, **updates, "profile.updated_at": now_iso()}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {"user": u}
+
+
+# ---------------- Personal Records ----------------
+class PersonalRecordBody(BaseModel):
+    name: str  # e.g., "Back Squat 1RM"
+    category: Optional[str] = None  # "strength", "run", "swim", "bike", "other"
+    value: float  # numeric value
+    unit: str  # "kg", "lb", "min", "sec", "km", "mi"
+    date: Optional[str] = None  # ISO date, defaults to today
+    notes: Optional[str] = None
+
+
+@api.get("/personal-records")
+async def pr_list(user: dict = Depends(current_user)):
+    rows = await db.personal_records.find({"user_id": user["id"]}, {"_id": 0}).sort("date", -1).to_list(200)
+    return {"records": rows}
+
+
+@api.post("/personal-records")
+async def pr_create(body: PersonalRecordBody, user: dict = Depends(current_user)):
+    from datetime import datetime as _dt
+    doc = {
+        "id": new_id(),
+        "user_id": user["id"],
+        "name": body.name.strip(),
+        "category": body.category or "other",
+        "value": float(body.value),
+        "unit": body.unit.strip(),
+        "date": body.date or _dt.utcnow().date().isoformat(),
+        "notes": body.notes,
+        "created_at": now_iso(),
+    }
+    await db.personal_records.insert_one(doc)
+    doc.pop("_id", None)
+    return {"record": {k: v for k, v in doc.items() if k != "_id"}}
+
+
+@api.patch("/personal-records/{pr_id}")
+async def pr_update(pr_id: str, body: PersonalRecordBody, user: dict = Depends(current_user)):
+    r = await db.personal_records.find_one({"id": pr_id, "user_id": user["id"]}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Not found")
+    updates = body.model_dump(exclude_none=True)
+    updates["updated_at"] = now_iso()
+    await db.personal_records.update_one({"id": pr_id, "user_id": user["id"]}, {"$set": updates})
+    r2 = await db.personal_records.find_one({"id": pr_id}, {"_id": 0})
+    return {"record": r2}
+
+
+@api.delete("/personal-records/{pr_id}")
+async def pr_delete(pr_id: str, user: dict = Depends(current_user)):
+    res = await db.personal_records.delete_one({"id": pr_id, "user_id": user["id"]})
+    return {"deleted": res.deleted_count > 0}
+
+
+# ---------------- Achievements (computed aggregate) ----------------
+@api.get("/achievements")
+async def achievements(user: dict = Depends(current_user)):
+    """Aggregate lightweight achievements from user's activity."""
+    uid = user["id"]
+    completed = await db.workouts.count_documents({"user_id": uid, "completed": True})
+    total_workouts = await db.workouts.count_documents({"user_id": uid})
+    prs = await db.personal_records.count_documents({"user_id": uid})
+    events = await db.events.count_documents({"user_id": uid})
+    assessments_done = await db.assessments.count_documents({"user_id": uid, "status": "completed"})
+    move_history = await db.move_history.count_documents({"user_id": uid})
+    # Streak = consecutive completed days (approx)
+    wkts = await db.workouts.find({"user_id": uid, "completed": True}, {"_id": 0, "date": 1}).sort("date", -1).to_list(60)
+    streak = 0
+    seen_dates = sorted({w["date"] for w in wkts if w.get("date")}, reverse=True)
+    from datetime import date as _date
+    today = _date.today()
+    prev: _date | None = None
+    for i, d in enumerate(seen_dates):
+        try:
+            ds = _date.fromisoformat(d)
+        except Exception:
+            continue
+        if prev is None:
+            if (today - ds).days > 1:
+                break
+            streak = 1
+            prev = ds
+            continue
+        if (prev - ds).days == 1:
+            streak += 1
+            prev = ds
+        else:
+            break
+    # Badges
+    badges: list[dict] = []
+    def _add(id_: str, title: str, sub: str, emoji: str, unlocked: bool):
+        badges.append({"id": id_, "title": title, "sub": sub, "emoji": emoji, "unlocked": unlocked})
+    _add("first_workout", "First Workout", "Complete your first CrewFit session", "🎯", completed >= 1)
+    _add("ten_workouts", "10 Workouts", "Complete 10 sessions total", "🔟", completed >= 10)
+    _add("fifty_workouts", "50 Workouts", "Complete 50 sessions total", "🏅", completed >= 50)
+    _add("century", "Century Club", "Complete 100 sessions total", "💯", completed >= 100)
+    _add("streak_3", "3-Day Streak", "Train 3 days in a row", "🔥", streak >= 3)
+    _add("streak_7", "Week Warrior", "Train 7 days in a row", "⚡", streak >= 7)
+    _add("streak_14", "Two-Week Titan", "Train 14 days in a row", "🌟", streak >= 14)
+    _add("first_pr", "First PR", "Log your first personal record", "📈", prs >= 1)
+    _add("event_planner", "Event Planner", "Have an active event on the calendar", "📅", events >= 1)
+    _add("intelligence", "CrewFit Intelligence", "Complete the assessment", "🧠", assessments_done >= 1)
+    _add("adaptive", "Adaptive Athlete", "Use Today's Reality 5 times", "🌊", move_history >= 5)
+    return {
+        "stats": {
+            "workouts_completed": completed,
+            "workouts_total": total_workouts,
+            "personal_records": prs,
+            "events_planned": events,
+            "assessments_completed": assessments_done,
+            "current_streak": streak,
+            "reality_adaptations": move_history,
+        },
+        "badges": badges,
+    }
+
+
+# ---------------- Notes (Coach & AI aggregated) ----------------
+@api.get("/notes/coach")
+async def notes_coach(user: dict = Depends(current_user)):
+    """Aggregate coach-authored notes for a client: coach messages + coach_notes on workouts + coach reviewed reality events."""
+    uid = user["id"]
+    # Workouts with coach_notes populated
+    wkts = await db.workouts.find(
+        {"user_id": uid, "coach_notes": {"$exists": True, "$nin": [None, ""]}},
+        {"_id": 0, "id": 1, "date": 1, "title": 1, "coach_notes": 1, "updated_at": 1},
+    ).sort("date", -1).to_list(50)
+    # Coach reviewed reality events
+    revs = await db.reality_events.find(
+        {"user_id": uid, "status": {"$in": ["coach_approved", "coach_rejected"]}, "coach_note": {"$nin": [None, ""]}},
+        {"_id": 0, "id": 1, "date": 1, "reality_label": 1, "coach_note": 1, "status": 1, "coach_reviewed_at": 1},
+    ).sort("coach_reviewed_at", -1).to_list(50)
+    # Messages from coach to this client (if messages collection exists)
+    msgs = await db.messages.find(
+        {"to_user_id": uid, "from_role": "coach"},
+        {"_id": 0, "id": 1, "from_name": 1, "body": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(30) if "messages" in await db.list_collection_names() else []
+    return {"workout_notes": wkts, "reality_reviews": revs, "messages": msgs}
+
+
+@api.get("/notes/ai")
+async def notes_ai(user: dict = Depends(current_user)):
+    """Aggregate AI-authored notes: DNA history + Reality context summaries + move history rationales."""
+    uid = user["id"]
+    dna_hist = await db.dna_history.find({"user_id": uid}, {"_id": 0}).sort("created_at", -1).to_list(30)
+    reality = await db.reality_events.find(
+        {"user_id": uid, "context_summary": {"$exists": True, "$nin": [None, ""]}},
+        {"_id": 0, "id": 1, "date": 1, "reality_label": 1, "context_summary": 1, "recovery_score": 1, "applied_option": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(50)
+    moves = await db.move_history.find(
+        {"user_id": uid},
+        {"_id": 0, "id": 1, "date": 1, "reality_label": 1, "option_title": 1, "option_why": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(30)
+    return {"dna_history": dna_hist, "reality_context": reality, "move_rationales": moves}
+
+
 # ------------------------------------------------------------------
 # Push
 # ------------------------------------------------------------------

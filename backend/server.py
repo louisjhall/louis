@@ -1442,20 +1442,9 @@ async def day_override(body: DayOverrideBody, user: dict = Depends(current_user)
         "coach_notified": False,
     })
 
-    # If a workout exists on this date and it's not coach-locked, mark it "updating"
-    # Use update_many because legacy data may have duplicate (user_id, date) rows.
+    # Check if any workout exists on this date and whether it's coach-locked
     wk = await db.workouts.find_one({"user_id": user["id"], "date": body.date}, {"_id": 0})
-    coach_locked = False
-    if wk and not wk.get("coach_locked") and not wk.get("completed"):
-        set_updates: dict[str, Any] = {"status": "updating", "override_applied": True, "updated_at": now_iso()}
-        if any(t in tags for t in ("annual_leave", "holiday", "sick", "injured", "need_rest")):
-            set_updates["status"] = "coach_reviewing"
-        await db.workouts.update_many(
-            {"user_id": user["id"], "date": body.date, "coach_locked": {"$ne": True}, "completed": {"$ne": True}},
-            {"$set": set_updates},
-        )
-    elif wk and wk.get("coach_locked"):
-        coach_locked = True
+    coach_locked = bool(wk and wk.get("coach_locked"))
 
     # === Rules Engine: adjust the workout content deterministically ===
     adjustment = await _apply_override_rules(user["id"], body.date, override)

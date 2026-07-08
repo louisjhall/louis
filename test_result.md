@@ -442,21 +442,18 @@ frontend:
 
 test_plan:
   current_focus:
-    - "GET /api/coach/videos"
-    - "GET /api/coach/videos/detail?key=..."
-    - "POST /api/coach/videos/slot?key=..."
-    - "POST /api/coach/videos/approve?key=..."
-    - "POST /api/coach/videos/preferred?key=..."
-    - "POST /api/coach/videos/variant?key=..."
-    - "DELETE /api/coach/videos/slot?key=...&slot=..."
-    - "POST /api/coach/videos/rescan?key=..."
-    - "Coach Videos frontend screen (master/detail + slots + variants + resolution)"
-    - "Client resolution honors preferred_slot and variants (GET /exercises/video?variant=)"
+    - "POST /api/calendar/day-override — Rules Engine adjustment logic (sick→rest, holiday→off, poor_sleep→mobility, reduce→trim, availability_min→trim/rest, location_only tags)"
+    - "GET /api/coach/calendar — override_tags/override_notes/override_applied surfaced per cell"
+    - "GET /api/coach/clients/{client_id} — overrides + change_log arrays included"
+    - "Coach-locked workouts remain untouched by Rules Engine (coach_locked:true short-circuits)"
+    - "Completed workouts remain untouched by Rules Engine"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
+  - agent: "main"
+    message: "Client Calendar Override Rules Engine implemented. When a client saves a day override via POST /api/calendar/day-override, backend deterministically mutates today's workout: (1) sick/injured or day_type in {sick,injury,rest} or training_preference=rest → REST workout (0 exercises, day_load=green, title='Rest & Recovery'); (2) annual_leave/holiday or day_type in {annual_leave,holiday,family} → OFF workout (grey); (3) poor_sleep/need_rest/high_stress/family_commitment/childcare or training_preference=mobility → 15-min mobility session with 5 stretches; (4) training_preference=reduce or limited_time or availability_min 1-20 → intensity reduction (sets -1, duration ×0.65, load steps down one level); (5) hotel_gym/no_gym/outdoor_run_possible tags → location update only. Response now includes {adjustment: {action, reason, changed, new_title, new_duration, new_day_load, coach_locked}}. Respects coach_locked and completed workouts (no changes). Coach visibility: /api/coach/calendar cells include override_tags/override_notes/override_applied. /api/coach/clients/{id} response now includes overrides[] and change_log[] arrays. Frontend: DayEditModal shows adjustment alert; workout screen shows amber 'PLAN ADJUSTED' banner with reason; coach calendar cells show amber left border + tag badge; coach client detail shows CLIENT DAY EDITS card. Please test rules engine matrix + coach visibility endpoints."
   - agent: "main"
     message: "§26 Phase B complete. Coach video CRUD dashboard delivered as /(coach)/videos screen with sidebar nav. 8 new backend endpoints (list, detail, upsert, slot, approve, preferred, variant, delete, rescan). Detail + mutation endpoints use ?key= query param (not path) because some exercise keys contain '/'. Client-facing GET /exercises/video and POST /exercises/videos-batch now accept ?variant=home|hotel|gym|default and use _resolve_display_video for priority (variant > preferred slot > custom_upload > custom_url > youtube_backup > primary > alternative > ai_image), excluding rejected slots. Please test all 8 backend endpoints (coach role required; client role must get 403 on all coach endpoints) AND the frontend flow (open Videos in sidebar, click item with '/' in key, paste a YouTube URL, mark preferred, set a hotel variant, verify the client's workout screen picks up the change). Phase C (custom uploads via base64) and Phase D (YouTube search via general web search) still pending."
 

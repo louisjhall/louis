@@ -23,7 +23,7 @@ export default function ClientDetail() {
     return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface }}><ActivityIndicator color={theme.color.brand} /></View>;
   }
 
-  const { client, roster, workouts, checkins } = data;
+  const { client, roster, workouts, checkins, overrides = [], change_log: changeLog = [] } = data;
   const p = client.profile || {};
 
   return (
@@ -86,6 +86,39 @@ export default function ClientDetail() {
           }
         </View>
 
+        {overrides.length > 0 && (
+          <View style={styles.card}>
+            <Text style={styles.sect}>CLIENT DAY EDITS · {overrides.length}</Text>
+            {overrides.slice(0, 12).map((o: any, idx: number) => {
+              const tagsList: string[] = o.tags || [];
+              const topTag = tagsList[0] || o.day_type || o.training_preference || "edit";
+              return (
+                <View key={o.id || `${o.date}-${idx}`} style={styles.ovRow}>
+                  <View style={styles.ovLeft}>
+                    <Ionicons name="create" size={14} color={theme.color.amber} />
+                    <Text style={styles.ovDate}>{o.date}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.ovTags} numberOfLines={1}>
+                      {tagsList.length
+                        ? tagsList.map((t: string) => t.replace(/_/g, " ").toUpperCase()).join(" · ")
+                        : String(topTag).replace(/_/g, " ").toUpperCase()}
+                    </Text>
+                    {o.notes ? (
+                      <Text style={styles.ovNotes} numberOfLines={2}>
+                        {`"${o.notes}"`}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              );
+            })}
+            {overrides.length > 12 && (
+              <Text style={styles.ovMore}>+{overrides.length - 12} more</Text>
+            )}
+          </View>
+        )}
+
         {checkins.length > 0 && (
           <View style={styles.card}>
             <Text style={styles.sect}>LATEST CHECK-IN</Text>
@@ -129,4 +162,10 @@ const styles = StyleSheet.create({
   wMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   approved: { color: theme.color.green, fontSize: 20, marginRight: 4 },
   pending: { color: theme.color.amber, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  ovRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.color.divider },
+  ovLeft: { flexDirection: "row", alignItems: "center", gap: 6, width: 118 },
+  ovDate: { color: theme.color.text, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
+  ovTags: { color: theme.color.amber, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  ovNotes: { color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", marginTop: 2 },
+  ovMore: { color: theme.color.textDim, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginTop: 6, textAlign: "center" },
 });

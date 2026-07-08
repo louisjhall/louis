@@ -114,8 +114,24 @@ export function DayEditModal({
           apply_to: applyTo,
         },
       });
+      const adj = res.adjustment || {};
       if (res.coach_locked) {
-        Alert.alert("Coach locked", "This workout has been locked by your coach. Your update has been sent to them for review.");
+        Alert.alert(
+          "Coach locked",
+          "This workout has been locked by your coach. Your update has been sent to them for review."
+        );
+      } else if (adj.changed && adj.action && adj.action !== "noop") {
+        const map: any = {
+          rest: "Rest day scheduled",
+          off: "Marked as off day",
+          mobility: "Swapped to light mobility",
+          reduce: "Session intensity reduced",
+          location_only: "Session location updated",
+        };
+        Alert.alert(
+          map[adj.action] || "Plan updated",
+          (adj.reason || "") + (adj.new_title ? `\n\nNow: ${adj.new_title}${adj.new_duration ? ` · ${adj.new_duration}m` : ""}` : "")
+        );
       }
       onSaved?.();
       onClose();

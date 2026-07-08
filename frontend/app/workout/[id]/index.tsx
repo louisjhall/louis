@@ -108,6 +108,13 @@ export default function WorkoutDetail() {
           {w.event_phase && <Text style={[styles.metaChip, { color: theme.color.brand, borderColor: theme.color.brand }]}>{String(w.event_phase).toUpperCase().replace("_", " ")}</Text>}
         </View>
 
+        {w.override_applied || w.override_generated ? (
+          <View style={styles.overrideBanner}>
+            <Text style={styles.overrideLabel}>PLAN ADJUSTED</Text>
+            <Text style={styles.overrideText}>{w.override_reason || "Your day edit changed this workout."}</Text>
+          </View>
+        ) : null}
+
         {w.rationale && (
           <View style={styles.rationale}>
             <Text style={styles.rLabel}>WHY THIS WORKOUT</Text>
@@ -244,6 +251,9 @@ const styles = StyleSheet.create({
   metaChip: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.pill },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
   rLabel: { color: theme.color.brand, letterSpacing: 2, fontSize: 10, fontWeight: "800" },
+  overrideBanner: { marginTop: theme.space.md, padding: theme.space.md, backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.amber },
+  overrideLabel: { color: theme.color.amber, letterSpacing: 2, fontSize: 10, fontWeight: "900" },
+  overrideText: { color: theme.color.text, marginTop: 6, fontSize: 13, lineHeight: 19 },
   rText: { color: theme.color.text, marginTop: 6, fontSize: 13, lineHeight: 19 },
   cycleBtn: { marginTop: theme.space.md, padding: 10, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center" },
   sect: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },

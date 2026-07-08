@@ -111,6 +111,7 @@ export default function CoachCalendar() {
                 </Pressable>
                 {cl.days.map((cell: any, i: number) => {
                   const isToday = cell.date === today;
+                  const hasOverride = !!(cell.override_applied || (cell.override_tags && cell.override_tags.length));
                   return (
                     <Pressable
                       key={i}
@@ -121,6 +122,7 @@ export default function CoachCalendar() {
                         styles.cell,
                         isToday && styles.todayCellBorder,
                         cell.workout_id && styles.cellClickable,
+                        hasOverride && styles.overrideCell,
                       ]}
                     >
                       <View style={[styles.loadStripe, { backgroundColor: cell.load ? loadColor(cell.load) : "transparent" }]} />
@@ -134,9 +136,19 @@ export default function CoachCalendar() {
                             {cell.key_session && <Ionicons name="star" size={9} color={theme.color.brand} />}
                             {cell.completed && <Ionicons name="checkmark-circle" size={10} color={theme.color.green} />}
                             {!cell.approved && <View style={styles.notApprovedDot} />}
+                            {hasOverride && (
+                              <Ionicons name="create" size={10} color={theme.color.amber} />
+                            )}
                             <Text style={styles.cellMeta}>{cell.duration_min ? `${cell.duration_min}m` : ""}</Text>
                           </View>
                         </>
+                      )}
+                      {hasOverride && cell.override_tags && cell.override_tags[0] && (
+                        <View style={styles.overrideTag}>
+                          <Text style={styles.overrideTagText} numberOfLines={1}>
+                            {String(cell.override_tags[0]).replace(/_/g, " ").toUpperCase()}
+                          </Text>
+                        </View>
                       )}
                     </Pressable>
                   );
@@ -215,6 +227,23 @@ const styles = StyleSheet.create({
   },
   cellClickable: {},
   todayCellBorder: { borderTopWidth: 2, borderTopColor: theme.color.brand },
+  overrideCell: { borderLeftWidth: 3, borderLeftColor: theme.color.amber },
+  overrideTag: {
+    position: "absolute",
+    left: 4,
+    right: 4,
+    bottom: 2,
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    borderRadius: 3,
+    paddingVertical: 1,
+    paddingHorizontal: 4,
+  },
+  overrideTagText: {
+    color: theme.color.amber,
+    fontSize: 7.5,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
   loadStripe: { height: 3, borderRadius: 2, marginBottom: 4 },
   workoutText: { color: theme.color.text, fontSize: 10, fontWeight: "700", lineHeight: 12 },
   dutyText: { color: theme.color.textMuted, fontSize: 9, fontStyle: "italic", lineHeight: 11 },

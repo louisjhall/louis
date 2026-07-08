@@ -1168,6 +1168,214 @@ VALID_EQUIPMENT = {
 VALID_TRAIN_PREF = {"normal", "reduce", "mobility", "rest", "ask_coach", "auto"}
 
 
+# ------------------------------------------------------------------
+# Rules Engine: turn a client Day Override into an adjusted workout
+# ------------------------------------------------------------------
+REST_TAGS = {"sick", "injured"}
+OFF_TAGS = {"annual_leave", "holiday"}
+LIGHT_TAGS = {"poor_sleep", "need_rest", "high_stress", "family_commitment", "childcare"}
+
+
+def _build_rest_workout(date: str, reason: str) -> dict:
+    return {
+        "day_load": "green",
+        "title": "Rest & Recovery",
+        "location": "Home",
+        "duration_min": 0,
+        "focus": "rest",
+        "warmup": [],
+        "exercises": [],
+        "alternatives": {},
+        "rationale": reason,
+        "key_session": False,
+        "override_generated": True,
+        "override_reason": reason,
+    }
+
+
+def _build_off_workout(date: str, reason: str) -> dict:
+    return {
+        "day_load": "grey",
+        "title": "Off Day",
+        "location": "Off",
+        "duration_min": 0,
+        "focus": "off",
+        "warmup": [],
+        "exercises": [],
+        "alternatives": {},
+        "rationale": reason,
+        "key_session": False,
+        "override_generated": True,
+        "override_reason": reason,
+    }
+
+
+def _build_mobility_workout(date: str, reason: str, minutes: int = 15) -> dict:
+    return {
+        "day_load": "green",
+        "title": "Light Mobility & Stretch",
+        "location": "Home",
+        "duration_min": minutes,
+        "focus": "mobility",
+        "warmup": [
+            {"name": "Neck rolls", "duration_sec": 30},
+            {"name": "Shoulder circles", "duration_sec": 30},
+        ],
+        "exercises": [
+            {"name": "Cat-cow stretch", "sets": 1, "reps": "10", "notes": "Slow, controlled breathing"},
+            {"name": "World's greatest stretch", "sets": 1, "reps": "6/side", "notes": "Open through the thoracic"},
+            {"name": "90/90 hip switches", "sets": 1, "reps": "10/side"},
+            {"name": "Down-dog to cobra flow", "sets": 1, "reps": "8"},
+            {"name": "Child's pose", "sets": 1, "reps": "60s hold"},
+        ],
+        "alternatives": {},
+        "rationale": reason,
+        "key_session": False,
+        "override_generated": True,
+        "override_reason": reason,
+    }
+
+
+def _reduce_intensity(w: dict, reason: str) -> dict:
+    """Trim sets/duration on an existing workout to reflect lower capacity."""
+    out = {**w}
+    ex_in = list(w.get("exercises") or [])
+    ex_out = []
+    for e in ex_in:
+        e2 = {**e}
+        try:
+            sets = int(e2.get("sets") or 0)
+            if sets > 1:
+                e2["sets"] = max(1, sets - 1)
+        except Exception:
+            pass
+        ex_out.append(e2)
+    out["exercises"] = ex_out
+    try:
+        dur = int(w.get("duration_min") or 0)
+        if dur:
+            out["duration_min"] = max(15, int(dur * 0.65))
+    except Exception:
+        pass
+    if w.get("day_load") == "red":
+        out["day_load"] = "amber"
+    elif w.get("day_load") == "amber":
+        out["day_load"] = "green"
+    out["override_generated"] = True
+    out["override_reason"] = reason
+    out["rationale"] = (w.get("rationale") or "") + f"  |  Adjusted: {reason}"
+    return out
+
+
+def _classify_override(ov: dict) -> tuple[str, str]:
+    """Return (action, reason) for a stored override.
+
+    action: 'rest' | 'off' | 'mobility' | 'reduce' | 'location_only' | 'noop'
+    """
+    tags = set(ov.get("tags") or [])
+    pref = ov.get("training_preference")
+    day_type = ov.get("day_type")
+    avail = ov.get("availability_min")
+
+    # Explicit rest/off requests
+    if pref == "rest" or day_type in ("rest", "sick", "injury") or (REST_TAGS & tags):
+        who = "sick" if "sick" in tags or day_type == "sick" else ("injured" if "injured" in tags or day_type == "injury" else "rest")
+        return "rest", f"Client marked day as {who.upper()} — full rest prescribed."
+    if day_type in ("annual_leave", "holiday", "family") or (OFF_TAGS & tags):
+        label = "ANNUAL LEAVE" if "annual_leave" in tags or day_type == "annual_leave" else ("HOLIDAY" if "holiday" in tags or day_type == "holiday" else "OFF")
+        return "off", f"Client marked day as {label} — no session planned."
+    if pref == "mobility":
+        return "mobility", "Client requested mobility only."
+    if LIGHT_TAGS & tags:
+        top = next(iter(LIGHT_TAGS & tags))
+        return "mobility", f"Client flagged {top.replace('_', ' ').upper()} — swapped to light mobility."
+    if pref == "reduce" or "limited_time" in tags:
+        return "reduce", ("Reduced intensity per client request." if pref == "reduce" else "Client flagged LIMITED TIME — reduced session.")
+    if avail is not None:
+        try:
+            avail_i = int(avail)
+        except Exception:
+            avail_i = -1
+        if avail_i == 0:
+            return "rest", "Client has no time today — rest scheduled."
+        if 0 < avail_i <= 20:
+            return "reduce", f"Only {avail_i} min available — trimmed session."
+    if tags & {"hotel_gym", "no_gym", "outdoor_run_possible"}:
+        return "location_only", "Location updated based on client tag."
+    if "feeling_good" in tags and not (tags & (REST_TAGS | OFF_TAGS | LIGHT_TAGS)):
+        return "noop", "Client feeling good — plan unchanged."
+    return "noop", ""
+
+
+async def _apply_override_rules(user_id: str, date: str, override: dict) -> dict:
+    """Rules Engine — mutate today's workout doc based on override intent.
+
+    Returns a dict summary { action, reason, workout_id, changed: bool }.
+    Respects `coach_locked` and `completed` — no changes to those.
+    """
+    action, reason = _classify_override(override)
+    result = {"action": action, "reason": reason, "changed": False, "workout_id": None, "coach_locked": False}
+    if action == "noop":
+        return result
+
+    wk = await db.workouts.find_one({"user_id": user_id, "date": date}, {"_id": 0})
+    if not wk:
+        # No workout on this date — nothing to adjust; alert already emitted upstream
+        return result
+    if wk.get("coach_locked"):
+        result["coach_locked"] = True
+        return result
+    if wk.get("completed"):
+        return result
+
+    result["workout_id"] = wk.get("id")
+    patch: dict = {}
+    if action == "rest":
+        patch = _build_rest_workout(date, reason)
+    elif action == "off":
+        patch = _build_off_workout(date, reason)
+    elif action == "mobility":
+        patch = _build_mobility_workout(date, reason)
+    elif action == "reduce":
+        patch = _reduce_intensity(wk, reason)
+    elif action == "location_only":
+        # Update location + equipment inference
+        tags = set(override.get("tags") or [])
+        if "no_gym" in tags:
+            new_loc = "Hotel Room (Bodyweight)"
+        elif "hotel_gym" in tags:
+            new_loc = "Hotel Gym"
+        elif "outdoor_run_possible" in tags:
+            new_loc = "Outdoor Run"
+        else:
+            new_loc = wk.get("location") or "Home"
+        patch = {**wk, "location": new_loc, "rationale": (wk.get("rationale") or "") + f"  |  {reason}", "override_generated": True, "override_reason": reason}
+
+    if not patch:
+        return result
+
+    # Preserve identity + any coach notes
+    patch["id"] = wk["id"]
+    patch["user_id"] = user_id
+    patch["roster_id"] = wk.get("roster_id")
+    patch["date"] = date
+    patch["approved"] = wk.get("approved", True)
+    patch["completed"] = False
+    patch["coach_notes"] = wk.get("coach_notes", "")
+    patch["coach_locked"] = False
+    patch["created_at"] = wk.get("created_at") or now_iso()
+    patch["updated_at"] = now_iso()
+    patch["status"] = "override_applied"
+    patch["override_applied"] = True
+
+    await db.workouts.update_one({"user_id": user_id, "date": date, "id": wk["id"]}, {"$set": patch})
+    result["changed"] = True
+    result["new_title"] = patch.get("title")
+    result["new_duration"] = patch.get("duration_min")
+    result["new_day_load"] = patch.get("day_load")
+    return result
+
+
 class DayOverrideBody(BaseModel):
     date: str
     day_type: Optional[str] = None
@@ -1249,6 +1457,11 @@ async def day_override(body: DayOverrideBody, user: dict = Depends(current_user)
     elif wk and wk.get("coach_locked"):
         coach_locked = True
 
+    # === Rules Engine: adjust the workout content deterministically ===
+    adjustment = await _apply_override_rules(user["id"], body.date, override)
+    if adjustment.get("coach_locked"):
+        coach_locked = True
+
     # Emit a coach alert
     try:
         await db.coach_alerts.insert_one({
@@ -1256,12 +1469,14 @@ async def day_override(body: DayOverrideBody, user: dict = Depends(current_user)
             "client_name": user.get("name") or user.get("email"),
             "kind": "day_edited", "date": body.date,
             "tags": tags, "apply_to": override["apply_to"],
+            "adjustment_action": adjustment.get("action"),
+            "adjustment_reason": adjustment.get("reason"),
             "created_at": now_iso(), "read": False,
         })
     except Exception:
         pass
 
-    return {"override": override, "coach_locked": coach_locked}
+    return {"override": override, "coach_locked": coach_locked, "adjustment": adjustment}
 
 
 @api.get("/calendar/day-override")
@@ -2398,7 +2613,13 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
     ev = await db.events.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
     if ev:
         ev["phase_info"] = _event_phase(ev.get("event_date", ""))
-    return {"client": c, "roster": r, "workouts": workouts, "checkins": checkins, "roster_history": history, "event": ev or None}
+    overrides = await db.day_overrides.find({"user_id": client_id}, {"_id": 0}).sort("date", -1).to_list(60)
+    change_log = await db.day_change_log.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(30)
+    return {
+        "client": c, "roster": r, "workouts": workouts, "checkins": checkins,
+        "roster_history": history, "event": ev or None,
+        "overrides": overrides, "change_log": change_log,
+    }
 
 
 @api.get("/coach/pending-approvals")
@@ -2425,10 +2646,14 @@ async def coach_calendar(days: int = 14, _: dict = Depends(require_role("coach")
         wkt_map: dict[str, dict] = {}
         for w in wkts:
             wkt_map[w["date"]] = w
+        # Fetch client's day overrides for this window
+        ovs = await db.day_overrides.find({"user_id": u["id"], "date": {"$in": dates}}, {"_id": 0}).to_list(500)
+        ov_map: dict[str, dict] = {o["date"]: o for o in ovs}
         cells = []
         for d in dates:
             rd = day_map.get(d, {})
             wk = wkt_map.get(d)
+            ov = ov_map.get(d)
             cells.append({
                 "date": d,
                 "load": rd.get("load") or (wk.get("day_load") if wk else None),
@@ -2440,6 +2665,10 @@ async def coach_calendar(days: int = 14, _: dict = Depends(require_role("coach")
                 "approved": bool((wk or {}).get("approved", True)),
                 "duration_min": (wk or {}).get("duration_min"),
                 "location": (wk or {}).get("location"),
+                "override_applied": bool((wk or {}).get("override_applied") or (wk or {}).get("override_generated")),
+                "override_tags": (ov or {}).get("tags") or [],
+                "override_notes": (ov or {}).get("notes"),
+                "override_pref": (ov or {}).get("training_preference"),
             })
         rows.append({
             "client_id": u["id"],

@@ -130,7 +130,8 @@ class TestDayOverridePost:
         created_at_1 = o1["created_at"]
 
         # small delay so updated_at differs
-        import time; time.sleep(1.1)
+        import time
+        time.sleep(1.1)
 
         r2 = requests.post(f"{API}/calendar/day-override", json={"date": d, "tags": ["feeling_good"], "notes": "changed"}, headers=client_headers, timeout=15)
         assert r2.status_code == 200

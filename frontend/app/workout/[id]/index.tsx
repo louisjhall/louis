@@ -8,6 +8,7 @@ import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
+import { RealityModal } from "@/src/components/RealityModal";
 
 const PREFERRED_CHANNELS = [
   "Jeff Nippard", "Squat University", "Renaissance Periodization",
@@ -24,6 +25,7 @@ export default function WorkoutDetail() {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [rpe, setRpe] = useState("");
+  const [realityOpen, setRealityOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,6 +116,23 @@ export default function WorkoutDetail() {
             <Text style={styles.overrideText}>{w.override_reason || "Your day edit changed this workout."}</Text>
           </View>
         ) : null}
+
+        {!isCoach && (
+          <Pressable
+            testID="reality-btn-workout"
+            onPress={() => setRealityOpen(true)}
+            style={styles.realityBtn}
+          >
+            <View style={styles.realityBtnLeft}>
+              <Text style={styles.realityEmojiW}>🧠</Text>
+              <View>
+                <Text style={styles.realityTitleW}>TODAY&apos;S REALITY</Text>
+                <Text style={styles.realitySubW}>What has changed today?</Text>
+              </View>
+            </View>
+            <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
+          </Pressable>
+        )}
 
         {w.rationale && (
           <View style={styles.rationale}>
@@ -235,6 +254,12 @@ export default function WorkoutDetail() {
           </Pressable>
         )}
       </View>
+      <RealityModal
+        visible={realityOpen}
+        date={w?.date || null}
+        onClose={() => setRealityOpen(false)}
+        onApplied={() => { setRealityOpen(false); load(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -254,6 +279,18 @@ const styles = StyleSheet.create({
   overrideBanner: { marginTop: theme.space.md, padding: theme.space.md, backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.amber },
   overrideLabel: { color: theme.color.amber, letterSpacing: 2, fontSize: 10, fontWeight: "900" },
   overrideText: { color: theme.color.text, marginTop: 6, fontSize: 13, lineHeight: 19 },
+  realityBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginTop: theme.space.md,
+    paddingVertical: 12, paddingHorizontal: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  realityBtnLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  realityEmojiW: { fontSize: 20 },
+  realityTitleW: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  realitySubW: { color: theme.color.textMuted, fontSize: 10, marginTop: 1 },
   rText: { color: theme.color.text, marginTop: 6, fontSize: 13, lineHeight: 19 },
   cycleBtn: { marginTop: theme.space.md, padding: 10, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center" },
   sect: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },

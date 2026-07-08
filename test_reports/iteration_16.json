@@ -1,0 +1,38 @@
+{
+  "summary": "CrewFit Intelligence Reality Engine (Phase 1) — 38/38 backend tests PASSED (100%). All endpoints verified end-to-end against live Claude Sonnet 4.5: /api/reality/kinds returns all 17 kinds; /api/reality/submit returns 3 A/B/C options for every reality_kind with touches_locked flag; /api/reality/apply Option A mutates workouts and records move_history; Option C routes to ask_coach + emits coach_alerts row; duplicate apply → 400; unknown event → 404; coach_locked and completed workouts are preserved (skipped_reason='locked_or_completed'); strict mode + touches_locked forces ask_coach routing; balanced-mode apply emits kind='reality_applied' coach_alerts visible via /api/coach/roster-alerts; /api/coach/reality/pending lists ask_coach events with client_name enrichment; /api/coach/reality/decision approve_A runs the option server-side and writes a move_history entry with actor_role='coach'; PATCH+GET /api/coach/settings works with strict/balanced/flexible; role gating: client → 403 on all /api/coach/* reality endpoints; cross-client fetch of a reality event → 403 while the coach can fetch any event. DB schema (reality_events and move_history) validated against the review spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/reality/kinds", "issue": "Endpoint has no auth dependency (returns 200 without a token). Review spec said 'auth: any user'. Low-risk (label lookup only) but inconsistent with other client endpoints — add Depends(current_user) if you want to gate it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reality_engine.py",
+    "/app/test_reports/pytest/reality_engine_results.xml"
+  ],
+  "action_items": [
+    "Optional: add auth dependency to GET /api/reality/kinds to match spec.",
+    "AI fallback path (_reality_fallback) was NOT exercised in this run — Claude Sonnet 4.5 responded on every one of the 17 kinds tested. Consider adding a unit-level test that mocks call_claude to force-raise so the deterministic fallback is covered."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 4193 lines (>>700). Reality engine block (~1490-2170) should be extracted into a dedicated module (e.g. crewfit/reality.py) — pure functions like _reality_fallback, _apply_reality_action, _build_reality_context are cleanly separable.",
+    "Coach approve path in /api/coach/reality/decision claims to 'bypass coach_locked because coach is doing it' but actually calls _apply_reality_action() unchanged — which still short-circuits on coach_locked/completed via the skipped_reason='locked_or_completed' branch. If the intent is a true bypass, pass a flag through the action executor (currently it silently no-ops on locked/completed even for coach-driven approvals).",
+    "coach_reality_decision decision='approve_A'|'approve_B' selects option via string parse; consider using apply_option_id consistently and treating decision as pure state ('approve' | 'reject').",
+    "Move-history entry stores full 'changes' snapshot including large workout payloads (before/after title, duration, exercises); consider bounding to avoid unbounded document growth over months."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reality_engine.py (created)"
+  ],
+  "success_rate": {"backend": "100% (38/38)", "frontend": "not tested"},
+  "seed_data_creation": "None. Used the pre-seeded client (client@crewfit.com) with 146 workouts. Each test snapshots and restores mutated workouts on the target date via direct Mongo writes so it can be re-run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file at /app/backend/tests/test_reality_engine.py is idempotent — it snapshots workouts before mutation and restores on teardown. Total runtime ~7 minutes because each of the 17 reality_kinds triggers a real Claude Sonnet 4.5 call (5–15s each). To speed up local iterations, comment out the TestSubmitAllKinds parametrize list. Coach mode is reset to 'balanced' via module-scoped autouse fixture so the suite is safe to run alongside the override_rules_engine suite.",
+  "rca_of_issue": "N/A — no bugs found."
+}

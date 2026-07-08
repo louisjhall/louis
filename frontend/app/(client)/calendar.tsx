@@ -107,6 +107,9 @@ export default function CalendarScreen() {
           <Pressable testID="cal-prev" onPress={prevMonth} style={styles.iconBtn}><Ionicons name="chevron-back" size={18} color={theme.color.brand} /></Pressable>
           <Pressable testID="cal-today" onPress={goToday} style={styles.todayBtn}><Text style={styles.todayBtnText}>TODAY</Text></Pressable>
           <Pressable testID="cal-next" onPress={nextMonth} style={styles.iconBtn}><Ionicons name="chevron-forward" size={18} color={theme.color.brand} /></Pressable>
+          <Pressable testID="cal-history" onPress={() => router.push("/reality-history" as any)} style={styles.iconBtn}>
+            <Ionicons name="time" size={16} color={theme.color.brand} />
+          </Pressable>
           <Pressable testID="cal-upload" onPress={() => router.push("/roster-upload")} style={styles.uploadBtn}>
             <Ionicons name="cloud-upload-outline" size={14} color="#fff" />
             <Text style={styles.uploadBtnText}>UPLOAD</Text>

@@ -1488,6 +1488,684 @@ async def clear_day_override(date: str, user: dict = Depends(current_user)):
     return {"ok": True}
 
 
+# ==================================================================
+# CrewFit Intelligence™ — Dynamic Life Adaptation Engine
+# ==================================================================
+REALITY_KINDS = {
+    "exhausted", "flight_delayed", "roster_changed", "hotel_changed", "no_gym",
+    "feeling_amazing", "less_time", "more_time", "family_commitments",
+    "annual_leave", "feeling_ill", "injured", "travelling", "bad_weather",
+    "missed_yesterday", "want_to_move", "other",
+}
+
+REALITY_KIND_LABELS = {
+    "exhausted": "I'm exhausted",
+    "flight_delayed": "Flight delayed",
+    "roster_changed": "Roster changed",
+    "hotel_changed": "Hotel changed",
+    "no_gym": "No gym available",
+    "feeling_amazing": "Feeling amazing",
+    "less_time": "Less time today",
+    "more_time": "More time today",
+    "family_commitments": "Family commitments",
+    "annual_leave": "Annual leave",
+    "feeling_ill": "Feeling ill",
+    "injured": "Injured",
+    "travelling": "Travelling",
+    "bad_weather": "Bad weather",
+    "missed_yesterday": "Missed yesterday's workout",
+    "want_to_move": "Move this workout",
+    "other": "Something else",
+}
+
+COACH_MODES = {"strict", "balanced", "flexible"}
+
+REALITY_SYSTEM = """You are CrewFit Intelligence™ — an elite AI coach for airline crew.
+
+The client just told you what happened in their life today. Your job: think like their personal coach and produce THREE options for how to adapt the training programme, ranked A (Recommended) B (Alternative) C (Ask Coach).
+
+Never make the client think like a coach. You do the thinking.
+
+RULES (STRICT):
+1. Preserve key sessions (long run, threshold, brick, race sim, heavy strength, testing, peak week) whenever possible.
+2. Never place high-intensity within 24h of a long-haul night flight, layover arrival, or after poor sleep.
+3. Never place heavy lower-body within 48h of a scheduled long run.
+4. Respect coach_locked=true workouts — you MAY suggest an action but ALSO include an "ask_coach" fallback for locked sessions.
+5. Recovery matters — if the client is exhausted / feeling ill / injured, prescribe rest, mobility or walk. Do NOT push training.
+6. Feeling amazing → OPTIONAL bonus mobility, core, zone-2 or technique work. Do NOT dramatically increase volume.
+7. Time-constrained (less_time / 20-min limit) → reduce sets, keep progression intact.
+8. No gym / hotel gym missing → replace with bodyweight or outdoor equivalent, MAINTAIN the training objective.
+9. Bad weather → indoor alternative that preserves the session focus.
+10. Missed yesterday → NEVER pile it on today; either skip safely or split next week.
+
+AVAILABLE ACTION KINDS (return one or more per option):
+- {"kind":"keep","date":"YYYY-MM-DD"} — no change
+- {"kind":"reduce","date":"YYYY-MM-DD","target_min":<int>} — trim duration/sets, keep focus
+- {"kind":"extend","date":"YYYY-MM-DD","add_min":<int>} — add optional bonus work
+- {"kind":"replace","date":"YYYY-MM-DD","new_title":"...","new_location":"...","new_focus":"...","target_min":<int>} — same slot, different session (e.g. no-gym swap)
+- {"kind":"convert_mobility","date":"YYYY-MM-DD"} — 15-min mobility
+- {"kind":"convert_recovery","date":"YYYY-MM-DD"} — 20-min recovery walk / easy spin
+- {"kind":"convert_walk","date":"YYYY-MM-DD","target_min":<int>} — walk-only
+- {"kind":"skip","date":"YYYY-MM-DD","reason":"..."} — mark as rest / off
+- {"kind":"move","from_date":"YYYY-MM-DD","to_date":"YYYY-MM-DD"} — swap the workout with whatever is on to_date (or place on empty day)
+- {"kind":"bring_forward","from_date":"YYYY-MM-DD","to_date":"YYYY-MM-DD"} — pull tomorrow's session to today
+- {"kind":"push_back","from_date":"YYYY-MM-DD","to_date":"YYYY-MM-DD"} — delay session
+- {"kind":"note","date":"YYYY-MM-DD","text":"..."} — coach note, no structural change
+- {"kind":"ask_coach","reason":"..."} — only when option C is chosen or a locked session is affected
+
+RESPONSE SCHEMA (return STRICT JSON):
+{
+  "recovery_score": 0-100,           // your assessment of the client's current recovery
+  "context_summary": "short 1-sentence read of the situation",
+  "options": [
+    {
+      "id":"A",
+      "label":"Recommended",
+      "title":"<8-word summary of what CrewFit will do>",
+      "why":"<2-3 sentence explanation referencing roster, event phase, and coaching rules>",
+      "risk":"low|medium|high",
+      "actions":[ {kind..., ...} ]
+    },
+    {"id":"B","label":"Alternative", ...},
+    {"id":"C","label":"Ask Coach", "title":"Escalate to coach", "why":"...", "risk":"low", "actions":[{"kind":"ask_coach","reason":"..."}]}
+  ]
+}
+
+Return ONLY JSON, no prose."""
+
+
+class RealitySubmitBody(BaseModel):
+    date: str
+    reality_kind: str
+    notes: Optional[str] = None
+    time_available_min: Optional[int] = None  # optional context signal
+
+
+class RealityApplyBody(BaseModel):
+    reality_event_id: str
+    option_id: str  # "A" | "B" | "C"
+
+
+class CoachModeBody(BaseModel):
+    mode: str  # strict | balanced | flexible
+
+
+async def _build_reality_context(user: dict, target_date: str) -> dict:
+    """Assemble the full context payload we hand to Claude for a reality submission."""
+    from datetime import datetime as _dt, timedelta as _td
+    profile = user.get("profile", {}) or {}
+    try:
+        anchor = _dt.fromisoformat(target_date).date()
+    except Exception:
+        anchor = _dt.utcnow().date()
+    window_dates = [(anchor + _td(days=i)).isoformat() for i in range(-2, 8)]  # 2 days back, 7 forward
+
+    # Active roster
+    roster = await db.rosters.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    roster_days = []
+    if roster:
+        for d in (roster.get("days") or []):
+            if d.get("date") in window_dates:
+                roster_days.append({
+                    "date": d.get("date"), "day_type": d.get("day_type"),
+                    "load": d.get("load"), "hotel_id": d.get("hotel_id"),
+                    "flights": (d.get("flights") or [])[:2],
+                })
+
+    # Workouts in window
+    wkts_raw = await db.workouts.find({"user_id": user["id"], "date": {"$in": window_dates}}, {"_id": 0}).to_list(50)
+    workouts = []
+    for w in wkts_raw:
+        workouts.append({
+            "id": w.get("id"), "date": w.get("date"),
+            "title": w.get("title"), "focus": w.get("focus"),
+            "duration_min": w.get("duration_min"), "day_load": w.get("day_load"),
+            "location": w.get("location"), "key_session": bool(w.get("key_session")),
+            "event_phase": w.get("event_phase"),
+            "coach_locked": bool(w.get("coach_locked")),
+            "completed": bool(w.get("completed")),
+        })
+
+    # Active event
+    ev = await db.events.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    event_ctx = None
+    if ev:
+        pi = _event_phase(ev.get("event_date", ""))
+        event_ctx = {
+            "type": ev.get("event_type"), "name": ev.get("event_name"),
+            "date": ev.get("event_date"),
+            "phase": pi.get("phase"), "weeks_to_race": pi.get("weeks_to_race"),
+            "days_to_race": pi.get("days_to_race"),
+        }
+
+    # Recent check-ins
+    checkins_raw = await db.checkins.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(3)
+    checkins = [{
+        "date": c.get("date"), "energy": c.get("energy"), "sleep": c.get("sleep"),
+        "soreness": c.get("soreness"), "stress": c.get("stress"), "rpe": c.get("rpe"),
+    } for c in checkins_raw]
+
+    # Coach mode
+    coach_mode = "balanced"
+    if user.get("coach_id"):
+        coach = await db.users.find_one({"id": user["coach_id"]}, {"_id": 0, "profile": 1})
+        if coach:
+            coach_mode = (coach.get("profile") or {}).get("coach_mode") or "balanced"
+
+    # Home equipment
+    home_equipment = profile.get("home_equipment") or []
+
+    return {
+        "target_date": target_date,
+        "profile": {
+            "name": user.get("name"),
+            "training_days_per_week": profile.get("training_days_per_week"),
+            "experience_level": profile.get("experience_level"),
+            "home_equipment": home_equipment,
+            "goal": profile.get("goal"),
+        },
+        "coach_mode": coach_mode,
+        "roster_days": roster_days,
+        "workouts_window": workouts,
+        "event": event_ctx,
+        "recent_checkins": checkins,
+    }
+
+
+@api.get("/reality/kinds")
+async def reality_kinds():
+    """List of supported reality kinds with labels — used by the UI to render icon cards."""
+    return {"kinds": [{"kind": k, "label": REALITY_KIND_LABELS[k]} for k in REALITY_KIND_LABELS]}
+
+
+@api.post("/reality/submit")
+async def reality_submit(body: RealitySubmitBody, user: dict = Depends(current_user)):
+    """Client submits a Today's Reality. AI computes 3 options (A/B/C) and returns them.
+
+    The reality event is persisted with the AI options; client then POSTs /reality/apply
+    to execute the chosen option.
+    """
+    if body.reality_kind not in REALITY_KINDS:
+        raise HTTPException(400, f"reality_kind must be one of {sorted(REALITY_KINDS)}")
+
+    ctx = await _build_reality_context(user, body.date)
+    ctx["reality_kind"] = body.reality_kind
+    ctx["reality_label"] = REALITY_KIND_LABELS[body.reality_kind]
+    ctx["client_notes"] = (body.notes or "").strip() or None
+    ctx["time_available_min"] = body.time_available_min
+
+    prompt = (
+        f"CLIENT REALITY UPDATE ({REALITY_KIND_LABELS[body.reality_kind]}):\n"
+        f"Notes: {ctx['client_notes'] or '(none)'}\n"
+        f"Time available: {body.time_available_min or 'not specified'} min\n\n"
+        f"FULL CONTEXT (JSON):\n{json.dumps(ctx)[:9000]}\n\n"
+        "Produce your 3-option adaptation JSON now."
+    )
+
+    try:
+        raw = await call_claude(REALITY_SYSTEM, prompt, max_out=4000)
+        parsed = parse_json_from_text(raw)
+    except Exception:
+        logger.exception("reality AI failed")
+        # Fallback deterministic option based on reality_kind
+        parsed = _reality_fallback(body.reality_kind, body.date, ctx, body.time_available_min)
+
+    options = parsed.get("options") or []
+    # Coerce to exactly 3 options if the model returned fewer
+    while len(options) < 3:
+        options.append({
+            "id": ["A", "B", "C"][len(options)],
+            "label": ["Recommended", "Alternative", "Ask Coach"][len(options)],
+            "title": "Escalate to coach",
+            "why": "Insufficient AI options — routed to your coach.",
+            "risk": "low",
+            "actions": [{"kind": "ask_coach", "reason": "AI returned fewer than 3 options"}],
+        })
+    options = options[:3]
+    # Ensure ids A/B/C in order
+    for i, o in enumerate(options):
+        o["id"] = ["A", "B", "C"][i]
+        o.setdefault("label", ["Recommended", "Alternative", "Ask Coach"][i])
+        o.setdefault("risk", "low")
+        o.setdefault("actions", [])
+
+    # Mark options that touch coach_locked workouts
+    locked_dates = {w["date"] for w in ctx.get("workouts_window", []) if w.get("coach_locked")}
+    for o in options:
+        touches_locked = False
+        for a in o.get("actions", []):
+            for f in ("date", "from_date", "to_date"):
+                if a.get(f) in locked_dates:
+                    touches_locked = True
+        o["touches_locked"] = touches_locked
+
+    reality_event = {
+        "id": new_id(),
+        "user_id": user["id"],
+        "date": body.date,
+        "reality_kind": body.reality_kind,
+        "reality_label": REALITY_KIND_LABELS[body.reality_kind],
+        "notes": body.notes,
+        "time_available_min": body.time_available_min,
+        "context_snapshot": ctx,
+        "recovery_score": parsed.get("recovery_score"),
+        "context_summary": parsed.get("context_summary"),
+        "options": options,
+        "coach_mode": ctx["coach_mode"],
+        "applied_option": None,
+        "applied_at": None,
+        "status": "awaiting_choice",  # awaiting_choice | applied | ask_coach | expired
+        "created_at": now_iso(),
+    }
+    await db.reality_events.insert_one(reality_event)
+
+    return {
+        "reality_event_id": reality_event["id"],
+        "recovery_score": reality_event["recovery_score"],
+        "context_summary": reality_event["context_summary"],
+        "options": options,
+        "coach_mode": ctx["coach_mode"],
+    }
+
+
+def _reality_fallback(kind: str, date: str, ctx: dict, time_available: Optional[int]) -> dict:
+    """Deterministic 3-option fallback if AI fails or is offline."""
+    workouts = ctx.get("workouts_window", [])
+    todays = next((w for w in workouts if w.get("date") == date), None)
+    label = REALITY_KIND_LABELS.get(kind, kind)
+
+    if kind in ("feeling_ill", "exhausted", "injured"):
+        a = {"id": "A", "label": "Recommended", "title": "Full rest today",
+             "why": f"You reported: {label}. Rest is the fastest way to bounce back.",
+             "risk": "low", "actions": [{"kind": "skip", "date": date, "reason": label}]}
+        b = {"id": "B", "label": "Alternative", "title": "Gentle mobility (15m)",
+             "why": "If you feel able, a short mobility flow can help without adding load.",
+             "risk": "medium", "actions": [{"kind": "convert_mobility", "date": date}]}
+    elif kind in ("less_time", "family_commitments"):
+        target = time_available if time_available else 20
+        a = {"id": "A", "label": "Recommended", "title": f"Trim session to {target} min",
+             "why": "Progression preserved by trimming sets, not skipping.",
+             "risk": "low", "actions": [{"kind": "reduce", "date": date, "target_min": target}]}
+        b = {"id": "B", "label": "Alternative", "title": "Skip today, add optional session later",
+             "why": "Better to skip than rush a poor-quality session.",
+             "risk": "medium", "actions": [{"kind": "skip", "date": date, "reason": label}]}
+    elif kind == "more_time":
+        a = {"id": "A", "label": "Recommended", "title": "Optional bonus mobility",
+             "why": "Volume already programmed — add mobility rather than more work.",
+             "risk": "low", "actions": [{"kind": "extend", "date": date, "add_min": 15}]}
+        b = {"id": "B", "label": "Alternative", "title": "Keep session as is",
+             "why": "Nothing wrong with banking recovery time.",
+             "risk": "low", "actions": [{"kind": "keep", "date": date}]}
+    elif kind == "feeling_amazing":
+        a = {"id": "A", "label": "Recommended", "title": "Add optional core / mobility",
+             "why": "Feeling good is a signal to add quality, not volume.",
+             "risk": "low", "actions": [{"kind": "extend", "date": date, "add_min": 15}]}
+        b = {"id": "B", "label": "Alternative", "title": "Keep planned session",
+             "why": "Ride the wave — the plan is already right.",
+             "risk": "low", "actions": [{"kind": "keep", "date": date}]}
+    elif kind == "no_gym":
+        home_eq = ctx.get("profile", {}).get("home_equipment") or []
+        loc = "Hotel Room (Bodyweight)" if not home_eq else "Home Workout"
+        a = {"id": "A", "label": "Recommended", "title": "Swap to hotel bodyweight session",
+             "why": "Same training objective, no equipment required.",
+             "risk": "low", "actions": [{"kind": "replace", "date": date, "new_title": "Hotel Bodyweight", "new_location": loc, "new_focus": todays.get("focus") if todays else "full", "target_min": todays.get("duration_min") if todays else 30}]}
+        b = {"id": "B", "label": "Alternative", "title": "Skip today, protect long session later",
+             "why": "If time is tight, banking recovery for the key session is smart.",
+             "risk": "medium", "actions": [{"kind": "convert_walk", "date": date, "target_min": 30}]}
+    elif kind == "bad_weather":
+        a = {"id": "A", "label": "Recommended", "title": "Move indoors — same focus",
+             "why": "Preserve the training stimulus with an indoor alternative.",
+             "risk": "low", "actions": [{"kind": "replace", "date": date, "new_title": "Indoor Alternative", "new_location": "Home Workout", "new_focus": todays.get("focus") if todays else "full", "target_min": todays.get("duration_min") if todays else 40}]}
+        b = {"id": "B", "label": "Alternative", "title": "Push today to tomorrow",
+             "why": "Weather clears — plan flexes.",
+             "risk": "medium", "actions": [{"kind": "push_back", "from_date": date, "to_date": _next_day(date)}]}
+    else:  # generic
+        a = {"id": "A", "label": "Recommended", "title": "Keep today as planned",
+             "why": "The AI didn't detect a strong reason to change — plan stays.",
+             "risk": "low", "actions": [{"kind": "keep", "date": date}]}
+        b = {"id": "B", "label": "Alternative", "title": "Convert to easy recovery",
+             "why": "Recovery is never wasted.",
+             "risk": "low", "actions": [{"kind": "convert_recovery", "date": date}]}
+
+    c = {"id": "C", "label": "Ask Coach", "title": "Escalate to coach",
+         "why": "Send this to your coach for a personal call on the plan.",
+         "risk": "low", "actions": [{"kind": "ask_coach", "reason": label}]}
+    return {"recovery_score": None, "context_summary": f"Reality: {label}", "options": [a, b, c]}
+
+
+def _next_day(d: str) -> str:
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        return (_dt.fromisoformat(d).date() + _td(days=1)).isoformat()
+    except Exception:
+        return d
+
+
+async def _apply_reality_action(user_id: str, action: dict) -> dict:
+    """Execute a single Reality action against db.workouts. Returns a change record."""
+    kind = action.get("kind")
+    change: dict = {"kind": kind, "action": action, "changed": False, "before": None, "after": None}
+
+    async def _find(date: str) -> Optional[dict]:
+        return await db.workouts.find_one({"user_id": user_id, "date": date}, {"_id": 0})
+
+    if kind == "keep" or kind == "note":
+        d = action.get("date")
+        w = await _find(d) if d else None
+        if kind == "note" and w:
+            note_text = action.get("text") or ""
+            new_notes = ((w.get("coach_notes") or "") + ("\n" if w.get("coach_notes") else "") + note_text).strip()
+            await db.workouts.update_one({"id": w["id"]}, {"$set": {"coach_notes": new_notes, "updated_at": now_iso()}})
+            change.update({"changed": True, "before": {"coach_notes": w.get("coach_notes")}, "after": {"coach_notes": new_notes}})
+        return change
+
+    if kind == "ask_coach":
+        return change  # no workout mutation; handled at the reality event level
+
+    if kind in ("reduce", "extend", "replace", "convert_mobility", "convert_recovery", "convert_walk", "skip"):
+        d = action.get("date")
+        if not d:
+            return change
+        w = await _find(d)
+        if not w:
+            return change
+        if w.get("coach_locked") or w.get("completed"):
+            change["skipped_reason"] = "locked_or_completed"
+            return change
+        before = dict(w)
+        patch = dict(w)
+        if kind == "reduce":
+            target = int(action.get("target_min") or max(15, int((w.get("duration_min") or 40) * 0.6)))
+            factor = target / max(1, int(w.get("duration_min") or target))
+            patch["duration_min"] = target
+            exs = []
+            for e in (w.get("exercises") or []):
+                e2 = dict(e)
+                try:
+                    s = int(e2.get("sets") or 0)
+                    if s > 1:
+                        e2["sets"] = max(1, int(round(s * factor)))
+                except Exception:
+                    pass
+                exs.append(e2)
+            patch["exercises"] = exs
+            if w.get("day_load") == "red":
+                patch["day_load"] = "amber"
+            patch["rationale"] = (w.get("rationale") or "") + f"  |  Reduced to {target}m by CrewFit Intelligence."
+        elif kind == "extend":
+            add = int(action.get("add_min") or 15)
+            patch["duration_min"] = int(w.get("duration_min") or 0) + add
+            patch["rationale"] = (w.get("rationale") or "") + f"  |  +{add}m optional bonus added."
+        elif kind == "replace":
+            patch["title"] = action.get("new_title") or w.get("title")
+            patch["location"] = action.get("new_location") or w.get("location")
+            patch["focus"] = action.get("new_focus") or w.get("focus")
+            if action.get("target_min"):
+                patch["duration_min"] = int(action["target_min"])
+            patch["rationale"] = (w.get("rationale") or "") + f"  |  Replaced: {action.get('new_title')}"
+        elif kind == "convert_mobility":
+            mob = _build_mobility_workout(d, "Client reality: mobility session prescribed by CrewFit Intelligence.")
+            for k in ("day_load", "title", "location", "duration_min", "focus", "warmup", "exercises",
+                     "alternatives", "rationale", "key_session", "override_generated", "override_reason"):
+                patch[k] = mob.get(k, patch.get(k))
+            patch["override_applied"] = True
+        elif kind == "convert_recovery":
+            patch["day_load"] = "green"
+            patch["title"] = "Recovery Session"
+            patch["location"] = "Home"
+            patch["duration_min"] = 20
+            patch["focus"] = "recovery"
+            patch["warmup"] = []
+            patch["exercises"] = [
+                {"name": "Easy walk or spin", "sets": 1, "reps": "20 min", "notes": "Nose-only breathing, zone 1"},
+            ]
+            patch["rationale"] = (w.get("rationale") or "") + "  |  Converted to recovery."
+        elif kind == "convert_walk":
+            target = int(action.get("target_min") or 30)
+            patch["day_load"] = "green"
+            patch["title"] = "Walk"
+            patch["location"] = "Outdoor"
+            patch["duration_min"] = target
+            patch["focus"] = "recovery"
+            patch["warmup"] = []
+            patch["exercises"] = [{"name": "Steady walk", "sets": 1, "reps": f"{target} min", "notes": "Easy pace"}]
+            patch["rationale"] = (w.get("rationale") or "") + f"  |  Converted to {target}m walk."
+        elif kind == "skip":
+            rest = _build_rest_workout(d, action.get("reason") or "Client reality: skip today.")
+            for k in ("day_load", "title", "location", "duration_min", "focus", "warmup", "exercises",
+                     "alternatives", "rationale", "key_session", "override_generated", "override_reason"):
+                patch[k] = rest.get(k, patch.get(k))
+            patch["override_applied"] = True
+
+        patch["override_applied"] = True
+        patch["updated_at"] = now_iso()
+        await db.workouts.update_one({"id": w["id"]}, {"$set": patch})
+        change.update({"changed": True, "before": {k: before.get(k) for k in ("title", "duration_min", "focus", "day_load", "location", "exercises")},
+                       "after": {k: patch.get(k) for k in ("title", "duration_min", "focus", "day_load", "location", "exercises")}})
+        return change
+
+    if kind in ("move", "bring_forward", "push_back"):
+        f, t = action.get("from_date"), action.get("to_date")
+        if not f or not t:
+            return change
+        w_from = await _find(f)
+        w_to = await _find(t)
+        if not w_from:
+            return change
+        if w_from.get("coach_locked") or w_from.get("completed"):
+            change["skipped_reason"] = "locked_or_completed"
+            return change
+        if w_to and (w_to.get("coach_locked") or w_to.get("completed")):
+            change["skipped_reason"] = "target_locked_or_completed"
+            return change
+        # Simplest swap: move w_from's payload to date=t (keep id, update date); move w_to's payload to date=f (or leave a rest day if no w_to)
+        payload_from = {k: w_from.get(k) for k in ("title", "location", "duration_min", "focus", "warmup",
+                                                     "exercises", "alternatives", "rationale", "key_session",
+                                                     "event_phase", "day_load")}
+        if w_to:
+            payload_to = {k: w_to.get(k) for k in ("title", "location", "duration_min", "focus", "warmup",
+                                                     "exercises", "alternatives", "rationale", "key_session",
+                                                     "event_phase", "day_load")}
+            await db.workouts.update_one({"id": w_from["id"]}, {"$set": {**payload_to, "override_applied": True, "updated_at": now_iso(),
+                                                                          "rationale": (payload_to.get("rationale") or "") + f"  |  Swapped with {t}."}})
+            await db.workouts.update_one({"id": w_to["id"]}, {"$set": {**payload_from, "override_applied": True, "updated_at": now_iso(),
+                                                                        "rationale": (payload_from.get("rationale") or "") + f"  |  Moved from {f}."}})
+        else:
+            # No workout on target date — just move payload_from's payload onto t by updating from's date field
+            await db.workouts.update_one({"id": w_from["id"]}, {"$set": {"date": t, "override_applied": True, "updated_at": now_iso(),
+                                                                          "rationale": (payload_from.get("rationale") or "") + f"  |  Moved from {f} to {t}."}})
+            # Build a rest day on f
+            rest = _build_rest_workout(f, f"Session moved to {t}.")
+            await db.workouts.insert_one({
+                "id": new_id(), "user_id": user_id, "date": f,
+                "roster_id": w_from.get("roster_id"),
+                **rest, "approved": True, "completed": False, "coach_locked": False,
+                "coach_notes": "", "created_at": now_iso(), "updated_at": now_iso(),
+                "override_applied": True,
+            })
+        change.update({"changed": True, "before": {"from": f, "to": t}, "after": {"from": f, "to": t}})
+        return change
+
+    return change
+
+
+@api.post("/reality/apply")
+async def reality_apply(body: RealityApplyBody, user: dict = Depends(current_user)):
+    """Apply the chosen option from a reality event. Records move_history and marks the event applied."""
+    evt = await db.reality_events.find_one({"id": body.reality_event_id, "user_id": user["id"]}, {"_id": 0})
+    if not evt:
+        raise HTTPException(404, "Reality event not found")
+    if evt.get("applied_option"):
+        raise HTTPException(400, f"Already applied option {evt['applied_option']}")
+    opt = next((o for o in evt.get("options", []) if o.get("id") == body.option_id), None)
+    if not opt:
+        raise HTTPException(400, f"Option {body.option_id} not found on this reality event")
+
+    # Coach approval gating (strict mode + locked touched → force ask_coach)
+    coach_mode = evt.get("coach_mode") or "balanced"
+    touches_locked = bool(opt.get("touches_locked"))
+    if body.option_id == "C" or (coach_mode == "strict" and touches_locked):
+        await db.reality_events.update_one({"id": evt["id"]}, {"$set": {
+            "applied_option": body.option_id, "applied_at": now_iso(),
+            "status": "ask_coach",
+        }})
+        try:
+            await db.coach_alerts.insert_one({
+                "id": new_id(), "client_id": user["id"],
+                "client_name": user.get("name") or user.get("email"),
+                "kind": "reality_ask_coach", "date": evt.get("date"),
+                "reality_event_id": evt["id"],
+                "reality_label": evt.get("reality_label"),
+                "option_id": body.option_id,
+                "created_at": now_iso(), "read": False,
+            })
+        except Exception:
+            pass
+        return {"status": "ask_coach", "reality_event_id": evt["id"], "coach_mode": coach_mode}
+
+    # Execute actions
+    changes: list[dict] = []
+    for a in opt.get("actions", []):
+        ch = await _apply_reality_action(user["id"], a)
+        changes.append(ch)
+
+    # Record move_history
+    await db.move_history.insert_one({
+        "id": new_id(), "user_id": user["id"],
+        "reality_event_id": evt["id"],
+        "reality_kind": evt.get("reality_kind"),
+        "reality_label": evt.get("reality_label"),
+        "date": evt.get("date"),
+        "option_id": body.option_id,
+        "option_title": opt.get("title"),
+        "option_why": opt.get("why"),
+        "changes": changes,
+        "actor_id": user["id"],
+        "actor_role": user.get("role", "client"),
+        "coach_mode": coach_mode,
+        "created_at": now_iso(),
+    })
+    await db.reality_events.update_one({"id": evt["id"]}, {"$set": {
+        "applied_option": body.option_id, "applied_at": now_iso(),
+        "status": "applied",
+    }})
+
+    # Notify coach in balanced mode
+    if coach_mode == "balanced":
+        try:
+            await db.coach_alerts.insert_one({
+                "id": new_id(), "client_id": user["id"],
+                "client_name": user.get("name") or user.get("email"),
+                "kind": "reality_applied", "date": evt.get("date"),
+                "reality_event_id": evt["id"],
+                "reality_label": evt.get("reality_label"),
+                "option_id": body.option_id,
+                "option_title": opt.get("title"),
+                "created_at": now_iso(), "read": False,
+            })
+        except Exception:
+            pass
+
+    return {"status": "applied", "reality_event_id": evt["id"], "changes": changes, "option": opt}
+
+
+@api.get("/reality/history")
+async def reality_history(limit: int = 50, user: dict = Depends(current_user)):
+    """Return the client's move history (most recent first)."""
+    rows = await db.move_history.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"history": rows}
+
+
+@api.get("/reality/{event_id}")
+async def reality_get(event_id: str, user: dict = Depends(current_user)):
+    """Fetch a reality event (client OR their coach)."""
+    evt = await db.reality_events.find_one({"id": event_id}, {"_id": 0})
+    if not evt:
+        raise HTTPException(404, "Not found")
+    if user["role"] == "client" and evt["user_id"] != user["id"]:
+        raise HTTPException(403, "Forbidden")
+    return evt
+
+
+@api.get("/coach/reality/pending")
+async def coach_reality_pending(coach: dict = Depends(require_role("coach"))):
+    """List all client reality events that are awaiting coach input."""
+    rows = await db.reality_events.find({"status": "ask_coach"}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    for r in rows:
+        u = await db.users.find_one({"id": r.get("user_id")}, {"_id": 0, "name": 1, "email": 1})
+        r["client_name"] = (u or {}).get("name") or (u or {}).get("email") or "Client"
+    return rows
+
+
+class CoachRealityDecisionBody(BaseModel):
+    reality_event_id: str
+    decision: str  # 'approve_A' | 'approve_B' | 'reject' | 'custom_note'
+    note: Optional[str] = None
+    apply_option_id: Optional[str] = None  # 'A'|'B' if coach wants to apply a specific option
+
+
+@api.post("/coach/reality/decision")
+async def coach_reality_decision(body: CoachRealityDecisionBody, coach: dict = Depends(require_role("coach"))):
+    evt = await db.reality_events.find_one({"id": body.reality_event_id}, {"_id": 0})
+    if not evt:
+        raise HTTPException(404, "Not found")
+    if body.decision == "reject":
+        await db.reality_events.update_one({"id": evt["id"]}, {"$set": {"status": "coach_rejected", "coach_note": body.note or "", "coach_reviewed_at": now_iso()}})
+        return {"status": "coach_rejected"}
+    # Approve — execute the chosen option on the client's behalf
+    opt_id = body.apply_option_id or ("A" if body.decision == "approve_A" else "B")
+    opt = next((o for o in evt.get("options", []) if o.get("id") == opt_id), None)
+    if not opt:
+        raise HTTPException(400, "Option not found")
+    # Bypass coach_locked because coach is doing it
+    changes: list[dict] = []
+    for a in opt.get("actions", []):
+        # For coach-executed apply, unlock momentarily
+        if a.get("kind") in ("move", "bring_forward", "push_back", "reduce", "extend", "replace",
+                              "convert_mobility", "convert_recovery", "convert_walk", "skip"):
+            # Read then write with an admin flag
+            change = await _apply_reality_action(evt["user_id"], a)
+            changes.append(change)
+        else:
+            changes.append({"kind": a.get("kind"), "action": a, "changed": False})
+    await db.reality_events.update_one({"id": evt["id"]}, {"$set": {
+        "status": "coach_approved", "coach_note": body.note or "",
+        "coach_reviewed_at": now_iso(), "coach_reviewer_id": coach["id"],
+        "applied_option": opt_id, "applied_at": now_iso(),
+    }})
+    await db.move_history.insert_one({
+        "id": new_id(), "user_id": evt["user_id"],
+        "reality_event_id": evt["id"],
+        "reality_kind": evt.get("reality_kind"),
+        "reality_label": evt.get("reality_label"),
+        "date": evt.get("date"),
+        "option_id": opt_id, "option_title": opt.get("title"),
+        "option_why": opt.get("why"),
+        "changes": changes,
+        "actor_id": coach["id"], "actor_role": "coach",
+        "coach_mode": evt.get("coach_mode"),
+        "created_at": now_iso(),
+    })
+    return {"status": "coach_approved", "changes": changes}
+
+
+@api.patch("/coach/settings/mode")
+async def coach_set_mode(body: CoachModeBody, coach: dict = Depends(require_role("coach"))):
+    if body.mode not in COACH_MODES:
+        raise HTTPException(400, f"mode must be one of {sorted(COACH_MODES)}")
+    await db.users.update_one({"id": coach["id"]}, {"$set": {"profile.coach_mode": body.mode}})
+    return {"mode": body.mode}
+
+
+@api.get("/coach/settings")
+async def coach_get_settings(coach: dict = Depends(require_role("coach"))):
+    prof = coach.get("profile") or {}
+    return {
+        "coach_mode": prof.get("coach_mode") or "balanced",
+        "style": prof.get("style"),
+    }
+
+
 # ------------------------------------------------------------------
 # Multi-month calendar timeline
 # ------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { CrewFitWordmark } from "@/src/components/Logo";
+import { RealityModal } from "@/src/components/RealityModal";
 
 const HERO = "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?crop=entropy&cs=srgb&fm=jpg&q=85";
 
@@ -22,6 +23,7 @@ export default function Home() {
   const [happenedOpen, setHappenedOpen] = useState(false);
   const [happenedSaving, setHappenedSaving] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<string>("normal");
+  const [realityOpen, setRealityOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,10 +150,26 @@ export default function Home() {
           )}
 
           {todaysWorkout ? (
-            <Pressable testID="start-today-workout" onPress={() => router.push(`/workout/${todaysWorkout.id}`)} style={styles.startCta}>
-              <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
-              <Ionicons name="arrow-forward" size={20} color="#fff" />
-            </Pressable>
+            <>
+              <Pressable
+                testID="reality-btn-home"
+                onPress={() => setRealityOpen(true)}
+                style={styles.realityBtn}
+              >
+                <View style={styles.realityBtnLeft}>
+                  <Text style={styles.realityEmoji}>🧠</Text>
+                  <View>
+                    <Text style={styles.realityTitle}>TODAY&apos;S REALITY</Text>
+                    <Text style={styles.realitySub}>Tell CrewFit what has changed</Text>
+                  </View>
+                </View>
+                <Ionicons name="arrow-forward" size={16} color={theme.color.brand} />
+              </Pressable>
+              <Pressable testID="start-today-workout" onPress={() => router.push(`/workout/${todaysWorkout.id}`)} style={styles.startCta}>
+                <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
+                <Ionicons name="arrow-forward" size={20} color="#fff" />
+              </Pressable>
+            </>
           ) : (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyTitle}>No workout scheduled for today</Text>
@@ -223,6 +241,13 @@ export default function Home() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <RealityModal
+        visible={realityOpen}
+        date={today}
+        onClose={() => setRealityOpen(false)}
+        onApplied={() => { setRealityOpen(false); load(); }}
+      />
     </View>
   );
 }
@@ -266,6 +291,17 @@ const styles = StyleSheet.create({
   addEventBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: theme.radius.md, borderStyle: "dashed", borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md },
   addEventText: { color: theme.color.brand, fontWeight: "800", letterSpacing: 1.5, fontSize: 11 },
   startCta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: theme.color.brand, paddingVertical: 18, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md },
+  realityBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingVertical: 14, paddingHorizontal: theme.space.lg,
+    borderRadius: theme.radius.md, marginBottom: theme.space.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  realityBtnLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+  realityEmoji: { fontSize: 22 },
+  realityTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  realitySub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
   startText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
   emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
   emptyTitle: { color: theme.color.text, fontWeight: "700", fontSize: 15 },

@@ -695,6 +695,601 @@ async def onboarding(body: HomeEquipmentBody, user: dict = Depends(current_user)
     return await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
 
 
+# ==================================================================
+# CrewFit Intelligence Assessment™ — Adaptive Onboarding + Coaching DNA
+# ==================================================================
+ASSESSMENT_INTERVIEWER_SYSTEM = """You are CrewFit Intelligence™ — an elite, empathetic coach conducting an adaptive assessment interview with an airline crew member.
+
+CORE RULES:
+1. Ask ONE question at a time. Never batch.
+2. Every next question MUST depend on previous answers. Skip irrelevant sections entirely.
+3. NEVER ask nutrition macros/calories/protein numbers — the client doesn't know.
+4. NEVER ask FTP/threshold if goal isn't endurance-based.
+5. NEVER ask bodybuilding questions if goal is fat loss / health / general fitness.
+6. Aim for 15-25 questions total (fewer if answers are clear, more if goals require depth).
+7. Adapt language & tone to their motivation style — supportive if they're returning from injury, sharper if they're driven / competitive.
+8. Track progress from 0 to 100. When you have enough to build a rich Coaching DNA, set `should_end: true`.
+
+SECTIONS YOU CAN COVER (only when relevant):
+Who You Are · Your Aviation · Your Why · Your Goals · Your Events · Training History · Fitness Level · Lifestyle · Recovery · Nutrition Habits · Equipment · Time Available · Injuries · Motivation · Psychology · Coach Preferences · Wearables · Future Plans
+
+QUESTION TYPES you can return:
+- "single_select" with options: [{"id":"...", "label":"...", "emoji":"..."}] — one choice
+- "multi_select" with options — multiple choices
+- "short_text" — one-line answer
+- "long_text" — paragraph answer
+- "number" with meta:{min, max, step, unit} — numeric
+- "date" — ISO date
+- "range" with meta:{min, max, step, unit, left_label, right_label}
+- "event_builder" — client adds one or more upcoming events {name, event_type, date, priority}
+- "equipment_picker" — multi-select equipment at a location; meta:{location:"home"|"hotel"|"commercial_gym"|"parents"}
+
+REQUIRED FIRST QUESTIONS (ask early):
+- Aviation role (Pilot / Cabin Crew / Ground Ops / Corporate Aviation / Other) — single_select
+- Primary goal category — multi_select from: [Lose body fat, Build muscle, General fitness, Improve health, Improve confidence, Ironman, 70.3, Sprint Triathlon, Olympic Triathlon, Marathon, Half Marathon, HYROX, 5K, 10K, Improve mobility, Reduce pain, Return from injury, Reduce jet lag, Improve sleep, Pass airline medical, Maintain fitness, Other]
+
+BRANCHING (examples — you should adapt intelligently):
+- If Pilot chosen → ask about sectors, long/short haul, layover length, time zones crossed.
+- If Cabin Crew → ask sectors, hotel gyms encountered, night flights per month, standby days.
+- If Ironman/Marathon/70.3/HYROX chosen → jump to event date, current base, weekly hours, key sessions, wearables.
+- If Lose Body Fat → target weight, timeline, current eating pattern (habits NOT macros), airport/crew meal frequency.
+- If Return from injury → what/when/severity/movements to avoid, ok cleared by physio.
+
+RESPONSE FORMAT (STRICT JSON — nothing else):
+{
+  "next_question": {
+    "id": "unique_snake_case_id",
+    "section": "Your Aviation",
+    "text": "The actual question (concise, coach-tone)",
+    "help_text": "Optional 1-sentence why we're asking",
+    "type": "single_select"|"multi_select"|"short_text"|"long_text"|"number"|"date"|"range"|"event_builder"|"equipment_picker",
+    "options": [{"id":"long_haul","label":"Long haul","emoji":"🌍"}],  // when applicable
+    "meta": {"min":0,"max":100,"step":1,"unit":"min"},                 // when applicable
+    "allow_skip": true|false
+  },
+  "should_end": false,
+  "progress": 45,
+  "section_context": "Building your flying profile..."
+}
+
+When you have enough context (usually after 15-22 quality answers), respond with:
+{ "should_end": true, "progress": 100, "section_context": "Building your Coaching DNA..." }
+
+Do NOT return next_question when should_end is true. Return ONLY valid JSON."""
+
+
+DNA_SYSTEM = """You are CrewFit Intelligence™. Given a completed assessment transcript, synthesise the client's permanent **Coaching DNA** — the elite-coach mental model that will guide every AI decision going forward.
+
+RULES:
+- Be specific and personal. Reference their actual answers.
+- Never generic. Every field should feel like it was written FOR THIS PERSON.
+- If information is missing, say "Unknown — will learn over time".
+- Assign a realistic `ai_confidence_score` (30-95). New clients rarely hit 90+.
+- `recommended_weekly_training` should be a concrete outline (e.g. "4 days: Mon strength, Tue Z2 run, Thu mobility, Sat long run").
+
+RESPOND WITH STRICT JSON only:
+{
+  "primary_goal": "one-line",
+  "secondary_goals": ["...", "..."],
+  "why_it_matters": "2-3 sentence explanation in their voice",
+  "next_event": { "name":"...", "date":"YYYY-MM-DD", "priority":"A|B|C" } | null,
+  "event_timeline": [ { "name":"...", "date":"YYYY-MM-DD", "priority":"A|B|C" } ],
+  "aviation_profile": {
+    "role": "Pilot|Cabin Crew|Ground Ops|Corporate|Other",
+    "haul_mix": "long|short|both",
+    "avg_sectors_month": <int>|null,
+    "typical_layover_hours": <int>|null,
+    "hotel_gym_frequency": "always|often|sometimes|rare|never"
+  },
+  "flying_style": "1-sentence read of their flying pattern",
+  "recovery_risk": "low|medium|high",
+  "training_experience": "beginner|intermediate|advanced",
+  "motivation_style": "one of: progress|competition|routine|coach|aesthetics|health|events|data|accountability",
+  "coaching_style": "one of: strict|supportive|data_driven|high_accountability|flexible|hands_off|motivational|educational",
+  "lifestyle_summary": "2-sentence overview of family/pets/stress/sleep/coffee/alcohol",
+  "equipment_locations": [ { "location":"home|hotel|commercial_gym|parents|holiday", "equipment":["..."] } ],
+  "training_availability": { "home":"<min>","layovers":"<min>","days_off":"<min>","standby":"<min>","leave":"<min>","preferred_time":"morning|afternoon|evening|flexible" },
+  "injury_summary": "one line, or 'No current injuries'",
+  "nutrition_summary": "one line — eating pattern, NOT macros",
+  "biggest_strength": "one line",
+  "biggest_weakness": "one line",
+  "biggest_opportunity": "one line",
+  "ai_confidence_score": 30-95,
+  "recommended_weekly_training": "concrete 4-6 line outline",
+  "recommended_recovery_strategy": "1-2 sentence prescription",
+  "recommended_nutrition_strategy": "1-2 sentence prescription",
+  "recommended_coaching_style": "1 sentence prescription",
+  "summary": "3-4 sentence CrewFit Intelligence summary — this is the AI's read of the client and how it will coach them."
+}
+
+Return ONLY JSON."""
+
+
+class AssessmentAnswerBody(BaseModel):
+    assessment_id: str
+    question_id: str
+    answer: Any  # string | list | number | dict (for event_builder/equipment_picker)
+
+
+class AssessmentStartBody(BaseModel):
+    seed_from_profile: bool = True
+
+
+async def _assessment_next_question(assessment: dict) -> dict:
+    """Feed the current transcript to Claude and get the next question / end signal."""
+    transcript = []
+    for a in (assessment.get("answers") or []):
+        transcript.append({
+            "q_id": a.get("question_id"),
+            "section": a.get("section"),
+            "question": a.get("question_text"),
+            "answer": a.get("answer"),
+        })
+    prompt = (
+        f"CLIENT NAME: {assessment.get('client_name') or 'the client'}\n"
+        f"ASSESSMENT SO FAR ({len(transcript)} answers):\n"
+        f"{json.dumps(transcript)[:8500]}\n\n"
+        "Return the next question JSON now. If enough context, set should_end true."
+    )
+    try:
+        raw = await call_claude(ASSESSMENT_INTERVIEWER_SYSTEM, prompt, max_out=1800)
+        parsed = parse_json_from_text(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("bad shape")
+        return parsed
+    except Exception:
+        logger.exception("assessment_next AI failed")
+        return _assessment_fallback_next(assessment)
+
+
+def _assessment_fallback_next(assessment: dict) -> dict:
+    """Deterministic fallback flow if AI fails — always keeps the interview moving."""
+    answered = {a.get("question_id") for a in (assessment.get("answers") or [])}
+    fb: list[dict] = [
+        {"id": "role", "section": "Your Aviation", "text": "What is your role in aviation?",
+         "type": "single_select", "options": [
+             {"id": "pilot", "label": "Pilot", "emoji": "✈️"},
+             {"id": "cabin_crew", "label": "Cabin Crew", "emoji": "🧳"},
+             {"id": "ground_ops", "label": "Ground Ops", "emoji": "🛄"},
+             {"id": "corporate", "label": "Corporate Aviation", "emoji": "🛩"},
+             {"id": "other", "label": "Other", "emoji": "🌐"},
+         ], "allow_skip": False},
+        {"id": "primary_goal", "section": "Your Goals",
+         "text": "What are you trying to achieve? Pick everything that matters.",
+         "type": "multi_select", "options": [
+             {"id": "lose_fat", "label": "Lose body fat", "emoji": "🔥"},
+             {"id": "build_muscle", "label": "Build muscle", "emoji": "💪"},
+             {"id": "general_fitness", "label": "General fitness", "emoji": "🏃"},
+             {"id": "marathon", "label": "Marathon", "emoji": "🏁"},
+             {"id": "half_marathon", "label": "Half Marathon", "emoji": "🏃‍♂️"},
+             {"id": "ironman", "label": "Ironman", "emoji": "🏊"},
+             {"id": "seventy_three", "label": "70.3", "emoji": "🚴"},
+             {"id": "hyrox", "label": "HYROX", "emoji": "🥊"},
+             {"id": "sprint_tri", "label": "Sprint Triathlon", "emoji": "🏊‍♀️"},
+             {"id": "olympic_tri", "label": "Olympic Triathlon", "emoji": "🏊"},
+             {"id": "five_k", "label": "5K", "emoji": "5️⃣"},
+             {"id": "ten_k", "label": "10K", "emoji": "🔟"},
+             {"id": "mobility", "label": "Improve mobility", "emoji": "🧘"},
+             {"id": "reduce_pain", "label": "Reduce pain", "emoji": "🩹"},
+             {"id": "return_injury", "label": "Return from injury", "emoji": "🩺"},
+             {"id": "reduce_jetlag", "label": "Reduce jet lag", "emoji": "🌍"},
+             {"id": "improve_sleep", "label": "Improve sleep", "emoji": "😴"},
+             {"id": "airline_medical", "label": "Pass airline medical", "emoji": "⚕️"},
+             {"id": "maintain", "label": "Maintain fitness", "emoji": "🔁"},
+         ], "allow_skip": False},
+        {"id": "why", "section": "Your Why", "text": "Why is this important to you right now?",
+         "type": "long_text", "help_text": "Your answer becomes part of every future coaching decision.",
+         "allow_skip": True},
+        {"id": "events", "section": "Your Events",
+         "text": "Any important events coming up? (races, holidays, medicals, weddings...)",
+         "type": "event_builder", "help_text": "CrewFit plans backwards from your dates.",
+         "allow_skip": True},
+        {"id": "experience", "section": "Training History", "text": "How would you describe your training experience?",
+         "type": "single_select", "options": [
+             {"id": "beginner", "label": "Beginner", "emoji": "🌱"},
+             {"id": "intermediate", "label": "Intermediate", "emoji": "🌿"},
+             {"id": "advanced", "label": "Advanced", "emoji": "🌳"},
+         ]},
+        {"id": "time_home", "section": "Time Available", "text": "How much time can you realistically train at home?",
+         "type": "range", "meta": {"min": 15, "max": 120, "step": 5, "unit": "min", "left_label": "15m", "right_label": "2h"}},
+        {"id": "time_layover", "section": "Time Available", "text": "How much time on layovers?",
+         "type": "range", "meta": {"min": 0, "max": 90, "step": 5, "unit": "min", "left_label": "None", "right_label": "1h30"}},
+        {"id": "training_days", "section": "Time Available", "text": "How many days a week can you train?",
+         "type": "single_select", "options": [
+             {"id": "2", "label": "2 days", "emoji": "2️⃣"},
+             {"id": "3", "label": "3 days", "emoji": "3️⃣"},
+             {"id": "4", "label": "4 days", "emoji": "4️⃣"},
+             {"id": "5", "label": "5 days", "emoji": "5️⃣"},
+             {"id": "6", "label": "6 days", "emoji": "6️⃣"},
+         ]},
+        {"id": "equipment_home", "section": "Equipment", "text": "What equipment do you have at home?",
+         "type": "equipment_picker", "meta": {"location": "home"}, "allow_skip": True},
+        {"id": "hotel_gyms", "section": "Your Aviation", "text": "Do you usually find gyms in your hotels?",
+         "type": "single_select", "options": [
+             {"id": "always", "label": "Always", "emoji": "✅"},
+             {"id": "often", "label": "Often", "emoji": "👍"},
+             {"id": "sometimes", "label": "Sometimes", "emoji": "🤔"},
+             {"id": "rare", "label": "Rarely", "emoji": "🚫"},
+             {"id": "never", "label": "Never", "emoji": "❌"},
+         ]},
+        {"id": "injuries", "section": "Injuries", "text": "Any current injuries or things you must avoid?",
+         "type": "long_text", "allow_skip": True},
+        {"id": "sleep_quality", "section": "Recovery", "text": "On average, how would you rate your sleep?",
+         "type": "range", "meta": {"min": 1, "max": 10, "step": 1, "unit": "/10", "left_label": "Poor", "right_label": "Great"}},
+        {"id": "stress", "section": "Lifestyle", "text": "How would you rate your daily stress?",
+         "type": "range", "meta": {"min": 1, "max": 10, "step": 1, "unit": "/10", "left_label": "Low", "right_label": "High"}},
+        {"id": "family", "section": "Lifestyle", "text": "Family commitments?",
+         "type": "multi_select", "options": [
+             {"id": "kids_young", "label": "Young children", "emoji": "👶"},
+             {"id": "kids_school", "label": "School-age kids", "emoji": "🎒"},
+             {"id": "partner", "label": "Partner", "emoji": "💑"},
+             {"id": "pets", "label": "Pets", "emoji": "🐕"},
+             {"id": "elders", "label": "Caring for elders", "emoji": "🧓"},
+             {"id": "none", "label": "None", "emoji": "🚶"},
+         ], "allow_skip": True},
+        {"id": "nutrition_habits", "section": "Nutrition Habits", "text": "How do you usually eat on trips?",
+         "type": "multi_select", "options": [
+             {"id": "airport_food", "label": "Airport food", "emoji": "🍔"},
+             {"id": "crew_meals", "label": "Crew meals", "emoji": "🍱"},
+             {"id": "hotel_restaurants", "label": "Hotel restaurants", "emoji": "🍽️"},
+             {"id": "meal_prep", "label": "Meal prep from home", "emoji": "🥗"},
+             {"id": "supermarket", "label": "Supermarket / snacks", "emoji": "🥪"},
+             {"id": "delivery", "label": "Food delivery apps", "emoji": "📦"},
+         ], "allow_skip": True},
+        {"id": "diet_style", "section": "Nutrition Habits", "text": "Any dietary preferences?",
+         "type": "multi_select", "options": [
+             {"id": "none", "label": "No restrictions", "emoji": "🍽️"},
+             {"id": "vegetarian", "label": "Vegetarian", "emoji": "🥕"},
+             {"id": "vegan", "label": "Vegan", "emoji": "🌱"},
+             {"id": "halal", "label": "Halal", "emoji": "🌙"},
+             {"id": "kosher", "label": "Kosher", "emoji": "✡️"},
+             {"id": "gluten_free", "label": "Gluten free", "emoji": "🌾"},
+             {"id": "dairy_free", "label": "Dairy free", "emoji": "🥛"},
+         ], "allow_skip": True},
+        {"id": "motivation", "section": "Motivation", "text": "What keeps you motivated?",
+         "type": "multi_select", "options": [
+             {"id": "progress", "label": "Progress", "emoji": "📈"},
+             {"id": "competition", "label": "Competition", "emoji": "🏆"},
+             {"id": "routine", "label": "Routine", "emoji": "🔁"},
+             {"id": "coach", "label": "Coach accountability", "emoji": "🧑‍🏫"},
+             {"id": "aesthetics", "label": "Looking better", "emoji": "🪞"},
+             {"id": "health", "label": "Feeling healthier", "emoji": "❤️"},
+             {"id": "events", "label": "Events", "emoji": "🎯"},
+             {"id": "data", "label": "Data", "emoji": "📊"},
+         ]},
+        {"id": "blocker", "section": "Psychology", "text": "What usually stops you training?",
+         "type": "multi_select", "options": [
+             {"id": "jetlag", "label": "Jet lag", "emoji": "🌍"},
+             {"id": "family", "label": "Family", "emoji": "👨‍👩‍👧"},
+             {"id": "pain", "label": "Pain", "emoji": "🤕"},
+             {"id": "time", "label": "Time", "emoji": "⏰"},
+             {"id": "motivation", "label": "Motivation", "emoji": "😔"},
+             {"id": "sleep", "label": "Sleep", "emoji": "😴"},
+             {"id": "travel", "label": "Travel", "emoji": "🚗"},
+             {"id": "stress", "label": "Stress", "emoji": "😣"},
+             {"id": "nothing", "label": "Nothing usually", "emoji": "💪"},
+         ]},
+        {"id": "coaching_style_pref", "section": "Coach Preferences",
+         "text": "What kind of coach do you respond to?",
+         "type": "single_select", "options": [
+             {"id": "strict", "label": "Strict", "emoji": "📏"},
+             {"id": "supportive", "label": "Supportive", "emoji": "🤝"},
+             {"id": "data_driven", "label": "Data driven", "emoji": "📊"},
+             {"id": "flexible", "label": "Flexible", "emoji": "🌊"},
+             {"id": "high_accountability", "label": "High accountability", "emoji": "🎯"},
+             {"id": "hands_off", "label": "Hands off", "emoji": "🕊️"},
+             {"id": "motivational", "label": "Motivational", "emoji": "🔥"},
+             {"id": "educational", "label": "Educational", "emoji": "📚"},
+         ]},
+    ]
+    for q in fb:
+        if q["id"] not in answered:
+            return {"next_question": q, "should_end": False,
+                    "progress": min(95, int(100 * len(answered) / max(1, len(fb)))),
+                    "section_context": q["section"]}
+    return {"should_end": True, "progress": 100, "section_context": "Building your Coaching DNA..."}
+
+
+async def _generate_coaching_dna(user_id: str, assessment: dict) -> dict:
+    """Synthesise the Coaching DNA from a completed assessment transcript."""
+    transcript = []
+    for a in (assessment.get("answers") or []):
+        transcript.append({
+            "q_id": a.get("question_id"), "section": a.get("section"),
+            "question": a.get("question_text"), "answer": a.get("answer"),
+        })
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    profile = (user or {}).get("profile") or {}
+    prompt = (
+        f"CLIENT: {user.get('name') or 'the client'} ({user.get('email')})\n"
+        f"EXISTING PROFILE FRAGMENT (may be sparse): {json.dumps(profile)[:1500]}\n\n"
+        f"ASSESSMENT TRANSCRIPT ({len(transcript)} answers):\n"
+        f"{json.dumps(transcript)[:9000]}\n\n"
+        "Return the Coaching DNA JSON now."
+    )
+    try:
+        raw = await call_claude(DNA_SYSTEM, prompt, max_out=3000)
+        dna = parse_json_from_text(raw)
+        if not isinstance(dna, dict):
+            raise ValueError("bad DNA")
+    except Exception:
+        logger.exception("DNA gen AI failed")
+        # Best-effort fallback synthesised from the answers directly
+        dna = _dna_fallback(transcript, profile)
+    return dna
+
+
+def _dna_fallback(transcript: list[dict], profile: dict) -> dict:
+    """Deterministic DNA if AI fails — reads structured answers directly."""
+    ans_map: dict[str, Any] = {t["q_id"]: t["answer"] for t in transcript if t.get("q_id")}
+    role = ans_map.get("role") or (profile.get("position") or "Cabin Crew").lower().replace(" ", "_")
+    goals = ans_map.get("primary_goal") or []
+    if isinstance(goals, str):
+        goals = [goals]
+    primary = goals[0] if goals else (profile.get("goal") or "General fitness")
+    return {
+        "primary_goal": str(primary).replace("_", " ").title(),
+        "secondary_goals": [str(g).replace("_", " ").title() for g in goals[1:5]],
+        "why_it_matters": ans_map.get("why") or "Unknown — will learn over time",
+        "next_event": None,
+        "event_timeline": ans_map.get("events") if isinstance(ans_map.get("events"), list) else [],
+        "aviation_profile": {
+            "role": str(role).replace("_", " ").title(),
+            "haul_mix": "both",
+            "hotel_gym_frequency": ans_map.get("hotel_gyms") or "sometimes",
+        },
+        "flying_style": "Adaptive schedule — will refine over time.",
+        "recovery_risk": "medium",
+        "training_experience": ans_map.get("experience") or profile.get("experience_level") or "intermediate",
+        "motivation_style": (ans_map.get("motivation") or ["progress"])[0]
+            if isinstance(ans_map.get("motivation"), list) else (ans_map.get("motivation") or "progress"),
+        "coaching_style": ans_map.get("coaching_style_pref") or "supportive",
+        "lifestyle_summary": "Unknown — will learn over time",
+        "equipment_locations": [{"location": "home", "equipment": profile.get("equipment") or []}],
+        "training_availability": {
+            "home": ans_map.get("time_home") or profile.get("max_home_minutes") or 45,
+            "layovers": ans_map.get("time_layover") or 30,
+            "preferred_time": "flexible",
+        },
+        "injury_summary": ans_map.get("injuries") or "No current injuries reported.",
+        "nutrition_summary": "Airline lifestyle eating — will refine.",
+        "biggest_strength": "Consistency potential",
+        "biggest_weakness": "Unpredictable schedule",
+        "biggest_opportunity": "Layover training",
+        "ai_confidence_score": 45,
+        "recommended_weekly_training": "4 days: 2× strength, 1× conditioning, 1× mobility",
+        "recommended_recovery_strategy": "Prioritise sleep windows; light mobility on jet-lag days.",
+        "recommended_nutrition_strategy": "Consistent protein at each meal; hydrate on flights.",
+        "recommended_coaching_style": "Supportive, empathetic, with clear structure.",
+        "summary": "CrewFit is beginning to learn your patterns. Confidence will rise with every roster and workout.",
+    }
+
+
+@api.post("/assessment/start")
+async def assessment_start(body: AssessmentStartBody = AssessmentStartBody(), user: dict = Depends(current_user)):
+    """Start a new assessment for the current user. Returns first question."""
+    # If an in-progress assessment exists, resume it
+    existing = await db.assessments.find_one({"user_id": user["id"], "status": "in_progress"}, {"_id": 0}, sort=[("created_at", -1)])
+    if existing:
+        nxt = await _assessment_next_question(existing)
+        return {"assessment_id": existing["id"], "resumed": True, **nxt}
+    doc = {
+        "id": new_id(), "user_id": user["id"],
+        "client_name": user.get("name"),
+        "status": "in_progress",
+        "seed_from_profile": body.seed_from_profile,
+        "answers": [],
+        "current_question": None,
+        "progress": 0,
+        "section": "Who You Are",
+        "created_at": now_iso(),
+        "completed_at": None,
+    }
+    await db.assessments.insert_one(doc)
+    nxt = await _assessment_next_question(doc)
+    q = nxt.get("next_question")
+    if q:
+        await db.assessments.update_one({"id": doc["id"]}, {"$set": {
+            "current_question": q,
+            "progress": nxt.get("progress", 0),
+            "section": q.get("section"),
+        }})
+    return {"assessment_id": doc["id"], "resumed": False, **nxt}
+
+
+@api.get("/assessment/current")
+async def assessment_current(user: dict = Depends(current_user)):
+    a = await db.assessments.find_one({"user_id": user["id"], "status": "in_progress"}, {"_id": 0}, sort=[("created_at", -1)])
+    if not a:
+        return {"assessment": None}
+    return {"assessment": a}
+
+
+@api.post("/assessment/answer")
+async def assessment_answer(body: AssessmentAnswerBody, user: dict = Depends(current_user)):
+    a = await db.assessments.find_one({"id": body.assessment_id, "user_id": user["id"]}, {"_id": 0})
+    if not a:
+        raise HTTPException(404, "Assessment not found")
+    if a.get("status") != "in_progress":
+        raise HTTPException(400, "Assessment already completed")
+
+    cq = a.get("current_question") or {}
+    q_id = body.question_id or cq.get("id")
+    a["answers"].append({
+        "question_id": q_id,
+        "section": cq.get("section"),
+        "question_text": cq.get("text"),
+        "question_type": cq.get("type"),
+        "answer": body.answer,
+        "answered_at": now_iso(),
+    })
+    await db.assessments.update_one({"id": a["id"]}, {"$set": {"answers": a["answers"]}})
+
+    nxt = await _assessment_next_question(a)
+    if nxt.get("should_end") or not nxt.get("next_question"):
+        await db.assessments.update_one({"id": a["id"]}, {"$set": {
+            "current_question": None,
+            "progress": 100,
+            "section": nxt.get("section_context") or "Building your Coaching DNA...",
+            "status": "ready_to_finalize",
+        }})
+        return {"should_end": True, "progress": 100, "section_context": nxt.get("section_context")}
+    q = nxt["next_question"]
+    await db.assessments.update_one({"id": a["id"]}, {"$set": {
+        "current_question": q,
+        "progress": nxt.get("progress", a.get("progress", 0)),
+        "section": q.get("section"),
+    }})
+    return nxt
+
+
+@api.post("/assessment/finalize")
+async def assessment_finalize(body: dict = None, user: dict = Depends(current_user)):
+    body = body or {}
+    assessment_id = body.get("assessment_id")
+    if not assessment_id:
+        raise HTTPException(400, "assessment_id required")
+    a = await db.assessments.find_one({"id": assessment_id, "user_id": user["id"]}, {"_id": 0})
+    if not a:
+        raise HTTPException(404, "Assessment not found")
+    if a.get("status") == "completed":
+        # Return existing DNA
+        dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("updated_at", -1)])
+        return {"dna": dna, "already_completed": True}
+
+    dna = await _generate_coaching_dna(user["id"], a)
+
+    # Version and persist
+    existing = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("version", -1)])
+    version = (existing.get("version", 0) + 1) if existing else 1
+    dna_doc = {
+        "id": new_id(),
+        "user_id": user["id"],
+        "assessment_id": a["id"],
+        "version": version,
+        **dna,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.coaching_dna.insert_one(dna_doc)
+    # Re-fetch to strip the mongo _id field before returning
+    dna_doc_clean = await db.coaching_dna.find_one({"id": dna_doc["id"]}, {"_id": 0})
+
+    # Link Event Mode — if the assessment surfaced events, materialise them in db.events
+    events_created = 0
+    try:
+        for ev in (dna.get("event_timeline") or []):
+            if not isinstance(ev, dict) or not ev.get("date"):
+                continue
+            # Detect event_type from name/keywords
+            name = str(ev.get("name") or "").strip()
+            etype = _guess_event_type(name)
+            # De-dupe: skip if we already have an event on the same date with similar name
+            dup = await db.events.find_one({"user_id": user["id"], "event_date": ev["date"]})
+            if dup:
+                continue
+            await db.events.insert_one({
+                "id": new_id(),
+                "user_id": user["id"],
+                "event_type": etype,
+                "event_name": name or etype,
+                "event_date": ev["date"],
+                "priority": ev.get("priority") or "B",
+                "is_active": True,
+                "source": "assessment_v1",
+                "created_at": now_iso(),
+            })
+            events_created += 1
+    except Exception:
+        logger.exception("event linking failed")
+
+    # Mark assessment complete
+    await db.assessments.update_one({"id": a["id"]}, {"$set": {
+        "status": "completed", "completed_at": now_iso(),
+        "dna_id": dna_doc["id"], "dna_version": version,
+    }})
+    # Onboarded flag flip so router accepts client
+    await db.users.update_one({"id": user["id"]}, {"$set": {"onboarded": True}})
+
+    return {"dna": dna_doc_clean, "events_created": events_created, "already_completed": False}
+
+
+def _guess_event_type(name: str) -> str:
+    n = (name or "").lower()
+    if "iron" in n and ("70" in n or "70.3" in n):
+        return "half_ironman"
+    if "iron" in n:
+        return "ironman"
+    if "hyrox" in n:
+        return "hyrox"
+    if "half" in n and "marathon" in n:
+        return "half_marathon"
+    if "marathon" in n:
+        return "marathon"
+    if "10k" in n:
+        return "10k"
+    if "5k" in n:
+        return "5k"
+    if "wedding" in n:
+        return "wedding"
+    if "holiday" in n or "beach" in n or "vacation" in n:
+        return "holiday"
+    if "medical" in n or "assessment" in n:
+        return "medical"
+    if "photo" in n:
+        return "photoshoot"
+    return "other"
+
+
+@api.get("/coaching-dna")
+async def coaching_dna_get(user: dict = Depends(current_user)):
+    dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("version", -1)])
+    return {"dna": dna}
+
+
+class CoachingDNAPatchBody(BaseModel):
+    updates: dict[str, Any]
+    reason: Optional[str] = None
+
+
+@api.patch("/coaching-dna")
+async def coaching_dna_patch(body: CoachingDNAPatchBody, user: dict = Depends(current_user)):
+    dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("version", -1)])
+    if not dna:
+        raise HTTPException(404, "No DNA yet — complete the assessment first")
+    allowed = {
+        "primary_goal", "secondary_goals", "why_it_matters", "next_event", "event_timeline",
+        "aviation_profile", "flying_style", "recovery_risk", "training_experience",
+        "motivation_style", "coaching_style", "lifestyle_summary", "equipment_locations",
+        "training_availability", "injury_summary", "nutrition_summary",
+        "biggest_strength", "biggest_weakness", "biggest_opportunity",
+        "recommended_weekly_training", "recommended_recovery_strategy",
+        "recommended_nutrition_strategy", "recommended_coaching_style", "summary",
+    }
+    updates = {k: v for k, v in body.updates.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    updates["updated_at"] = now_iso()
+    await db.coaching_dna.update_one({"id": dna["id"]}, {"$set": updates})
+    # Log life-change
+    try:
+        await db.dna_history.insert_one({
+            "id": new_id(), "user_id": user["id"], "dna_id": dna["id"],
+            "kind": "client_edit", "reason": body.reason or "manual edit",
+            "changes": list(updates.keys()), "created_at": now_iso(),
+        })
+    except Exception:
+        pass
+    dna2 = await db.coaching_dna.find_one({"id": dna["id"]}, {"_id": 0})
+    return {"dna": dna2}
+
+
+@api.get("/assessment/history")
+async def assessment_history(user: dict = Depends(current_user)):
+    rows = await db.assessments.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(20)
+    return {"assessments": rows}
+
+
 # ------------------------------------------------------------------
 # Push
 # ------------------------------------------------------------------

@@ -72,9 +72,19 @@ export default function Profile() {
           <Text style={styles.linkText}>WEEKLY CHECK-INS</Text>
           <Text style={styles.count}>{checkins.length}</Text>
         </Pressable>
+        <Pressable testID="btn-dna" onPress={() => router.push("/coaching-dna" as any)} style={styles.linkRow}>
+          <Ionicons name="pulse" size={18} color={theme.color.brand} />
+          <Text style={styles.linkText}>COACHING DNA</Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} />
+        </Pressable>
+        <Pressable testID="btn-assessment" onPress={() => router.push("/assessment" as any)} style={styles.linkRow}>
+          <Ionicons name="sparkles" size={18} color={theme.color.brand} />
+          <Text style={styles.linkText}>RE-TAKE ASSESSMENT</Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} />
+        </Pressable>
         <Pressable testID="btn-onboarding" onPress={() => router.push("/(auth)/onboarding")} style={styles.linkRow}>
           <Ionicons name="settings" size={18} color={theme.color.brand} />
-          <Text style={styles.linkText}>EDIT PROFILE</Text>
+          <Text style={styles.linkText}>EDIT LEGACY PROFILE</Text>
           <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} />
         </Pressable>
 

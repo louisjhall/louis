@@ -29,7 +29,7 @@ export default function Login() {
     try {
       const u = await login(email.trim(), password);
       if (u.role === "coach") router.replace(isDesktopWeb ? "/(coach)/overview" : "/(coach)/clients");
-      else if (!u.onboarded) router.replace("/(auth)/onboarding");
+      else if (!u.onboarded) router.replace("/assessment");
       else router.replace("/(client)/home");
     } catch (e: any) {
       setErr(e.message || "Login failed");

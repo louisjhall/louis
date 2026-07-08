@@ -24,7 +24,7 @@ export default function Signup() {
     try {
       const u = await signup(email.trim(), password, name.trim(), role);
       if (u.role === "coach") router.replace("/(coach)/clients");
-      else router.replace("/(auth)/onboarding");
+      else router.replace("/assessment");
     } catch (e: any) {
       setErr(e.message);
     } finally {

@@ -13,7 +13,7 @@ export default function Index() {
     );
   }
   if (!user) return <Redirect href="/(auth)/login" />;
-  if (!user.onboarded && user.role === "client") return <Redirect href="/(auth)/onboarding" />;
+  if (!user.onboarded && user.role === "client") return <Redirect href="/assessment" />;
   if (user.role === "coach") return <Redirect href="/(coach)/clients" />;
   return <Redirect href="/(client)/home" />;
 }

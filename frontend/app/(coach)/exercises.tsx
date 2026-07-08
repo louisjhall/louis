@@ -61,12 +61,32 @@ export default function CoachExercises() {
       <ScrollView contentContainerStyle={styles.body}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}>
         {filtered.map((ex) => (
-          <Pressable key={ex.id} onPress={() => setSelected(ex)} style={styles.exRow} testID={`ex-${ex.id}`}>
+          <Pressable
+            key={ex.id}
+            onPress={async () => {
+              // Fetch the FULL exercise (with full-resolution custom_image_b64) before opening the editor
+              try {
+                const r = await api<any>(`/coach/exercises/${encodeURIComponent(ex.name)}`);
+                setSelected(r.exercise || ex);
+              } catch {
+                setSelected(ex);
+              }
+            }}
+            style={styles.exRow}
+            testID={`ex-${ex.id}`}
+          >
+            {ex.thumb_b64 ? (
+              <Image source={{ uri: ex.thumb_b64 }} style={styles.exThumb} resizeMode="cover" />
+            ) : (
+              <View style={[styles.exThumb, styles.exThumbEmpty]}>
+                <Ionicons name={ex.has_image ? "image" : "image-outline"} size={20} color={theme.color.textDim} />
+              </View>
+            )}
             <View style={styles.exScore}>
               <Text style={[styles.exScoreT, ex.content_score >= 4 && { color: theme.color.green }]}>{ex.content_score || 0}/5</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.exName}>{ex.name}</Text>
+              <Text style={styles.exName} numberOfLines={1}>{ex.name}</Text>
               <View style={styles.exFlagRow}>
                 <Flag on={ex.has_image} label="IMG" />
                 <Flag on={ex.has_video} label="VID" />
@@ -387,6 +407,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
   exScore: { width: 40, alignItems: "center" },
+  exThumb: { width: 44, height: 44, borderRadius: 8, marginRight: 8, backgroundColor: theme.color.surface2 },
+  exThumbEmpty: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.border, borderStyle: "dashed" },
   exScoreT: { color: theme.color.amber, fontSize: 13, fontWeight: "900" },
   exName: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
   exFlagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 5 },

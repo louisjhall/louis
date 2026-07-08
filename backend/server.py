@@ -66,6 +66,34 @@ def _louis_ref_b64() -> str:
             _LOUIS_REF_B64_CACHE = base64.b64encode(f.read()).decode("utf-8")
     return _LOUIS_REF_B64_CACHE
 
+
+def _make_thumb_data_url(img: Optional[str], size: int = 96, quality: int = 60) -> Optional[str]:
+    """Generate a small JPEG thumbnail data URL from a full data URL or http URL.
+
+    Returns None if input is missing/invalid. Used by list endpoints so the client
+    doesn't need to download 500KB+ hero images just to show row previews.
+    """
+    if not img or not isinstance(img, str):
+        return None
+    try:
+        from io import BytesIO
+        from PIL import Image as PILImage
+        if img.startswith("data:"):
+            _, b64 = img.split(",", 1)
+            raw = base64.b64decode(b64)
+        else:
+            # remote URL — skip (avoid outbound calls during list render)
+            return None
+        with PILImage.open(BytesIO(raw)) as im:
+            im = im.convert("RGB")
+            im.thumbnail((size, size))
+            buf = BytesIO()
+            im.save(buf, format="JPEG", quality=quality, optimize=True)
+            b = base64.b64encode(buf.getvalue()).decode("utf-8")
+            return f"data:image/jpeg;base64,{b}"
+    except Exception:
+        return None
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("crewfit")
 
@@ -3992,12 +4020,22 @@ async def _find_or_create_exercise(name: str) -> dict:
 
 @api.get("/coach/exercises")
 async def coach_exercises_list(coach: dict = Depends(require_role("coach"))):
-    """Return the exercise library with content-completeness flags for the Coach dashboard."""
+    """Return the exercise library with content-completeness flags for the Coach dashboard.
+
+    Ships a proper 96×96 JPEG thumbnail (`thumb_b64`) generated with Pillow so the coach
+    list can render inline previews without the full 500KB+ hero image per row.
+    Full `custom_image_b64` is stripped from the list payload for performance.
+    """
     rows = await db.exercises.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
     out = []
     for r in rows:
+        img = r.get("custom_image_b64") or r.get("coach_image_url")
+        thumb = _make_thumb_data_url(img)
+        row = {**r}
+        row.pop("custom_image_b64", None)  # drop heavy field from list payload
         out.append({
-            **r,
+            **row,
+            "thumb_b64": thumb,
             "has_instructions": bool(r.get("instructions")),
             "has_cues": bool(r.get("cues")),
             "has_mistakes": bool(r.get("mistakes")),

@@ -790,6 +790,16 @@ function WarmupCard({ item, index }: { item: any; index: number }) {
   const [left, setLeft] = useState<number | null>(null);
   const tick = useRef<any>(null);
   const [done, setDone] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [content, setContent] = useState<any>(null);
+  const [videoOpen, setVideoOpen] = useState(false);
+
+  useEffect(() => {
+    if (!item?.name) return;
+    api<any>(`/exercises/content?name=${encodeURIComponent(item.name)}`)
+      .then((r) => setContent(r?.exercise || null))
+      .catch(() => setContent(null));
+  }, [item?.name]);
 
   const start = () => {
     if (left !== null && left > 0) return; // already running
@@ -814,19 +824,72 @@ function WarmupCard({ item, index }: { item: any; index: number }) {
 
   const running = left !== null && left > 0;
   const pct = left !== null ? Math.round(((total - left) / total) * 100) : (done ? 100 : 0);
+  const thumb = content?.custom_image_b64 || content?.coach_image_url;
+  const hasVideo = !!content && (content.coach_video_url || content.video_url);
+  const instrs: string[] = Array.isArray(content?.instructions)
+    ? content.instructions.filter(Boolean)
+    : (content?.instructions ? [String(content.instructions)] : []);
+  const cues: string[] = Array.isArray(content?.cues) ? content.cues.filter(Boolean) : [];
 
   return (
     <View style={[styles.wuCard, done && styles.wuCardDone]}>
-      <View style={styles.wuCardTop}>
-        <View style={[styles.wuNum, done && styles.wuNumDone]}>
-          {done ? <Ionicons name="checkmark" size={12} color="#fff" /> : <Text style={styles.wuNumT}>{index}</Text>}
-        </View>
+      <Pressable onPress={() => setExpanded((v) => !v)} style={styles.wuCardTop} testID={`warmup-toggle-${index}`}>
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={styles.wuThumb} resizeMode="cover" />
+        ) : (
+          <View style={[styles.wuNum, done && styles.wuNumDone]}>
+            {done ? <Ionicons name="checkmark" size={12} color="#fff" /> : <Text style={styles.wuNumT}>{index}</Text>}
+          </View>
+        )}
         <View style={{ flex: 1 }}>
           <Text style={styles.wuName} numberOfLines={2}>{item.name || `Warm-up ${index}`}</Text>
-          <Text style={styles.wuMeta}>{total}s</Text>
+          <Text style={styles.wuMeta}>
+            {total}s{hasVideo ? " · VIDEO" : ""}{instrs.length ? " · " + instrs.length + " STEPS" : ""}
+          </Text>
         </View>
         <Text style={styles.wuTimer}>{left !== null ? fmtMMSS(left) : fmtMMSS(total)}</Text>
-      </View>
+      </Pressable>
+
+      {/* Expanded: how-to content */}
+      {expanded && (
+        <View style={styles.wuExpanded}>
+          {thumb && (
+            <Image source={{ uri: thumb }} style={styles.wuHero} resizeMode="cover" />
+          )}
+          {hasVideo && (
+            <Pressable onPress={() => setVideoOpen(true)} style={styles.wuVideoBtn} testID={`warmup-video-${index}`}>
+              <Ionicons name="play-circle" size={16} color={theme.color.brand} />
+              <Text style={styles.wuVideoBtnT}>WATCH VIDEO DEMO</Text>
+            </Pressable>
+          )}
+          {instrs.length > 0 && (
+            <View style={styles.wuBlock}>
+              <Text style={styles.wuBlockH}>HOW TO</Text>
+              {instrs.map((s, i) => (
+                <View key={i} style={styles.wuLine}>
+                  <Text style={styles.wuLineN}>{i + 1}</Text>
+                  <Text style={styles.wuLineT}>{s}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          {cues.length > 0 && (
+            <View style={styles.wuBlock}>
+              <Text style={styles.wuBlockH}>COACHING CUES</Text>
+              {cues.map((s, i) => (
+                <View key={i} style={styles.wuCue}>
+                  <Ionicons name="ellipse" size={5} color={theme.color.brand} />
+                  <Text style={styles.wuCueT}>{s}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          {!thumb && !hasVideo && instrs.length === 0 && (
+            <Text style={styles.wuEmpty}>Atlas content coming soon for this move.</Text>
+          )}
+        </View>
+      )}
+
       <View style={styles.wuBarTrack}>
         <View style={[styles.wuBarFill, { width: `${pct}%` }, done && { backgroundColor: theme.color.green }]} />
       </View>
@@ -842,12 +905,39 @@ function WarmupCard({ item, index }: { item: any; index: number }) {
             <Text style={styles.wuBtnT}>RESET</Text>
           </Pressable>
         )}
+        <Pressable
+          onPress={() => setExpanded((v) => !v)}
+          style={styles.wuBtnGhost}
+          testID={`warmup-expand-${index}`}
+        >
+          <Text style={styles.wuBtnGhostT}>{expanded ? "HIDE" : "HOW TO"}</Text>
+        </Pressable>
         {!done && (
-          <Pressable onPress={() => setDone(true)} style={styles.wuBtnGhost}>
+          <Pressable onPress={() => setDone(true)} style={[styles.wuBtnGhost, { marginLeft: "auto" }]}>
             <Text style={styles.wuBtnGhostT}>MARK DONE</Text>
           </Pressable>
         )}
       </View>
+
+      {/* Video modal */}
+      {hasVideo && videoOpen && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setVideoOpen(false)}>
+          <View style={styles.wuVideoRoot}>
+            <Pressable style={styles.wuBackdrop} onPress={() => setVideoOpen(false)} />
+            <View style={styles.wuVideoSheet}>
+              <View style={styles.wuVideoHead}>
+                <Text style={styles.wuVideoTitle} numberOfLines={1}>{item.name}</Text>
+                <Pressable onPress={() => setVideoOpen(false)} hitSlop={12}>
+                  <Ionicons name="close" size={22} color={theme.color.text} />
+                </Pressable>
+              </View>
+              <ExerciseVideoPlayer
+                exerciseName={item.name}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -1018,4 +1108,21 @@ const styles = StyleSheet.create({
   wuBtnGhostT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
   wuDoneBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 10, padding: 14, borderRadius: 10, backgroundColor: theme.color.green },
   wuDoneBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  wuThumb: { width: 44, height: 44, borderRadius: 8 },
+  wuExpanded: { marginTop: 6, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.color.divider },
+  wuHero: { width: "100%", height: 180, borderRadius: 10, marginBottom: 10, backgroundColor: theme.color.surface },
+  wuVideoBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, padding: 10, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, marginBottom: 10 },
+  wuVideoBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  wuBlock: { marginBottom: 8 },
+  wuBlockH: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 6 },
+  wuLine: { flexDirection: "row", gap: 8, marginBottom: 4 },
+  wuLineN: { color: theme.color.brand, fontSize: 11, fontWeight: "900", width: 14 },
+  wuLineT: { color: theme.color.text, fontSize: 12, lineHeight: 17, flex: 1 },
+  wuCue: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 3 },
+  wuCueT: { color: theme.color.text, fontSize: 12, flex: 1 },
+  wuEmpty: { color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", textAlign: "center", padding: 8 },
+  wuVideoRoot: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(0,0,0,0.6)" },
+  wuVideoSheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16 },
+  wuVideoHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 12 },
+  wuVideoTitle: { color: theme.color.text, fontSize: 15, fontWeight: "800", flex: 1 },
 });

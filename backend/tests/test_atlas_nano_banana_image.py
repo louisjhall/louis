@@ -146,13 +146,13 @@ class TestAtlasImageGeneration:
         assert img.startswith("data:image/") and len(img) > 10000
 
     def test_style_hint_accepted(self, base_url, coach_auth):
-        """Case 7: style_hint is accepted (status 200) and endpoint completes.
+        """Case 7: style_hint is accepted (status 200) and reflected in image_prompt_summary.
 
-        NOTE: image_prompt_summary is prompt[:400]; the style_hint appears later in the
-        prompt (~char 432) so it may be truncated out of the summary. We only assert:
+        After main-agent fix, image_prompt_summary = prompt[:900] so the style block
+        (which sits around char ~432) is now captured. We assert:
           - endpoint accepts body {"style_hint": "..."} without validation error
           - image is still generated + persisted
-          - image_prompt_summary is populated with the base prompt
+          - image_prompt_summary contains the coach-supplied style_hint text
         """
         name = "Assault Bike Zone 2"
         style_hint = "TEST_MARKER_STUDIO_XZ7 bright cyan seamless backdrop overhead lighting"
@@ -161,7 +161,12 @@ class TestAtlasImageGeneration:
         assert r.status_code == 200, f"style_hint gen failed: {r.status_code} {r.text[:300]}"
         ex = r.json()["exercise"]
         summary = ex.get("image_prompt_summary") or ""
-        print(f"[style_hint] summary_len={len(summary)} summary_head={summary[:200]!r}")
+        print(f"[style_hint] summary_len={len(summary)} summary_head={summary[:200]!r} summary_tail={summary[-200:]!r}")
         assert summary, "image_prompt_summary should be populated when style_hint provided"
+        # After fix: prompt[:900] should include the style block containing the coach hint
+        assert "TEST_MARKER_STUDIO_XZ7" in summary, (
+            f"style_hint text not captured in image_prompt_summary (len={len(summary)}). "
+            f"summary tail: {summary[-300:]!r}"
+        )
         img = ex.get("custom_image_b64") or ""
         assert img.startswith("data:image/") and len(img) > 10000

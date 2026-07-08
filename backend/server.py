@@ -53,6 +53,18 @@ PUSH_BASE_URL = "https://integrations.emergentagent.com"
 
 # Louis Hall reference photo used to generate exercise demo images with Nano Banana.
 LOUIS_REF_IMAGE_PATH = ROOT_DIR / "assets" / "louis_ref.png"
+_LOUIS_REF_B64_CACHE: Optional[str] = None
+
+
+def _louis_ref_b64() -> str:
+    """Cache Louis reference photo base64 so we don't re-encode ~1.8MB on every request."""
+    global _LOUIS_REF_B64_CACHE
+    if _LOUIS_REF_B64_CACHE is None:
+        if not LOUIS_REF_IMAGE_PATH.exists():
+            raise FileNotFoundError(str(LOUIS_REF_IMAGE_PATH))
+        with open(LOUIS_REF_IMAGE_PATH, "rb") as f:
+            _LOUIS_REF_B64_CACHE = base64.b64encode(f.read()).decode("utf-8")
+    return _LOUIS_REF_B64_CACHE
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("crewfit")
@@ -4075,7 +4087,7 @@ def _build_exercise_image_prompt(ex: dict, style_hint: Optional[str] = None) -> 
     )
 
 
-@api.post("/coach/exercises/{name}/generate-image")
+@api.post("/coach/exercises/{name:path}/generate-image")
 async def coach_exercises_generate_image(
     name: str,
     body: GenerateImageBody = GenerateImageBody(),
@@ -4087,11 +4099,10 @@ async def coach_exercises_generate_image(
     """
     ex = await _find_or_create_exercise(name)
 
-    if not LOUIS_REF_IMAGE_PATH.exists():
+    try:
+        ref_b64 = _louis_ref_b64()
+    except FileNotFoundError:
         raise HTTPException(500, "Louis reference photo not found on server")
-
-    with open(LOUIS_REF_IMAGE_PATH, "rb") as f:
-        ref_b64 = base64.b64encode(f.read()).decode("utf-8")
 
     prompt = _build_exercise_image_prompt(ex, body.style_hint)
 
@@ -4104,9 +4115,9 @@ async def coach_exercises_generate_image(
 
         msg = UserMessage(text=prompt, file_contents=[ImageContent(ref_b64)])
         _text, images = await chat.send_message_multimodal_response(msg)
-    except Exception as e:
+    except Exception:
         logger.exception("nano banana image gen failed for %s", name)
-        raise HTTPException(502, f"Atlas image generation failed: {e}")
+        raise HTTPException(502, "Atlas image generation failed. Please try again.")
 
     if not images:
         raise HTTPException(502, "Atlas returned no image")
@@ -4115,12 +4126,13 @@ async def coach_exercises_generate_image(
     mime = img.get("mime_type") or "image/png"
     data_url = f"data:{mime};base64,{img['data']}"
 
+    # Persist a longer prompt summary so coach-supplied style_hint is captured in the audit trail.
     updates = {
         "custom_image_b64": data_url,
         "custom_image_uploaded_at": now_iso(),
         "custom_image_uploaded_by": coach["id"],
         "image_source": "atlas_nano_banana",
-        "image_prompt_summary": prompt[:400],
+        "image_prompt_summary": prompt[:900],
     }
     await db.exercises.update_one({"id": ex["id"]}, {"$set": updates})
     fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})

@@ -1,0 +1,33 @@
+{
+  "summary": "Retest of Atlas Nano Banana exercise image generation endpoint after main-agent fixes. All 7/7 backend tests PASS (52s total, real Gemini gemini-3.1-flash-image-preview calls, no mocks). Previously failing test_url_encoded_name_with_slash now passes: `{name:path}` signature preserves %2F -> '/' decoding, so '90/90 Hip Rotation' (URL-encoded as 90%2F90%20Hip%20Rotation) resolves to the existing seeded exercise (ex.name == '90/90 Hip Rotation', 200, valid data:image/jpeg data URL). Style-hint audit fix verified: strengthened test_style_hint_accepted now asserts the coach-supplied marker 'TEST_MARKER_STUDIO_XZ7' appears in the persisted image_prompt_summary (prompt[:900] now captures the Style block at ~char 432, previously truncated at 400). Louis reference base64 cache (_louis_ref_b64) validated indirectly by 7 back-to-back generations without file-IO slowdown. Generic 502 error message ('Atlas image generation failed. Please try again.') is used — no provider trace leaked. Note: first full-suite run had one transient Cloudflare 502 on the encoded-slash test which resolved immediately on retry; re-running the full suite gave 7/7 clean. Not treating as a real issue.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_atlas_nano_banana_image.py",
+    "/app/test_reports/pytest/atlas_nano_banana_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:4090 — {name:path} correctly preserves slash-in-name. Confirmed via localhost and public ingress both returning 200 for '90%2F90 Hip Rotation'.",
+    "server.py:4135 — image_prompt_summary=prompt[:900] now captures the Style block; coach-supplied style_hint is auditable. If prompts grow further, revisit.",
+    "server.py:4103 — _louis_ref_b64() cache works well; module-scope _LOUIS_REF_B64_CACHE avoids re-reading the ~1.8MB PNG per request.",
+    "server.py:4120 — generic 502 message is good; provider error still logged via logger.exception (server-side visibility preserved)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_atlas_nano_banana_image.py (strengthened test_style_hint_accepted to assert style_hint text is present in image_prompt_summary)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "not tested (backend-only per request)"},
+  "seed_data_creation": "Auto-created one throwaway exercise 'TEST_NanoBanana_AutoExercise_{ts}' via /generate-image (test_unknown_exercise_auto_created). Also mutated the seeded 'Assault Bike Zone 2' and '90/90 Hip Rotation' custom_image_b64 fields several times (expected — the endpoint replaces existing images).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Endpoint is stable. Suite runs in ~50s. If a transient Cloudflare 502 appears in the ingress layer during bursty test runs, simply rerun — it is not a code bug (localhost confirmed 200 in parallel).",
+  "rca_of_issue": "N/A — all previously reported issues are fixed. The prior slash-in-name 404 has been resolved by declaring the path parameter as {name:path}; Starlette now allows '/' inside the {name} segment. Style-hint audit gap fixed by widening the prompt summary slice to 900 chars, comfortably including the Style block."
+}

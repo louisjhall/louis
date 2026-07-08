@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 14 — follow-up verification of the two HIGH-priority workout-dedup fixes from iteration_13. RESULT: ALL 5 CHECKPOINTS PASS. (1) db.workouts is now 113 rows (previously duplicated across 74 dates with up to 7 copies) with ZERO (user_id,date) duplicate groups — verified via aggregate pipeline. (2) UNIQUE compound index `uniq_user_date` on {user_id:1,date:1} is present and marked unique — verified via index_information(). (3) Attempting a second db.workouts.insert_one with the same (user_id,date) NOW raises pymongo.errors.DuplicateKeyError at write time (verified with a synthetic 2099-01-01 doc, cleaned up). (4) POST /api/calendar/day-override with tags=[poor_sleep] on a real client date flips the (single) workout row to status='updating' AND the timeline-surfaced workout id shows the same status — no more stale duplicate; with tags=[sick] the row flips to status='coach_reviewing'. Exactly ONE row exists for (user_id,date) after the operation. (5) All prior endpoints unchanged: /api/calendar/timeline (returns months with load values), /api/coach/analytics, /api/coach/videos, /api/roster/upload-and-generate (400 on empty payload — not 5xx), /api/workouts/regenerate (returns queued job), /api/roster/jobs/active, /api/exercises/video all 200/expected. Also confirmed that /api/workouts/regenerate DOES NOT produce new duplicates (post-run aggregate = zero). NEW TEST SUITE: /app/backend/tests/test_workout_dedup_index.py (10 tests, all pass). Also cleaned up test isolation in the pre-existing /app/backend/tests/test_day_override.py so the previously-xfailed status-flip tests now PASS deterministically (previously 15 passed / 3 xfail → now 18 passed / 0 xfail). Backend-only per request; no frontend regression run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/coach/roster-alerts", "issue": "Endpoint caps response at 50 rows (server.py L1139 `to_list(50)`). Seed + accumulated iteration tests have produced >50 alerts of kind=day_edited on 2026-07-01, so the pre-existing sanity assertion in test_day_override.py::test_neutral_override_flips_status_to_updating (line ~215) that `after_ct > before_ct` on filtered alerts can flake when >50 alerts already exist for the target date. Not a fix-verification failure; verification of the new alert-insert path itself passes (POST returns 200 and the endpoint accepts the new row). Suggest supporting a `?limit=` param or `?client_id=` filter so counts remain deterministic under load, and add TTL/index-based cleanup for old coach_alerts."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_workout_dedup_index.py",
+    "/app/backend/tests/test_day_override.py",
+    "/app/test_reports/pytest/workout_dedup_index_results.xml",
+    "/app/test_reports/pytest/day_override_results.xml",
+    "/app/test_reports/pytest/iteration_14_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: /api/coach/roster-alerts caps at 50 rows and has no `?client_id` or `?date` filter — add filters so downstream tests (and coach UI's per-client alert count) can be deterministic when seed data grows. Also consider a background TTL on coach_alerts older than 30d.",
+    "OPTIONAL: PATCH /api/workouts/{id} drops None values in updates (server.py L1795), so there is no wire-level way to CLEAR status back to null — tests have to reach into Mongo directly for cleanup. Consider a dedicated coach 'reset-status' route or accepting an explicit sentinel (e.g. status='none') to clear it."
+  ],
+  "critical_code_review_comments": [
+    "server.py L1237-L1248: day-override handler still calls `find_one` before the `update_many`. With the unique index now in place the `find_one` is guaranteed to be deterministic (only one row can match), but the find_one → then conditional-branch on coach_locked / completed → then update_many pattern is now two round-trips where one would do. Consider replacing with a single `find_one_and_update` (returning the pre-image) or an aggregation-pipeline update to shave a query, and to prevent the tiny race where the workout gets coach_locked between the read and the write. Non-blocking.",
+    "server.py L1245-1248 update_many filter re-adds `coach_locked:{$ne:True}` and `completed:{$ne:True}` which is correct — but the find_one on L1239 is unfiltered, so a coach-locked row is still fetched and inspected, then the response's `coach_locked` flag is set from it. With the unique index this is fine; documenting the invariant (find_one is now deterministic thanks to uniq_user_date) in a code comment would help.",
+    "server.py L1795 (PATCH /workouts/{id}) — `{k: v for k, v in body.model_dump().items() if v is not None}` silently drops falsy resets. If clients ever need to CLEAR a status field they can't. Not tied to this iteration but surfaced during test cleanup work.",
+    "Ensure the seed() function that runs at backend startup respects the new unique index; if a re-seed ever attempts to insert a second workout on the same (user_id, date) it will now raise DuplicateKeyError instead of silently duplicating. Recommend switching seed to `update_one(..., upsert=True)` if not already.",
+    "server.py has grown to 3298 lines (guideline <=700). Split calendar/override/roster/workout routers into separate modules (repeat of iter-13 comment)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_workout_dedup_index.py (new — 10 tests: dedup verification, unique-index verification, DuplicateKeyError verification, deterministic status-flip, regression on 4 prior endpoints, post-regenerate duplicate re-check)",
+    "/app/backend/tests/test_day_override.py (edited — added `_reset_workout_status(wid)` helper using pymongo to clear status/override_applied between tests; wired into the two status-flip tests and the coach-lock test as pre-condition. This flipped the 3 formerly-xfailed tests to hard PASSes. No production code touched.)"
+  ],
+  "success_rate": {
+    "backend": "100% on fix-verification (28/28 in test_workout_dedup_index.py + test_day_override.py); regression suite test_roster_calendar_flow.py 16/16 also pass",
+    "frontend": "not tested per request (backend-only follow-up)"
+  },
+  "seed_data_creation": "None. All test rows use TEST_* prefix on synthetic user_ids (2099-01-01 date) or are cleaned up with DELETE /calendar/day-override + direct pymongo status reset in teardown. No production seed touched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both HIGH-priority fixes are live and verified: (a) db.workouts has zero duplicate (user_id,date) groups and (b) uniq_user_date unique compound index is in place. POST /calendar/day-override uses update_many with a coach_locked:$ne:true / completed:$ne:true filter (server.py L1245-1248). All 18 tests in test_day_override.py + all 10 in test_workout_dedup_index.py pass cleanly. If a future change to seed() or to workout generation ever tries to insert a duplicate (user_id, date), Mongo will raise DuplicateKeyError — main agent should wrap the generation loops in `update_one(..., upsert=True)` or add try/except DuplicateKeyError. Note the pre-existing 50-row cap on /api/coach/roster-alerts (server.py L1139) causes filtered-alert counts to plateau under heavy seed test load — the response payload doesn't grow past 50 even as new alerts are inserted, so downstream tests should assert on POST 200/alert insertion via Mongo rather than counting endpoint responses.",
+  "rca_of_issue": "Original bug (iter-13): db.workouts had accumulated 163 duplicate rows across 74 (user_id, date) groups due to workout generation/regenerate flows inserting without a uniqueness constraint. Because /calendar/day-override used find_one → update_one, the row it picked to flip was non-deterministic while /calendar/timeline may have surfaced a different duplicate, so the client saw stale status after a successful save. Fix (iter-14): (a) main agent removed 163 duplicate rows keeping the most-recently-updated per group, (b) created uniq_user_date unique index on {user_id:1,date:1}, (c) changed handler to update_many filtered by coach_locked:$ne:true & completed:$ne:true. Verification confirmed: zero duplicate groups, unique index present, second-insert with same (user,date) raises DuplicateKeyError, override handler now flips exactly one row and the timeline surfaces the same row. No follow-up work required."
+}

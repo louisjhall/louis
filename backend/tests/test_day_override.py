@@ -10,6 +10,7 @@ from datetime import date, timedelta
 
 import pytest
 import requests
+from pymongo import MongoClient
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
@@ -22,6 +23,18 @@ CLIENT_EMAIL = "client@crewfit.com"
 CLIENT_PW = "Client123!"
 COACH_EMAIL = "coach@crewfit.com"
 COACH_PW = "Coach123!"
+
+_MONGO = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+_DB = _MONGO[os.environ.get("DB_NAME", "crewfit_v1")]
+
+
+def _reset_workout_status(wid: str) -> None:
+    """Directly clear status/override_applied for a workout row via Mongo.
+
+    The PATCH /workouts/{id} endpoint drops None values so it can't clear
+    the status field. This helper is only used to keep tests isolated.
+    """
+    _DB.workouts.update_one({"id": wid}, {"$unset": {"status": "", "override_applied": ""}})
 
 
 # ---------- fixtures ----------
@@ -179,6 +192,8 @@ class TestDayOverrideWorkoutStatus:
         if not wk:
             pytest.skip("No unlocked workout available to test status flip")
         d = wk["date"]
+        # Track workout for status reset after mutation (test isolation)
+        _wk_id = wk["id"]
         # sample coach alerts count before, so we can assert an alert was emitted
         before = requests.get(f"{API}/coach/roster-alerts?unread=false", headers=coach_headers, timeout=15).json()
         before_ct = len([a for a in before if a.get("kind") == "day_edited" and a.get("date") == d])
@@ -207,12 +222,15 @@ class TestDayOverrideWorkoutStatus:
             pytest.xfail(f"seed has duplicate workouts on {d}; find_one flipped a different row (status still={w2.get('status')})")
 
         requests.delete(f"{API}/calendar/day-override?date={d}", headers=client_headers, timeout=10)
+        # reset workout status so downstream tests start clean
+        _reset_workout_status(_wk_id)
 
-    def test_review_tag_flips_status_to_coach_reviewing(self, client_headers):
+    def test_review_tag_flips_status_to_coach_reviewing(self, client_headers, coach_headers):
         wk = _find_upcoming_workout(client_headers)
         if not wk:
             pytest.skip("No unlocked workout available")
         d = wk["date"]
+        _wk_id = wk["id"]
         r = requests.post(f"{API}/calendar/day-override",
                           json={"date": d, "tags": ["sick"]},
                           headers=client_headers, timeout=15)
@@ -223,6 +241,8 @@ class TestDayOverrideWorkoutStatus:
         if w2 and w2.get("status") != "coach_reviewing":
             pytest.xfail(f"duplicate-workouts seed data; status={w2.get('status')}")
         requests.delete(f"{API}/calendar/day-override?date={d}", headers=client_headers, timeout=10)
+        # reset workout status so downstream tests start clean
+        _reset_workout_status(_wk_id)
 
 
 # ---------- GET / DELETE ----------
@@ -270,6 +290,8 @@ class TestCoachLocked:
         wk = _find_upcoming_workout(client_headers)
         if not wk:
             pytest.skip("No workout available to lock")
+        # ensure clean status on the picked workout (previous tests may have flipped it)
+        _reset_workout_status(wk["id"])
         # coach patches workout to coach_locked=True
         r = requests.patch(f"{API}/workouts/{wk['id']}", json={"coach_locked": True}, headers=coach_headers, timeout=15)
         assert r.status_code in (200, 201), r.text

@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
+import { DayEditModal } from "@/src/components/DayEditModal";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -21,6 +22,7 @@ export default function CalendarScreen() {
   const [monthsBack, setMonthsBack] = useState(2);
   const [monthsAhead, setMonthsAhead] = useState(4);
   const [selectedIsoMonth, setSelectedIsoMonth] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const monthOffsetsRef = useRef<Record<string, number>>({});
 
@@ -172,8 +174,8 @@ export default function CalendarScreen() {
                   <Pressable
                     key={d.date}
                     testID={`cal-day-${d.date}`}
-                    onPress={() => d.workout_id ? router.push(`/workout/${d.workout_id}`) : null}
-                    disabled={!d.workout_id}
+                    onPress={() => d.workout_id ? router.push(`/workout/${d.workout_id}`) : setEditDate(d.date)}
+                    onLongPress={() => setEditDate(d.date)}
                     style={[styles.dayCell, isToday && styles.todayCell]}
                   >
                     <Text style={[styles.dayNum, isToday && { color: theme.color.brand, fontWeight: "800" }]}>{d.day}</Text>
@@ -205,6 +207,17 @@ export default function CalendarScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      <Pressable testID="cal-fab-add" onPress={() => setEditDate(today || new Date().toISOString().slice(0,10))} style={styles.fab}>
+        <Ionicons name="add" size={22} color="#fff" />
+      </Pressable>
+
+      <DayEditModal
+        visible={!!editDate}
+        date={editDate}
+        onClose={() => setEditDate(null)}
+        onSaved={load}
+      />
     </SafeAreaView>
   );
 }
@@ -250,4 +263,11 @@ const styles = StyleSheet.create({
   historyDot: { width: 8, height: 8, borderRadius: 4 },
   historyDate: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
   historySub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2, letterSpacing: 0.5 },
+  fab: {
+    position: "absolute", right: 20, bottom: 24,
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+    shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 6, elevation: 6,
+  },
 });

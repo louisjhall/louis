@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
+import { StatusBadge, deriveStatus } from "@/src/components/StatusBadge";
 
 export default function ClientDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -79,7 +80,7 @@ export default function ClientDetail() {
                   <Text style={styles.wMeta}>{w.date} · {w.exercises?.length || 0} ex</Text>
                 </View>
                 {w.approved && <Text style={styles.approved}>✓</Text>}
-                {!w.approved && <Text style={styles.pending}>REVIEW</Text>}
+                {!w.approved && <StatusBadge status={deriveStatus(w)} />}
               </Pressable>
             ))
           }

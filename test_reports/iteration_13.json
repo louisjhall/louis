@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 13: Client Calendar Review & Override + Workout Status Rename verification. BACKEND: 15 passed / 3 xfail — POST/GET/DELETE /api/calendar/day-override work end-to-end. Auth guard (401 without token), enum & tag validation (invalid day_type/equipment/training_preference silently dropped, custom: tags accepted), created_at preserved on update, DELETE clears + adds 'cleared' history entry, GET returns history DESC. Regression: /api/calendar/timeline, /api/roster/jobs/active, /api/coach/videos, /api/coach/analytics, /api/exercises/video, /api/roster/upload-and-generate, /api/workouts/regenerate all still 200/expected. FRONTEND (420x900): client login -> Calendar renders 7 month cards with cal-day-YYYY-MM-DD grid; DayEditModal opens with ALL required testIDs (tag-sick, tag-poor_sleep, tag-no_gym, dt-sick, av-30, eq-bodyweight, pref-reduce, apply-week, dayedit-notes, dayedit-save, dayedit-close); chips highlight in crimson when tapped; save closes modal cleanly; reopening restores notes+chips+shows CLIENT · entry in CHANGE HISTORY. cal-fab-add opens modal on today. Long-press on a day WITH a workout opens the modal (short-press correctly navigates to workout details). Workout details renders new status-coach_reviewing badge near the date; ZERO occurrences of standalone 'PENDING' as a workout status on the workout page. Coach /clients -> client-card -> /coach/client/{id} loads; ZERO 'REVIEW' plain-text occurrences (replaced by StatusBadge component). Coach desktop 1440x900 /overview sidebar (Overview/Clients/Calendar/Approvals/Library/Videos/Messages/Analytics/Profile) intact — no regression. FLAG: seed DB has duplicate workout rows for many (user_id, date) pairs (74 dates observed, up to 7 copies), which surfaces a latent backend bug where POST /calendar/day-override uses find_one+update_one and may flip status on a stale duplicate — the client-facing workout id shown by /calendar/timeline may not receive the status change. Not a new regression from this iteration, but likely to bite in production.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/calendar/day-override", "issue": "Uses find_one + update_one for workout status flip. When the DB has duplicate workouts for the same (user_id, date) — currently 74 such dates — only ONE duplicate is flipped, and /calendar/timeline may surface a DIFFERENT duplicate that still reports status=null. Result: user saves the modal, gets no visual feedback on the calendar cell / workout screen because the wrong row was mutated. Fix: use update_many({user_id, date, coach_locked:{$ne:true}, completed:{$ne:true}}, {$set:{status:...}}) AND upstream de-dupe of the workouts collection."},
+      {"endpoint": "data-state", "issue": "db.workouts contains 74 dates with duplicate rows for user_id 62f90680-... (client@crewfit.com) — up to 7 rows on 2026-03-02. Likely accumulated across successive regenerate/generate-month runs that insert without cleaning old rows for the same date. See RCA in report."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo-notifications (web)", "issue": "Console warning '[expo-notifications] Listening to push token changes is not yet fully supported on web' — pre-existing, tracked from iter 12."},
+      {"component": "shadow* deprecation", "issue": "Console warning '\"shadow*\" style props are deprecated. Use \"boxShadow\"' — pre-existing across the app."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_day_override.py",
+    "/app/test_reports/pytest/day_override_results.xml"
+  ],
+  "action_items": [
+    "HIGH: Fix duplicate-workout data corruption. Add a unique index on (user_id, date) in db.workouts AND de-duplicate existing rows (keep the most recent per pair). Then switch /calendar/day-override to update_many so any surviving row updates atomically.",
+    "MEDIUM: Consider making /calendar/day-override also stamp override_id on the affected workout(s) so the UI can show 'client edited this day' without a second round-trip.",
+    "LOW: The DayEditModal has no confirmation summary; per spec this is intentionally deferred. When implemented later, add a 'Ready to build your plan?' summary sheet before dispatching."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to 3294 lines (guideline: <=700). Split calendar/override/roster/workout routers into separate modules.",
+    "DayEditModal.tsx line 118: coach_locked branch triggers Alert.alert then still calls onSaved()+onClose() unconditionally — acceptable for MVP but the user may not realise the change was suppressed on their workout. Consider showing a persistent inline warning in the header when reopening a coach-locked day.",
+    "StatusBadge.tsx deriveStatus() maps w.status=='pending' to 'coach_reviewing' — good backward-compat shim; document this so backend authors don't accidentally re-introduce a raw 'pending' status label.",
+    "workout/[id]/index.tsx line 94 uses native alert(m.desc) — works on web but on native iOS/Android this shows a browser-style alert which is inconsistent with the rest of the app; consider Alert.alert(m.label, m.desc) for parity.",
+    "The custom: tag prefix is accepted in the backend but no UI path exists yet to enter a custom tag string — this is dead code today until the ADD CUSTOM TAG affordance is built."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_day_override.py (new — 18 tests: POST/GET/DELETE, enum & tag validation, coach-lock, workout status flip, regression on prior endpoints)"
+  ],
+  "success_rate": {"backend": "83% (15 passed, 3 xfail due to seed data duplicates — endpoint code is functionally correct on singletons)", "frontend": "100%"},
+  "seed_data_creation": "None. Reused auto-seeded client@crewfit.com and coach@crewfit.com. Override rows created during tests are DELETEd in teardown blocks so no state leaks.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend day-override endpoints are wired correctly. Only lingering issue is data-integrity (duplicate workouts) which the endpoint semantics don't compensate for. When main agent adds a unique index + update_many, re-run test_day_override.py — the 3 xfails should flip to XPASS and can then be tightened to hard asserts. Frontend DayEditModal + StatusBadge testIDs are all present and stable. Coach dashboard routes are unprefixed under (coach) group — /clients, /overview, /calendar (not /coach/*). Client detail lives at /coach/client/{id}. FAB always opens DayEditModal regardless of workout presence (spec item 11). Long-press on day-with-workout also opens the modal.",
+  "rca_of_issue": "Latent bug — RCA: /api/calendar/day-override (server.py L1237-1245) fetches the target workout via db.workouts.find_one({user_id, date}) then update_one({id: wk.id}, ...). MongoDB find_one is non-deterministic when multiple documents match. Meanwhile /api/calendar/timeline uses an aggregation that may surface a DIFFERENT duplicate for the same (user, date). If the two picks disagree, the client sees stale status on their calendar despite a successful save. Reproduction: (1) log in as client@crewfit.com, (2) tap 2026-07-01 (which has 3 workout rows), (3) POST /calendar/day-override tags=[sick], (4) GET /workouts/1ab3eda2-... (the id returned by timeline) — status is still None. But GET /workouts/9ef53042-... (a sibling duplicate) shows status=coach_reviewing. Mitigation: (A) unique index db.workouts.create_index([('user_id',1),('date',1)], unique=True) + de-dup migration keeping the latest row per pair, (B) change update_one -> update_many in the override handler."
+}

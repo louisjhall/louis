@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
+import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 
 const PREFERRED_CHANNELS = [
   "Jeff Nippard", "Squat University", "Renaissance Periodization",
@@ -85,6 +86,15 @@ export default function WorkoutDetail() {
 
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 160 }}>
         <Text style={styles.date}>{w.date}</Text>
+        {(() => {
+          const s = deriveStatus(w);
+          const m = statusMeta(s);
+          return (
+            <View style={{ marginTop: 4, marginBottom: 8 }}>
+              <StatusBadge status={s} onPress={() => alert(m.desc)} />
+            </View>
+          );
+        })()}
         {editing ? (
           <TextInput value={w.title} onChangeText={(v) => setW({ ...w, title: v })} style={styles.titleInput} testID="edit-title" />
         ) : (

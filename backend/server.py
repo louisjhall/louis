@@ -1147,6 +1147,141 @@ async def coach_mark_alerts_read(coach: dict = Depends(require_role("coach"))):
 
 
 # ------------------------------------------------------------------
+# Client calendar day override + change history
+# ------------------------------------------------------------------
+VALID_DAY_TAGS = {
+    "annual_leave", "holiday", "sick", "injured", "poor_sleep", "high_stress",
+    "family_commitment", "childcare", "travel_day", "no_gym", "hotel_gym",
+    "outdoor_run_possible", "limited_time", "extra_time", "standby", "called_out",
+    "duty_cancelled", "flight_delayed", "flight_extended", "need_rest", "feeling_good",
+}
+VALID_DAY_TYPES = {
+    "home_day", "turnaround", "layover_arrival", "layover_full", "layover_departure",
+    "standby", "reserve", "simulator", "annual_leave", "holiday", "sick", "injury",
+    "family", "busy", "rest", "custom",
+}
+VALID_AVAILABILITY = {"none", "10", "20", "30", "45", "60", "90", "custom"}
+VALID_EQUIPMENT = {
+    "home_equipment", "gym", "hotel_gym", "bodyweight", "dumbbells",
+    "outdoor_run", "pool", "bike", "unknown",
+}
+VALID_TRAIN_PREF = {"normal", "reduce", "mobility", "rest", "ask_coach", "auto"}
+
+
+class DayOverrideBody(BaseModel):
+    date: str
+    day_type: Optional[str] = None
+    location: Optional[str] = None
+    availability_min: Optional[int] = None
+    equipment: Optional[list[str]] = None
+    training_preference: Optional[str] = None
+    tags: Optional[list[str]] = None
+    notes: Optional[str] = None
+    custom_day_type: Optional[str] = None
+    apply_to: Optional[str] = "day"  # 'day' | 'week' | 'forward' | 'note_only'
+
+
+@api.post("/calendar/day-override")
+async def day_override(body: DayOverrideBody, user: dict = Depends(current_user)):
+    """Create/update a per-day client override and log the change history entry.
+
+    Overrides are stored in the `day_overrides` collection keyed by (user_id, date).
+    They take priority over roster/AI interpretations in `_resolve_display_video`-style
+    fashion (see the client home & workout screens which will pick them up)."""
+    if not body.date:
+        raise HTTPException(400, "date is required")
+
+    prev = await db.day_overrides.find_one({"user_id": user["id"], "date": body.date}, {"_id": 0})
+
+    tags = [t for t in (body.tags or []) if t in VALID_DAY_TAGS or t.startswith("custom:")]
+
+    override = {
+        "id": prev.get("id") if prev else new_id(),
+        "user_id": user["id"],
+        "date": body.date,
+        "day_type": body.day_type if body.day_type in VALID_DAY_TYPES else prev.get("day_type") if prev else None,
+        "custom_day_type": body.custom_day_type,
+        "location": body.location,
+        "availability_min": body.availability_min,
+        "equipment": [e for e in (body.equipment or []) if e in VALID_EQUIPMENT],
+        "training_preference": body.training_preference if body.training_preference in VALID_TRAIN_PREF else None,
+        "tags": tags,
+        "notes": (body.notes or "").strip() or None,
+        "apply_to": body.apply_to or "day",
+        "created_by": user["id"],
+        "created_by_role": user.get("role", "client"),
+        "updated_at": now_iso(),
+        "created_at": prev.get("created_at") if prev else now_iso(),
+    }
+
+    await db.day_overrides.update_one(
+        {"user_id": user["id"], "date": body.date},
+        {"$set": override},
+        upsert=True,
+    )
+
+    # Log the change
+    await db.day_change_log.insert_one({
+        "id": new_id(),
+        "user_id": user["id"],
+        "date": body.date,
+        "created_at": now_iso(),
+        "actor_id": user["id"],
+        "actor_role": user.get("role", "client"),
+        "prev": prev or {},
+        "new": override,
+        "apply_to": override["apply_to"],
+        "coach_notified": False,
+    })
+
+    # If a workout exists on this date and it's not coach-locked, mark it "updating"
+    wk = await db.workouts.find_one({"user_id": user["id"], "date": body.date}, {"_id": 0})
+    coach_locked = False
+    if wk and not wk.get("coach_locked") and not wk.get("completed"):
+        set_updates: dict[str, Any] = {"status": "updating", "override_applied": True, "updated_at": now_iso()}
+        # Apply hard rules based on override
+        if any(t in tags for t in ("annual_leave", "holiday", "sick", "injured", "need_rest")):
+            set_updates["status"] = "coach_reviewing"
+        await db.workouts.update_one({"id": wk["id"]}, {"$set": set_updates})
+    elif wk and wk.get("coach_locked"):
+        coach_locked = True
+
+    # Emit a coach alert
+    try:
+        await db.coach_alerts.insert_one({
+            "id": new_id(), "client_id": user["id"],
+            "client_name": user.get("name") or user.get("email"),
+            "kind": "day_edited", "date": body.date,
+            "tags": tags, "apply_to": override["apply_to"],
+            "created_at": now_iso(), "read": False,
+        })
+    except Exception:
+        pass
+
+    return {"override": override, "coach_locked": coach_locked}
+
+
+@api.get("/calendar/day-override")
+async def get_day_override(date: str, user: dict = Depends(current_user)):
+    o = await db.day_overrides.find_one({"user_id": user["id"], "date": date}, {"_id": 0})
+    hist = await db.day_change_log.find({"user_id": user["id"], "date": date}, {"_id": 0}).sort("created_at", -1).to_list(20)
+    return {"override": o or None, "history": hist}
+
+
+@api.delete("/calendar/day-override")
+async def clear_day_override(date: str, user: dict = Depends(current_user)):
+    prev = await db.day_overrides.find_one({"user_id": user["id"], "date": date}, {"_id": 0})
+    if prev:
+        await db.day_overrides.delete_one({"user_id": user["id"], "date": date})
+        await db.day_change_log.insert_one({
+            "id": new_id(), "user_id": user["id"], "date": date, "created_at": now_iso(),
+            "actor_id": user["id"], "actor_role": user.get("role", "client"),
+            "prev": prev, "new": None, "action": "cleared",
+        })
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------
 # Multi-month calendar timeline
 # ------------------------------------------------------------------
 @api.get("/calendar/timeline")

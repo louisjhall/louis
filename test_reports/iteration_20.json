@@ -1,0 +1,47 @@
+{
+  "summary": "Tested new POST /api/coach/exercises/{name}/generate-image (Atlas Nano Banana / Gemini gemini-3.1-flash-image-preview) end-to-end. 6/7 cases PASS: coach 200 + valid data:image/... URL (~700-830KB JPEG), DB persistence via /api/exercises/content, regeneration replaces image with distinct bytes, non-coach client blocked with 403, unauth blocked, unknown exercise name auto-created via _find_or_create_exercise, optional style_hint body accepted (endpoint returns 200 + image). 1 FAIL: exercise names containing a forward-slash (case 6, e.g. '90/90 Hip Rotation') cannot be reached — single-encoded %2F is decoded by Starlette before routing → 404; double-encoding creates a bogus exercise named literally '90%2F90 Hip Rotation'. Real Gemini calls averaged 6-8s each. No mocks. Backend healthy throughout.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/coach/exercises/{name}/generate-image",
+        "issue": "Exercise names containing '/' are unreachable. Starlette decodes %2F back to / before route matching, so 'POST /api/coach/exercises/90%2F90 Hip Rotation/generate-image' becomes an unrouted path and returns 404. Confirmed against both http://localhost:8001 and the public ingress URL — this is a FastAPI/Starlette routing behaviour, not an ingress issue. Double-encoding (%252F) hits the route but stores the exercise under the literal name '90%2F90 Hip Rotation' (a NEW row) instead of the existing seeded '90/90 Hip Rotation' — silent data corruption. Fix options: (a) change the path param to {name:path} to preserve the slash, or (b) move exercise name to a query param / JSON body (recommended for URL safety), or (c) accept an exercise `id` in the path instead of the name.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/coach/exercises/{name}/generate-image",
+        "issue": "`image_prompt_summary` is set to prompt[:400], but the `style_hint` text is injected into the prompt only around char ~432, so callers using style_hint will not see it reflected in the persisted `image_prompt_summary`. Either lift style_hint earlier in the prompt or bump the summary slice (e.g. prompt[:800]) so coaches can audit what style was requested."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_atlas_nano_banana_image.py",
+    "/app/test_reports/pytest/atlas_nano_banana_results.xml"
+  ],
+  "action_items": [
+    "Fix path routing for exercise names containing '/'. Recommended: change signature to `@api.post('/coach/exercises/{name:path}/generate-image')` OR restructure to `POST /api/coach/exercises/generate-image` with `{name, style_hint}` in the JSON body. Apply the same fix to the sibling routes /coach/exercises/{name}/image and /coach/exercises/{name}/content-gen if they need to accept '90/90 Hip Rotation' etc. — this endpoint pattern is shared by several routes and all are affected.",
+    "Consider extending `image_prompt_summary` beyond prompt[:400], or reorder _build_exercise_image_prompt so the (potentially coach-supplied) style_hint sits inside the first 400 chars so it is captured in the audit summary."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 4078: path param {name} — same fragile pattern as _find_or_create_exercise callers around lines 3990/4023. Any exercise with '/', '?', '#' in the name is unreachable through these path-based endpoints. This will silently break several seeded exercises ('90/90 Hip Rotation', 'Bent-Over Row (band)' works but '90/90' does not).",
+    "server.py line 4123: `image_prompt_summary = prompt[:400]` truncates before the style block. Combined with lines 4058-4064 placing 'Style: ...' well past char 400, the coach-provided style_hint is never persisted in the audit field.",
+    "server.py line 4109: HTTPException(502, f'Atlas image generation failed: {e}') leaks provider error strings to the client. Consider a generic message client-side and full trace to logs only.",
+    "server.py line 4094: entire reference PNG (~1.8MB) is base64-loaded on every request. Consider caching the base64 string in module scope (immutable file)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_atlas_nano_banana_image.py (new)"
+  ],
+  "success_rate": {"backend": "86% (6/7)", "frontend": "not tested (backend-only per request)"},
+  "seed_data_creation": "Auto-created one throwaway exercise via /generate-image with name pattern 'TEST_NanoBanana_AutoExercise_{ts}' during test_unknown_exercise_auto_created. Also created one polluted row 'Assault Bike Zone 2' (image replaced multiple times) and 'TEST_MARKER_STUDIO_XZ7'-flavoured image on same. No other seed writes.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_atlas_nano_banana_image.py exercises the new endpoint. Each Gemini call takes 6-10s. Six of seven cases pass. Only remaining failure is the slash-in-name routing bug; once main agent switches to `{name:path}` or a body-based name param, re-run test_url_encoded_name_with_slash to confirm. The public URL (EXPO_PUBLIC_BACKEND_URL) is used via conftest.py.",
+  "rca_of_issue": "Slash-in-name 404 RCA: Starlette's URL routing matches on the already-decoded path. Even when the client sends %2F, the decoded form '/' appears in the path and splits the {name} segment. FastAPI/Starlette route '/coach/exercises/{name}/generate-image' therefore only ever sees names without '/'. Reproduction: `curl -X POST 'http://localhost:8001/api/coach/exercises/90%2F90%20Hip%20Rotation/generate-image' -H 'Authorization: Bearer <coach>' -d '{}' -> 404`. Mitigation: declare `{name:path}` OR relocate the name to the request body (`POST /coach/exercises/generate-image` with `{name, style_hint}`)."
+}

@@ -102,6 +102,7 @@ function EditorSheet({ exercise, onClose, onSaved }: { exercise: any; onClose: (
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [genImaging, setGenImaging] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -154,6 +155,34 @@ function EditorSheet({ exercise, onClose, onSaved }: { exercise: any; onClose: (
     } finally { setUploading(false); }
   };
 
+  const generateImage = async () => {
+    if (genImaging) return;
+    const doIt = async () => {
+      setGenImaging(true);
+      try {
+        const r = await api<any>(`/coach/exercises/${encodeURIComponent(exercise.name)}/generate-image`, {
+          method: "POST", body: {},
+        });
+        setEx(r.exercise);
+        Alert.alert("Atlas image ready", "Louis has been rendered for this exercise. Review and approve.");
+      } catch (e: any) {
+        Alert.alert("Image generation failed", e?.message || "Atlas could not render this exercise. Please try again.");
+      } finally { setGenImaging(false); }
+    };
+    if (ex.custom_image_b64) {
+      Alert.alert(
+        "Replace existing image?",
+        "This will replace the current photo with a newly generated Atlas image.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Replace", style: "destructive", onPress: doIt },
+        ],
+      );
+    } else {
+      doIt();
+    }
+  };
+
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetRoot}>
@@ -180,6 +209,21 @@ function EditorSheet({ exercise, onClose, onSaved }: { exercise: any; onClose: (
                 <Pressable onPress={uploadImage} disabled={uploading} style={styles.actionSecondary} testID="ex-upload">
                   <Ionicons name="image" size={13} color={theme.color.brand} />
                   <Text style={styles.actionSecondaryT}>{uploading ? "..." : "UPLOAD IMAGE"}</Text>
+                </Pressable>
+              </View>
+              <View style={[styles.actionRow, { marginTop: 8 }]}>
+                <Pressable
+                  onPress={generateImage}
+                  disabled={genImaging}
+                  style={[styles.actionPrimary, { backgroundColor: theme.color.text, flex: 1 }]}
+                  testID="ex-generate-image"
+                >
+                  {genImaging
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Ionicons name="color-wand" size={13} color="#fff" />}
+                  <Text style={styles.actionPrimaryT}>
+                    {genImaging ? "RENDERING LOUIS..." : (ex.custom_image_b64 ? "REGENERATE ATLAS IMAGE" : "GENERATE ATLAS IMAGE")}
+                  </Text>
                 </Pressable>
               </View>
 

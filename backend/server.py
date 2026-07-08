@@ -35,6 +35,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from emergentintegrations.llm.chat import (
     FileContentWithMimeType,
+    ImageContent,
     LlmChat,
     UserMessage,
 )
@@ -49,6 +50,9 @@ JWT_ALGO = os.environ.get("JWT_ALGORITHM", "HS256")
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 EMERGENT_PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
 PUSH_BASE_URL = "https://integrations.emergentagent.com"
+
+# Louis Hall reference photo used to generate exercise demo images with Nano Banana.
+LOUIS_REF_IMAGE_PATH = ROOT_DIR / "assets" / "louis_ref.png"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("crewfit")
@@ -4029,6 +4033,98 @@ async def coach_exercises_image(name: str, body: ImageUploadBody, coach: dict = 
     }})
     fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})
     return {"exercise": fresh}
+
+
+# ---- Atlas AI exercise image generation (Gemini Nano Banana + Louis reference) ----
+class GenerateImageBody(BaseModel):
+    style_hint: Optional[str] = None  # optional coach override
+
+
+ATLAS_EXERCISE_IMAGE_SYSTEM = (
+    "You are Atlas, the intelligence engine behind Louis Hall's CrewFit method. "
+    "You generate clean, professional exercise demonstration photos featuring Louis Hall "
+    "(the man in the reference image) as the model. Match his face, hair, build, and skin tone precisely. "
+    "The image must look like a modern fitness education photo — no distractions, no logos, no text."
+)
+
+
+def _build_exercise_image_prompt(ex: dict, style_hint: Optional[str] = None) -> str:
+    name = ex.get("name", "the exercise")
+    equipment = ex.get("equipment") or "bodyweight"
+    pattern = ex.get("primary_pattern") or ""
+    cues = ex.get("cues") or []
+    setup_cue = (cues[0] if cues else "").strip()
+
+    style = (
+        style_hint
+        or "Clean, bright gym studio photograph. Neutral light-grey seamless backdrop. "
+        "Soft, even studio lighting with a subtle rim light. Shot at eye level with a 50mm lens, sharp focus, "
+        "shallow depth of field. Louis wears fitted black athletic shorts and a fitted plain black training t-shirt. "
+        "No brand logos, no text, no watermark."
+    )
+
+    return (
+        f"Photorealistic image of Louis Hall (the man in the provided reference image) demonstrating the exercise "
+        f"'{name}' with textbook form. Use his face, hair, and build exactly as shown in the reference.\n\n"
+        f"Equipment: {equipment}. Movement pattern: {pattern or 'as per exercise'}.\n"
+        f"Show the exercise mid-repetition at the most instructive point of the movement — the position that "
+        f"best teaches a client the correct technique. {('Key cue to embody: ' + setup_cue + '.') if setup_cue else ''}\n\n"
+        f"Style: {style}\n"
+        f"Framing: full body or half body as appropriate for the exercise; body fully in frame; feet not cropped "
+        f"if standing. Single subject only. No other people, no coaches, no equipment other than what is needed."
+    )
+
+
+@api.post("/coach/exercises/{name}/generate-image")
+async def coach_exercises_generate_image(
+    name: str,
+    body: GenerateImageBody = GenerateImageBody(),
+    coach: dict = Depends(require_role("coach")),
+):
+    """Atlas generates a clean-studio exercise demo photo using Louis Hall's reference likeness (Gemini Nano Banana).
+
+    Replaces `custom_image_b64` on the exercise record on success.
+    """
+    ex = await _find_or_create_exercise(name)
+
+    if not LOUIS_REF_IMAGE_PATH.exists():
+        raise HTTPException(500, "Louis reference photo not found on server")
+
+    with open(LOUIS_REF_IMAGE_PATH, "rb") as f:
+        ref_b64 = base64.b64encode(f.read()).decode("utf-8")
+
+    prompt = _build_exercise_image_prompt(ex, body.style_hint)
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=new_id(),
+            system_message=ATLAS_EXERCISE_IMAGE_SYSTEM,
+        ).with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
+
+        msg = UserMessage(text=prompt, file_contents=[ImageContent(ref_b64)])
+        _text, images = await chat.send_message_multimodal_response(msg)
+    except Exception as e:
+        logger.exception("nano banana image gen failed for %s", name)
+        raise HTTPException(502, f"Atlas image generation failed: {e}")
+
+    if not images:
+        raise HTTPException(502, "Atlas returned no image")
+
+    img = images[0]
+    mime = img.get("mime_type") or "image/png"
+    data_url = f"data:{mime};base64,{img['data']}"
+
+    updates = {
+        "custom_image_b64": data_url,
+        "custom_image_uploaded_at": now_iso(),
+        "custom_image_uploaded_by": coach["id"],
+        "image_source": "atlas_nano_banana",
+        "image_prompt_summary": prompt[:400],
+    }
+    await db.exercises.update_one({"id": ex["id"]}, {"$set": updates})
+    fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})
+    return {"exercise": fresh, "source": "atlas_nano_banana"}
 
 
 @api.get("/exercises/content")

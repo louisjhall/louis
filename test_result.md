@@ -442,14 +442,23 @@ frontend:
 
 test_plan:
   current_focus:
-    - "POST /api/calendar/day-override — Rules Engine adjustment logic (sick→rest, holiday→off, poor_sleep→mobility, reduce→trim, availability_min→trim/rest, location_only tags)"
-    - "GET /api/coach/calendar — override_tags/override_notes/override_applied surfaced per cell"
-    - "GET /api/coach/clients/{client_id} — overrides + change_log arrays included"
-    - "Coach-locked workouts remain untouched by Rules Engine (coach_locked:true short-circuits)"
-    - "Completed workouts remain untouched by Rules Engine"
+    - "POST /api/coach/exercises/{name}/generate-image — Gemini Nano Banana image generation with Louis reference"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend_new:
+  - task: "Atlas Nano Banana exercise image generation (Louis reference)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added POST /api/coach/exercises/{name}/generate-image. Loads /app/backend/assets/louis_ref.png, base64 encodes it, sends to Gemini model gemini-3.1-flash-image-preview with modalities=[image,text] via emergentintegrations LlmChat. Prompt built from exercise name/equipment/pattern/cues with clean-studio style. Saves data-URL to exercise.custom_image_b64, image_source=atlas_nano_banana, image_prompt_summary. Requires coach role. Verified locally with 'Assault Bike Zone 2' → 603KB JPEG returned successfully. Frontend button in /(coach)/exercises editor: 'GENERATE ATLAS IMAGE' (or 'REGENERATE ATLAS IMAGE' when image exists, with confirm alert)."
 
 agent_communication:
   - agent: "main"

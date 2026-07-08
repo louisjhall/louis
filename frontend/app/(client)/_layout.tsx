@@ -20,7 +20,7 @@ export default function ClientLayout() {
       }}
     >
       <Tabs.Screen name="home" options={{ title: "TODAY", tabBarIcon: ({ color }) => <Ionicons name="flash" size={22} color={color} /> }} />
-      <Tabs.Screen name="calendar" options={{ title: "WEEK", tabBarIcon: ({ color }) => <Ionicons name="calendar" size={22} color={color} /> }} />
+      <Tabs.Screen name="calendar" options={{ title: "CALENDAR", tabBarIcon: ({ color }) => <Ionicons name="calendar" size={22} color={color} /> }} />
       <Tabs.Screen name="nutrition" options={{ title: "NUTRITION", tabBarIcon: ({ color }) => <Ionicons name="restaurant" size={22} color={color} /> }} />
       <Tabs.Screen name="messages" options={{ title: "MESSAGES", tabBarIcon: ({ color }) => <Ionicons name="chatbubble-ellipses" size={22} color={color} /> }} />
       <Tabs.Screen name="profile" options={{ title: "PROFILE", tabBarIcon: ({ color }) => <Ionicons name="person" size={22} color={color} /> }} />

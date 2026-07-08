@@ -1547,6 +1547,192 @@ async def achievements(user: dict = Depends(current_user)):
 
 
 # ---------------- Notes (Coach & AI aggregated) ----------------
+# ---- Atlas Workout Player — Sets logging + Alternatives ----
+class WorkoutSetBody(BaseModel):
+    workout_id: str
+    exercise_index: int
+    exercise_name: str
+    set_number: int
+    target_reps: Optional[str] = None
+    actual_reps: Optional[int] = None
+    target_weight: Optional[float] = None
+    actual_weight: Optional[float] = None
+    rpe: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@api.post("/workouts/{workout_id}/sets")
+async def log_set(workout_id: str, body: WorkoutSetBody, user: dict = Depends(current_user)):
+    """Log a completed set. Stored in workout_sets for future 'previous performance' lookups."""
+    doc = {
+        "id": new_id(),
+        "user_id": user["id"],
+        "workout_id": workout_id,
+        "exercise_index": body.exercise_index,
+        "exercise_name": body.exercise_name.strip(),
+        "set_number": body.set_number,
+        "target_reps": body.target_reps,
+        "actual_reps": body.actual_reps,
+        "target_weight": body.target_weight,
+        "actual_weight": body.actual_weight,
+        "rpe": body.rpe,
+        "notes": body.notes,
+        "created_at": now_iso(),
+    }
+    await db.workout_sets.insert_one(doc)
+    doc.pop("_id", None)
+    return {"set": doc}
+
+
+@api.get("/workouts/{workout_id}/sets")
+async def list_sets(workout_id: str, user: dict = Depends(current_user)):
+    rows = await db.workout_sets.find(
+        {"user_id": user["id"], "workout_id": workout_id},
+        {"_id": 0},
+    ).sort("created_at", 1).to_list(500)
+    return {"sets": rows}
+
+
+@api.get("/exercises/previous")
+async def exercise_previous(name: str, user: dict = Depends(current_user)):
+    """Return the last session's sets for this exercise + best set ever + a suggested load."""
+    # Case-insensitive exact-ish match on exercise_name
+    q = {"user_id": user["id"], "exercise_name": {"$regex": f"^{name}$", "$options": "i"}}
+    rows = await db.workout_sets.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
+    if not rows:
+        return {"last_session": [], "personal_best": None, "suggested_load": None}
+    # Last session = all sets from the most recent workout_id
+    last_wid = rows[0].get("workout_id")
+    last_session = [r for r in rows if r.get("workout_id") == last_wid]
+    last_session.sort(key=lambda r: r.get("set_number") or 0)
+    # PB by weight
+    weighted = [r for r in rows if r.get("actual_weight")]
+    pb = None
+    if weighted:
+        pb = max(weighted, key=lambda r: (r.get("actual_weight") or 0, r.get("actual_reps") or 0))
+    # Suggested: if all last-session sets hit target reps with RPE <= 8, add 2.5kg (or 5%); else keep
+    suggested = None
+    if last_session:
+        top_set = max(last_session, key=lambda r: r.get("actual_weight") or 0)
+        wt = top_set.get("actual_weight")
+        if wt:
+            rpe = top_set.get("rpe") or 0
+            hit_reps = all((r.get("actual_reps") or 0) >= int(str(r.get("target_reps") or 0).split("-")[0] or 0)
+                           for r in last_session if r.get("target_reps"))
+            if hit_reps and rpe and rpe <= 8:
+                suggested = round(wt + max(2.5, wt * 0.025), 1)
+            else:
+                suggested = wt
+    return {"last_session": last_session, "personal_best": pb, "suggested_load": suggested}
+
+
+# Deterministic alternative catalog — Atlas uses this as ground truth
+ALT_CATALOG: dict[str, list[dict]] = {
+    "squat": [
+        {"name": "Goblet Squat", "equipment": ["dumbbell", "kettlebell"], "why": "Front-loaded pattern keeps torso upright and quads active."},
+        {"name": "Dumbbell Split Squat", "equipment": ["dumbbell"], "why": "Unilateral, less spinal load, hotel-friendly."},
+        {"name": "Bodyweight Tempo Squat", "equipment": [], "why": "3-second lowering keeps the stimulus without kit."},
+        {"name": "Dumbbell Front Squat", "equipment": ["dumbbell"], "why": "Same pattern, front-rack alternative."},
+    ],
+    "deadlift": [
+        {"name": "Dumbbell Romanian Deadlift", "equipment": ["dumbbell"], "why": "Hinge pattern preserved with lighter kit."},
+        {"name": "Single-leg RDL", "equipment": [], "why": "Balance + hamstring emphasis, no gym needed."},
+        {"name": "Kettlebell Swing", "equipment": ["kettlebell"], "why": "Explosive hip hinge — great in hotel gyms."},
+    ],
+    "bench": [
+        {"name": "Dumbbell Bench Press", "equipment": ["dumbbell", "bench"], "why": "Unilateral chest work with better shoulder path."},
+        {"name": "Push-Up", "equipment": [], "why": "Bodyweight pattern, zero equipment."},
+        {"name": "Floor Press", "equipment": ["dumbbell"], "why": "Hotel-friendly, no bench needed."},
+    ],
+    "row": [
+        {"name": "Dumbbell Row", "equipment": ["dumbbell"], "why": "Same pull pattern, unilateral."},
+        {"name": "Band Row", "equipment": ["band"], "why": "Travel-friendly resistance."},
+        {"name": "TRX Row", "equipment": ["trx"], "why": "Bodyweight horizontal pull."},
+        {"name": "Inverted Row", "equipment": [], "why": "Bodyweight equivalent using a bar or table edge."},
+    ],
+    "press": [
+        {"name": "Dumbbell Shoulder Press", "equipment": ["dumbbell"], "why": "Same vertical push, better joint path."},
+        {"name": "Pike Push-Up", "equipment": [], "why": "Bodyweight vertical push for hotel rooms."},
+        {"name": "Band Overhead Press", "equipment": ["band"], "why": "Travel-friendly vertical push."},
+    ],
+    "pull_up": [
+        {"name": "Band-Assisted Pull-Up", "equipment": ["band"], "why": "Reduces bodyweight load to hit target reps."},
+        {"name": "TRX Row", "equipment": ["trx"], "why": "Horizontal pull alternative when no bar."},
+        {"name": "Dumbbell Row", "equipment": ["dumbbell"], "why": "Same lat pattern using DBs."},
+    ],
+    "lunge": [
+        {"name": "Reverse Lunge", "equipment": [], "why": "Same unilateral pattern, easier on the knees."},
+        {"name": "Walking Lunge", "equipment": [], "why": "Space-permitting alternative."},
+        {"name": "Step-Up", "equipment": [], "why": "Uses a bench or bed edge for hotels."},
+    ],
+    "plank": [
+        {"name": "Dead Bug", "equipment": [], "why": "Anti-extension core with less shoulder load."},
+        {"name": "Side Plank", "equipment": [], "why": "Lateral core emphasis."},
+    ],
+}
+
+
+def _match_alt_key(name: str) -> Optional[str]:
+    n = (name or "").lower()
+    for key in ALT_CATALOG:
+        if key in n:
+            return key
+    if "chin" in n or "pullup" in n:
+        return "pull_up"
+    if "overhead" in n or "shoulder" in n:
+        return "press"
+    return None
+
+
+@api.get("/exercises/alternatives")
+async def exercise_alternatives(
+    name: str,
+    location: Optional[str] = None,
+    equipment: Optional[str] = None,  # comma-separated
+    user: dict = Depends(current_user),
+):
+    """Return Atlas-recommended alternatives for an exercise given the user's context.
+
+    Filter priority: equipment match > location fit > general fallback.
+    """
+    key = _match_alt_key(name)
+    have_equipment = set((equipment or "").lower().split(",")) if equipment else set()
+    have_equipment.discard("")
+
+    # Pull user's home equipment as a soft signal
+    if not have_equipment and user.get("profile"):
+        eq = user["profile"].get("home_equipment") or user["profile"].get("equipment") or []
+        have_equipment = {str(e).lower() for e in eq}
+
+    if key and key in ALT_CATALOG:
+        alts = ALT_CATALOG[key]
+        # Score: how many of the required equipment items are available? 0-equip = universal.
+        def _score(a: dict) -> int:
+            req = set(a.get("equipment") or [])
+            if not req:
+                return 10  # bodyweight is always best if location=hotel
+            hits = sum(1 for r in req if any(r in h for h in have_equipment))
+            return hits * 5 + (2 if location == "Hotel" and not req else 0)
+
+        alts_scored = sorted(alts, key=_score, reverse=True)
+        return {
+            "source": "catalog",
+            "reason": "Atlas alternatives keep the same training objective using the equipment you have available.",
+            "alternatives": alts_scored,
+        }
+
+    # Fallback: no key match
+    return {
+        "source": "generic",
+        "reason": "No exact match found. Try a similar movement pattern with bodyweight or dumbbell.",
+        "alternatives": [
+            {"name": "Bodyweight Alternative", "equipment": [], "why": "Same movement pattern, no equipment."},
+            {"name": "Dumbbell Alternative", "equipment": ["dumbbell"], "why": "Common substitute."},
+        ],
+    }
+
+
+# ---------------- Notes (Coach & AI aggregated) ----------------
 @api.get("/notes/coach")
 async def notes_coach(user: dict = Depends(current_user)):
     """Aggregate coach-authored notes for a client: coach messages + coach_notes on workouts + coach reviewed reality events."""

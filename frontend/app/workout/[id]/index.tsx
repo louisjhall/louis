@@ -249,9 +249,14 @@ export default function WorkoutDetail() {
             </Pressable>
           </View>
         ) : (
-          <Pressable testID="complete-workout" onPress={complete} disabled={saving || w.completed} style={[styles.cta, w.completed && { backgroundColor: theme.color.green }, saving && { opacity: 0.6 }]}>
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>{w.completed ? "COMPLETED ✓" : "COMPLETE WORKOUT"}</Text>}
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Pressable testID="atlas-play" onPress={() => router.push(`/workout/${w.id}/play` as any)} disabled={w.completed} style={[styles.cta, { flex: 2 }, w.completed && { backgroundColor: theme.color.green }]}>
+              <Text style={styles.ctaText}>{w.completed ? "COMPLETED ✓" : "START WORKOUT →"}</Text>
+            </Pressable>
+            <Pressable testID="complete-workout" onPress={complete} disabled={saving || w.completed} style={[styles.ctaSecondary, { flex: 1 }, saving && { opacity: 0.6 }]}>
+              {saving ? <ActivityIndicator color={theme.color.brand} /> : <Text style={styles.ctaSecondaryText}>{w.completed ? "DONE" : "MARK DONE"}</Text>}
+            </Pressable>
+          </View>
         )}
       </View>
       <RealityModal

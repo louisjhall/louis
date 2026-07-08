@@ -2,7 +2,7 @@
  * Atlas Exercise Content — Coach Dashboard (Phase 2)
  * List all exercises with content-completeness scores and inline editors.
  */
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator,
   Alert, Image, RefreshControl, Modal, KeyboardAvoidingView, Platform,
@@ -20,6 +20,7 @@ export default function CoachExercises() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<any>(null);
+  const [batchOpen, setBatchOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,6 +44,10 @@ export default function CoachExercises() {
           <Text style={styles.eyebrow}>ATLAS EXERCISE LIBRARY</Text>
           <Text style={styles.title}>Coach <Text style={styles.brandRed}>Content</Text></Text>
         </View>
+        <Pressable onPress={() => setBatchOpen(true)} style={styles.batchBtn} testID="batch-open">
+          <Ionicons name="sparkles" size={13} color={theme.color.brand} />
+          <Text style={styles.batchBtnT}>BATCH</Text>
+        </Pressable>
         <View style={styles.countPill}>
           <Text style={styles.countPillT}>{exercises.length}</Text>
         </View>
@@ -101,6 +106,9 @@ export default function CoachExercises() {
       </ScrollView>
 
       {selected && <EditorSheet exercise={selected} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); load(); }} />}
+      {batchOpen && (
+        <BatchGenerateModal onClose={() => setBatchOpen(false)} onDone={() => { setBatchOpen(false); load(); }} />
+      )}
     </SafeAreaView>
   );
 }
@@ -113,6 +121,225 @@ function Flag({ on, label }: { on: boolean; label: string }) {
     </View>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Batch Atlas Image Generation Modal                                         */
+/* -------------------------------------------------------------------------- */
+function BatchGenerateModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [filter, setFilter] = useState<"warmup" | "missing_image" | "all">("warmup");
+  const [starting, setStarting] = useState(false);
+  const [job, setJob] = useState<any>(null);
+  const pollRef = useRef<any>(null);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const r = await api<any>("/coach/exercises/batch-generate-images/status");
+      setJob(r.job || null);
+      if (r.job && (r.job.status === "done" || r.job.status === "cancelled" || r.job.status === "error")) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    loadStatus();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [loadStatus]);
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      const r = await api<any>("/coach/exercises/batch-generate-images", {
+        method: "POST", body: { filter },
+      });
+      if (r.error) {
+        Alert.alert("Cannot start", r.error);
+      } else {
+        setJob(r.job);
+        // start polling every 3s
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(loadStatus, 3000);
+      }
+    } catch (e: any) {
+      Alert.alert("Failed to start", e?.message || "Please try again.");
+    } finally { setStarting(false); }
+  };
+
+  const cancel = async () => {
+    try {
+      await api("/coach/exercises/batch-generate-images/cancel", { method: "POST", body: {} });
+      loadStatus();
+    } catch { /* ignore */ }
+  };
+
+  const isRunning = job && (job.status === "queued" || job.status === "running");
+  const pct = job && job.total ? Math.round(((job.processed || 0) / job.total) * 100) : 0;
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={batchStyles.root}>
+        <Pressable style={batchStyles.backdrop} onPress={isRunning ? undefined : onClose} />
+        <View style={batchStyles.sheet}>
+          <View style={batchStyles.head}>
+            <View style={batchStyles.headIcon}><Ionicons name="sparkles" size={16} color={theme.color.brand} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={batchStyles.eyebrow}>ATLAS BATCH RENDER</Text>
+              <Text style={batchStyles.title}>Generate images at scale</Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={12} disabled={isRunning}>
+              <Ionicons name="close" size={22} color={isRunning ? theme.color.textDim : theme.color.text} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+            {!isRunning && (job?.status !== "done" || starting) && (
+              <>
+                <Text style={batchStyles.label}>SELECT SCOPE</Text>
+                <View style={batchStyles.filters}>
+                  <FilterChip label="WARM-UP MOVES" hint="~221 moves · fastest" active={filter === "warmup"} onPress={() => setFilter("warmup")} />
+                  <FilterChip label="ALL MISSING IMAGES" hint="Every exercise without a photo" active={filter === "missing_image"} onPress={() => setFilter("missing_image")} />
+                  <FilterChip label="ENTIRE LIBRARY" hint="All exercises · slowest" active={filter === "all"} onPress={() => setFilter("all")} />
+                </View>
+                <View style={batchStyles.warn}>
+                  <Ionicons name="information-circle" size={12} color={theme.color.brand} />
+                  <Text style={batchStyles.warnT}>
+                    Each render takes ~10-15s. Atlas runs politely at 1 per second, so 221 warm-up moves will take ~40-50 minutes. You can close this window; the job keeps running.
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={start}
+                  disabled={starting}
+                  style={[batchStyles.startBtn, starting && { opacity: 0.35 }]}
+                  testID="batch-start"
+                >
+                  {starting
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Ionicons name="rocket" size={14} color="#fff" />}
+                  <Text style={batchStyles.startBtnT}>{starting ? "STARTING..." : "START BATCH RENDER"}</Text>
+                </Pressable>
+              </>
+            )}
+
+            {job && (
+              <View style={batchStyles.progressCard}>
+                <View style={batchStyles.progressHead}>
+                  <View style={[batchStyles.statusDot, statusColor(job.status)]} />
+                  <Text style={batchStyles.progressStatus}>{String(job.status || "").toUpperCase()}</Text>
+                  <Text style={batchStyles.progressCount}>
+                    {job.processed || 0} / {job.total || 0}
+                  </Text>
+                </View>
+                <View style={batchStyles.barTrack}>
+                  <View style={[batchStyles.barFill, { width: `${pct}%` }]} />
+                </View>
+                <View style={batchStyles.stats}>
+                  <StatChip label="DONE" value={job.succeeded || 0} color={theme.color.green} />
+                  <StatChip label="FAILED" value={job.failed || 0} color={"#c94a4a"} />
+                  <StatChip label="TOTAL" value={job.total || 0} color={theme.color.brand} />
+                </View>
+                {job.current_name && isRunning && (
+                  <Text style={batchStyles.currentT}>
+                    <Text style={{ color: theme.color.textMuted, fontSize: 10 }}>NOW RENDERING · </Text>
+                    {job.current_name}
+                  </Text>
+                )}
+                {job.errors && job.errors.length > 0 && (
+                  <View style={batchStyles.errorBox}>
+                    <Text style={batchStyles.errorH}>RECENT ERRORS ({job.errors.length})</Text>
+                    {job.errors.slice(-5).map((e: any, i: number) => (
+                      <Text key={i} style={batchStyles.errorL} numberOfLines={1}>
+                        • {e.name || e.exercise_id}: {e.error}
+                      </Text>
+                    ))}
+                  </View>
+                )}
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+                  {isRunning ? (
+                    <Pressable onPress={cancel} style={batchStyles.cancelBtn}>
+                      <Ionicons name="stop-circle" size={12} color={theme.color.text} />
+                      <Text style={batchStyles.cancelBtnT}>STOP JOB</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable onPress={onDone} style={batchStyles.startBtn}>
+                      <Ionicons name="checkmark-circle" size={14} color="#fff" />
+                      <Text style={batchStyles.startBtnT}>DONE</Text>
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function FilterChip({ label, hint, active, onPress }: { label: string; hint: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[batchStyles.chip, active && batchStyles.chipActive]}>
+      <View style={{ flex: 1 }}>
+        <Text style={[batchStyles.chipL, active && batchStyles.chipLA]}>{label}</Text>
+        <Text style={batchStyles.chipH}>{hint}</Text>
+      </View>
+      <Ionicons name={active ? "radio-button-on" : "radio-button-off"} size={16} color={active ? theme.color.brand : theme.color.textDim} />
+    </Pressable>
+  );
+}
+
+function StatChip({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <View style={[batchStyles.statChip, { borderColor: color }]}>
+      <Text style={[batchStyles.statV, { color }]}>{value}</Text>
+      <Text style={batchStyles.statL}>{label}</Text>
+    </View>
+  );
+}
+
+function statusColor(s: string) {
+  if (s === "running" || s === "queued") return { backgroundColor: theme.color.brand };
+  if (s === "done") return { backgroundColor: theme.color.green };
+  if (s === "cancelled") return { backgroundColor: theme.color.textDim };
+  return { backgroundColor: "#c94a4a" };
+}
+
+const batchStyles = StyleSheet.create({
+  root: { flex: 1, justifyContent: "flex-end" },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
+  sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "88%" },
+  head: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
+  headIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.brand },
+  eyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  title: { color: theme.color.text, fontSize: 16, fontWeight: "800", marginTop: 3 },
+  label: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
+  filters: { gap: 8, marginBottom: 14 },
+  chip: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  chipActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
+  chipL: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
+  chipLA: { color: theme.color.brand },
+  chipH: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  warn: { flexDirection: "row", gap: 8, padding: 10, borderRadius: 8, backgroundColor: theme.color.brandTint, marginBottom: 14, borderWidth: 1, borderColor: theme.color.brand },
+  warnT: { color: theme.color.text, fontSize: 11, lineHeight: 15, flex: 1 },
+  startBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 10, backgroundColor: theme.color.brand, flex: 1 },
+  startBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  cancelBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 10, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, flex: 1 },
+  cancelBtnT: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  progressCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  progressHead: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  progressStatus: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, flex: 1 },
+  progressCount: { color: theme.color.brand, fontSize: 13, fontWeight: "900", fontVariant: ["tabular-nums"] },
+  barTrack: { height: 6, borderRadius: 3, backgroundColor: theme.color.surface3, overflow: "hidden" },
+  barFill: { height: 6, backgroundColor: theme.color.brand },
+  stats: { flexDirection: "row", gap: 8, marginTop: 10 },
+  statChip: { flex: 1, alignItems: "center", padding: 8, borderRadius: 8, borderWidth: 1 },
+  statV: { fontSize: 18, fontWeight: "900" },
+  statL: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginTop: 2 },
+  currentT: { color: theme.color.text, fontSize: 11, marginTop: 10, fontStyle: "italic" },
+  errorBox: { marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: "#c94a4a" },
+  errorH: { color: "#c94a4a", fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 6 },
+  errorL: { color: theme.color.textMuted, fontSize: 10, lineHeight: 14, marginTop: 2 },
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Editor Sheet                                                              */
@@ -391,6 +618,8 @@ const styles = StyleSheet.create({
   title: { color: theme.color.text, fontSize: 18, fontWeight: "800", marginTop: 3 },
   brandRed: { color: theme.color.brand, fontWeight: "900" },
   countPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
+  batchBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, marginRight: 8 },
+  batchBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
   countPillT: { color: theme.color.brand, fontSize: 12, fontWeight: "900" },
   searchWrap: {
     flexDirection: "row", alignItems: "center", gap: 8,

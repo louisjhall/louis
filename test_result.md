@@ -440,11 +440,24 @@ frontend:
         agent: "main"
         comment: "videos route registered with href:null to keep mobile tab bar at 5 items."
 
+backend_batch_atlas:
+  - task: "Batch Atlas image generation (background job)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added POST /api/coach/exercises/batch-generate-images (filter=warmup|missing_image|all|category, force=bool, limit=int) which fires an asyncio.create_task worker that iterates matching exercises, calls Gemini Nano Banana per item with a 1.2s throttle, updates DB, and reports progress. GET /status returns the active or last-finished job doc. POST /cancel marks the job cancelled. Smoke-tested with limit=2 → 2/2 succeeded in ~20s. Kicked off the real warmup batch (217 items) and verified progress at 4/217 with 0 failures after 30s."
+
 test_plan:
   current_focus:
-    - "POST /api/workouts/{wid}/sets — cardio fields (logging_type, duration_sec, distance_m, pace auto-derive, heart_rate_avg)"
-    - "GET /api/exercises/previous — progression_hint field (increase/hold with delta_kg and reason)"
-    - "POST /api/coach/exercises/{name:path}/generate-image — regression check (Nano Banana still works)"
+    - "Coach BATCH modal opens, filter selection works, START triggers the job"
+    - "Progress polling shows real-time status/succeeded/failed/current_name"
+    - "Warmup batch job completes without failures on the majority of items"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

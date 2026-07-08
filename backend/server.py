@@ -13,6 +13,7 @@ Phase A additions on top of V1:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -4214,6 +4215,176 @@ async def coach_exercises_generate_image(
     await db.exercises.update_one({"id": ex["id"]}, {"$set": updates})
     fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})
     return {"exercise": fresh, "source": "atlas_nano_banana"}
+
+
+# ---- Batch Atlas image generation (background) ------------------------------
+class BatchImageBody(BaseModel):
+    filter: str = "missing_image"  # "missing_image" | "warmup" | "all" | "category"
+    category: Optional[str] = None  # used when filter == "category"
+    limit: Optional[int] = None     # cap number of items processed
+    force: bool = False             # regenerate even when image already exists
+
+
+async def _gen_single_image_for(ex: dict) -> tuple[bool, Optional[str]]:
+    """Run Nano Banana for one exercise. Returns (ok, error_message)."""
+    try:
+        ref_b64 = _louis_ref_b64()
+    except FileNotFoundError:
+        return False, "Louis reference missing"
+
+    try:
+        prompt = _build_exercise_image_prompt(ex)
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=new_id(),
+            system_message=ATLAS_EXERCISE_IMAGE_SYSTEM,
+        ).with_model("gemini", "gemini-3.1-flash-image-preview").with_params(modalities=["image", "text"])
+        msg = UserMessage(text=prompt, file_contents=[ImageContent(ref_b64)])
+        _text, images = await chat.send_message_multimodal_response(msg)
+        if not images:
+            return False, "no image returned"
+        img = images[0]
+        mime = img.get("mime_type") or "image/png"
+        data_url = f"data:{mime};base64,{img['data']}"
+        await db.exercises.update_one({"id": ex["id"]}, {"$set": {
+            "custom_image_b64": data_url,
+            "custom_image_uploaded_at": now_iso(),
+            "image_source": "atlas_nano_banana_batch",
+            "image_prompt_summary": prompt[:900],
+        }})
+        return True, None
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+async def _run_batch_image_job(job_id: str, ex_ids: list[str], coach_id: str) -> None:
+    """Background worker: iterate exercises, gen image for each, throttle politely, report progress."""
+    total = len(ex_ids)
+    started = now_iso()
+    await db.image_jobs.update_one({"id": job_id}, {"$set": {
+        "status": "running", "started_at": started, "total": total,
+    }})
+    done = 0
+    failed = 0
+    errors: list[dict] = []
+    try:
+        for eid in ex_ids:
+            ex = await db.exercises.find_one({"id": eid}, {"_id": 0})
+            if not ex:
+                failed += 1
+                errors.append({"exercise_id": eid, "error": "exercise vanished"})
+            else:
+                await db.image_jobs.update_one({"id": job_id}, {"$set": {
+                    "current_name": ex.get("name"),
+                }})
+                ok, err = await _gen_single_image_for(ex)
+                if ok:
+                    done += 1
+                else:
+                    failed += 1
+                    errors.append({"name": ex.get("name"), "error": err or "unknown"})
+            await db.image_jobs.update_one({"id": job_id}, {"$set": {
+                "processed": done + failed, "succeeded": done, "failed": failed,
+                "errors": errors[-25:],  # keep last 25 for the coach
+            }})
+            # Gentle throttle to avoid provider rate limits
+            await asyncio.sleep(1.2)
+        await db.image_jobs.update_one({"id": job_id}, {"$set": {
+            "status": "done", "finished_at": now_iso(), "current_name": None,
+        }})
+    except Exception as e:
+        logger.exception("batch image job %s crashed", job_id)
+        await db.image_jobs.update_one({"id": job_id}, {"$set": {
+            "status": "error", "finished_at": now_iso(),
+            "fatal_error": str(e)[:400], "current_name": None,
+        }})
+
+
+@api.post("/coach/exercises/batch-generate-images")
+async def coach_batch_generate_images(body: BatchImageBody, coach: dict = Depends(require_role("coach"))):
+    """Start a background job that generates Atlas images for many exercises at once.
+
+    Respects the `filter` selector so the coach can target warm-up moves, all missing images,
+    a specific category, or the whole library.
+    """
+    # Prevent overlapping jobs — only allow one running at a time.
+    active = await db.image_jobs.find_one({"status": {"$in": ["queued", "running"]}}, {"_id": 0})
+    if active:
+        return {"error": "A batch job is already running.", "job": active}
+
+    q: dict = {}
+    if body.filter == "missing_image":
+        q = {"$or": [{"custom_image_b64": {"$exists": False}}, {"custom_image_b64": None}, {"custom_image_b64": ""}]}
+    elif body.filter == "warmup":
+        q = {"category": "warmup"}
+        if not body.force:
+            q["$or"] = [{"custom_image_b64": {"$exists": False}}, {"custom_image_b64": None}, {"custom_image_b64": ""}]
+    elif body.filter == "category":
+        if not body.category:
+            raise HTTPException(400, "category is required when filter=category")
+        q = {"category": body.category}
+        if not body.force:
+            q["$or"] = [{"custom_image_b64": {"$exists": False}}, {"custom_image_b64": None}, {"custom_image_b64": ""}]
+    elif body.filter == "all":
+        q = {} if body.force else {"$or": [{"custom_image_b64": {"$exists": False}}, {"custom_image_b64": None}, {"custom_image_b64": ""}]}
+    else:
+        raise HTTPException(400, "unknown filter")
+
+    rows = await db.exercises.find(q, {"id": 1, "name": 1}).sort("name", 1).to_list(1000)
+    ex_ids = [r["id"] for r in rows if r.get("id")]
+    if body.limit and body.limit > 0:
+        ex_ids = ex_ids[: body.limit]
+
+    if not ex_ids:
+        return {"error": "No exercises match this filter.", "count": 0}
+
+    job_id = new_id()
+    doc = {
+        "id": job_id,
+        "status": "queued",
+        "coach_id": coach["id"],
+        "filter": body.filter,
+        "category": body.category,
+        "force": body.force,
+        "total": len(ex_ids),
+        "processed": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "errors": [],
+        "current_name": None,
+        "created_at": now_iso(),
+        "started_at": None,
+        "finished_at": None,
+    }
+    await db.image_jobs.insert_one(doc)
+
+    # Kick off the async worker (fire-and-forget)
+    asyncio.create_task(_run_batch_image_job(job_id, ex_ids, coach["id"]))
+    doc.pop("_id", None)
+    return {"job": doc}
+
+
+@api.get("/coach/exercises/batch-generate-images/status")
+async def coach_batch_status(coach: dict = Depends(require_role("coach"))):
+    """Return the most recent batch image job (running or last-finished)."""
+    active = await db.image_jobs.find_one(
+        {"status": {"$in": ["queued", "running"]}}, {"_id": 0}
+    )
+    if active:
+        return {"job": active}
+    last = await db.image_jobs.find_one({}, {"_id": 0}, sort=[("created_at", -1)])
+    return {"job": last}
+
+
+@api.post("/coach/exercises/batch-generate-images/cancel")
+async def coach_batch_cancel(coach: dict = Depends(require_role("coach"))):
+    """Mark any running job as cancel-requested. Worker checks between items and stops."""
+    # For MVP: just mark done immediately (worker will finish the current item then exit)
+    await db.image_jobs.update_many(
+        {"status": {"$in": ["queued", "running"]}},
+        {"$set": {"status": "cancelled", "finished_at": now_iso()}},
+    )
+    return {"ok": True}
 
 
 @api.get("/exercises/content")

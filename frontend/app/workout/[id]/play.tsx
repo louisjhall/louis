@@ -223,8 +223,12 @@ function TileImage({ ex }: { ex: any }) {
   useEffect(() => {
     if (!ex?.name) return;
     setImgUrl(null); setTried(false);
-    api<any>(`/exercises/video?name=${encodeURIComponent(ex.name)}`)
-      .then((v) => {
+    // Prefer coach-custom image, else fall back to video thumbnail
+    api<any>(`/exercises/content?name=${encodeURIComponent(ex.name)}`)
+      .then(async (r) => {
+        const custom = r?.exercise?.custom_image_b64 || r?.exercise?.coach_image_url;
+        if (custom) { setImgUrl(custom); setTried(true); return; }
+        const v = await api<any>(`/exercises/video?name=${encodeURIComponent(ex.name)}`).catch(() => null);
         setTried(true);
         setImgUrl(v?.thumbnail || v?.image || null);
       })
@@ -262,13 +266,27 @@ function TileImage({ ex }: { ex: any }) {
 /*  Tile 2 — How To                                                            */
 /* -------------------------------------------------------------------------- */
 function TileHow({ ex }: { ex: any }) {
+  const [coach, setCoach] = useState<any>(null);
+  useEffect(() => {
+    if (!ex?.name) return;
+    api<any>(`/exercises/content?name=${encodeURIComponent(ex.name)}`)
+      .then((r) => setCoach(r?.exercise || null)).catch(() => setCoach(null));
+  }, [ex?.name]);
   // Prefer coach-authored fields, else fall back to smart defaults
-  const instructions: string[] = ex?.instructions?.length ? ex.instructions : defaultInstructions(ex);
-  const cues: string[] = ex?.cues?.length ? ex.cues : defaultCues(ex);
-  const mistakes: string[] = ex?.mistakes?.length ? ex.mistakes : defaultMistakes(ex);
+  const src = coach || ex || {};
+  const instructions: string[] = src?.instructions?.length ? src.instructions : defaultInstructions(ex);
+  const cues: string[] = src?.cues?.length ? src.cues : defaultCues(ex);
+  const mistakes: string[] = src?.mistakes?.length ? src.mistakes : defaultMistakes(ex);
+  const isCoachSourced = !!(coach?.instructions?.length);
 
   return (
     <View>
+      {isCoachSourced && (
+        <View style={styles.coachBadge}>
+          <Ionicons name="ribbon" size={12} color={theme.color.brand} />
+          <Text style={styles.coachBadgeT}>AUTHORED BY LOUIS</Text>
+        </View>
+      )}
       <View style={styles.howCard}>
         <Text style={styles.howHead}>HOW TO PERFORM IT</Text>
         {instructions.map((s, i) => (
@@ -611,6 +629,8 @@ const styles = StyleSheet.create({
   howNum: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   howNumT: { color: theme.color.brand, fontSize: 10, fontWeight: "900" },
   howT: { flex: 1, color: theme.color.text, fontSize: 13, lineHeight: 19 },
+  coachBadge: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, marginBottom: 10 },
+  coachBadgeT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
 
   videoWrap: { borderRadius: 14, overflow: "hidden", marginBottom: 12 },
   videoNote: { flexDirection: "row", alignItems: "center", gap: 6, padding: 10 },

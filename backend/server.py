@@ -3879,6 +3879,179 @@ async def exercises_delete(eid: str, _: dict = Depends(require_role("coach"))):
     return {"ok": True}
 
 
+# ==================================================================
+# Atlas Exercise Content System (Phase 2)
+# ==================================================================
+EXERCISE_CONTENT_SYSTEM = """You are Atlas — the CrewFit Intelligence™ engine built by Louis Hall.
+
+Given an exercise name (and optional context), produce coaching content following Louis' methodology.
+
+RULES:
+- All content should sound like Louis: clear, concise, safety-first, technique-first.
+- Instructions: exactly 4 numbered steps, each a single crisp sentence, action-oriented.
+- Coaching cues: 3-5 short imperatives (e.g. "Ribs down", "Drive floor away") — max 4 words each.
+- Common mistakes: 3-5 short warnings.
+
+Return STRICT JSON only:
+{
+  "instructions": ["...", "...", "...", "..."],
+  "cues": ["...", "...", "...", "..."],
+  "mistakes": ["...", "...", "...", "..."],
+  "primary_pattern": "squat|hinge|push|pull|carry|core|cardio|mobility|other",
+  "muscles": ["..."],
+  "difficulty": "beginner|intermediate|advanced",
+  "default_rest_sec": <int>,
+  "logging_type": "weighted|bodyweight|cardio|timer|mobility"
+}"""
+
+
+class ExerciseContentPatch(BaseModel):
+    instructions: Optional[list[str]] = None
+    cues: Optional[list[str]] = None
+    mistakes: Optional[list[str]] = None
+    regressions: Optional[list[str]] = None
+    progressions: Optional[list[str]] = None
+    default_rest_sec: Optional[int] = None
+    logging_type: Optional[str] = None
+    primary_pattern: Optional[str] = None
+    equipment: Optional[list[str]] = None
+    muscles: Optional[list[str]] = None
+    difficulty: Optional[str] = None
+    custom_image_b64: Optional[str] = None  # data URL or raw base64
+    approved: Optional[bool] = None
+
+
+async def _find_or_create_exercise(name: str) -> dict:
+    ex = await db.exercises.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}}, {"_id": 0})
+    if ex:
+        return ex
+    doc = {
+        "id": new_id(), "name": name.strip(),
+        "created_at": now_iso(),
+        "created_by": "auto",
+    }
+    await db.exercises.insert_one(doc)
+    fresh = await db.exercises.find_one({"id": doc["id"]}, {"_id": 0})
+    return fresh or doc
+
+
+@api.get("/coach/exercises")
+async def coach_exercises_list(coach: dict = Depends(require_role("coach"))):
+    """Return the exercise library with content-completeness flags for the Coach dashboard."""
+    rows = await db.exercises.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
+    out = []
+    for r in rows:
+        out.append({
+            **r,
+            "has_instructions": bool(r.get("instructions")),
+            "has_cues": bool(r.get("cues")),
+            "has_mistakes": bool(r.get("mistakes")),
+            "has_video": bool(r.get("video_url") or r.get("coach_video_url")),
+            "has_image": bool(r.get("custom_image_b64") or r.get("coach_image_url")),
+            "content_score": sum([
+                bool(r.get("instructions")),
+                bool(r.get("cues")),
+                bool(r.get("mistakes")),
+                bool(r.get("video_url") or r.get("coach_video_url")),
+                bool(r.get("custom_image_b64") or r.get("coach_image_url")),
+            ]),
+        })
+    return {"exercises": out, "count": len(out)}
+
+
+@api.get("/coach/exercises/{name}")
+async def coach_exercises_get(name: str, coach: dict = Depends(require_role("coach"))):
+    ex = await _find_or_create_exercise(name)
+    return {"exercise": ex}
+
+
+@api.patch("/coach/exercises/{name}")
+async def coach_exercises_patch(name: str, body: ExerciseContentPatch, coach: dict = Depends(require_role("coach"))):
+    ex = await _find_or_create_exercise(name)
+    updates = body.model_dump(exclude_none=True)
+    updates["updated_at"] = now_iso()
+    updates["updated_by"] = coach["id"]
+    await db.exercises.update_one({"id": ex["id"]}, {"$set": updates})
+    fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})
+    return {"exercise": fresh}
+
+
+class GenerateContentBody(BaseModel):
+    fields: Optional[list[str]] = None  # subset: instructions|cues|mistakes|all
+
+
+@api.post("/coach/exercises/{name}/generate")
+async def coach_exercises_generate(name: str, body: GenerateContentBody, coach: dict = Depends(require_role("coach"))):
+    """Atlas generates missing coaching content for an exercise (instructions/cues/mistakes)."""
+    ex = await _find_or_create_exercise(name)
+    want = set(body.fields or ["instructions", "cues", "mistakes", "primary_pattern", "muscles", "difficulty", "default_rest_sec", "logging_type"])
+    prompt = f"Exercise name: {name}\nExisting fields: {json.dumps({k: ex.get(k) for k in ('instructions','cues','mistakes','equipment')}, default=str)[:800]}\nProduce Louis Hall coaching content JSON."
+    try:
+        raw = await call_claude(EXERCISE_CONTENT_SYSTEM, prompt, max_out=1200)
+        parsed = parse_json_from_text(raw) or {}
+    except Exception:
+        logger.exception("exercise content gen failed")
+        parsed = {}
+    # Only fill fields that are requested AND currently empty (respect coach's work)
+    updates: dict[str, Any] = {}
+    for k in ("instructions", "cues", "mistakes"):
+        if k in want and not ex.get(k) and isinstance(parsed.get(k), list):
+            updates[k] = parsed[k]
+    for k in ("primary_pattern", "difficulty", "logging_type", "default_rest_sec"):
+        if k in want and not ex.get(k) and parsed.get(k) is not None:
+            updates[k] = parsed[k]
+    if "muscles" in want and not ex.get("muscles") and isinstance(parsed.get("muscles"), list):
+        updates["muscles"] = parsed["muscles"]
+    if updates:
+        updates["updated_at"] = now_iso()
+        updates["content_source"] = "atlas"
+        updates["approved"] = False  # coach must approve
+        await db.exercises.update_one({"id": ex["id"]}, {"$set": updates})
+    fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})
+    return {"exercise": fresh, "generated": list(updates.keys()), "raw": parsed}
+
+
+class ImageUploadBody(BaseModel):
+    image_b64: str  # data URL or raw base64
+
+
+@api.post("/coach/exercises/{name}/image")
+async def coach_exercises_image(name: str, body: ImageUploadBody, coach: dict = Depends(require_role("coach"))):
+    ex = await _find_or_create_exercise(name)
+    b64 = body.image_b64
+    if b64.startswith("data:"):
+        pass  # keep as data URL
+    elif not b64.startswith("http"):
+        b64 = "data:image/jpeg;base64," + b64
+    await db.exercises.update_one({"id": ex["id"]}, {"$set": {
+        "custom_image_b64": b64, "custom_image_uploaded_at": now_iso(),
+        "custom_image_uploaded_by": coach["id"],
+    }})
+    fresh = await db.exercises.find_one({"id": ex["id"]}, {"_id": 0})
+    return {"exercise": fresh}
+
+
+@api.get("/exercises/content")
+async def exercise_content_public(name: str, user: dict = Depends(current_user)):
+    """Client-facing lookup used by the Atlas Player HOW TO tile.
+    Returns coach-authored content (instructions/cues/mistakes/image) for the named exercise."""
+    ex = await db.exercises.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}}, {"_id": 0})
+    if not ex:
+        return {"exercise": None}
+    return {"exercise": {
+        "name": ex.get("name"),
+        "instructions": ex.get("instructions"),
+        "cues": ex.get("cues"),
+        "mistakes": ex.get("mistakes"),
+        "custom_image_b64": ex.get("custom_image_b64"),
+        "coach_image_url": ex.get("coach_image_url"),
+        "default_rest_sec": ex.get("default_rest_sec"),
+        "logging_type": ex.get("logging_type"),
+        "content_source": ex.get("content_source"),
+        "approved": ex.get("approved", True),
+    }}
+
+
 def youtube_search_url(name: str, channel: Optional[str] = None) -> str:
     q = f"{channel} {name}" if channel else name
     return "https://www.youtube.com/results?search_query=" + q.replace(" ", "+")

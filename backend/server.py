@@ -1340,8 +1340,8 @@ async def _get_dna_context(user_id: str) -> dict:
 async def _emit_reassessment_prompt(user_id: str, kind: str, reason: str, meta: Optional[dict] = None) -> None:
     """Create a re-assessment prompt (dismissible) that appears on the client home."""
     # Cool-down: don't re-emit the same kind if there's a pending prompt in the last 3 days
-    from datetime import datetime as _dt, timedelta as _td
-    cutoff = (_dt.utcnow() - _td(days=3)).isoformat()
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    cutoff = (_dt.now(_tz.utc) - _td(days=3)).isoformat()
     existing = await db.reassessment_prompts.find_one({
         "user_id": user_id, "kind": kind, "dismissed": False, "created_at": {"$gte": cutoff},
     })

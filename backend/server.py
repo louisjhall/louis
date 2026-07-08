@@ -2110,10 +2110,13 @@ async def _lookup_or_fetch_video(exercise_name: str) -> Optional[dict]:
     if not key:
         return None
     existing = await db.exercise_videos.find_one({"key": key}, {"_id": 0})
-    if existing and existing.get("primary", {}).get("video_id"):
-        # Return the full record; caller uses _resolve_display_video to honor
-        # approval status, preferred slot, and variant overrides.
-        return existing
+    if existing:
+        has_any = any(
+            (existing.get(s) or {}).get("video_id") or (existing.get(s) or {}).get("video_url")
+            for s in ("primary", "alternative", "custom_url", "custom_upload", "youtube_backup")
+        )
+        if has_any:
+            return existing
     # Fetch fresh
     channel_hint = _pick_channel_hint(exercise_name)
     query = f"{channel_hint} {exercise_name} tutorial"
@@ -2492,6 +2495,14 @@ async def coach_video_delete_slot(key: str, slot: str, coach: dict = Depends(req
     doc = await db.exercise_videos.find_one({"key": key})
     if not doc:
         raise HTTPException(404, "No such exercise video")
+    # Clean up custom_upload blob if that's the slot being deleted
+    if slot == "custom_upload":
+        blob_id = (doc.get("custom_upload") or {}).get("blob_id")
+        if blob_id:
+            try:
+                await db.exercise_video_blobs.delete_one({"id": blob_id})
+            except Exception:
+                pass
     updates: dict = {slot: None, "updated_at": _now_iso()}
     if doc.get("preferred_slot") == slot:
         updates["preferred_slot"] = None
@@ -2528,6 +2539,123 @@ async def coach_video_rescan(key: str, coach: dict = Depends(require_role("coach
     await db.exercise_videos.update_one({"key": key}, {"$set": {"primary": primary, "updated_at": _now_iso()}})
     await _touch_review(key, coach.get("id"))
     return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+# ------------------------------------------------------------------
+# §26 Phase C — Custom video uploads (base64 in MongoDB, <=10 MB)
+# ------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB raw
+ALLOWED_UPLOAD_MIME = {"video/mp4", "video/quicktime", "video/webm", "video/x-m4v"}
+
+
+class VideoUploadBody(BaseModel):
+    filename: str
+    mime_type: str
+    data_base64: str
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    make_preferred: bool = False
+
+
+@api.post("/coach/videos/upload")
+async def coach_video_upload(
+    key: str,
+    body: VideoUploadBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Upload a custom video (base64) to the custom_upload slot.
+
+    Body: {filename, mime_type, data_base64, title?, notes?, make_preferred?}
+    """
+    import base64
+    if body.mime_type not in ALLOWED_UPLOAD_MIME:
+        raise HTTPException(400, f"Unsupported mime type. Allowed: {sorted(ALLOWED_UPLOAD_MIME)}")
+    # Strip data-URI prefix if present
+    data = body.data_base64
+    if data.startswith("data:"):
+        _, _, data = data.partition(",")
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except Exception:
+        raise HTTPException(400, "Invalid base64 payload")
+    if len(raw) == 0:
+        raise HTTPException(400, "Empty payload")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Video too large ({len(raw)/1_048_576:.1f} MB). Max is 10 MB.")
+
+    doc = await db.exercise_videos.find_one({"key": key}, {"_id": 0}) or {
+        "id": str(uuid.uuid4()), "key": key, "display_name": key.title(),
+        "created_at": _now_iso(),
+    }
+
+    # Clean up any prior blob for this exercise's custom_upload slot
+    old = (doc.get("custom_upload") or {}).get("blob_id")
+    if old:
+        try:
+            await db.exercise_video_blobs.delete_one({"id": old})
+        except Exception:
+            pass
+
+    blob_id = str(uuid.uuid4())
+    await db.exercise_video_blobs.insert_one({
+        "id": blob_id,
+        "exercise_key": key,
+        "slot": "custom_upload",
+        "filename": body.filename,
+        "mime_type": body.mime_type,
+        "size_bytes": len(raw),
+        "data_base64": data,  # keep as base64 string to avoid BSON binary size limits vs streaming
+        "uploaded_by": coach.get("id"),
+        "uploaded_at": _now_iso(),
+    })
+    slot_doc = {
+        "source": "custom_upload",
+        "blob_id": blob_id,
+        "filename": body.filename,
+        "mime_type": body.mime_type,
+        "size_bytes": len(raw),
+        "video_url": f"/api/videos/blob/{blob_id}",
+        "title": body.title or body.filename,
+        "channel": "CrewFit Upload",
+        "approval_status": "approved",
+        "added_by": coach.get("id"),
+        "added_at": _now_iso(),
+        "notes": body.notes,
+    }
+    doc["custom_upload"] = slot_doc
+    doc["updated_at"] = _now_iso()
+    if body.make_preferred or not doc.get("preferred_slot"):
+        doc["preferred_slot"] = "custom_upload"
+    await db.exercise_videos.update_one({"key": key}, {"$set": doc}, upsert=True)
+    await _touch_review(key, coach.get("id"))
+    return await db.exercise_videos.find_one({"key": key}, {"_id": 0})
+
+
+@api.get("/videos/blob/{blob_id}")
+async def get_video_blob(blob_id: str):
+    """Stream the custom-upload video bytes with the correct Content-Type.
+
+    Public GET so <video> elements and native players can load it directly (blob_id
+    is a UUID; not enumerable). Auth still required to know which exercise it maps
+    to, so we intentionally do not require auth here."""
+    import base64
+    from fastapi.responses import Response
+    doc = await db.exercise_video_blobs.find_one({"id": blob_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Blob not found")
+    try:
+        raw = base64.b64decode(doc.get("data_base64") or "", validate=True)
+    except Exception:
+        raise HTTPException(500, "Corrupted blob")
+    return Response(
+        content=raw,
+        media_type=doc.get("mime_type", "video/mp4"),
+        headers={
+            "Content-Length": str(len(raw)),
+            "Cache-Control": "private, max-age=86400",
+            "Accept-Ranges": "bytes",  # Note: not truly ranged; browsers still accept full response
+        },
+    )
 
 
 # ------------------------------------------------------------------

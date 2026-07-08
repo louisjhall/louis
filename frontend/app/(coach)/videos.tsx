@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
+import * as DocumentPicker from "expo-document-picker";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { useIsDesktop } from "@/src/lib/responsive";
@@ -63,7 +64,7 @@ type Record = {
 const SLOTS = [
   { key: "primary", label: "PRIMARY (AUTO)", icon: "logo-youtube" as const },
   { key: "custom_url", label: "CUSTOM URL", icon: "link" as const },
-  { key: "custom_upload", label: "CREWFIT UPLOAD", icon: "cloud-upload" as const, disabled: true },
+  { key: "custom_upload", label: "CREWFIT UPLOAD", icon: "cloud-upload" as const, uploadable: true },
   { key: "alternative", label: "ALTERNATIVE", icon: "swap-horizontal" as const },
   { key: "youtube_backup", label: "YOUTUBE BACKUP", icon: "bookmark" as const },
   { key: "ai_image", label: "AI IMAGE", icon: "image" as const, disabled: true },
@@ -312,6 +313,67 @@ function DetailPanel({ detail, onReload, busy, setBusy }: any) {
   const deleteVariant = (variant: string) =>
     call("POST", `/coach/videos/variant?key=${encodeURIComponent(key)}`, { variant, delete: true });
 
+  const [uploadProgress, setUploadProgress] = useState<{ pct: number; label: string } | null>(null);
+  const uploadCustomVideo = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ["video/mp4", "video/quicktime", "video/webm", "video/x-m4v"],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const asset = res.assets[0];
+      // Validate size client-side
+      const sizeBytes = asset.size || 0;
+      if (sizeBytes > 10 * 1024 * 1024) {
+        Alert.alert("File too large", `Max upload is 10 MB. This file is ${(sizeBytes / 1_048_576).toFixed(1)} MB.`);
+        return;
+      }
+      setUploadProgress({ pct: 5, label: "READING FILE\u2026" });
+
+      // Read file → base64
+      let base64: string;
+      if (Platform.OS === "web") {
+        // On web, DocumentPicker's uri is a blob URL; fetch it and convert
+        const blob = await fetch(asset.uri).then((r) => r.blob());
+        base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const s = String(reader.result || "");
+            resolve(s.includes(",") ? s.split(",")[1] : s);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const FileSystem = require("expo-file-system");
+        base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 });
+      }
+
+      setUploadProgress({ pct: 45, label: `UPLOADING ${((sizeBytes || 0) / 1_048_576).toFixed(1)} MB\u2026` });
+      setBusy("upload");
+      await api<any>(`/coach/videos/upload?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        body: {
+          filename: asset.name,
+          mime_type: asset.mimeType || "video/mp4",
+          data_base64: base64,
+          title: asset.name.replace(/\.[^.]+$/, ""),
+          make_preferred: true,
+        },
+      } as any);
+      setUploadProgress({ pct: 100, label: "DONE" });
+      await onReload();
+      setTimeout(() => setUploadProgress(null), 800);
+    } catch (e: any) {
+      setUploadProgress(null);
+      Alert.alert("Upload failed", e?.message || "Something went wrong");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.detailContent} testID="videos-detail">
       <View style={styles.detailHeader}>
@@ -341,13 +403,15 @@ function DetailPanel({ detail, onReload, busy, setBusy }: any) {
           const slot: Slot | null = detail[s.key] || null;
           const isPreferred = preferred === s.key;
           const has = !!slot?.video_id || !!slot?.video_url;
+          const isUploadSlot = (s as any).uploadable;
           return (
             <View key={s.key} style={[styles.slotCard, s.disabled && { opacity: 0.55 }]}>
               <View style={styles.slotHeader}>
                 <Ionicons name={s.icon} size={16} color={theme.color.brand} />
                 <Text style={styles.slotLabel}>{s.label}</Text>
                 {isPreferred && has ? <Text style={styles.preferredBadge}>PREFERRED</Text> : null}
-                {s.disabled ? <Text style={styles.comingSoon}>PHASE C</Text> : null}
+                {s.disabled ? <Text style={styles.comingSoon}>PHASE D</Text> : null}
+                {isUploadSlot && !has ? <Text style={[styles.comingSoon, { color: theme.color.brand }]}>MP4 · MAX 10MB</Text> : null}
               </View>
               {has ? (
                 <>
@@ -355,7 +419,7 @@ function DetailPanel({ detail, onReload, busy, setBusy }: any) {
                     <View style={styles.slotThumb}>
                       {slot?.thumbnail_url && Platform.OS === "web"
                         ? React.createElement("img", { src: slot.thumbnail_url, style: { width: "100%", height: "100%", objectFit: "cover", display: "block" }, alt: slot.title || "" })
-                        : <Ionicons name="videocam" size={24} color={theme.color.textMuted} />}
+                        : <Ionicons name={isUploadSlot ? "cloud-done" : "videocam"} size={24} color={isUploadSlot ? theme.color.brand : theme.color.textMuted} />}
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.slotTitle} numberOfLines={2}>{slot?.title || slot?.video_id || slot?.video_url}</Text>
@@ -364,6 +428,7 @@ function DetailPanel({ detail, onReload, busy, setBusy }: any) {
                         {"  ·  "}
                         <Text style={{ color: approvalColor(slot?.approval_status) }}>{(slot?.approval_status || "—").toUpperCase()}</Text>
                         {slot?.added_at ? `  ·  ${fmtDate(slot.added_at)}` : ""}
+                        {isUploadSlot && (slot as any)?.size_bytes ? `  ·  ${((slot as any).size_bytes / 1_048_576).toFixed(1)} MB` : ""}
                       </Text>
                       {slot?.notes ? <Text style={styles.slotNotes}>{slot.notes}</Text> : null}
                     </View>
@@ -387,14 +452,35 @@ function DetailPanel({ detail, onReload, busy, setBusy }: any) {
                         <Text style={styles.actBtnText}>MARK PREFERRED</Text>
                       </Pressable>
                     )}
+                    {isUploadSlot && (
+                      <Pressable testID={`slot-${s.key}-replace`} onPress={uploadCustomVideo} style={[styles.actBtn, { backgroundColor: theme.color.brand }]} disabled={!!uploadProgress}>
+                        <Ionicons name="refresh" size={13} color="#fff" />
+                        <Text style={styles.actBtnText}>REPLACE</Text>
+                      </Pressable>
+                    )}
                     <Pressable testID={`slot-${s.key}-delete`} onPress={() => deleteSlot(s.key)} style={[styles.actBtn, styles.actBtnGhost]}>
                       <Ionicons name="trash-outline" size={13} color={theme.color.red} />
                       <Text style={[styles.actBtnText, { color: theme.color.red }]}>DELETE</Text>
                     </Pressable>
                   </View>
                 </>
+              ) : isUploadSlot ? (
+                <>
+                  <Text style={styles.slotEmpty}>Upload your own coaching clip (MP4/MOV/WebM · max 10 MB). It becomes the preferred video the moment it uploads.</Text>
+                  {uploadProgress ? (
+                    <View style={styles.uploadProgressRow}>
+                      <ActivityIndicator size="small" color={theme.color.brand} />
+                      <Text style={styles.uploadProgressText}>{uploadProgress.label}</Text>
+                    </View>
+                  ) : (
+                    <Pressable testID={`slot-${s.key}-upload`} onPress={uploadCustomVideo} style={[styles.actBtn, { backgroundColor: theme.color.brand, alignSelf: "flex-start", marginTop: 10 }]}>
+                      <Ionicons name="cloud-upload" size={14} color="#fff" />
+                      <Text style={styles.actBtnText}>UPLOAD CUSTOM VIDEO</Text>
+                    </Pressable>
+                  )}
+                </>
               ) : (
-                <Text style={styles.slotEmpty}>{s.disabled ? "Custom uploads / AI illustrations coming soon." : "No video set. Paste a YouTube URL below to add one."}</Text>
+                <Text style={styles.slotEmpty}>{s.disabled ? "AI illustrations coming soon (Phase D)." : "No video set. Paste a YouTube URL below to add one."}</Text>
               )}
             </View>
           );
@@ -565,6 +651,8 @@ const styles = StyleSheet.create({
   slotMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
   slotNotes: { color: theme.color.textDim, fontSize: 11, marginTop: 4, fontStyle: "italic" },
   slotEmpty: { color: theme.color.textMuted, fontSize: 12, fontStyle: "italic" },
+  uploadProgressRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 12 },
+  uploadProgressText: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
   slotActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
   actBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
   actBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.red },

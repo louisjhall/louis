@@ -1,0 +1,25 @@
+{
+  "summary": "Smoke verification of Android package rename fix in /app/frontend/app.json. All 5 required fields present (name=CrewFit, slug=crewfit, scheme=crewfit, ios.bundleIdentifier=net.crewfit.app, android.package=net.crewfit.app). Zero leftover references to com.emergent.flightfitplans anywhere in /app/frontend (excluding node_modules). Metro/Expo bundler restarted cleanly with new manifest; supervisor shows backend + expo RUNNING (no restart loop). Frontend serves 200 on localhost:3000. Backend intact: /api/roster/current returns 401 without auth (auth enforcement working). Client login (client@crewfit.com) at 420x900 lands on /home with CrewFit branding, roster data, and workout cards. Coach login (coach@crewfit.com) at 1440x900 lands on /overview with coach desktop shell (Coach Kai, sidebar, KPI cards, pending approvals). Android package identifier 'net.crewfit.app' validated against regex ^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$ -> True. Next AAB build triggered via Emergent Publish will correctly use net.crewfit.app and pass Google Play Console's package-name gate.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "package.json still has \"name\": \"frontend\" — cosmetic only, unrelated to Android package identity; no action required for Play Store."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None. Used auto-seeded coach@crewfit.com and client@crewfit.com.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "app.json rename to net.crewfit.app verified. No functional regressions observed. Existing shadow* deprecation warnings and expo-notifications web warnings are pre-existing and unrelated to this change.",
+  "rca_of_issue": "Google Play Console rejected AAB because expo.android.package was 'com.emergent.flightfitplans.a6uxe9' but the Play listing was registered under net.crewfit.app. Fix updated bundleIdentifier/package in app.json to net.crewfit.app; also aligned name/slug/scheme to CrewFit branding. Verification: (1) app.json contents match spec, (2) full-project grep for com.emergent/flightfitplans returned 0 hits, (3) regex-validated package name, (4) Metro bundler restarted successfully with new manifest, (5) app smoke-tested end-to-end for both roles."
+}

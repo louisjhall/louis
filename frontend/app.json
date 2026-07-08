@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "CrewFit",
+    "slug": "crewfit",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "crewfit",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.flightfitplans.a6uxe9",
+      "bundleIdentifier": "net.crewfit.app",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Upload roster & progress photos",
         "NSCameraUsageDescription": "Capture meals and roster photos"
@@ -22,7 +22,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.flightfitplans.a6uxe9",
+      "package": "net.crewfit.app",
       "permissions": ["READ_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES"]
     },
     "web": {

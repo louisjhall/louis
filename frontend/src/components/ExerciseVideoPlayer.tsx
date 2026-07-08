@@ -90,6 +90,41 @@ function YouTubeEmbed({ videoId }: { videoId: string }) {
   );
 }
 
+// --- Custom (MP4/WebM) video embed (used for CrewFit uploads and pasted direct video URLs) ---
+function CustomVideoEmbed({ videoUrl, mimeType }: { videoUrl: string; mimeType?: string }) {
+  // Resolve relative URLs (like /api/videos/blob/xxx) to the backend base
+  const resolved = videoUrl.startsWith("/") ? `${process.env.EXPO_PUBLIC_BACKEND_URL || ""}${videoUrl}` : videoUrl;
+  if (Platform.OS === "web") {
+    return React.createElement(
+      "video",
+      {
+        src: resolved,
+        controls: true,
+        playsInline: true,
+        style: { width: "100%", height: "100%", background: "#000", display: "block" },
+      },
+      mimeType ? React.createElement("source", { src: resolved, type: mimeType }) : null,
+    );
+  }
+  // Native: render inside WebView using an HTML shell
+  const html = `<!doctype html><html><body style="margin:0;background:#000;height:100vh;display:flex;align-items:center;justify-content:center">` +
+    `<video src="${resolved}" controls playsinline autoplay style="max-width:100%;max-height:100%;background:#000"></video></body></html>`;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { WebView } = require("react-native-webview");
+  return (
+    <WebView
+      testID="custom-video-webview"
+      style={{ flex: 1, backgroundColor: "#000" }}
+      source={{ html }}
+      allowsFullscreenVideo
+      allowsInlineMediaPlayback
+      mediaPlaybackRequiresUserAction={false}
+      javaScriptEnabled
+      originWhitelist={["*"]}
+    />
+  );
+}
+
 export function ExerciseVideoPlayer({
   exerciseName,
   compact = false,
@@ -136,7 +171,15 @@ export function ExerciseVideoPlayer({
     );
   }
 
-  const openYT = () => Linking.openURL(`https://www.youtube.com/watch?v=${video.video_id}`);
+  const isCustom = !video.video_id && !!video.video_url;
+  const isCrewFitUpload = video.source === "custom_upload";
+  const openExternal = () => {
+    if (video.video_id) return Linking.openURL(`https://www.youtube.com/watch?v=${video.video_id}`);
+    if (video.video_url) {
+      const url = video.video_url.startsWith("/") ? `${process.env.EXPO_PUBLIC_BACKEND_URL || ""}${video.video_url}` : video.video_url;
+      return Linking.openURL(url);
+    }
+  };
   const modalW = isWebDesktop ? Math.min(920, width - 80) : Math.min(width - 24, 900);
   const modalH = Math.round(modalW * 9 / 16);
 
@@ -168,7 +211,13 @@ export function ExerciseVideoPlayer({
         <View style={styles.meta}>
           <View style={{ flex: 1 }}>
             <Text style={styles.channel} numberOfLines={1}>
-              <Ionicons name="logo-youtube" size={11} color={theme.color.red} /> {video.channel || video.channel_hint || "YouTube"}
+              {isCrewFitUpload ? (
+                <><Ionicons name="cloud-done" size={11} color={theme.color.brand} /> CREWFIT UPLOAD</>
+              ) : isCustom ? (
+                <><Ionicons name="link" size={11} color={theme.color.brand} /> {video.channel || "Custom Video"}</>
+              ) : (
+                <><Ionicons name="logo-youtube" size={11} color={theme.color.red} /> {video.channel || video.channel_hint || "YouTube"}</>
+              )}
             </Text>
             <Text style={styles.title} numberOfLines={compact ? 1 : 2}>{video.title || exerciseName}</Text>
           </View>
@@ -190,7 +239,13 @@ export function ExerciseVideoPlayer({
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalTitle} numberOfLines={1}>{video.title || exerciseName}</Text>
                 <Text style={styles.modalChannel} numberOfLines={1}>
-                  <Ionicons name="logo-youtube" size={11} color={theme.color.red} /> {video.channel || video.channel_hint || "YouTube"}
+                  {isCrewFitUpload ? (
+                    <><Ionicons name="cloud-done" size={11} color={theme.color.brand} /> CREWFIT UPLOAD</>
+                  ) : isCustom ? (
+                    <><Ionicons name="link" size={11} color={theme.color.brand} /> {video.channel || "Custom Video"}</>
+                  ) : (
+                    <><Ionicons name="logo-youtube" size={11} color={theme.color.red} /> {video.channel || video.channel_hint || "YouTube"}</>
+                  )}
                 </Text>
               </View>
               <Pressable testID={`${testIDPrefix}-close`} onPress={() => setOpen(false)} hitSlop={12}>
@@ -198,12 +253,16 @@ export function ExerciseVideoPlayer({
               </Pressable>
             </View>
             <View style={{ width: "100%", height: modalH, backgroundColor: "#000" }}>
-              <YouTubeEmbed videoId={video.video_id} />
+              {isCustom ? (
+                <CustomVideoEmbed videoUrl={video.video_url!} mimeType={(video as any).mime_type} />
+              ) : (
+                <YouTubeEmbed videoId={video.video_id!} />
+              )}
             </View>
             <View style={styles.modalFoot}>
-              <Pressable testID={`${testIDPrefix}-open-yt`} onPress={openYT} style={styles.footBtn}>
+              <Pressable testID={`${testIDPrefix}-open-yt`} onPress={openExternal} style={styles.footBtn}>
                 <Ionicons name="open-outline" size={14} color={theme.color.textMuted} />
-                <Text style={styles.footText}>OPEN ON YOUTUBE</Text>
+                <Text style={styles.footText}>{isCrewFitUpload ? "OPEN IN NEW TAB" : isCustom ? "OPEN VIDEO" : "OPEN ON YOUTUBE"}</Text>
               </Pressable>
             </View>
           </View>

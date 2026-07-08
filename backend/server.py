@@ -1281,6 +1281,17 @@ async def coaching_dna_patch(body: CoachingDNAPatchBody, user: dict = Depends(cu
     except Exception:
         pass
     dna2 = await db.coaching_dna.find_one({"id": dna["id"]}, {"_id": 0})
+    # Living Profile: goal or major identity change is a re-assessment trigger
+    try:
+        important = {"primary_goal", "aviation_profile", "injury_summary", "training_availability"}
+        if important & set(updates.keys()):
+            await _emit_reassessment_prompt(
+                user["id"], "life_change",
+                f"You updated: {', '.join(sorted(important & set(updates.keys())))}. Refresh your CrewFit DNA?",
+                {"fields": sorted(important & set(updates.keys()))},
+            )
+    except Exception:
+        pass
     return {"dna": dna2}
 
 
@@ -1288,6 +1299,91 @@ async def coaching_dna_patch(body: CoachingDNAPatchBody, user: dict = Depends(cu
 async def assessment_history(user: dict = Depends(current_user)):
     rows = await db.assessments.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(20)
     return {"assessments": rows}
+
+
+async def _get_dna_context(user_id: str) -> dict:
+    """Return a compact DNA payload for injection into other AI prompts.
+    Returns {} when the client has not yet completed their assessment."""
+    dna = await db.coaching_dna.find_one({"user_id": user_id}, {"_id": 0}, sort=[("version", -1)])
+    if not dna:
+        return {}
+    return {
+        "primary_goal": dna.get("primary_goal"),
+        "secondary_goals": dna.get("secondary_goals"),
+        "why_it_matters": dna.get("why_it_matters"),
+        "next_event": dna.get("next_event"),
+        "aviation_profile": dna.get("aviation_profile"),
+        "flying_style": dna.get("flying_style"),
+        "recovery_risk": dna.get("recovery_risk"),
+        "training_experience": dna.get("training_experience"),
+        "motivation_style": dna.get("motivation_style"),
+        "coaching_style": dna.get("coaching_style"),
+        "lifestyle_summary": dna.get("lifestyle_summary"),
+        "training_availability": dna.get("training_availability"),
+        "injury_summary": dna.get("injury_summary"),
+        "nutrition_summary": dna.get("nutrition_summary"),
+        "biggest_strength": dna.get("biggest_strength"),
+        "biggest_weakness": dna.get("biggest_weakness"),
+        "biggest_opportunity": dna.get("biggest_opportunity"),
+        "recommended_weekly_training": dna.get("recommended_weekly_training"),
+        "recommended_recovery_strategy": dna.get("recommended_recovery_strategy"),
+        "recommended_nutrition_strategy": dna.get("recommended_nutrition_strategy"),
+        "recommended_coaching_style": dna.get("recommended_coaching_style"),
+        "ai_confidence_score": dna.get("ai_confidence_score"),
+        "version": dna.get("version"),
+    }
+
+
+# ==================================================================
+# Living Profile — Re-assessment triggers
+# ==================================================================
+async def _emit_reassessment_prompt(user_id: str, kind: str, reason: str, meta: Optional[dict] = None) -> None:
+    """Create a re-assessment prompt (dismissible) that appears on the client home."""
+    # Cool-down: don't re-emit the same kind if there's a pending prompt in the last 3 days
+    from datetime import datetime as _dt, timedelta as _td
+    cutoff = (_dt.utcnow() - _td(days=3)).isoformat()
+    existing = await db.reassessment_prompts.find_one({
+        "user_id": user_id, "kind": kind, "dismissed": False, "created_at": {"$gte": cutoff},
+    })
+    if existing:
+        return
+    await db.reassessment_prompts.insert_one({
+        "id": new_id(),
+        "user_id": user_id,
+        "kind": kind,
+        "reason": reason,
+        "meta": meta or {},
+        "dismissed": False,
+        "created_at": now_iso(),
+    })
+
+
+@api.get("/reassessment/prompts")
+async def reassessment_prompts(user: dict = Depends(current_user)):
+    """Return active (undismissed) re-assessment prompts for the user."""
+    rows = await db.reassessment_prompts.find(
+        {"user_id": user["id"], "dismissed": False},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(20)
+    return {"prompts": rows}
+
+
+class ReassessmentDismissBody(BaseModel):
+    prompt_id: Optional[str] = None
+    kind: Optional[str] = None  # dismiss all of this kind
+
+
+@api.post("/reassessment/dismiss")
+async def reassessment_dismiss(body: ReassessmentDismissBody, user: dict = Depends(current_user)):
+    q: dict[str, Any] = {"user_id": user["id"], "dismissed": False}
+    if body.prompt_id:
+        q["id"] = body.prompt_id
+    elif body.kind:
+        q["kind"] = body.kind
+    else:
+        raise HTTPException(400, "prompt_id or kind required")
+    res = await db.reassessment_prompts.update_many(q, {"$set": {"dismissed": True, "dismissed_at": now_iso()}})
+    return {"dismissed": res.modified_count}
 
 
 # ==================================================================
@@ -1848,6 +1944,15 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 await _notify_coaches_of_new_roster(user, roster, job_id)
             except Exception:
                 pass
+            # Living Profile trigger — new roster invites a quick review
+            try:
+                await _emit_reassessment_prompt(
+                    user["id"], "roster_uploaded",
+                    "New roster detected — take 90s to update your availability so CrewFit adapts perfectly.",
+                    {"roster_id": roster.get("id"), "days": len(roster.get("days") or [])},
+                )
+            except Exception:
+                pass
             await _set_job(job_id, status="complete", stage="complete", progress=100,
                            message="Your new plan is ready", completed_at=now_iso(),
                            workouts_generated=len(workouts))
@@ -2249,6 +2354,23 @@ async def day_override(body: DayOverrideBody, user: dict = Depends(current_user)
     except Exception:
         pass
 
+    # Living Profile triggers
+    try:
+        if "injured" in tags or override.get("day_type") == "injury":
+            await _emit_reassessment_prompt(
+                user["id"], "injury_flagged",
+                "You flagged an injury — CrewFit should re-plan around it.",
+                {"date": body.date, "tags": tags},
+            )
+        if "annual_leave" in tags or override.get("day_type") == "annual_leave":
+            await _emit_reassessment_prompt(
+                user["id"], "annual_leave",
+                "Annual leave — want to switch to a light or maintenance block?",
+                {"date": body.date},
+            )
+    except Exception:
+        pass
+
     return {"override": override, "coach_locked": coach_locked, "adjustment": adjustment}
 
 
@@ -2309,6 +2431,14 @@ REALITY_SYSTEM = """You are CrewFit Intelligence™ — an elite AI coach for ai
 The client just told you what happened in their life today. Your job: think like their personal coach and produce THREE options for how to adapt the training programme, ranked A (Recommended) B (Alternative) C (Ask Coach).
 
 Never make the client think like a coach. You do the thinking.
+
+USE THE COACHING DNA CONTEXT (if provided) — every recommendation MUST reflect:
+- Their `primary_goal` and `next_event` — never sacrifice progress toward these.
+- Their `recovery_risk` — high = err on rest / mobility; low = can push.
+- Their `motivation_style` — reference in your WHY (e.g., "keeps your streak intact" for routine-driven, "protects the PB target" for competition-driven).
+- Their `coaching_style` — strict/supportive/data/etc. shapes tone.
+- Their `biggest_weakness` and `biggest_opportunity` — bias recommendations toward these when relevant.
+- Their `training_availability` — never propose a session longer than realistic minutes for that context.
 
 RULES (STRICT):
 1. Preserve key sessions (long run, threshold, brick, race sim, heavy strength, testing, peak week) whenever possible.
@@ -2439,6 +2569,9 @@ async def _build_reality_context(user: dict, target_date: str) -> dict:
     # Home equipment
     home_equipment = profile.get("home_equipment") or []
 
+    # Living Profile — Coaching DNA context (compact)
+    dna_ctx = await _get_dna_context(user["id"])
+
     return {
         "target_date": target_date,
         "profile": {
@@ -2448,6 +2581,7 @@ async def _build_reality_context(user: dict, target_date: str) -> dict:
             "home_equipment": home_equipment,
             "goal": profile.get("goal"),
         },
+        "coaching_dna": dna_ctx,
         "coach_mode": coach_mode,
         "roster_days": roster_days,
         "workouts_window": workouts,
@@ -3202,6 +3336,9 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
     if not all_days:
         return []
 
+    # Living Profile: fetch DNA so workout gen is personalised to Coaching DNA
+    dna_ctx = await _get_dna_context(user["id"])
+
     # Fetch active event for the user (if any) and build event_context
     event_context: Optional[dict] = None
     ev = await db.events.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
@@ -3255,10 +3392,12 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
 
     async def _run_chunk(chunk: list[dict]) -> list[dict]:
         prompt = (
-            f"Client profile: {json.dumps(profile)[:2500]}\n"
+            f"Client profile: {json.dumps(profile)[:2000]}\n"
+            f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
-            f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:8000]}\n"
-            "Design exactly one workout per date in this chunk. Return JSON."
+            f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:7500]}\n"
+            "Design exactly one workout per date in this chunk. Return JSON. "
+            "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available."
         )
         try:
             raw = await call_claude(WORKOUT_SYSTEM, prompt)
@@ -3443,6 +3582,45 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
 @api.get("/workouts/week")
 async def workouts_week(user: dict = Depends(current_user)):
     rows = await db.workouts.find({"user_id": user["id"]}, {"_id": 0}).sort("date", 1).to_list(500)
+    # Living Profile: opportunistic missed-workout detection
+    try:
+        from datetime import date as _date, timedelta as _td
+        today = _date.today()
+        cutoff = today - _td(days=10)
+        missed = 0
+        for w in rows:
+            try:
+                d = _date.fromisoformat(w.get("date") or "")
+            except Exception:
+                continue
+            if d >= today or d < cutoff:
+                continue
+            if w.get("completed") or w.get("override_applied") or w.get("override_generated"):
+                continue
+            if (w.get("focus") in {"rest", "off"} or w.get("title", "").lower().startswith(("rest", "off"))):
+                continue
+            missed += 1
+        if missed >= 3:
+            await _emit_reassessment_prompt(
+                user["id"], "missed_workouts",
+                f"You've missed {missed} planned sessions recently — is life changing? Take 90s to update CrewFit.",
+                {"missed_count": missed},
+            )
+        # Event-completion detection
+        ev = await db.events.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+        if ev and ev.get("event_date"):
+            try:
+                edate = _date.fromisoformat(ev["event_date"])
+                if edate < today:
+                    await _emit_reassessment_prompt(
+                        user["id"], "event_completed",
+                        f"Nice work on {ev.get('event_name') or ev.get('event_type')}! What's next?",
+                        {"event_id": ev.get("id"), "event_date": ev.get("event_date")},
+                    )
+            except Exception:
+                pass
+    except Exception:
+        logger.exception("living-profile trigger check failed")
     return rows
 
 

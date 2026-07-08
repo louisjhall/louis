@@ -23,7 +23,10 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "net.crewfit.app",
-      "permissions": ["READ_EXTERNAL_STORAGE", "READ_MEDIA_IMAGES"]
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -41,7 +44,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

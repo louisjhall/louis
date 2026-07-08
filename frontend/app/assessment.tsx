@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
+import { DateField } from "@/src/components/DateField";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -315,13 +316,8 @@ function DateAnswer({ q, onSubmit, submitting }: any) {
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(v);
   return (
     <View>
-      <TextInput
-        value={v} onChangeText={setV}
-        placeholder="YYYY-MM-DD"
-        placeholderTextColor={theme.color.textDim}
-        style={styles.textInput}
-        editable={!submitting}
-      />
+      <DateField value={v} onChange={setV} testID={`ans-${q.id}-date`} />
+      <View style={{ height: 12 }} />
       <ContinueBtn onPress={() => onSubmit(v)} disabled={submitting || !valid} />
     </View>
   );
@@ -358,12 +354,8 @@ function EventBuilder({ q, onSubmit, submitting }: any) {
           placeholderTextColor={theme.color.textDim}
           style={styles.textInput} editable={!submitting}
         />
-        <TextInput
-          value={date} onChangeText={setDate}
-          placeholder="Date (YYYY-MM-DD)"
-          placeholderTextColor={theme.color.textDim}
-          style={styles.textInput} editable={!submitting}
-        />
+        <DateField value={date} onChange={setDate} testID="event-date-picker" />
+        <View style={{ height: 12 }} />
         <View style={styles.prioRow}>
           {["A", "B", "C"].map((p) => (
             <Pressable

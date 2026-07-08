@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
+import { DateField } from "@/src/components/DateField";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -754,8 +755,8 @@ function PRAddModal({ visible, onClose, onSaved }: { visible: boolean; onClose: 
               </View>
             </View>
             <Text style={styles.editLbl}>DATE</Text>
-            <TextInput value={date} onChangeText={setDate} placeholder="YYYY-MM-DD"
-              placeholderTextColor={theme.color.textDim} style={styles.editInput} />
+            <DateField value={date} onChange={setDate} testID="pr-date-picker" />
+            <View style={{ height: 8 }} />
             <Pressable onPress={save} style={styles.saveBtn} testID="pr-save">
               <Text style={styles.saveBtnT}>SAVE PR</Text>
               <Ionicons name="checkmark" size={16} color="#fff" />

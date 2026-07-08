@@ -1,0 +1,35 @@
+{
+  "summary": "Backend-only tests for Living Profile (Phase C) — DNA injection + re-assessment prompt engine. Wrote /app/backend/tests/test_living_profile.py with 13 pytest cases covering all 13 review scenarios (login, prompts structure, cleanup, missed_workouts/event_completed emission from /workouts/week, cool-down, dismiss by id/kind, empty-body 400, PATCH /coaching-dna life_change trigger + cool-down, day-override injury_flagged, /reality/submit sanity, auth gating, teardown/restore). Ran against http://localhost:8001 — 13/13 PASS. Environment gap discovered & handled: seed client `client@crewfit.com` has NO coaching_dna record on startup, so PATCH /coaching-dna returns 404. Test fixture bootstraps a minimal DNA row directly via pymongo and deletes it in teardown, so no persistent state changes remain (verified: 0 DNA docs, 0 undismissed prompts, 0 day_overrides after run).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/coaching-dna", "issue": "Returns 404 when the client has no DNA yet. Seeded client `client@crewfit.com` ships with NO coaching_dna record, so any life_change trigger path is unreachable without first completing an assessment. Consider auto-seeding a placeholder DNA for the demo client OR making PATCH create-on-missing so Phase C life_change triggers work out-of-the-box for the demo user."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_living_profile.py",
+    "/app/test_reports/pytest/living_profile_results.xml"
+  ],
+  "action_items": [
+    "Consider seeding a minimal coaching_dna doc for `client@crewfit.com` in `seed()` so /api/coaching-dna returns a real DNA and PATCH-based life_change triggers work without needing the full assessment flow first (optional QoL — not a functional bug in Phase C)."
+  ],
+  "critical_code_review_comments": [
+    "_emit_reassessment_prompt cool-down cutoff uses `datetime.utcnow().isoformat()` (naive, no timezone) but the `created_at` written elsewhere uses `now_iso()` which typically produces tz-aware ISO strings. String comparison happens to work because both are ISO-8601-ish, but any tz-suffix difference (e.g. `+00:00` vs none) could skew the 3-day boundary at the seam. Recommend using `now_iso()` (or an equivalent tz-aware helper) for the cutoff too, and storing/comparing consistently.",
+    "The 'annual_leave' trigger inside POST /api/calendar/day-override runs after the 'injured' trigger in the same try-block — if a user tags both, both prompts fire (fine), but the reason strings assume a single trigger. Minor UX comment.",
+    "GET /api/workouts/week both mutates state (emits prompts) and returns a list. Consider decoupling — an idempotent GET is more RESTful; prompt emission could be a background task on workout events. Not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_living_profile.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "not tested"},
+  "seed_data_creation": "During test run only: fixture inserts one minimal coaching_dna doc for the seed client via pymongo (id captured, `_test_bootstrap: true`) and deletes it in teardown. Post-run verification confirms 0 DNA docs, 0 undismissed prompts, 0 day_overrides remain for the client.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Living Profile prompt engine is fully covered by /app/backend/tests/test_living_profile.py. Note: this test uses pymongo directly to bootstrap a coaching_dna row (the seed client has no DNA by default) and cleans it up. If E1 later adds DNA to the seed(), you can drop the bootstrap block and the tests still work (fixture guards on `if not dna`). All 13 review cases pass. Cool-down mechanism verified twice (missed_workouts and life_change)."
+}

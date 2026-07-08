@@ -11,6 +11,30 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { CrewFitWordmark } from "@/src/components/Logo";
 import { RealityModal } from "@/src/components/RealityModal";
 
+function iconFor(kind: string): string {
+  switch (kind) {
+    case "roster_uploaded": return "📅";
+    case "injury_flagged": return "🤕";
+    case "annual_leave": return "🏖️";
+    case "missed_workouts": return "⏰";
+    case "event_completed": return "🏁";
+    case "life_change": return "🔀";
+    default: return "🧠";
+  }
+}
+
+function titleFor(kind: string): string {
+  switch (kind) {
+    case "roster_uploaded": return "NEW ROSTER · REFRESH YOUR DNA";
+    case "injury_flagged": return "INJURY FLAGGED · RE-PLAN NEEDED";
+    case "annual_leave": return "ANNUAL LEAVE · SWITCH BLOCK?";
+    case "missed_workouts": return "MISSED SESSIONS · REVIEW";
+    case "event_completed": return "EVENT COMPLETE · WHAT'S NEXT?";
+    case "life_change": return "LIFE CHANGE · REFRESH DNA";
+    default: return "CREWFIT INTELLIGENCE";
+  }
+}
+
 const HERO = "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?crop=entropy&cs=srgb&fm=jpg&q=85";
 
 export default function Home() {
@@ -24,21 +48,29 @@ export default function Home() {
   const [happenedSaving, setHappenedSaving] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<string>("normal");
   const [realityOpen, setRealityOpen] = useState(false);
+  const [prompts, setPrompts] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev] = await Promise.all([
+      const [ws, r, ev, pr] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
+        api<any>("/reassessment/prompts").catch(() => ({ prompts: [] })),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
       setEvent(ev && ev.id ? ev : null);
+      setPrompts(pr.prompts || []);
       setScheduleMode(user?.profile?.schedule_mode || "normal");
     } finally { setLoading(false); }
   }, [user]);
+
+  const dismissPrompt = async (p: any) => {
+    setPrompts((s) => s.filter((x) => x.id !== p.id));
+    try { await api("/reassessment/dismiss", { method: "POST", body: { prompt_id: p.id } }); } catch { /* ignore */ }
+  };
 
   const submitHappened = async (tag: string) => {
     setHappenedSaving(true);
@@ -151,6 +183,34 @@ export default function Home() {
 
           {todaysWorkout ? (
             <>
+              {prompts.length > 0 && (
+                <View style={styles.promptWrap}>
+                  {prompts.slice(0, 3).map((p) => (
+                    <View key={p.id} style={styles.promptCard}>
+                      <View style={styles.promptLeft}>
+                        <Text style={styles.promptEmoji}>{iconFor(p.kind)}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.promptTitle}>{titleFor(p.kind)}</Text>
+                          <Text style={styles.promptReason} numberOfLines={3}>{p.reason}</Text>
+                          <View style={styles.promptCtaRow}>
+                            <Pressable
+                              testID={`prompt-take-${p.id}`}
+                              onPress={() => router.push("/assessment" as any)}
+                              style={styles.promptTakeBtn}
+                            >
+                              <Text style={styles.promptTakeText}>UPDATE DNA</Text>
+                              <Ionicons name="arrow-forward" size={11} color={theme.color.brand} />
+                            </Pressable>
+                            <Pressable testID={`prompt-dismiss-${p.id}`} onPress={() => dismissPrompt(p)} style={styles.promptDismissBtn}>
+                              <Text style={styles.promptDismissText}>NOT NOW</Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
               <Pressable
                 testID="reality-btn-home"
                 onPress={() => setRealityOpen(true)}
@@ -302,6 +362,25 @@ const styles = StyleSheet.create({
   realityEmoji: { fontSize: 22 },
   realityTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   realitySub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  promptWrap: { marginBottom: theme.space.md, gap: 8 },
+  promptCard: {
+    padding: 12, borderRadius: 10,
+    backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  promptLeft: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  promptEmoji: { fontSize: 22, marginTop: 2 },
+  promptTitle: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  promptReason: { color: theme.color.text, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  promptCtaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  promptTakeBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  promptTakeText: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  promptDismissBtn: { paddingVertical: 6, paddingHorizontal: 8 },
+  promptDismissText: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.5 },
   startText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
   emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
   emptyTitle: { color: theme.color.text, fontWeight: "700", fontSize: 15 },

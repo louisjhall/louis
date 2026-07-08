@@ -129,6 +129,50 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.body}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
       >
+        {/* NEW: CrewFit Coaching System banner */}
+        <View style={styles.systemBanner}>
+          <View style={styles.systemHead}>
+            <View style={styles.systemIcon}>
+              <Ionicons name="shield-checkmark" size={22} color={theme.color.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.systemEyebrow}>THE CREWFIT COACHING SYSTEM</Text>
+              <Text style={styles.systemTitle}>Louis Hall · Atlas</Text>
+            </View>
+          </View>
+          <Text style={styles.systemBody}>
+            Your coaching is built on a combination of real human coaching and intelligent analysis.
+            {"\n\n"}Louis Hall designed the coaching philosophy. Atlas applies that philosophy consistently across your programme.
+            {"\n\n"}As Atlas learns more about you, your coaching becomes increasingly personalised while remaining within the same proven coaching framework.
+          </Text>
+          <View style={styles.systemActions}>
+            <Pressable
+              testID="hq-meet-atlas"
+              onPress={() => router.push("/atlas-intro" as any)}
+              style={styles.systemBtnPrimary}
+            >
+              <Ionicons name="pulse" size={12} color="#fff" />
+              <Text style={styles.systemBtnPrimaryT}>MEET ATLAS</Text>
+            </Pressable>
+            <Pressable
+              testID="hq-guard-rails"
+              onPress={() => router.push("/guard-rails" as any)}
+              style={styles.systemBtnSecondary}
+            >
+              <Ionicons name="shield-half" size={12} color={theme.color.brand} />
+              <Text style={styles.systemBtnSecondaryT}>GUARD RAILS</Text>
+            </Pressable>
+            <Pressable
+              testID="hq-welcome"
+              onPress={() => router.push("/welcome" as any)}
+              style={styles.systemBtnSecondary}
+            >
+              <Ionicons name="play-circle" size={12} color={theme.color.brand} />
+              <Text style={styles.systemBtnSecondaryT}>MEET LOUIS</Text>
+            </Pressable>
+          </View>
+        </View>
+
         {/* 1. PROFILE */}
         <Section id="profile" title="PROFILE" icon="person" emoji="👤" expanded={expanded} onToggle={toggle}
           onEdit={() => openEdit({
@@ -932,4 +976,31 @@ const styles = StyleSheet.create({
   },
   saveBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   rowGap: { flexDirection: "row", gap: 10 },
+  systemBanner: {
+    padding: 16, borderRadius: 14, marginBottom: 14,
+    backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  systemHead: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 },
+  systemIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1, borderColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  systemEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  systemTitle: { color: theme.color.text, fontSize: 16, fontWeight: "900", letterSpacing: 1, marginTop: 3 },
+  systemBody: { color: theme.color.text, fontSize: 12, lineHeight: 18, marginBottom: 14 },
+  systemActions: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  systemBtnPrimary: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6,
+    backgroundColor: theme.color.brand,
+  },
+  systemBtnPrimaryT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  systemBtnSecondary: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  systemBtnSecondaryT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
 });

@@ -114,7 +114,7 @@ export default function Assessment() {
     <SafeAreaView style={styles.rootDark} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <View style={styles.headerBar}>
-          <Text style={styles.brand}>CREW<Text style={styles.brandRed}>FIT</Text> INTELLIGENCE™</Text>
+          <Text style={styles.brand}>ATLAS · <Text style={styles.brandRed}>CREWFIT</Text> ASSESSMENT</Text>
           <Text style={styles.progressLabel}>{progress}%</Text>
         </View>
         <View style={styles.progressTrack}>
@@ -455,7 +455,7 @@ function FinalisingAnimation() {
         <View style={styles.pulseCircle}>
           <ActivityIndicator size="large" color={theme.color.brand} />
         </View>
-        <Text style={styles.finaliseBrand}>CREW<Text style={styles.brandRed}>FIT</Text> INTELLIGENCE™</Text>
+        <Text style={styles.finaliseBrand}>ATLAS · <Text style={styles.brandRed}>CREWFIT</Text></Text>
         <View style={styles.stageList}>
           {stages.map((s, i) => (
             <View key={i} style={styles.stageRow}>
@@ -531,7 +531,7 @@ function DNAReveal({ dna, onContinue }: { dna: any; onContinue: () => void }) {
 
         {dna.summary ? (
           <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>CREWFIT INTELLIGENCE SUMMARY</Text>
+            <Text style={styles.summaryLabel}>ATLAS INTELLIGENCE SUMMARY</Text>
             <Text style={styles.summaryText}>{dna.summary}</Text>
           </View>
         ) : null}

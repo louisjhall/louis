@@ -120,8 +120,8 @@ export function RealityModal({
               <Text style={styles.title}>TODAY&apos;S REALITY</Text>
               <Text style={styles.sub}>
                 {stage === "pick" && "What has changed today?"}
-                {stage === "loading" && "CrewFit Intelligence is thinking..."}
-                {stage === "review" && (result?.context_summary || "Here are your options")}
+                {stage === "loading" && "Atlas is analysing your day..."}
+                {stage === "review" && (result?.context_summary || "Atlas has prepared these options")}
                 {stage === "applying" && "Applying..."}
               </Text>
             </View>
@@ -176,7 +176,7 @@ export function RealityModal({
               <View style={styles.spinCircle}>
                 <ActivityIndicator size="large" color={theme.color.brand} />
               </View>
-              <Text style={styles.thinkingT}>CREWFIT INTELLIGENCE</Text>
+              <Text style={styles.thinkingT}>ATLAS</Text>
               <Text style={styles.thinkingS}>
                 Analysing programme · recovery · roster · event · coach rules...
               </Text>
@@ -210,7 +210,7 @@ export function RealityModal({
                 </View>
               )}
 
-              <Text style={styles.optHeader}>CREWFIT RECOMMENDATION</Text>
+              <Text style={styles.optHeader}>ATLAS RECOMMENDATION</Text>
               {(result.options || []).map((o: any) => (
                 <View key={o.id} style={[
                   styles.optCard,

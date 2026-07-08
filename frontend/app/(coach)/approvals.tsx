@@ -18,8 +18,9 @@ export default function Approvals() {
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
-        <Text style={styles.title}>AI PLANS · PENDING APPROVAL</Text>
-        <Text style={styles.sub}>{items.length} workouts awaiting review</Text>
+        <Text style={styles.title}>ATLAS RECOMMENDATIONS</Text>
+        <Text style={styles.sub}>Prepared using the CrewFit Coaching System · Awaiting Coach Review</Text>
+        <Text style={styles.count}>{items.length} workouts awaiting your approval</Text>
       </View>
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 60 }} refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}>
         {loading && items.length === 0 ? <ActivityIndicator color={theme.color.brand} /> : items.length === 0 ? (
@@ -43,7 +44,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: { padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   title: { color: theme.color.text, fontSize: 16, letterSpacing: 2, fontWeight: "900" },
-  sub: { color: theme.color.textMuted, marginTop: 2 },
+  sub: { color: theme.color.brand, marginTop: 4, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  count: { color: theme.color.textMuted, marginTop: 4, fontSize: 12 },
   card: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.sm, overflow: "hidden" },
   loadBar: { width: 4, alignSelf: "stretch" },
   client: { color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },

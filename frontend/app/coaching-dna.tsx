@@ -52,7 +52,7 @@ export default function CoachingDnaScreen() {
           <View style={styles.empty}>
             <Ionicons name="pulse" size={40} color={theme.color.textDim} />
             <Text style={styles.emptyT}>No Coaching DNA yet</Text>
-            <Text style={styles.emptyS}>Complete the CrewFit Intelligence Assessment to generate your permanent coaching blueprint.</Text>
+            <Text style={styles.emptyS}>Complete the Atlas Assessment to generate your permanent coaching blueprint.</Text>
             <Pressable testID="dna-take" onPress={() => router.push("/assessment" as any)} style={styles.takeBtn}>
               <Text style={styles.takeTxt}>START ASSESSMENT</Text>
               <Ionicons name="arrow-forward" size={14} color="#fff" />
@@ -117,7 +117,7 @@ export default function CoachingDnaScreen() {
 
             {dna.summary ? (
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryLabel}>CREWFIT INTELLIGENCE SUMMARY</Text>
+                <Text style={styles.summaryLabel}>ATLAS INTELLIGENCE SUMMARY</Text>
                 <Text style={styles.summaryText}>{dna.summary}</Text>
               </View>
             ) : null}

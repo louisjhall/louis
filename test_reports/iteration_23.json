@@ -1,0 +1,34 @@
+{
+  "summary": "Backend testing of the new Coach To-Do Feed + AI Message Drafting + Coach Controls + Change Log endpoints. All 23 pytest cases PASSED (100%). Verified: client→coach /api/messages triggers background Atlas draft (via emergentintegrations Claude Sonnet 4.5) creating a message_drafts row + a coach_tasks row of type=message_draft_ready with category='messages' and correct risk/priority mapping; /coach/messages/drafts list & detail (with ordered thread) work; manual /coach/messages/generate creates drafts; /regenerate updates atlas_draft/tone_used and pushes previous text into regeneration_history (capped at 5); PATCH persists coach_edited_text; approve sends real coach→client message with source_draft_id, transitions draft.status='sent' + sets sent_at/sent_message_id, closes the related coach_task, and writes a coach_change_log entry (category='message'); double-approve returns 400; dismiss sets status='dismissed' and logs change; per-client controls GET returns merged defaults (flexible/standard/medium/weekly/none); PUT partial merge does NOT wipe other fields and writes a controls change_log diff entry; /coach/change-log sorts newest-first and supports category & client_id filters; /coach/clients/{id}/change-log returns client-scoped rows; all coach endpoints reject client and anonymous callers with 401/403; client→client message does NOT generate a draft. Approve endpoint works both with no body AND with {coach_edited_text} body.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coach_message_drafts.py",
+    "/app/test_reports/pytest/coach_message_drafts_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 7,209 lines — well past the 700-line guideline. Coach message-draft, controls and change-log blocks should be extracted into a dedicated router module (e.g. /app/backend/routers/coach_messages.py) for maintainability.",
+    "MessageDraftEditBody.coach_edited_text is required (not Optional), but /coach/messages/{id}/approve declares body as Optional[MessageDraftEditBody]=None. This works today because FastAPI accepts no body (body=None), but if a caller sends `{}` they get a 422. Consider making coach_edited_text Optional on that model or defining a distinct ApproveBody with an optional field to avoid confusing 422s.",
+    "_bg_generate_message_draft is fired via asyncio.create_task and swallows exceptions in the msg_send hook. Good for resilience, but the Atlas call is unbounded — recommend adding a timeout (asyncio.wait_for) around call_claude so a stuck LLM call doesn't leak a task.",
+    "In coach_msg_approve the push send failure is only logged as warning — good, but the fact that push send happens BEFORE _log_change means a push exception cannot block the change log (already the case, just worth noting).",
+    "coach_change_log query lacks an index on (created_at, category, client_id). With growth this .sort will get slow — add a compound index."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coach_message_drafts.py (new)"
+  ],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "not tested (backend-only per request)"},
+  "seed_data_creation": "Test data was written into the shared DB: several message_drafts (waiting_approval / sent / dismissed) between coach@crewfit.com and client@crewfit.com, coach_change_log entries (category=message and category=controls), and controls updates on the seeded client (progression_speed left at 'aggressive', injury_caution='high'). If main agent wants pristine defaults for a demo, PUT /api/coach/clients/{client_id}/controls with the defaults or reseed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use /app/backend/tests/test_coach_message_drafts.py as a regression suite for these features. All 23 tests are self-contained and rely only on the two seeded users. Background draft polling uses a 20s timeout which is enough with the current Claude latency (~3-6s) and the fallback path.",
+  "rca_of_issue": "N/A — no defects found."
+}

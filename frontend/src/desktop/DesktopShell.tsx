@@ -15,6 +15,7 @@ const NAV: { path: string; label: string; icon: any; testId: string }[] = [
   { path: "/(coach)/videos", label: "Videos", icon: "videocam-outline", testId: "desktop-nav-videos" },
   { path: "/(coach)/messages", label: "Messages", icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
   { path: "/(coach)/analytics", label: "Analytics", icon: "bar-chart-outline", testId: "desktop-nav-analytics" },
+  { path: "/(coach)/changelog", label: "Change Log", icon: "time-outline", testId: "desktop-nav-changelog" },
   { path: "/(coach)/profile", label: "Profile", icon: "person-outline", testId: "desktop-nav-profile" },
 ];
 

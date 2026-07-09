@@ -16,7 +16,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
-import { getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue } from "@/src/lib/workoutMode";
+import { RestTimer } from "@/src/components/RestTimer";
+import { getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue, getAutoRest } from "@/src/lib/workoutMode";
+import { hapticSuccess } from "@/src/lib/haptics";
+import { playWorkoutComplete } from "@/src/lib/sounds";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -52,11 +55,11 @@ export default function GuidedFlow() {
   const [exIdx, setExIdx] = useState(0);
   const [setIdx, setSetIdx] = useState(1);
   const [paused, setPaused] = useState(false);
-  const [restLeft, setRestLeft] = useState(0);
   const [warmupTimer, setWarmupTimer] = useState(0);
-  const [countdown, setCountdown] = useState<number | null>(null);
   const [autoCont, setAutoCont] = useState(true);
+  const [autoRest, setAutoRest] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
+  const [previousLabel, setPreviousLabel] = useState<string>("");
   const [howToOpen, setHowToOpen] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
   const [content, setContent] = useState<any>(null);
@@ -73,18 +76,20 @@ export default function GuidedFlow() {
 
   const restTick = useRef<any>(null);
   const warmupTick = useRef<any>(null);
-  const countdownTick = useRef<any>(null);
+  const restSeconds = useRef<number>(0);
 
   // Load workout + settings
   useEffect(() => {
     (async () => {
-      const [w, ac, so] = await Promise.all([
+      const [w, ac, ar, so] = await Promise.all([
         api<any>(`/workouts/${id}`),
         getAutoContinue(),
+        getAutoRest(),
         getSoundOn(),
       ]);
       setWorkout(w);
       setAutoCont(ac);
+      setAutoRest(ar);
       setSoundOn(so);
       // Start with warmup if any, else jump to first exercise
       if (Array.isArray(w.warmup) && w.warmup.length > 0) {
@@ -97,7 +102,6 @@ export default function GuidedFlow() {
     return () => {
       if (restTick.current) clearInterval(restTick.current);
       if (warmupTick.current) clearInterval(warmupTick.current);
-      if (countdownTick.current) clearInterval(countdownTick.current);
     };
   }, [id]);
 
@@ -152,43 +156,15 @@ export default function GuidedFlow() {
     return () => { if (warmupTick.current) clearInterval(warmupTick.current); };
   }, [phase, warmupIdx, paused, workout]);
 
-  // Rest timer
-  const startRest = useCallback((sec: number) => {
-    setRestLeft(sec);
+  // Rest phase — kicks in via `setPhase("rest")`. The RestTimer component
+  // owns its own countdown; on complete we advance.
+  const startRest = useCallback((sec: number, prevLabel: string) => {
+    restSeconds.current = sec;
+    setPreviousLabel(prevLabel);
     setPhase("rest");
-    if (restTick.current) clearInterval(restTick.current);
-    restTick.current = setInterval(() => {
-      setRestLeft((s) => {
-        if (s <= 1) {
-          clearInterval(restTick.current);
-          Vibration.vibrate([0, 300, 100, 300]);
-          // 3-2-1 countdown
-          setCountdown(3);
-          countdownTick.current = setInterval(() => {
-            setCountdown((c) => {
-              if (c === null) return null;
-              if (c <= 1) {
-                clearInterval(countdownTick.current);
-                setCountdown(null);
-                // advance
-                setTimeout(() => advanceAfterRest(), 200);
-                return null;
-              }
-              return c - 1;
-            });
-          }, 700);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
   }, []);
 
   const advanceAfterRest = () => {
-    if (!autoCont) {
-      // Wait for user to press continue
-      return;
-    }
     goToNextSetOrExercise();
   };
 
@@ -243,9 +219,14 @@ export default function GuidedFlow() {
       setLogRpe("");
 
       if (isLastSet && isLastExercise) {
+        hapticSuccess();
+        playWorkoutComplete();
         setPhase("complete");
+      } else if (autoRest) {
+        startRest(restSec, `${currentEx.name} Set ${setIdx} complete`);
       } else {
-        startRest(restSec);
+        // Skip rest — advance immediately
+        goToNextSetOrExercise();
       }
     } catch (e: any) {
       // Non-blocking — user can retry
@@ -253,14 +234,8 @@ export default function GuidedFlow() {
   };
 
   const skipRest = () => {
-    if (restTick.current) clearInterval(restTick.current);
-    setRestLeft(0);
-    setCountdown(null);
-    if (countdownTick.current) clearInterval(countdownTick.current);
     goToNextSetOrExercise();
   };
-
-  const addRest = () => setRestLeft((s) => s + 15);
 
   const skipWarmup = () => {
     if (warmupTick.current) clearInterval(warmupTick.current);
@@ -370,16 +345,23 @@ export default function GuidedFlow() {
       <ScrollView contentContainerStyle={styles.body}>
         {/* Phase label */}
         {phase === "rest" ? (
-          <RestPanel
-            left={restLeft}
-            nextUp={nextUpLabel}
-            countdown={countdown}
-            onAdd={addRest}
-            onSkip={skipRest}
-            paused={paused}
-            autoCont={autoCont}
-            onToggleAuto={toggleAutoCont}
-          />
+          <View style={{ paddingVertical: 8 }}>
+            <RestTimer
+              seconds={restSeconds.current}
+              previousLabel={previousLabel}
+              nextLabel={nextUpLabel}
+              onComplete={advanceAfterRest}
+              onSkip={skipRest}
+              autoContinueOverride={autoCont}
+              size={260}
+            />
+            <Pressable onPress={toggleAutoCont} style={styles.autoContRow} testID="gf-auto-toggle">
+              <View style={[styles.check, autoCont && styles.checkOn]}>
+                {autoCont && <Ionicons name="checkmark" size={14} color="#fff" />}
+              </View>
+              <Text style={styles.autoContT}>Auto-continue after rest</Text>
+            </Pressable>
+          </View>
         ) : phase === "warmup" ? (
           <WarmupPanel
             item={workout.warmup[warmupIdx]}
@@ -640,50 +622,6 @@ function LogInput({ label, value, onChangeText, placeholder }: any) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Rest Panel                                                                 */
-/* -------------------------------------------------------------------------- */
-function RestPanel({
-  left, nextUp, countdown, onAdd, onSkip, paused, autoCont, onToggleAuto,
-}: {
-  left: number; nextUp: string; countdown: number | null;
-  onAdd: () => void; onSkip: () => void; paused: boolean; autoCont: boolean; onToggleAuto: () => void;
-}) {
-  return (
-    <View>
-      <Text style={styles.phaseLabel}>REST</Text>
-      {countdown !== null ? (
-        <View style={styles.countdownBox}>
-          <Text style={styles.countdownT}>{countdown}</Text>
-        </View>
-      ) : (
-        <>
-          <Text style={styles.restBig}>{fmtMMSS(left)}</Text>
-          <Text style={styles.restHint}>Next · {nextUp}</Text>
-        </>
-      )}
-
-      <View style={styles.rowActions}>
-        <Pressable onPress={onAdd} style={styles.secondaryBtn} testID="gf-rest-add">
-          <Ionicons name="add" size={14} color={theme.color.brand} />
-          <Text style={styles.secondaryBtnT}>+15s</Text>
-        </Pressable>
-        <Pressable onPress={onSkip} style={styles.secondaryBtn} testID="gf-rest-skip">
-          <Ionicons name="play-forward" size={14} color={theme.color.brand} />
-          <Text style={styles.secondaryBtnT}>SKIP REST</Text>
-        </Pressable>
-      </View>
-
-      <Pressable onPress={onToggleAuto} style={styles.autoContRow} testID="gf-auto-toggle">
-        <View style={[styles.check, autoCont && styles.checkOn]}>
-          {autoCont && <Ionicons name="checkmark" size={14} color="#fff" />}
-        </View>
-        <Text style={styles.autoContT}>Auto-continue after rest</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
 /*  How-To Bottom Sheet                                                        */
 /* -------------------------------------------------------------------------- */
 function HowToSheet({
@@ -838,6 +776,8 @@ function WorkoutComplete({ workout, logs, durationMin, onDone }: {
     (async () => {
       if (saving) return;
       setSaving(true);
+      // Fire the completion cue as soon as user lands on this screen
+      playWorkoutComplete(); hapticSuccess();
       try {
         await api<any>(`/workouts/${workout.id}/complete`, {
           method: "POST",

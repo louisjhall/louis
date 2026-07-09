@@ -115,6 +115,34 @@ export default function Login() {
                 <Text style={styles.seedText}>client@crewfit.com / Client123!</Text>
                 <Text style={styles.seedText}>coach@crewfit.com / Coach123!</Text>
               </View>
+
+              {/* Development-only quick coach login.
+                * Hidden in production builds via the `__DEV__` guard.
+                * Fills credentials + submits, then routes straight to the coach dashboard. */}
+              {__DEV__ && (
+                <Pressable
+                  testID="dev-coach-login"
+                  onPress={async () => {
+                    setErr(null);
+                    setLoading(true);
+                    try {
+                      const u = await login("coach@crewfit.com", "Coach123!");
+                      if (u.role === "coach") {
+                        router.replace(isDesktopWeb ? "/(coach)/overview" : "/(coach)/clients");
+                      } else {
+                        router.replace("/(client)/home");
+                      }
+                    } catch (e: any) {
+                      setErr(e.message || "Dev login failed");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  style={styles.devBtn}
+                >
+                  <Text style={styles.devBtnT}>◈ COACH DASHBOARD LOGIN (DEV)</Text>
+                </Pressable>
+              )}
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -173,4 +201,15 @@ const styles = StyleSheet.create({
   },
   seedTitle: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "700" },
   seedText: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
+  devBtn: {
+    marginTop: theme.space.md,
+    padding: theme.space.md,
+    borderRadius: theme.radius.sm,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+    borderStyle: "dashed",
+    alignItems: "center",
+    backgroundColor: "transparent",
+  },
+  devBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 });

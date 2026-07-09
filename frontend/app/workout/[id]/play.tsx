@@ -14,6 +14,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
+import { RestTimer } from "@/src/components/RestTimer";
+import { getAutoRest } from "@/src/lib/workoutMode";
+import { hapticSuccess } from "@/src/lib/haptics";
+import { playWorkoutComplete } from "@/src/lib/sounds";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const TILES = ["IMAGE", "HOW TO", "VIDEO", "SWAP", "LOG"] as const;
@@ -57,6 +61,9 @@ export default function AtlasPlayer() {
   const [sets, setSets] = useState<any[]>([]);
   const [prev, setPrev] = useState<any>(null);
   const [restLeft, setRestLeft] = useState(0);
+  const [restVisible, setRestVisible] = useState(false);
+  const [restSecondsInit, setRestSecondsInit] = useState(60);
+  const [autoRestOn, setAutoRestOn] = useState(true);
   const restTimer = useRef<any>(null);
   const startedAt = useRef<number>(Date.now());
   const [now, setNow] = useState(Date.now());
@@ -99,20 +106,20 @@ export default function AtlasPlayer() {
     return () => clearInterval(t);
   }, []);
 
-  // Rest timer tick
+  // Rest timer: RestTimer component owns the countdown. Legacy interval kept for
+  // any callers still setting `restLeft`, but modern flow uses `restVisible`.
+  useEffect(() => {
+    getAutoRest().then(setAutoRestOn);
+  }, []);
   useEffect(() => {
     if (restLeft <= 0) { if (restTimer.current) clearInterval(restTimer.current); return; }
     restTimer.current = setInterval(() => {
       setRestLeft((s) => {
-        if (s <= 1) {
-          Vibration.vibrate([0, 300, 100, 300]);
-          clearInterval(restTimer.current);
-          return 0;
-        }
+        if (s <= 1) { clearInterval(restTimer.current); return 0; }
         return s - 1;
       });
     }, 1000);
-    return () => clearInterval(restTimer.current);
+    return () => { if (restTimer.current) clearInterval(restTimer.current); };
   }, [restLeft > 0]);
 
   const currentSets = useMemo(
@@ -133,7 +140,11 @@ export default function AtlasPlayer() {
 
   const goNext = () => { if (idx < total - 1) setIdx(idx + 1); };
   const goPrev = () => { if (idx > 0) setIdx(idx - 1); };
-  const startRest = (sec: number) => setRestLeft(Math.max(0, sec));
+  const startRest = (sec: number) => {
+    if (!autoRestOn || sec <= 0) return;
+    setRestSecondsInit(Math.max(15, sec));
+    setRestVisible(true);
+  };
 
   const finishWorkout = async () => {
     try { await api(`/workouts/${id}/complete`, { method: "POST", body: {} }); }
@@ -200,15 +211,36 @@ export default function AtlasPlayer() {
         />
       )}
 
-      {/* Rest timer overlay */}
-      {restLeft > 0 && (
-        <View style={styles.restBar}>
-          <Ionicons name="timer" size={16} color={theme.color.brand} />
-          <Text style={styles.restBarT}>REST · {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, "0")}</Text>
-          <Pressable onPress={() => setRestLeft(restLeft + 30)} style={styles.restBtn}><Text style={styles.restBtnT}>+30</Text></Pressable>
-          <Pressable onPress={() => setRestLeft(0)} style={styles.restBtn}><Text style={styles.restBtnT}>SKIP</Text></Pressable>
+      {/* Rest timer bottom sheet — Manual Mode */}
+      <Modal
+        visible={restVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRestVisible(false)}
+      >
+        <View style={styles.restRoot}>
+          <Pressable style={styles.restBackdrop} onPress={() => setRestVisible(false)} />
+          <View style={styles.restSheet}>
+            <View style={styles.restSheetHead}>
+              <Text style={styles.restSheetTitle}>REST TIMER</Text>
+              <Pressable onPress={() => setRestVisible(false)} hitSlop={12} testID="rest-close">
+                <Ionicons name="close" size={22} color={theme.color.text} />
+              </Pressable>
+            </View>
+            <View style={{ padding: 16, paddingTop: 4 }}>
+              <RestTimer
+                seconds={restSecondsInit}
+                previousLabel={`${currentEx?.name} — set logged`}
+                nextLabel={currentEx?.name}
+                autoContinueOverride={true}
+                onComplete={() => setRestVisible(false)}
+                onSkip={() => setRestVisible(false)}
+                size={230}
+              />
+            </View>
+          </View>
         </View>
-      )}
+      </Modal>
 
       {/* Exercise name + tabs */}
       <View style={styles.exHead}>
@@ -969,6 +1001,11 @@ const styles = StyleSheet.create({
   restBarT: { flex: 1, color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
   restBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.brand },
   restBtnT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  restRoot: { flex: 1, justifyContent: "flex-end" },
+  restBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.55)" },
+  restSheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 20 },
+  restSheetHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
+  restSheetTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
 
   exHead: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 },
   exName: { color: theme.color.text, fontSize: 22, fontWeight: "900", lineHeight: 28 },

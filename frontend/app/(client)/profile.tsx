@@ -10,6 +10,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 import { DateField } from "@/src/components/DateField";
+import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -547,6 +548,8 @@ export default function ProfileScreen() {
         <Pressable testID="hq-legacy-onboarding" onPress={() => router.push("/(auth)/onboarding")} style={styles.legacyCta}>
           <Text style={styles.legacyText}>EDIT LEGACY PROFILE</Text>
         </Pressable>
+
+        <WorkoutSettingsPanel />
       </ScrollView>
 
       {/* Edit sheet */}

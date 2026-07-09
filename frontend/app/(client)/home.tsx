@@ -10,6 +10,7 @@ import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { CrewFitWordmark } from "@/src/components/Logo";
 import { RealityModal } from "@/src/components/RealityModal";
+import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 
 function iconFor(kind: string): string {
   switch (kind) {
@@ -245,6 +246,8 @@ export default function Home() {
             <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
             <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
           </View>
+
+          <WeeklyCheckinCard />
 
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
           {loading && !workouts.length ? (

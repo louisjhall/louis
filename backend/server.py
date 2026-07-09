@@ -30,6 +30,7 @@ import httpx
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, status
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -6070,9 +6071,529 @@ async def _shutdown():
         await _push_client.aclose()
 
 
-@api.get("/")
-async def root():
-    return {"service": "CrewFit V1.5", "ok": True}
+# ============================================================================
+#  SUNDAY CHECK-IN + COACH VIDEO TOUCHPOINT
+# ============================================================================
+#
+# Data model (Mongo collections):
+#   check_ins             — one submission per client per week
+#   coach_tasks           — coach to-do feed items (check-in review, record video, etc)
+#   weekly_videos         — coach video metadata (storage abstracted; local disk for MVP)
+#   scheduled_messages    — persistence for reminders (worker deferred to next session)
+#
+# Design notes:
+#   - Time zones are IANA strings (e.g. "Europe/London"). Stored on the user profile.
+#   - All weekly recurring times are stored as (local_date, local_time, time_zone) plus a
+#     computed `scheduled_utc` for querying. DST handled by zoneinfo — no fixed offsets.
+#   - Video storage is abstracted via `_save_coach_video()` — for MVP we save the raw bytes
+#     to /app/backend/uploads/coach_videos/ and return a relative URL. Swap this helper to
+#     upload to S3/R2 later without touching endpoint code.
+#   - Atlas AI: uses Claude Sonnet 4.5 via existing `call_claude()`.
+
+from zoneinfo import ZoneInfo, available_timezones
+import datetime as _dt
+
+COACH_VIDEO_DIR = ROOT_DIR / "uploads" / "coach_videos"
+COACH_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class TimeZonePrefsBody(BaseModel):
+    home_time_zone: Optional[str] = None
+    use_current_device_time_zone_while_travelling: Optional[bool] = None
+    current_time_zone: Optional[str] = None
+    preferred_check_in_day: Optional[str] = None   # e.g. "sunday"
+    preferred_check_in_time: Optional[str] = None  # "HH:MM" local
+    preferred_message_time: Optional[str] = None
+    quiet_hours_start: Optional[str] = None        # "21:00"
+    quiet_hours_end: Optional[str] = None          # "07:00"
+    notification_permission_status: Optional[str] = None
+
+
+@api.put("/user/timezone-prefs")
+async def set_timezone_prefs(body: TimeZonePrefsBody, user: dict = Depends(current_user)):
+    """Save the client's IANA time zone + weekly-check-in preferences."""
+    updates: dict[str, Any] = {}
+    tz_set = set(available_timezones())
+    if body.home_time_zone is not None:
+        if body.home_time_zone not in tz_set:
+            raise HTTPException(400, "home_time_zone must be an IANA name like 'Europe/London'")
+        updates["home_time_zone"] = body.home_time_zone
+    if body.current_time_zone is not None and body.current_time_zone in tz_set:
+        updates["current_time_zone"] = body.current_time_zone
+    for k in ("preferred_check_in_day", "preferred_check_in_time", "preferred_message_time",
+              "quiet_hours_start", "quiet_hours_end", "notification_permission_status"):
+        v = getattr(body, k)
+        if v is not None:
+            updates[k] = v
+    if body.use_current_device_time_zone_while_travelling is not None:
+        updates["use_current_device_time_zone_while_travelling"] = body.use_current_device_time_zone_while_travelling
+    if not updates:
+        return {"user": user}
+    updates["time_zone_source"] = "user_set"
+    updates["updated_at"] = now_iso()
+    await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {"user": u}
+
+
+def _user_tz(u: dict) -> ZoneInfo:
+    name = u.get("current_time_zone") or u.get("home_time_zone") or "Europe/London"
+    try: return ZoneInfo(name)
+    except Exception: return ZoneInfo("Europe/London")
+
+
+def _current_week_bounds(u: dict) -> tuple[str, str]:
+    """Return (week_start_iso, week_end_iso) — Monday 00:00 → Sunday 23:59 in the user's local time zone."""
+    tz = _user_tz(u)
+    now_local = _dt.datetime.now(tz)
+    monday = (now_local - _dt.timedelta(days=now_local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    sunday = monday + _dt.timedelta(days=6, hours=23, minutes=59, seconds=59)
+    return monday.date().isoformat(), sunday.date().isoformat()
+
+
+CHECKIN_SYSTEM = """You are Atlas — the CrewFit Intelligence™ engine that prepares the weekly review for Louis Hall to deliver as a personal coaching touchpoint.
+
+You are not the coach. Louis is the coach. You prepare summaries and a video script that sound like Louis speaking naturally.
+
+Tone: warm, human, direct, professional, supportive, specific, never cheesy. British spelling. Never use motivational-poster language.
+
+Return STRICT JSON only, no code fences, matching:
+{
+  "atlas_client_summary": "2-3 short paragraphs to show the client after they submit",
+  "atlas_coach_summary": {
+    "adherence_note": "...",
+    "recovery_note": "...",
+    "sleep_note": "...",
+    "stress_note": "...",
+    "injury_flag": null or "minor" | "moderate" | "severe",
+    "nutrition_note": "...",
+    "roster_note": "...",
+    "motivation_note": "...",
+    "suggested_focus_next_week": "...",
+    "coach_review_required": true or false,
+    "reasoning_for_review": null or "why the coach must review",
+    "urgent_safety_flag": null or "chest_pain" | "dizziness" | "severe_pain" | "fainting"
+  },
+  "next_week_focus": "one short paragraph the client will see",
+  "suggested_programme_adjustments": [
+    { "area": "strength|running|mobility|rest|nutrition|cardio|other", "change": "human sentence", "rationale": "why" }
+  ],
+  "weekly_video_script": "45-120 second first-person script for Louis to read on camera. Use client first name. Warm human tone. Structure: greeting → specific positive → check-in insight → roster/fatigue if relevant → training progress → injury/recovery if relevant → next-week focus → one clear action → human sign-off",
+  "whatsapp_short": "same content compressed for a text message, 1-3 sentences",
+  "push_notification": "one line, under 90 chars"
+}"""
+
+
+@api.get("/checkins/current")
+async def checkin_current(user: dict = Depends(current_user)):
+    """Return this week's check-in for the client (may be null if not yet submitted)."""
+    ws, we = _current_week_bounds(user)
+    doc = await db.check_ins.find_one({"user_id": user["id"], "week_start": ws}, {"_id": 0})
+    tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    # Is today Sunday in the client's local time zone?
+    tz = _user_tz(user)
+    now_local = _dt.datetime.now(tz)
+    is_sunday = now_local.weekday() == 6
+    return {
+        "check_in": doc, "week_start": ws, "week_end": we,
+        "time_zone": tz_name, "is_sunday_local": is_sunday,
+        "next_scheduled": f"{ws} 09:00 {tz_name}",
+    }
+
+
+@api.get("/checkins/questions")
+async def sunday_checkin_questions(user: dict = Depends(current_user)):
+    """Return the check-in question set — core + dynamic based on Coaching DNA + roster."""
+    dna = user.get("coaching_dna") or {}
+    goals = [str(g).lower() for g in (dna.get("primary_goals") or [])]
+    role = (dna.get("crew_role") or user.get("crew_role") or "").lower()
+    dynamic: list[dict] = []
+    if any("marathon" in g or "run" in g for g in goals):
+        dynamic += [
+            {"id": "run_long_done", "label": "Did you complete your long run?", "type": "choice", "options": ["Yes", "Partial", "No"]},
+            {"id": "run_niggles", "label": "Any running niggles?", "type": "text"},
+            {"id": "run_pacing", "label": "How did pacing feel?", "type": "choice", "options": ["On target", "Too fast", "Too slow", "Inconsistent"]},
+            {"id": "legs_ready", "label": "Do your legs feel ready for next week?", "type": "choice", "options": ["Yes", "Some fatigue", "No"]},
+        ]
+    if any("fat" in g or "loss" in g or "cut" in g for g in goals):
+        dynamic += [
+            {"id": "hunger", "label": "How was hunger this week?", "type": "choice", "options": ["Manageable", "Occasional cravings", "High", "Very high"]},
+            {"id": "protein", "label": "How consistent was protein?", "type": "choice", "options": ["Very consistent", "Mostly", "Mixed", "Poor"]},
+            {"id": "food_env", "label": "Any difficult food environments?", "type": "text"},
+            {"id": "adjust_cals", "label": "Do calories need adjusting?", "type": "choice", "options": ["No", "Slightly lower", "Slightly higher", "Louis to review"]},
+        ]
+    if any("muscle" in g or "gain" in g or "hypertrophy" in g for g in goals):
+        dynamic += [
+            {"id": "strength_trend", "label": "Did strength feel stable, up or down?", "type": "choice", "options": ["Up", "Stable", "Down"]},
+            {"id": "exercise_difficulty", "label": "Any exercises too easy or too hard?", "type": "text"},
+            {"id": "appetite", "label": "Appetite this week?", "type": "choice", "options": ["High", "Normal", "Low"]},
+        ]
+    if any("iron" in g or "tri" in g for g in goals):
+        dynamic += [
+            {"id": "swim_consistency", "label": "Swim consistency", "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
+            {"id": "bike_consistency", "label": "Bike consistency", "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
+            {"id": "run_consistency", "label": "Run consistency", "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
+            {"id": "biggest_limiter", "label": "Biggest limiter this week", "type": "text"},
+        ]
+    if "pilot" in role or "crew" in role or "cabin" in role:
+        dynamic += [
+            {"id": "flying_impact", "label": "How much did flying affect training this week?", "type": "choice", "options": ["Not much", "Somewhat", "A lot"]},
+            {"id": "jetlag", "label": "Any jet lag issues?", "type": "choice", "options": ["No", "Mild", "Significant"]},
+            {"id": "post_duty_sleep", "label": "Any poor sleep after duties?", "type": "choice", "options": ["No", "Some", "Bad"]},
+            {"id": "layover_gym", "label": "Any layover or hotel gym issues?", "type": "text"},
+        ]
+
+    core = [
+        {"id": "overall", "label": "How was your overall training week?", "type": "choice",
+         "options": ["Excellent", "Good", "Okay", "Difficult", "Poor"]},
+        {"id": "energy", "label": "Energy this week", "type": "scale", "min": 1, "max": 5},
+        {"id": "sleep", "label": "Sleep quality this week", "type": "scale", "min": 1, "max": 5},
+        {"id": "stress", "label": "Stress level this week", "type": "scale", "min": 1, "max": 5},
+        {"id": "recovery", "label": "Recovery level this week", "type": "scale", "min": 1, "max": 5},
+        {"id": "pain", "label": "Any pain, injury or discomfort?", "type": "choice",
+         "options": ["No", "Yes, minor", "Yes, moderate", "Yes, severe"]},
+        {"id": "pain_where", "label": "Where is the pain?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
+        {"id": "pain_worse", "label": "What movements make it worse?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
+        {"id": "nutrition", "label": "Nutrition consistency this week", "type": "choice",
+         "options": ["Very consistent", "Mostly consistent", "Mixed", "Poor", "Not focused on nutrition"]},
+        {"id": "biggest_win", "label": "Biggest win this week", "type": "text"},
+        {"id": "biggest_challenge", "label": "Biggest challenge this week", "type": "text"},
+        {"id": "for_louis", "label": "Anything Louis needs to know?", "type": "text"},
+    ]
+    return {"core": core, "dynamic": dynamic}
+
+
+class CheckinSubmitBody(BaseModel):
+    answers: dict[str, Any]
+    submitted_time_zone: Optional[str] = None
+
+
+def _severity_flag(answers: dict) -> Optional[str]:
+    """Detect urgent safety keywords. Returns a flag name or None."""
+    pain = str(answers.get("pain") or "").lower()
+    text = " ".join(str(answers.get(k) or "") for k in ("pain_where", "pain_worse", "for_louis", "biggest_challenge")).lower()
+    if "chest pain" in text or "chest tightness" in text: return "chest_pain"
+    if "dizzy" in text or "dizziness" in text or "faint" in text: return "dizziness"
+    if "severe" in pain or "severe" in text: return "severe_pain"
+    return None
+
+
+async def _create_coach_task(user: dict, task_type: str, title: str, description: str,
+                             priority: str = "normal", check_in_id: Optional[str] = None,
+                             video_id: Optional[str] = None) -> str:
+    coach = await db.users.find_one({"role": "coach"}, {"id": 1})
+    coach_id = (coach or {}).get("id")
+    tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    doc = {
+        "id": new_id(),
+        "coach_id": coach_id,
+        "user_id": user["id"],
+        "user_name": user.get("name") or user.get("email"),
+        "check_in_id": check_in_id,
+        "video_id": video_id,
+        "task_type": task_type,
+        "title": title,
+        "description": description,
+        "priority": priority,
+        "status": "todo",
+        "due_time_zone": tz_name,
+        "created_at": now_iso(),
+        "completed_at": None,
+        "snoozed_until": None,
+        "dismissed_at": None,
+    }
+    await db.coach_tasks.insert_one(doc)
+    return doc["id"]
+
+
+@api.post("/checkins/submit")
+async def checkin_submit(body: CheckinSubmitBody, user: dict = Depends(current_user)):
+    """Client submits their weekly check-in. Atlas analyses and creates coach tasks."""
+    ws, we = _current_week_bounds(user)
+    existing = await db.check_ins.find_one({"user_id": user["id"], "week_start": ws})
+    if existing:
+        return {"check_in": {**existing, "_id": None}, "duplicate": True}
+
+    tz_name = body.submitted_time_zone or user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    urgent_flag = _severity_flag(body.answers)
+
+    # Snapshot the week's training + roster + reality context
+    week_workouts = await db.workouts.find(
+        {"user_id": user["id"], "date": {"$gte": ws, "$lte": we}}, {"_id": 0}
+    ).to_list(20)
+    completed = [w for w in week_workouts if w.get("completed")]
+    context = {
+        "client_name": (user.get("name") or "").split(" ")[0] or "there",
+        "goals": (user.get("coaching_dna") or {}).get("primary_goals") or [],
+        "crew_role": (user.get("coaching_dna") or {}).get("crew_role") or user.get("crew_role"),
+        "time_zone": tz_name,
+        "week_start": ws,
+        "week_end": we,
+        "workouts_planned": len(week_workouts),
+        "workouts_completed": len(completed),
+        "workouts_missed": len(week_workouts) - len(completed),
+        "answers": body.answers,
+        "urgent_flag": urgent_flag,
+    }
+
+    prompt = "Prepare the weekly review for this CrewFit client:\n\n" + json.dumps(context, default=str)[:5000]
+    parsed: dict[str, Any] = {}
+    try:
+        raw = await call_claude(CHECKIN_SYSTEM, prompt, max_out=2400)
+        parsed = parse_json_from_text(raw) or {}
+    except Exception:
+        logger.exception("Atlas check-in analysis failed")
+
+    coach_summary = parsed.get("atlas_coach_summary") or {}
+    coach_review_required = bool(coach_summary.get("coach_review_required")) or bool(urgent_flag)
+
+    doc = {
+        "id": new_id(),
+        "user_id": user["id"],
+        "user_name": user.get("name") or user.get("email"),
+        "week_start": ws,
+        "week_end": we,
+        "submitted_at": now_iso(),
+        "submitted_time_zone": tz_name,
+        "answers": body.answers,
+        "training_adherence": (len(completed) / max(1, len(week_workouts))) if week_workouts else None,
+        "energy_score": body.answers.get("energy"),
+        "sleep_score": body.answers.get("sleep"),
+        "stress_score": body.answers.get("stress"),
+        "recovery_score": body.answers.get("recovery"),
+        "pain_flag": body.answers.get("pain"),
+        "injury_flag": coach_summary.get("injury_flag"),
+        "nutrition_flag": body.answers.get("nutrition") in ["Poor", "Mixed"],
+        "urgent_safety_flag": urgent_flag or coach_summary.get("urgent_safety_flag"),
+        "atlas_client_summary": parsed.get("atlas_client_summary"),
+        "atlas_coach_summary": coach_summary,
+        "next_week_focus": parsed.get("next_week_focus"),
+        "suggested_programme_adjustments": parsed.get("suggested_programme_adjustments"),
+        "weekly_video_script": parsed.get("weekly_video_script"),
+        "whatsapp_short": parsed.get("whatsapp_short"),
+        "push_notification": parsed.get("push_notification"),
+        "coach_review_status": "pending",
+        "coach_review_required": coach_review_required,
+        "weekly_video_status": "script_ready",
+        "weekly_video_id": None,
+        "reviewed_by": None,
+        "reviewed_at": None,
+    }
+    await db.check_ins.insert_one(doc)
+
+    # Create coach tasks
+    await _create_coach_task(user, "check_in_review",
+                             f"Check-in from {doc['user_name']}",
+                             "Review Atlas summary and prepare video script.",
+                             priority="high" if coach_review_required else "normal",
+                             check_in_id=doc["id"])
+    await _create_coach_task(user, "record_weekly_video",
+                             f"Record video for {doc['user_name']}",
+                             "Atlas has prepared a video script. Record and send.",
+                             priority="high" if coach_review_required else "normal",
+                             check_in_id=doc["id"])
+    if urgent_flag:
+        await _create_coach_task(user, "injury_urgent",
+                                 f"URGENT: {urgent_flag.replace('_',' ').title()} reported by {doc['user_name']}",
+                                 "Review before progressing training.",
+                                 priority="urgent",
+                                 check_in_id=doc["id"])
+
+    doc.pop("_id", None)
+    return {"check_in": doc}
+
+
+@api.get("/checkins/history")
+async def checkin_history(user: dict = Depends(current_user), limit: int = 12):
+    rows = await db.check_ins.find({"user_id": user["id"]}, {"_id": 0}).sort("week_start", -1).to_list(limit)
+    return {"check_ins": rows}
+
+
+# ---- Coach Tasks Feed ------------------------------------------------------
+@api.get("/coach/tasks")
+async def coach_tasks_list(coach: dict = Depends(require_role("coach")),
+                          status: Optional[str] = None,
+                          filter_type: Optional[str] = None):
+    q: dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    else:
+        q["status"] = {"$in": ["todo", "in_progress", "scheduled", "waiting_for_client"]}
+    if filter_type:
+        q["task_type"] = filter_type
+    rows = await db.coach_tasks.find(q, {"_id": 0}).sort([("priority", -1), ("created_at", -1)]).to_list(200)
+    # Sort by priority manually (urgent > high > normal > low)
+    order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+    rows.sort(key=lambda r: (order.get(r.get("priority", "normal"), 5), r.get("created_at") or ""))
+    return {"tasks": rows, "count": len(rows)}
+
+
+class CoachTaskUpdate(BaseModel):
+    status: Optional[str] = None
+    snoozed_until: Optional[str] = None
+    coach_note: Optional[str] = None
+
+
+@api.patch("/coach/tasks/{task_id}")
+async def coach_task_update(task_id: str, body: CoachTaskUpdate, coach: dict = Depends(require_role("coach"))):
+    updates: dict[str, Any] = {}
+    if body.status:
+        updates["status"] = body.status
+        if body.status in ("done", "sent", "reviewed", "dismissed"):
+            updates["completed_at"] = now_iso()
+        if body.status == "dismissed":
+            updates["dismissed_at"] = now_iso()
+    if body.snoozed_until:
+        updates["snoozed_until"] = body.snoozed_until
+    if body.coach_note is not None:
+        updates["coach_note"] = body.coach_note
+    if not updates:
+        raise HTTPException(400, "no updates")
+    await db.coach_tasks.update_one({"id": task_id}, {"$set": updates})
+    t = await db.coach_tasks.find_one({"id": task_id}, {"_id": 0})
+    return {"task": t}
+
+
+# ---- Coach check-in review + script editing --------------------------------
+@api.get("/coach/checkins/{checkin_id}")
+async def coach_get_checkin(checkin_id: str, coach: dict = Depends(require_role("coach"))):
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
+    if not ci:
+        raise HTTPException(404, "check-in not found")
+    return {"check_in": ci}
+
+
+class ScriptEditBody(BaseModel):
+    weekly_video_script: str
+
+
+@api.put("/coach/checkins/{checkin_id}/script")
+async def coach_edit_script(checkin_id: str, body: ScriptEditBody, coach: dict = Depends(require_role("coach"))):
+    await db.check_ins.update_one({"id": checkin_id}, {"$set": {
+        "weekly_video_script": body.weekly_video_script,
+        "script_edited_by": coach["id"], "script_edited_at": now_iso(),
+    }})
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
+    return {"check_in": ci}
+
+
+# ---- Coach Videos (storage abstraction) -----------------------------------
+async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> str:
+    """Save video bytes to disk (MVP) and return a URL. Swap this for S3/R2 later without
+    touching endpoint code — same signature."""
+    ext = "mp4"
+    if "webm" in mime: ext = "webm"
+    elif "quicktime" in mime or "mov" in mime: ext = "mov"
+    path = COACH_VIDEO_DIR / f"{video_id}.{ext}"
+    with open(path, "wb") as f:
+        f.write(video_bytes)
+    return f"/api/coach/videos/{video_id}/file"
+
+
+class CoachVideoCreateBody(BaseModel):
+    check_in_id: str
+    user_id: str
+    script: str
+    duration_seconds: Optional[int] = None
+    file_b64: Optional[str] = None
+    file_mime: Optional[str] = None
+    file_url: Optional[str] = None
+
+
+@api.post("/coach/videos")
+async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(require_role("coach"))):
+    ci = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0})
+    if not ci:
+        raise HTTPException(404, "check_in not found")
+    video_id = new_id()
+    file_url = body.file_url
+    if body.file_b64 and not file_url:
+        try:
+            raw = base64.b64decode(body.file_b64.split(",")[-1])
+            file_url = await _save_coach_video(raw, body.file_mime or "video/mp4", video_id)
+        except Exception as e:
+            raise HTTPException(400, f"invalid file_b64: {e}")
+    doc = {
+        "id": video_id,
+        "user_id": body.user_id,
+        "coach_id": coach["id"],
+        "check_in_id": body.check_in_id,
+        "script": body.script,
+        "file_url": file_url,
+        "thumbnail_url": None,
+        "duration_seconds": body.duration_seconds,
+        "status": "draft" if not file_url else "recorded",
+        "created_at": now_iso(),
+        "sent_at": None,
+        "watched_at": None,
+    }
+    await db.weekly_videos.insert_one(doc)
+    await db.check_ins.update_one({"id": body.check_in_id}, {"$set": {
+        "weekly_video_id": video_id, "weekly_video_status": doc["status"],
+    }})
+    doc.pop("_id", None)
+    return {"video": doc}
+
+
+@api.post("/coach/videos/{video_id}/send")
+async def coach_send_video(video_id: str, coach: dict = Depends(require_role("coach"))):
+    v = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "video not found")
+    now = now_iso()
+    await db.weekly_videos.update_one({"id": video_id}, {"$set": {"status": "sent", "sent_at": now}})
+    await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
+        "weekly_video_status": "sent", "weekly_video_sent_at": now,
+    }})
+    # Mark associated coach tasks as sent
+    await db.coach_tasks.update_many(
+        {"check_in_id": v["check_in_id"], "task_type": "record_weekly_video"},
+        {"$set": {"status": "sent", "completed_at": now, "video_id": video_id}},
+    )
+    # Create client-facing message record
+    await db.messages.insert_one({
+        "id": new_id(),
+        "from_id": coach["id"],
+        "to_id": v["user_id"],
+        "kind": "weekly_video",
+        "video_id": video_id,
+        "body": "Your weekly coaching review is ready.",
+        "created_at": now,
+        "read_at": None,
+    })
+    return {"ok": True, "sent_at": now}
+
+
+@api.get("/coach/videos/{video_id}/file")
+async def coach_video_file(video_id: str):
+    """Serve a coach-recorded video. No auth for MVP — signed URLs when we move to S3."""
+    for ext in ("mp4", "webm", "mov"):
+        p = COACH_VIDEO_DIR / f"{video_id}.{ext}"
+        if p.exists():
+            mimes = {"mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime"}
+            return FileResponse(str(p), media_type=mimes[ext])
+    raise HTTPException(404, "video file not found")
+
+
+@api.get("/videos/for-me")
+async def videos_for_me(user: dict = Depends(current_user)):
+    """Client fetches their weekly videos (sent only)."""
+    rows = await db.weekly_videos.find(
+        {"user_id": user["id"], "status": "sent"}, {"_id": 0}
+    ).sort("sent_at", -1).to_list(20)
+    return {"videos": rows}
+
+
+@api.post("/videos/{video_id}/watched")
+async def video_watched(video_id: str, user: dict = Depends(current_user)):
+    await db.weekly_videos.update_one(
+        {"id": video_id, "user_id": user["id"]},
+        {"$set": {"watched_at": now_iso()}},
+    )
+    return {"ok": True}
+
+
+
 
 
 app.include_router(api)

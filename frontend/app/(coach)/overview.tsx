@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
+import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
 
 type Client = any;
 
@@ -99,6 +100,8 @@ export default function CoachOverview() {
               </View>
             </View>
           )}
+
+          <CoachToDoFeed />
 
           <View style={[styles.twoCol, !isWide && { flexDirection: "column" }]}>
             <View style={[styles.section, isWide ? { flex: 1 } : {}]}>

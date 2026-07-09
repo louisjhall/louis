@@ -9,6 +9,8 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 import { RealityModal } from "@/src/components/RealityModal";
+import { ModePickerModal } from "@/src/components/ModePickerModal";
+import { getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
 
 const PREFERRED_CHANNELS = [
   "Jeff Nippard", "Squat University", "Renaissance Periodization",
@@ -26,6 +28,28 @@ export default function WorkoutDetail() {
   const [editing, setEditing] = useState(false);
   const [rpe, setRpe] = useState("");
   const [realityOpen, setRealityOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
+
+  const startWorkout = useCallback(async () => {
+    // Route to the mode the user has remembered, or open the picker.
+    const remembered = await getRememberedMode();
+    if (remembered === "guided") {
+      router.push(`/workout/${w.id}/guided` as any);
+    } else if (remembered === "manual") {
+      router.push(`/workout/${w.id}/play` as any);
+    } else {
+      setModeOpen(true);
+    }
+  }, [router, w]);
+
+  const chooseMode = (mode: WorkoutMode) => {
+    setModeOpen(false);
+    if (mode === "guided") {
+      router.push(`/workout/${w.id}/guided` as any);
+    } else {
+      router.push(`/workout/${w.id}/play` as any);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -250,7 +274,7 @@ export default function WorkoutDetail() {
           </View>
         ) : (
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable testID="atlas-play" onPress={() => router.push(`/workout/${w.id}/play` as any)} disabled={w.completed} style={[styles.cta, { flex: 2 }, w.completed && { backgroundColor: theme.color.green }]}>
+            <Pressable testID="atlas-play" onPress={startWorkout} disabled={w.completed} style={[styles.cta, { flex: 2 }, w.completed && { backgroundColor: theme.color.green }]}>
               <Text style={styles.ctaText}>{w.completed ? "COMPLETED ✓" : "START WORKOUT →"}</Text>
             </Pressable>
             <Pressable testID="complete-workout" onPress={complete} disabled={saving || w.completed} style={[styles.ctaSecondary, { flex: 1 }, saving && { opacity: 0.6 }]}>
@@ -264,6 +288,11 @@ export default function WorkoutDetail() {
         date={w?.date || null}
         onClose={() => setRealityOpen(false)}
         onApplied={() => { setRealityOpen(false); load(); }}
+      />
+      <ModePickerModal
+        visible={modeOpen}
+        onClose={() => setModeOpen(false)}
+        onChoose={chooseMode}
       />
     </SafeAreaView>
   );

@@ -27,7 +27,7 @@ function isCardioExercise(ex: any): boolean {
   if (!ex) return false;
   if (ex.logging_type === "cardio" || ex.logging_type === "timer") return true;
   const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
-  return /\b(run|running|jog|zone\s?2|zone\s?[35]|intervals?|tempo|treadmill|row|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
+  return /\b(run|running|jog|zone\s?[235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
 }
 
 function fmtMMSS(sec: number): string {

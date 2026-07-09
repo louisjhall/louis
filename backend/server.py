@@ -4387,6 +4387,187 @@ async def coach_batch_cancel(coach: dict = Depends(require_role("coach"))):
     return {"ok": True}
 
 
+# ---- Batch Atlas HOW-TO content generation (Claude Sonnet 4.5) --------------
+class BatchContentBody(BaseModel):
+    filter: str = "missing_content"  # "missing_content" | "warmup" | "all" | "category"
+    category: Optional[str] = None
+    limit: Optional[int] = None
+    force: bool = False  # regenerate even when content exists
+
+
+async def _gen_single_content_for(ex: dict) -> tuple[bool, Optional[str]]:
+    """Run Claude for one exercise. Returns (ok, error_message).
+
+    Fills instructions/cues/mistakes only when empty (respects existing coach work).
+    """
+    try:
+        name = ex.get("name", "")
+        existing_ctx = {k: ex.get(k) for k in ("instructions", "cues", "mistakes", "equipment", "category")}
+        prompt = (
+            f"Exercise name: {name}\n"
+            f"Category: {ex.get('category') or 'general'}\n"
+            f"Existing fields: {json.dumps(existing_ctx, default=str)[:600]}\n"
+            "Produce Louis Hall coaching content JSON. Prioritise safe, aviation-crew-friendly cues."
+        )
+        raw = await call_claude(EXERCISE_CONTENT_SYSTEM, prompt, max_out=1200)
+        parsed = parse_json_from_text(raw) or {}
+    except Exception as e:
+        return False, str(e)[:200]
+
+    updates: dict[str, Any] = {}
+    for k in ("instructions", "cues", "mistakes"):
+        if not ex.get(k) and isinstance(parsed.get(k), list) and parsed[k]:
+            updates[k] = parsed[k]
+    for k in ("primary_pattern", "difficulty", "logging_type", "default_rest_sec"):
+        if not ex.get(k) and parsed.get(k) is not None:
+            updates[k] = parsed[k]
+    if not ex.get("muscles") and isinstance(parsed.get("muscles"), list):
+        updates["muscles"] = parsed["muscles"]
+
+    if not updates:
+        # Nothing new to save — treat as skipped-success
+        return True, None
+    updates["updated_at"] = now_iso()
+    updates["content_source"] = "atlas_batch"
+    updates["approved"] = False  # coach must review
+    await db.exercises.update_one({"id": ex["id"]}, {"$set": updates})
+    return True, None
+
+
+async def _run_batch_content_job(job_id: str, ex_ids: list[str], coach_id: str) -> None:
+    """Background worker for HOW-TO content batch generation."""
+    total = len(ex_ids)
+    started = now_iso()
+    await db.content_jobs.update_one({"id": job_id}, {"$set": {
+        "status": "running", "started_at": started, "total": total,
+    }})
+    done = 0
+    failed = 0
+    errors: list[dict] = []
+    try:
+        for eid in ex_ids:
+            # cancellation check
+            cur = await db.content_jobs.find_one({"id": job_id}, {"status": 1})
+            if not cur or cur.get("status") == "cancelled":
+                break
+            ex = await db.exercises.find_one({"id": eid}, {"_id": 0})
+            if not ex:
+                failed += 1
+                errors.append({"exercise_id": eid, "error": "exercise vanished"})
+            else:
+                await db.content_jobs.update_one({"id": job_id}, {"$set": {
+                    "current_name": ex.get("name"),
+                }})
+                ok, err = await _gen_single_content_for(ex)
+                if ok:
+                    done += 1
+                else:
+                    failed += 1
+                    errors.append({"name": ex.get("name"), "error": err or "unknown"})
+            await db.content_jobs.update_one({"id": job_id}, {"$set": {
+                "processed": done + failed, "succeeded": done, "failed": failed,
+                "errors": errors[-25:],
+            }})
+            await asyncio.sleep(0.4)  # Claude is faster; lighter throttle
+        # Only mark done if not already cancelled
+        cur = await db.content_jobs.find_one({"id": job_id}, {"status": 1})
+        if cur and cur.get("status") != "cancelled":
+            await db.content_jobs.update_one({"id": job_id}, {"$set": {
+                "status": "done", "finished_at": now_iso(), "current_name": None,
+            }})
+    except Exception as e:
+        logger.exception("batch content job %s crashed", job_id)
+        await db.content_jobs.update_one({"id": job_id}, {"$set": {
+            "status": "error", "finished_at": now_iso(),
+            "fatal_error": str(e)[:400], "current_name": None,
+        }})
+
+
+@api.post("/coach/exercises/batch-generate-content")
+async def coach_batch_generate_content(body: BatchContentBody, coach: dict = Depends(require_role("coach"))):
+    """Start a background job that generates HOW-TO content (instructions/cues/mistakes) for many exercises at once.
+
+    Uses Claude Sonnet 4.5. Respects existing coach work — only fills missing fields
+    unless `force=true` is set (which still respects existing arrays via `_gen_single_content_for`).
+    """
+    active = await db.content_jobs.find_one({"status": {"$in": ["queued", "running"]}}, {"_id": 0})
+    if active:
+        return {"error": "A content batch job is already running.", "job": active}
+
+    # An exercise is "missing content" if it has no instructions.
+    missing_q = {"$or": [{"instructions": {"$exists": False}}, {"instructions": None}, {"instructions": []}]}
+    if body.filter == "missing_content":
+        q = missing_q
+    elif body.filter == "warmup":
+        q = {"category": "warmup"}
+        if not body.force:
+            q.update(missing_q)
+    elif body.filter == "category":
+        if not body.category:
+            raise HTTPException(400, "category is required when filter=category")
+        q = {"category": body.category}
+        if not body.force:
+            q.update(missing_q)
+    elif body.filter == "all":
+        q = {} if body.force else missing_q
+    else:
+        raise HTTPException(400, "unknown filter")
+
+    rows = await db.exercises.find(q, {"id": 1, "name": 1}).sort("name", 1).to_list(2000)
+    ex_ids = [r["id"] for r in rows if r.get("id")]
+    if body.limit and body.limit > 0:
+        ex_ids = ex_ids[: body.limit]
+
+    if not ex_ids:
+        return {"error": "No exercises match this filter.", "count": 0}
+
+    job_id = new_id()
+    doc = {
+        "id": job_id,
+        "kind": "content",
+        "status": "queued",
+        "coach_id": coach["id"],
+        "filter": body.filter,
+        "category": body.category,
+        "force": body.force,
+        "total": len(ex_ids),
+        "processed": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "errors": [],
+        "current_name": None,
+        "created_at": now_iso(),
+        "started_at": None,
+        "finished_at": None,
+    }
+    await db.content_jobs.insert_one(doc)
+    asyncio.create_task(_run_batch_content_job(job_id, ex_ids, coach["id"]))
+    doc.pop("_id", None)
+    return {"job": doc}
+
+
+@api.get("/coach/exercises/batch-generate-content/status")
+async def coach_batch_content_status(coach: dict = Depends(require_role("coach"))):
+    """Return the most recent content batch job (running or last-finished)."""
+    active = await db.content_jobs.find_one(
+        {"status": {"$in": ["queued", "running"]}}, {"_id": 0}
+    )
+    if active:
+        return {"job": active}
+    last = await db.content_jobs.find_one({}, {"_id": 0}, sort=[("created_at", -1)])
+    return {"job": last}
+
+
+@api.post("/coach/exercises/batch-generate-content/cancel")
+async def coach_batch_content_cancel(coach: dict = Depends(require_role("coach"))):
+    """Mark any running content job as cancelled. Worker exits between items."""
+    await db.content_jobs.update_many(
+        {"status": {"$in": ["queued", "running"]}},
+        {"$set": {"status": "cancelled", "finished_at": now_iso()}},
+    )
+    return {"ok": True}
+
+
 @api.get("/exercises/content")
 async def exercise_content_public(name: str, user: dict = Depends(current_user)):
     """Client-facing lookup used by the Atlas Player HOW TO tile.
@@ -5868,6 +6049,19 @@ async def seed():
 @app.on_event("startup")
 async def _startup():
     await seed()
+    # Zombie job cleanup — any jobs left running from a previous process are dead now.
+    for coll in ("image_jobs", "content_jobs"):
+        try:
+            await db[coll].update_many(
+                {"status": {"$in": ["queued", "running"]}},
+                {"$set": {
+                    "status": "cancelled",
+                    "finished_at": now_iso(),
+                    "fatal_error": "server restart — worker did not survive",
+                }},
+            )
+        except Exception:
+            logger.exception("startup zombie cleanup failed for %s", coll)
 
 @app.on_event("shutdown")
 async def _shutdown():

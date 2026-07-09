@@ -440,7 +440,18 @@ frontend:
         agent: "main"
         comment: "videos route registered with href:null to keep mobile tab bar at 5 items."
 
-backend_batch_atlas:
+guided_flow_v1:
+  - task: "Guided Flow Mode (step-by-step player)"
+    implemented: true
+    working: true
+    file: "frontend/app/workout/[id]/guided.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Built full Guided Flow experience: ModePickerModal (Manual vs Guided with Remember toggle), guided.tsx state machine (warmup → work → rest → complete). Reuses same workout data, same /workouts/{id}/sets logging endpoint, same /exercises/content and /exercises/previous. WarmupPanel with per-move image + timer + cue. WorkPanel with media (Nano Banana image priority), primary cue, LAST TIME + TODAY'S TARGET (from progression_hint), weight/reps/RPE/note inputs, COMPLETE SET button. RestPanel with big countdown, +15s, SKIP, 3-2-1 countdown before advance, auto-continue toggle persisted to AsyncStorage. HowToSheet bottom modal (instructions/cues/mistakes/video). SwapSheet uses existing /exercises/alternatives. WorkoutComplete screen with 4 summary stats + Atlas summary + auto-marks workout complete. Fixed cardio detection regex (was matching 'row' in 'Bent-Over Row'). All 5 test-IDs verified via screenshot flow: mode-picker, warmup, work, rest, next-up card."
   - task: "Batch Atlas image generation (background job)"
     implemented: true
     working: true

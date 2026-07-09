@@ -145,18 +145,29 @@ export default function CoachCheckinReview() {
           </View>
         </View>
 
-        {/* Send video */}
-        <Pressable
-          onPress={createDraftAndSend}
-          disabled={sending || !script.trim()}
-          style={[styles.sendBtn, (sending || !script.trim()) && { opacity: 0.35 }]}
-          testID="send-weekly-video"
-        >
-          {sending ? <ActivityIndicator color="#fff" /> : <Ionicons name="send" size={16} color="#fff" />}
-          <Text style={styles.sendBtnT}>{sending ? "SENDING…" : "SEND WEEKLY VIDEO TO CLIENT"}</Text>
-        </Pressable>
+        {/* Send video / Teleprompter */}
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+          <Pressable
+            onPress={() => router.push(`/coach/teleprompter/${id}` as any)}
+            disabled={!script.trim()}
+            style={[styles.sendBtn, !script.trim() && { opacity: 0.35 }, { flex: 1 }]}
+            testID="open-teleprompter"
+          >
+            <Ionicons name="videocam" size={16} color="#fff" />
+            <Text style={styles.sendBtnT}>RECORD VIDEO</Text>
+          </Pressable>
+          <Pressable
+            onPress={createDraftAndSend}
+            disabled={sending || !script.trim()}
+            style={[styles.saveBtn, (sending || !script.trim()) && { opacity: 0.35 }, { flex: 1, paddingVertical: 16, borderRadius: 12 }]}
+            testID="send-weekly-video"
+          >
+            {sending ? <ActivityIndicator color={theme.color.brand} /> : <Ionicons name="send" size={14} color={theme.color.brand} />}
+            <Text style={styles.saveBtnT}>{sending ? "SENDING…" : "SEND TEXT ONLY"}</Text>
+          </Pressable>
+        </View>
         <Text style={styles.footHint}>
-          Teleprompter camera recording ships next session. This MVP delivers the script as an in-app touchpoint so the loop is testable end-to-end.
+          RECORD VIDEO opens the teleprompter with your live camera. SEND TEXT ONLY delivers the script as a written coaching touchpoint.
         </Text>
       </ScrollView>
     </SafeAreaView>

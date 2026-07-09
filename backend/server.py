@@ -6063,6 +6063,8 @@ async def _startup():
             )
         except Exception:
             logger.exception("startup zombie cleanup failed for %s", coll)
+    # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
+    asyncio.create_task(_reminder_scheduler_loop())
 
 @app.on_event("shutdown")
 async def _shutdown():
@@ -6591,6 +6593,116 @@ async def video_watched(video_id: str, user: dict = Depends(current_user)):
         {"$set": {"watched_at": now_iso()}},
     )
     return {"ok": True}
+
+
+# ---- Reminder Scheduler Worker --------------------------------------------
+REMINDER_SLOTS = [
+    ("weekly_check_in_available", 6, 9, 0),   # (kind, weekday 0=Mon..6=Sun, hour, minute)
+    ("reminder_1", 6, 17, 0),
+    ("reminder_2", 0, 9, 0),
+    ("reminder_last", 0, 18, 0),
+]
+
+
+def _in_quiet_hours(local_dt: _dt.datetime, quiet_start: str, quiet_end: str) -> bool:
+    def _t(s: str) -> _dt.time:
+        try:
+            h, m = s.split(":"); return _dt.time(int(h), int(m))
+        except Exception:
+            return _dt.time(21, 0)
+    qs, qe = _t(quiet_start), _t(quiet_end)
+    cur = local_dt.time()
+    if qs > qe:  # wraps midnight, e.g. 21:00 → 07:00
+        return cur >= qs or cur < qe
+    return qs <= cur < qe
+
+
+async def _tick_reminders() -> None:
+    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(2000)
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    for u in users:
+        tz_name = u.get("current_time_zone") or u.get("home_time_zone") or "Europe/London"
+        try: tz = ZoneInfo(tz_name)
+        except Exception: continue
+        local_now = now_utc.astimezone(tz)
+        if _in_quiet_hours(local_now, u.get("quiet_hours_start", "21:00"), u.get("quiet_hours_end", "07:00")):
+            continue
+        ws, _ = _current_week_bounds(u)
+        if await db.check_ins.find_one({"user_id": u["id"], "week_start": ws}, {"id": 1}):
+            continue
+        for kind, weekday, hh, mm in REMINDER_SLOTS:
+            if local_now.weekday() != weekday: continue
+            if local_now.hour != hh: continue
+            if not (mm <= local_now.minute < mm + 10): continue
+            if await db.scheduled_messages.find_one(
+                {"user_id": u["id"], "message_type": kind, "week_start": ws}, {"id": 1}
+            ): continue
+            body_map = {
+                "weekly_check_in_available": "Your CrewFit weekly check-in is ready.",
+                "reminder_1": "Quick reminder: complete your weekly check-in when you're off duty or settled.",
+                "reminder_2": "Your check-in is still open. Completing it helps Louis review your week properly.",
+                "reminder_last": "Last reminder for this week's check-in.",
+            }
+            await db.scheduled_messages.insert_one({
+                "id": new_id(),
+                "user_id": u["id"],
+                "message_type": kind,
+                "week_start": ws,
+                "title": "Weekly check-in",
+                "body": body_map.get(kind, "Weekly check-in reminder"),
+                "scheduled_time_zone": tz_name,
+                "scheduled_local_datetime": local_now.isoformat(),
+                "scheduled_utc_datetime": now_utc.isoformat(),
+                "status": "ready",
+                "quiet_hours_checked": True,
+                "created_at": now_iso(),
+                "sent_at": None,
+                "cancelled_at": None,
+                "delivery_attempts": 0,
+            })
+
+
+async def _reminder_scheduler_loop() -> None:
+    """Every 5 minutes: enqueue Sunday-morning + missed-check-in reminders per client local time.
+    Rules: Sun 09:00, Sun 17:00, Mon 09:00, Mon 18:00 — never inside quiet hours — idempotent per week."""
+    while True:
+        try:
+            await _tick_reminders()
+        except Exception:
+            logger.exception("reminder scheduler tick failed")
+        await asyncio.sleep(300)
+
+
+@api.get("/scheduled-messages/mine")
+async def scheduled_messages_mine(user: dict = Depends(current_user), limit: int = 20):
+    rows = await db.scheduled_messages.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(limit)
+    return {"scheduled": rows}
+
+
+# ---- Coach Sunday check-ins listing (with filters) ------------------------
+@api.get("/coach/checkins")
+async def coach_checkins_list(coach: dict = Depends(require_role("coach")),
+                              filter_type: Optional[str] = None,
+                              limit: int = 100):
+    q: dict[str, Any] = {}
+    if filter_type == "needs_review":
+        q["coach_review_required"] = True
+        q["reviewed_at"] = None
+    elif filter_type == "video_sent":
+        q["weekly_video_status"] = "sent"
+    elif filter_type == "video_needed":
+        q["weekly_video_status"] = {"$in": ["script_ready", "draft", "recorded"]}
+    elif filter_type == "injury":
+        q["$or"] = [{"injury_flag": {"$in": ["minor", "moderate", "severe"]}},
+                    {"urgent_safety_flag": {"$ne": None}}]
+    elif filter_type == "low_recovery":
+        q["recovery_score"] = {"$lte": 2}
+    elif filter_type == "completed":
+        q["weekly_video_status"] = "sent"
+    rows = await db.check_ins.find(q, {"_id": 0}).sort("submitted_at", -1).to_list(limit)
+    return {"check_ins": rows, "count": len(rows)}
 
 
 

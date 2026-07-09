@@ -11,6 +11,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { CrewFitWordmark } from "@/src/components/Logo";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
+import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 
 function iconFor(kind: string): string {
   switch (kind) {
@@ -311,6 +312,7 @@ export default function Home() {
         onClose={() => setRealityOpen(false)}
         onApplied={() => { setRealityOpen(false); load(); }}
       />
+      <TimeZoneConfirmModal user={user} />
     </View>
   );
 }

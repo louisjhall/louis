@@ -816,15 +816,18 @@ backend:
         comment: "Accepts Authorization header OR ?token= query. ANY authenticated user can view another user's photo (coach ↔ client dashboards). 404 when no photo."
   - task: "POST /api/user/location — upsert location + tz"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_profile.py"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: "Sets current_location_city/country/time_zone + location_source + location_permission_status + location_last_updated_at."
+      - working: true
+        agent: "main"
+        comment: "Empty-body 400 fixed: LocationBody.source default was 'manual' which pre-seeded updates. Set source default to None and moved timestamps assignment AFTER the emptiness check. Verified: {}→400, {city:'Paris'}→200."
   - task: "POST /api/user/location/permission — record permission state"
     implemented: true
     working: "NA"

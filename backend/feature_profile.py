@@ -160,7 +160,7 @@ class LocationBody(BaseModel):
     city: Optional[str] = None
     country: Optional[str] = None
     tz: Optional[str] = None                        # IANA (e.g. "Europe/London")
-    source: Optional[str] = "manual"                # manual | gps | ip
+    source: Optional[str] = None                    # manual | gps | ip  (default None so empty body is truly empty)
     permission_status: Optional[str] = None         # granted | denied | not_requested
 
 
@@ -171,8 +171,7 @@ class LocationPermissionBody(BaseModel):
 
 @api.post("/user/location")
 async def user_location_upsert(body: LocationBody, user: dict = Depends(current_user)):
-    now = now_iso()
-    updates: dict = {"location_last_updated_at": now, "updated_at": now}
+    updates: dict = {}
     if body.city is not None:    updates["current_location_city"] = body.city
     if body.country is not None: updates["current_location_country"] = body.country
     if body.tz is not None:      updates["current_time_zone"] = body.tz
@@ -181,6 +180,9 @@ async def user_location_upsert(body: LocationBody, user: dict = Depends(current_
         updates["location_permission_status"] = body.permission_status
     if not updates:
         raise HTTPException(400, "no updates")
+    now = now_iso()
+    updates["location_last_updated_at"] = now
+    updates["updated_at"] = now
     await db.users.update_one({"id": user["id"]}, {"$set": updates})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
     return {"user": u}

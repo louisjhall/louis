@@ -11,6 +11,7 @@ import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 import { DateField } from "@/src/components/DateField";
 import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
+import { NotificationPreferencesCard } from "@/src/components/NotificationPreferencesCard";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -550,6 +551,8 @@ export default function ProfileScreen() {
         </Pressable>
 
         <HabitsProfileSection />
+
+        <NotificationPreferencesCard />
 
         <WorkoutSettingsPanel />
       </ScrollView>

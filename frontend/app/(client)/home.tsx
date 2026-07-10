@@ -13,6 +13,8 @@ import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
+import { NotificationBell } from "@/src/components/NotificationBell";
+import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 
 function iconFor(kind: string): string {
   switch (kind) {
@@ -116,8 +118,11 @@ export default function Home() {
           <LinearGradient colors={["rgba(0,0,0,0.25)", "rgba(0,0,0,0.85)", "#000000"]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <CrewFitWordmark size={16} showMark={false} />
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <CrewFitWordmark size={16} showMark={false} />
+                </View>
+                <NotificationBell testID="client-notif-bell" />
               </View>
               <Text style={styles.hello}>HELLO {user?.name?.toUpperCase().split(" ")[0]}</Text>
               <Text style={styles.date}>{new Date().toDateString().toUpperCase()}</Text>
@@ -252,6 +257,7 @@ export default function Home() {
           <HabitTodayCard />
 
           <WeeklyCheckinCard />
+          <PushPermissionPrompt />
 
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
           {loading && !workouts.length ? (

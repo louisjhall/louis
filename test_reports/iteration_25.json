@@ -1,0 +1,53 @@
+{
+  "summary": "Backend regression + Notifications V1 tests. 23/26 passed, 1 skipped, 2 FAILED. Both failures share the same root cause: the manual endpoint POST /api/coach/messages/generate creates a message_draft (and its coach_task) but does NOT enqueue a coach_draft_ready in-app notification for the coach. The helper `notify_coach_draft_ready(...)` is only invoked from the auto-drafting background task `_bg_generate_message_draft` (server.py:7021) — the manual coach-initiated path `coach_msg_generate` (server.py:7051–7083) is missing the same hook. All other Notifications V1 behavior works: GET/PUT /notifications/settings (defaults, partial merge, empty-body→400), POST /notifications/permission (granted/denied/not_requested → 200, other→400), GET /notifications (list+unread shape, newest-first sort, unread_only filter), POST /notifications/{id}/read (200 + idempotent + 404 for bogus id), POST /notifications/read-all ({marked:int}). Role guards: anonymous → 401 on all three /notifications routes. Hook wiring on APPROVE works — after POST /coach/messages/{id}/approve the client receives a coach_message notification with category='coach_messages', action_url='/(client)/messages', and coach name in title. Regression endpoints (habits/today, habits/{id}/log, coach/messages/drafts, coach/clients/{id}/controls, coach/change-log, coach/clients/{id}/habits, coach/habits/reviews/{id}/approve) all return 2xx/4xx (no 5xx). Backend uvicorn restarted cleanly (no traceback in /var/log/supervisor/backend.err.log; `supervisorctl status backend` = RUNNING).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/coach/messages/generate",
+        "issue": "Missing hook — after `_persist_draft(...)` creates the draft, the endpoint does not call `notify_coach_draft_ready(coach['id'], client.get('name') or client.get('email'), draft['id'])`. Consequence: the coach's Notification Bell never shows the 'Draft ready · {client}' row when a coach manually presses the 'Generate reply' button. The same helper IS wired on the auto-draft background path (`_bg_generate_message_draft` at server.py:7021), so this is an inconsistency, not a missing helper. Location: server.py:7051–7083 (add the call right after `draft = await _persist_draft(...)` on line 7065). Failing tests: TestHookWiring::test_generate_creates_coach_draft_ready and test_second_generate_creates_second_notification_unique_dedupe.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/coach/messages/{draft_id}/approve",
+        "issue": "When called with an empty JSON body `{}` (no `coach_edited_text`), FastAPI/Pydantic returns 422 (validation) BEFORE the endpoint's own `if d['status'] != 'waiting_approval': 400` check runs. `MessageDraftEditBody.coach_edited_text` is a REQUIRED field but the endpoint signature marks the whole body Optional. Cosmetic — callers must send a body; but returning 400 (or making coach_edited_text Optional) would match the documented behaviour."
+      },
+      {
+        "endpoint": "GET /api/notifications (auto-generated drafts consume EMERGENT_LLM budget)",
+        "issue": "Each successful POST /coach/messages/generate call inside the test suite invokes _atlas_draft_reply (LLM). The two test drafts created by TestHookWiring live in message_drafts as status='waiting_approval' — the second one is 'sent' by the approve test, the FIRST remains pending in the DB. It also leaves an open coach_task (message_draft_ready). Not a defect, but flagged so main agent knows a small amount of test residue exists."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_notifications_v1.py",
+    "/app/test_reports/pytest/notifications_v1_results.xml"
+  ],
+  "action_items": [
+    "In server.py `coach_msg_generate` (around line 7082, immediately before `return {\"draft\": draft}`), add:  \n    try:\n        await notify_coach_draft_ready(coach['id'], client.get('name') or client.get('email'), draft['id'])\n    except Exception:\n        logger.exception('notify_coach_draft_ready failed')\n  This fixes both hook-wiring failures and makes the dedupe_key='draft::{draft_id}' guarantee testable end-to-end.",
+    "Optional: mirror the same hook inside `_persist_draft` itself so every code path that creates a draft (auto + manual + any future path) emits the notification exactly once — this avoids future regressions.",
+    "Optional: make `MessageDraftEditBody.coach_edited_text` Optional[str] so the approve endpoint returns 400 instead of 422 when the coach tries to double-approve with an empty body."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~8,455 lines. The whole NOTIFICATIONS + REMINDERS V1 block (lines 8053–8447, ~400 lines) plus the coach-messages block (7051–7203, ~150 lines) plus the habits block from iteration 24 (~700 lines) should be extracted into /app/backend/routers/{notifications,coach_messages,habits}.py. This will make future hook-wiring bugs much easier to spot.",
+    "The dedupe check in `enqueue_notification` (server.py:8164–8168) uses `dedupe_key` when supplied. Good. However for `coach_message` notifications (no dedupe_key set — see notify_coach_message at 8401) the dedupe query becomes {user_id, notif_type}. That means EVERY new coach message to a client updates the SAME notification row (title/body get overwritten). Consider setting `dedupe_key=msg['id']` (or `related_id=msg['id']`) so each new coach message creates its own bell row; otherwise the client will always see exactly one 'Message from Louis' row that keeps re-showing the latest body.",
+    "`_get_notif_settings` merges defaults on top of stored settings — good. But `permission_status` is stored inside `user.notification_settings`, while some legacy top-level user.quiet_hours_start/end fields override the mirrored value. This dual source can drift; consider migrating everything to `notification_settings` and removing the top-level mirror on write.",
+    "`_is_on_duty_now` swallows exceptions silently and defaults to False. Fine for production, but a warning-level log would help debug flight-duty rewording issues.",
+    "Coach messages sent via `send_push([d['client_id']], ...)` inside `coach_msg_approve` (server.py:7167) happen BEFORE the in-app notification is created via `notify_coach_message`. If push succeeds but notify_coach_message throws, the client gets a push but no in-app row. Consider inverting the order or wrapping in a single try/finally so the in-app record is always written first."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_notifications_v1.py (new — 26 test cases across 7 classes, ~360 lines, JUnit XML report at /app/test_reports/pytest/notifications_v1_results.xml)"
+  ],
+  "success_rate": {"backend": "88% (23/26 passed, 1 skipped, 2 failed — both same root cause)", "frontend": "not tested (backend-only per request)"},
+  "seed_data_creation": "Fresh signup client `TEST_notif_<random>@example.com` (permission_status flipped granted→denied→not_requested during permission tests). Two message_drafts on client@crewfit.com — one 'sent' (approved) and ONE left 'waiting_approval' as residue. One additional message row created by the successful approve. The two coach_tasks created by /coach/messages/generate: the one linked to the approved draft is auto-closed to status='done'; the other remains in status='todo'. Client user retains 1 coach_message notification + 2 coach_draft_ready notifications would have existed if the hook was wired (currently missing → 0). No changes to client@crewfit.com's habits, roster or coach_controls.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use /app/backend/tests/test_notifications_v1.py as the regression suite for Notifications V1. It reads EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env at import time. The two currently-failing tests (TestHookWiring::test_generate_creates_coach_draft_ready and test_second_generate_creates_second_notification_unique_dedupe) will pass once E1 adds the missing notify_coach_draft_ready call inside coach_msg_generate. To clean residual test drafts before re-running, delete message_drafts where coach_edited_text starts with 'TEST_notif' or where regeneration_history is empty and status='waiting_approval' AND created within the current hour. The suite takes ~25s wall-clock; the two coach_msg_generate calls dominate that time because each invokes Claude via _atlas_draft_reply.",
+  "rca_of_issue": "REPRODUCTION: 1) POST /api/auth/login as coach@crewfit.com. 2) POST /api/coach/messages/generate {client_id: <alex_id>, custom_instruction:'x'} — returns 200 with a new draft. 3) GET /api/notifications with coach's token — expected: a row with notif_type='coach_draft_ready', related_id==draft.id, action_url='/coach/draft/<draft.id>'; actual: no such row. RCA: `coach_msg_generate` (server.py:7051) creates the draft via `_persist_draft` and a coach_task via `_create_coach_task`, but does NOT invoke `notify_coach_draft_ready(coach_id, client_name, draft_id)`. The auto-draft path `_bg_generate_message_draft` DOES invoke this helper (line 7021), which is why the auto-generated drafts (triggered when a client sends a message) do produce the bell row and the manual generate path does not. FIX: add a single try/except block calling `await notify_coach_draft_ready(coach['id'], client.get('name') or client.get('email'), draft['id'])` right before `return {\"draft\": draft}` in `coach_msg_generate`. Verified in code review that `notify_coach_draft_ready` uses `dedupe_key=f\"draft::{draft_id}\"` and `respect_settings=False`, so each new draft (unique id) will create its own bell row — satisfying the dedupe_key uniqueness test."
+}

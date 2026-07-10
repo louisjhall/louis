@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
 import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
+import { NotificationBell } from "@/src/components/NotificationBell";
 
 type Client = any;
 
@@ -62,7 +63,7 @@ export default function CoachOverview() {
           <Text style={styles.h1}>OVERVIEW</Text>
           <Text style={styles.sub}>Fleet health at a glance · {total} client{total !== 1 ? "s" : ""}</Text>
         </View>
-        <View style={{ flexDirection: "row", gap: 10 }}>
+        <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
           <Pressable testID="ov-goto-calendar" onPress={() => router.push("/(coach)/calendar")} style={styles.headerBtn}>
             <Ionicons name="calendar-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>WEEKLY CALENDAR</Text>
@@ -71,6 +72,7 @@ export default function CoachOverview() {
             <Ionicons name="bar-chart-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>ANALYTICS</Text>
           </Pressable>
+          <NotificationBell testID="coach-notif-bell" />
         </View>
       </View>
 

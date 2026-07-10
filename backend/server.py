@@ -3440,6 +3440,11 @@ async def coach_reality_decision(body: CoachRealityDecisionBody, coach: dict = D
         "coach_mode": evt.get("coach_mode"),
         "created_at": now_iso(),
     })
+    # Notify the client that the coach updated their programme
+    try:
+        await notify_programme_updated(evt["user_id"], {"reality_event_id": evt["id"], "date": evt.get("date")})
+    except Exception:
+        logger.exception("programme_updated notify failed")
     return {"status": "coach_approved", "changes": changes}
 
 
@@ -6676,6 +6681,11 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
         {"check_in_id": v["check_in_id"], "task_type": "record_weekly_video"},
         {"$set": {"status": "sent", "completed_at": now, "video_id": video_id}},
     )
+    # Notify the client (push + in-app)
+    try:
+        await notify_weekly_video_ready(v["user_id"], video_id)
+    except Exception:
+        logger.exception("weekly video notify failed")
     # Create client-facing message record
     await db.messages.insert_one({
         "id": new_id(),
@@ -7004,6 +7014,13 @@ async def _bg_generate_message_draft(client: dict, incoming_message: dict) -> No
             category="messages",
             payload={"source_message_id": incoming_message.get("id")},
         )
+        # Notify the coach in-app about the ready draft
+        try:
+            coach_id_now = coach_id or (await db.users.find_one({"role": "coach"}, {"id": 1}) or {}).get("id")
+            if coach_id_now:
+                await notify_coach_draft_ready(coach_id_now, client.get("name") or client.get("email"), draft["id"])
+        except Exception:
+            logger.exception("coach draft notify failed")
     except Exception:
         logger.exception("_bg_generate_message_draft failed")
 
@@ -7150,6 +7167,11 @@ async def coach_msg_approve(draft_id: str, body: Optional[MessageDraftEditBody] 
         await send_push([d["client_id"]], {"title": coach.get("name", "CrewFit"), "message": final_text[:120], "action_url": "/(client)/messages"})
     except Exception as e:
         logger.warning("push send fail: %s", e)
+    # In-app notification record for the client
+    try:
+        await notify_coach_message(coach["id"], d["client_id"], final_text)
+    except Exception:
+        logger.exception("coach message notify failed")
     await _log_change(coach["id"], d["client_id"], "message",
                       f"Sent reply to {d.get('client_name')}",
                       final_text[:180], actor="coach",

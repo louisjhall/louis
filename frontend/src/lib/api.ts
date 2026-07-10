@@ -44,3 +44,67 @@ export async function api<T = any>(
   if (ct.includes("application/json")) return (await res.json()) as T;
   return (await res.text()) as unknown as T;
 }
+
+/**
+ * Upload a file via multipart/form-data.
+ * `file` should be either a React-Native-friendly object
+ * `{ uri, name, type }` (works on native + expo web via Blob polyfill),
+ * or a browser File/Blob.
+ */
+export async function uploadFile<T = any>(
+  path: string,
+  file: { uri: string; name: string; type: string } | Blob | File,
+  extraFields: Record<string, string | number | undefined | null> = {},
+  opts: { onProgress?: (loaded: number, total: number) => void } = {}
+): Promise<T> {
+  const form = new FormData();
+  // @ts-ignore RN FormData accepts { uri, name, type }
+  form.append("file", file as any);
+  for (const [k, v] of Object.entries(extraFields)) {
+    if (v === undefined || v === null) continue;
+    form.append(k, String(v));
+  }
+  const token = await getToken();
+  const url = `${API_BASE}${path}`;
+
+  // Prefer XHR for progress reporting where available
+  if (typeof XMLHttpRequest !== "undefined" && opts.onProgress) {
+    return await new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { resolve(JSON.parse(xhr.responseText) as T); }
+          catch { resolve(xhr.responseText as unknown as T); }
+        } else {
+          let msg = `HTTP ${xhr.status}`;
+          try { const j = JSON.parse(xhr.responseText); msg = j.detail || msg; } catch {}
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.send(form as any);
+    });
+  }
+
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { method: "POST", headers, body: form as any });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const j = await res.json(); msg = j.detail || JSON.stringify(j); } catch {}
+    throw new Error(msg);
+  }
+  return (await res.json()) as T;
+}
+
+/** Build a token-signed streaming URL (used for <video> preview since <video> can't send headers). */
+export async function buildStreamUrl(path: string): Promise<string> {
+  const token = await getToken();
+  const sep = path.includes("?") ? "&" : "?";
+  return `${API_BASE}${path}${token ? `${sep}token=${encodeURIComponent(token)}` : ""}`;
+}

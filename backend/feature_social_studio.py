@@ -22,17 +22,72 @@ Content status machine:
   Idea → Draft → Approved → Scheduled → Posted
   Any → Dismissed / Archived / Failed
 """
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, UploadFile, File, Form, Query, Header, status
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Any, Optional
+from pathlib import Path
 import datetime as _dt
 import json
+import os
 import random
+import shutil
+
+import jwt as _jwt
 
 from server import (
     api, db, current_user, require_admin, new_id, now_iso, logger,
     call_claude, parse_json_from_text, _create_coach_task, _log_change,
+    JWT_SECRET, JWT_ALGO,
 )
+
+
+# ---- Media storage --------------------------------------------------------
+
+MEDIA_ROOT = Path(os.environ.get("SOCIAL_MEDIA_ROOT", "/app/backend/uploads/social_assets"))
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+
+MAX_UPLOAD_BYTES = 120 * 1024 * 1024   # 120 MB hard cap (~60s 1080p vertical)
+ALLOWED_MIMES = {
+    "video/mp4", "video/quicktime", "video/webm",
+    "video/x-matroska", "video/mpeg", "video/3gpp",
+    "audio/mpeg", "audio/wav",  # allow audio-only fallback if ever needed
+}
+
+
+def _asset_dir(post_id: str) -> Path:
+    d = MEDIA_ROOT / post_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _ext_for_mime(mime: str) -> str:
+    return {
+        "video/mp4": ".mp4",
+        "video/quicktime": ".mov",
+        "video/webm": ".webm",
+        "video/x-matroska": ".mkv",
+        "video/mpeg": ".mpeg",
+        "video/3gpp": ".3gp",
+        "audio/mpeg": ".mp3",
+        "audio/wav": ".wav",
+    }.get(mime, ".bin")
+
+
+async def _admin_from_query_token(token: Optional[str]) -> dict:
+    """Auth helper for <video> tag GET requests (which can't set Authorization header)."""
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing token")
+    try:
+        payload = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except _jwt.PyJWTError as e:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Bad token: {e}")
+    u = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    if u.get("role") not in ("admin", "coach"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "admin role required")
+    return u
 
 
 # ---- Constants ------------------------------------------------------------
@@ -603,3 +658,198 @@ async def _tick_daily_social() -> None:
         await _create_daily_task(admin["id"], target, force=False)
     except Exception:
         logger.exception("daily social task creation failed")
+
+
+# ---- Recording Studio: media asset endpoints ------------------------------
+
+@api.post("/social/posts/{post_id}/assets")
+async def social_asset_upload(
+    post_id: str,
+    file: UploadFile = File(...),
+    duration_seconds: Optional[float] = Form(None),
+    width: Optional[int] = Form(None),
+    height: Optional[int] = Form(None),
+    kind: str = Form("video"),           # "video" | "audio"
+    label: Optional[str] = Form(None),
+    admin: dict = Depends(require_admin()),
+):
+    """Upload a recorded video/audio draft for a Social Studio post.
+
+    - Stores file on local disk under MEDIA_ROOT/<post_id>/<asset_id><ext>.
+    - Persists metadata in `social_media_assets` collection.
+    - Transitions post.status to 'Recorded' if it was <= 'Draft'/'Script Ready'.
+    """
+    post = await db.social_posts.find_one({"id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(404, "post not found")
+
+    mime = (file.content_type or "").lower()
+    if mime not in ALLOWED_MIMES:
+        raise HTTPException(400, f"unsupported content-type: {mime}")
+
+    asset_id = new_id()
+    ext = _ext_for_mime(mime)
+    target_path = _asset_dir(post_id) / f"{asset_id}{ext}"
+
+    total = 0
+    try:
+        with open(target_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)   # 1 MB chunks
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    out.close()
+                    target_path.unlink(missing_ok=True)
+                    raise HTTPException(413, "file exceeds 120MB limit")
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("social asset write failed")
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(500, "failed to save asset")
+    finally:
+        await file.close()
+
+    now = now_iso()
+    doc = {
+        "id": asset_id,
+        "post_id": post_id,
+        "kind": kind if kind in ("video", "audio") else "video",
+        "label": label,
+        "storage": "local",
+        "file_path": str(target_path),
+        "mime": mime,
+        "extension": ext,
+        "size_bytes": total,
+        "duration_seconds": float(duration_seconds) if duration_seconds is not None else None,
+        "width": width,
+        "height": height,
+        "status": "draft",             # draft | active | archived
+        "subtitle_id": None,
+        "created_by": admin["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.social_media_assets.insert_one(doc)
+    doc.pop("_id", None)
+
+    # Advance post status if still upstream
+    upstream = {"Idea", "Draft", "Script Ready", "Recording Needed"}
+    if post.get("status") in upstream:
+        await db.social_posts.update_one(
+            {"id": post_id},
+            {"$set": {"status": "Recorded", "media_id": asset_id, "updated_at": now}},
+        )
+    else:
+        await db.social_posts.update_one(
+            {"id": post_id}, {"$set": {"media_id": asset_id, "updated_at": now}},
+        )
+
+    return {"asset": doc}
+
+
+@api.get("/social/posts/{post_id}/assets")
+async def social_asset_list(post_id: str, admin: dict = Depends(require_admin())):
+    rows = await db.social_media_assets.find(
+        {"post_id": post_id, "status": {"$ne": "archived"}},
+        {"_id": 0, "file_path": 0},
+    ).sort("created_at", -1).to_list(50)
+    return {"assets": rows, "count": len(rows)}
+
+
+@api.get("/social/assets/{asset_id}")
+async def social_asset_get(asset_id: str, admin: dict = Depends(require_admin())):
+    doc = await db.social_media_assets.find_one({"id": asset_id}, {"_id": 0, "file_path": 0})
+    if not doc:
+        raise HTTPException(404, "asset not found")
+    return {"asset": doc}
+
+
+@api.delete("/social/assets/{asset_id}")
+async def social_asset_delete(asset_id: str, admin: dict = Depends(require_admin())):
+    """Soft-archive an asset + delete the file from disk (used by Retake)."""
+    doc = await db.social_media_assets.find_one({"id": asset_id})
+    if not doc:
+        raise HTTPException(404, "asset not found")
+    path = doc.get("file_path")
+    if path:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except Exception:
+            logger.warning("failed to unlink asset file %s", path)
+    await db.social_media_assets.update_one(
+        {"id": asset_id},
+        {"$set": {"status": "archived", "updated_at": now_iso(), "file_path": None}},
+    )
+    # If this was the post's primary media, unlink it
+    await db.social_posts.update_many(
+        {"media_id": asset_id},
+        {"$set": {"media_id": None, "updated_at": now_iso()}},
+    )
+    return {"ok": True}
+
+
+@api.get("/social/assets/{asset_id}/stream")
+async def social_asset_stream(
+    asset_id: str,
+    token: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Serve the raw media file. Accepts either Authorization: Bearer <t> OR ?token=<t>
+    query param so an HTML5 <video> element (which can't set custom headers) can play it."""
+    if authorization and authorization.startswith("Bearer "):
+        # Standard header-based auth
+        u = await current_user(authorization=authorization)
+        if u.get("role") not in ("admin", "coach"):
+            raise HTTPException(403, "admin role required")
+    else:
+        await _admin_from_query_token(token)
+
+    doc = await db.social_media_assets.find_one({"id": asset_id})
+    if not doc:
+        raise HTTPException(404, "asset not found")
+    path = doc.get("file_path")
+    if not path or not Path(path).exists():
+        raise HTTPException(404, "asset file missing")
+    return FileResponse(path, media_type=doc.get("mime") or "application/octet-stream")
+
+
+# ---- Subtitle stub (real whisper-1 integration ships next) ----------------
+
+@api.post("/social/assets/{asset_id}/subtitles/generate")
+async def social_subtitle_generate_stub(asset_id: str, admin: dict = Depends(require_admin())):
+    """Placeholder subtitle generation. Real whisper-1 pipeline lands in the next release."""
+    asset = await db.social_media_assets.find_one({"id": asset_id}, {"_id": 0})
+    if not asset:
+        raise HTTPException(404, "asset not found")
+    sub_id = new_id()
+    now = now_iso()
+    doc = {
+        "id": sub_id,
+        "asset_id": asset_id,
+        "post_id": asset.get("post_id"),
+        "status": "pending",             # pending | generating | ready | failed
+        "provider": "whisper-1-stub",
+        "srt": None,
+        "vtt": None,
+        "segments": [],
+        "language": "en",
+        "created_by": admin["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.social_subtitles.insert_one(doc)
+    await db.social_media_assets.update_one(
+        {"id": asset_id}, {"$set": {"subtitle_id": sub_id, "updated_at": now}},
+    )
+    doc.pop("_id", None)
+    return {"subtitle": doc, "note": "Subtitle generation is stubbed. Real Whisper integration ships next."}
+
+
+@api.get("/social/assets/{asset_id}/subtitles")
+async def social_subtitle_get(asset_id: str, admin: dict = Depends(require_admin())):
+    doc = await db.social_subtitles.find_one({"asset_id": asset_id}, {"_id": 0}, sort=[("created_at", -1)])
+    return {"subtitle": doc}

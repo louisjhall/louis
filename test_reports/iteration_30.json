@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only test of Recording Studio + Teleprompter integration (§32) — all 27 tests PASSED (100%). Covered: multipart upload with status transition (Draft→Recorded, media_id set), image mime rejection (400), oversized upload (413), list (no file_path leakage, sorted desc), detail (404 on missing), stream via both Bearer header and ?token= query param (401 on missing/bad), delete (archives + unlinks disk file + clears post.media_id + subsequent stream 404), subtitle stub (pending/whisper-1-stub + note field + asset.subtitle_id set), and full client-role gating (all 7 new endpoints → 401/403). Regression spot-check on /social/settings, /social/posts (list, create, dismiss), /social/analytics all 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_social_recording_studio.py",
+    "/app/test_reports/pytest/social_recording_studio_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_social_studio.py:687 — ALLOWED_MIMES check uses (file.content_type or '').lower() which trusts the client-supplied Content-Type. Non-blocking (admin-only endpoint), but for defence-in-depth consider sniffing the first bytes of the uploaded stream (e.g. python-magic) before persisting to disk.",
+    "feature_social_studio.py:665-751 — Upload writes to disk with `open(path, 'wb')` synchronously inside an async handler. Fine for 120MB cap but ideally use aiofiles to avoid blocking the event loop under concurrent uploads.",
+    "feature_social_studio.py:817 — FileResponse returns the entire file with a video/mp4 content-type but no Accept-Ranges / partial-content handling. HTML5 <video> scrubbing on the Studio player will re-download from byte 0 on every seek. Non-blocking for V1 but worth a follow-up to return a StreamingResponse with Range support.",
+    "feature_social_studio.py:763-768 — GET /social/assets/{asset_id} returns archived assets too (no status filter). That is intentional per the delete test (client checks status=='archived' after delete), just calling it out for the frontend consumer.",
+    "feature_social_studio.py:754-760 — GET list projects out `file_path` correctly; nice.",
+    "feature_social_studio.py:47 — MEDIA_ROOT.mkdir(parents=True, exist_ok=True) runs at module import — safe but couples the module to a writable filesystem at load time. If /app/backend/uploads is ever read-only the whole server fails to boot."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_social_recording_studio.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (27/27)",
+    "frontend": "N/A (backend-only test as requested)"
+  },
+  "seed_data_creation": "Created one Draft-status social post (title prefixed TEST_recording_) and uploaded two synthetic ~200KB mp4 blobs against it. Primary asset was archived at the end of the delete test (file removed from disk, doc soft-archived). Second asset was cleaned up in the list-sort test. A TEST_regression post was created and dismissed. No orphan disk files left behind under /app/backend/uploads/social_assets/.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Recording Studio backend (§32) is fully green. New pytest file lives at /app/backend/tests/test_social_recording_studio.py and shares uses cross-test state via pytest.asset_id / pytest.post_id (set in TestAssetUpload::test_upload_video_success_and_status_transition). Tests must run in file order; do not shuffle. The 413 test streams 130MB via a generator over the public HTTPS URL — completed in <8s in this run, so either the ingress accepts and forwards, or the backend closes fast. If flaky, keep the try/except ChunkedEncodingError → skip fallback in place. Two follow-ups worth surfacing to E1 for the NEXT iteration (not blocking this ship): (a) FileResponse in /stream lacks Range/206 handling — video scrubbing will be laggy; (b) content-type is trusted from client — consider magic-byte sniff for defence in depth.",
+  "rca_of_issue": "N/A — no bugs found."
+}

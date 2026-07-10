@@ -159,6 +159,15 @@ export default function SocialStudio() {
 
           <Text style={styles.sect}>ACTIONS</Text>
           <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+            <Pressable
+              testID="btn-record"
+              onPress={() => router.push(`/social-studio/record/${selected.id}` as any)}
+              disabled={!!busy}
+              style={styles.recordCta}
+            >
+              <Ionicons name="videocam" size={16} color="#fff" />
+              <Text style={styles.actT}>RECORD VIDEO</Text>
+            </Pressable>
             {selected.status !== "Approved" ? (
               <Pressable testID="btn-approve" onPress={() => approve(selected.id)} disabled={!!busy} style={styles.actBtn}>
                 <Text style={styles.actT}>APPROVE</Text>
@@ -235,6 +244,17 @@ export default function SocialStudio() {
 }
 
 function PostDetail({ post }: { post: Post }) {
+  const router = useRouter();
+  const [assets, setAssets] = useState<any[]>([]);
+  // Load assets
+  const loadAssets = useCallback(async () => {
+    try {
+      const r = await api<{ assets: any[] }>(`/social/posts/${post.id}/assets`);
+      setAssets(r.assets || []);
+    } catch { /* ignore */ }
+  }, [post.id]);
+  useFocusEffect(useCallback(() => { loadAssets(); }, [loadAssets]));
+
   return (
     <View>
       <View style={styles.postHeader}>
@@ -256,6 +276,31 @@ function PostDetail({ post }: { post: Post }) {
         <Text style={styles.detailBody}>{(post.hashtags || []).join(" ")}</Text></>
       ) : null}
       {post.cta ? (<><Text style={styles.sect}>CTA</Text><Text style={styles.detailBody}>{post.cta}</Text></>) : null}
+
+      {assets.length > 0 ? (
+        <>
+          <Text style={styles.sect}>RECORDED DRAFTS · {assets.length}</Text>
+          {assets.map((a) => (
+            <Pressable
+              key={a.id}
+              onPress={() => router.push(`/social-studio/subtitles/${a.id}` as any)}
+              style={styles.assetCard}
+              testID={`asset-${a.id}`}
+            >
+              <Ionicons name="film" size={18} color={theme.color.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.assetT}>
+                  {a.kind?.toUpperCase() || "VIDEO"} · {a.duration_seconds ? `${Math.round(a.duration_seconds)}s` : "—"}
+                </Text>
+                <Text style={styles.assetSub}>
+                  {a.size_bytes ? `${(a.size_bytes / (1024 * 1024)).toFixed(1)} MB · ` : ""}{new Date(a.created_at).toLocaleString()}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} />
+            </Pressable>
+          ))}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -296,6 +341,10 @@ const styles = StyleSheet.create({
   toneT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
   actBtn: { paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.brand },
   actT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  recordCta: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, backgroundColor: "#c94a4a" },
+  assetCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, marginTop: 6, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  assetT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
+  assetSub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2, letterSpacing: 0.5 },
   altBtn: { paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   altT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   input: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 14 },

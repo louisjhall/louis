@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, RefreshControl, ActivityIndicator } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
@@ -10,6 +10,7 @@ import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/Exe
 const CATS = ["push", "pull", "legs", "core", "mobility", "cardio"];
 
 export default function Library() {
+  const router = useRouter();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [cat, setCat] = useState<string | null>(null);
@@ -21,7 +22,21 @@ export default function Library() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setItems(await api<any[]>("/exercises")); } finally { setLoading(false); }
+    try {
+      // Use unified exercise_content (v2). Fall back to legacy /exercises if v2 is unreachable.
+      try {
+        const r = await api<{ exercises: any[] }>("/exercise-content?limit=500");
+        setItems((r.exercises || []).map((e) => ({
+          id: e.id,
+          name: e.exercise_name || e.name,
+          category: (e.category || e.training_type || "strength").toLowerCase(),
+          equipment: e.equipment_type || e.equipment || [],
+          _v2: true,
+        })));
+      } catch {
+        setItems(await api<any[]>("/exercises"));
+      }
+    } finally { setLoading(false); }
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -50,12 +65,27 @@ export default function Library() {
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.title}>EXERCISE LIBRARY</Text>
-        <Pressable testID="lib-add-btn" onPress={() => setShowAdd((x) => !x)} style={styles.addBtn}>
-          <Ionicons name={showAdd ? "close" : "add"} size={22} color="#fff" />
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <Pressable testID="lib-goto-content" onPress={() => router.push("/coach/exercise-content" as any)} style={styles.upgradeBtn}>
+            <Ionicons name="sparkles" size={13} color="#fff" />
+            <Text style={styles.upgradeBtnT}>V2</Text>
+          </Pressable>
+          <Pressable testID="lib-add-btn" onPress={() => setShowAdd((x) => !x)} style={styles.addBtn}>
+            <Ionicons name={showAdd ? "close" : "add"} size={22} color="#fff" />
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.migratedBanner}>
+        <Ionicons name="information-circle" size={13} color={theme.color.brand} />
+        <Text style={styles.migratedBannerT}>{items.length} exercises · migrated to Unified Exercise Content</Text>
+        <Pressable onPress={() => router.push("/coach/exercise-content" as any)}>
+          <Text style={styles.migratedBannerLink}>OPEN &rsaquo;</Text>
         </Pressable>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}
+        style={styles.chipsScroll} contentContainerStyle={styles.chipsRow}>
         <Pressable onPress={() => setCat(null)} style={[styles.chip, !cat && styles.chipActive]}><Text style={[styles.chipText, !cat && { color: "#fff" }]}>ALL</Text></Pressable>
         {CATS.map((c) => (
           <Pressable key={c} testID={`lib-filter-${c}`} onPress={() => setCat(c)} style={[styles.chip, cat === c && styles.chipActive]}>
@@ -105,8 +135,14 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   title: { color: theme.color.text, fontSize: 18, letterSpacing: 2, fontWeight: "900" },
   addBtn: { backgroundColor: theme.color.brand, width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  chipsRow: { paddingHorizontal: theme.space.lg, paddingVertical: theme.space.md, gap: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },
+  upgradeBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, height: 36, borderRadius: 8, backgroundColor: theme.color.brand },
+  upgradeBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  migratedBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: theme.space.lg, paddingVertical: 8, backgroundColor: theme.color.brandTint, borderBottomWidth: 1, borderBottomColor: theme.color.brand },
+  migratedBannerT: { color: theme.color.text, fontSize: 11, flex: 1, fontWeight: "700" },
+  migratedBannerLink: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  chipsScroll: { flexGrow: 0, maxHeight: 56 },
+  chipsRow: { paddingHorizontal: theme.space.lg, paddingVertical: theme.space.md, gap: 8, alignItems: "center" },
+  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0, alignSelf: "center" },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   chipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 1 },
   addCard: { padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.md },

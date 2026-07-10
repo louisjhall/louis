@@ -97,11 +97,11 @@ async def _find_video(exercise: dict) -> Optional[dict]:
 @api.get("/admin/exercises/migrate/status")
 async def migrate_status(admin: dict = Depends(require_admin())):
     total_v1 = await db.exercises.count_documents({})
-    total_v2 = await db.exercise_content.count_documents({})
+    total_v2 = await db.exercises_v2.count_documents({})
     total_videos = await db.videos.count_documents({})
     return {
         "exercises_v1": total_v1,
-        "exercise_content_v2": total_v2,
+        "exercises_v2": total_v2,
         "videos": total_videos,
     }
 
@@ -130,16 +130,27 @@ async def migrate_exercises(dry_run: bool = Query(True),
                 skipped += 1
                 continue
 
-            existing = await db.exercise_content.find_one({"id": ex_id}, {"_id": 0})
+            existing = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0})
             video = await _find_video(old)
 
             # Compose the v2 record. When a field is unknown we leave the
             # existing value alone (via $setOnInsert vs $set below).
             image_url = old.get("image_url") or old.get("photo_url") or old.get("thumbnail")
+            # Preserve the raw v1 category so the legacy Library UI keeps its
+            # PUSH/PULL/LEGS filter chips working after migration.
+            legacy_cat = str(
+                old.get("category") or old.get("training_type") or
+                old.get("type") or "strength"
+            ).strip().lower()
+
             common = {
                 "exercise_name": name,
-                "category": _coerce_category(old),
+                "category": legacy_cat if legacy_cat in {
+                    "push", "pull", "legs", "core", "mobility", "cardio",
+                    "warmup", "cooldown", "rehab", "strength"
+                } else _coerce_category(old),
                 "training_type": (old.get("training_type") or _coerce_category(old)),
+                "legacy_category": legacy_cat,
                 "body_area": (old.get("body_area") or old.get("primary_muscle") or None),
                 "equipment_type": _as_list(old.get("equipment_type") or old.get("equipment")),
                 "coaching_points": _coerce_points(old),
@@ -164,7 +175,7 @@ async def migrate_exercises(dry_run: bool = Query(True),
                 continue
 
             if existing:
-                await db.exercise_content.update_one(
+                await db.exercises_v2.update_one(
                     {"id": ex_id},
                     {"$set": {**common, "updated_at": now}},
                 )
@@ -174,7 +185,7 @@ async def migrate_exercises(dry_run: bool = Query(True),
                     "id": ex_id, "created_at": now,
                     "created_by": admin["id"], **common,
                 }
-                await db.exercise_content.insert_one(doc)
+                await db.exercises_v2.insert_one(doc)
                 inserted += 1
         except Exception as e:
             logger.exception("migrate exercise failed")

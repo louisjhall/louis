@@ -23,6 +23,7 @@ type Task = {
   due_time_zone?: string;
   check_in_id?: string | null;
   message_draft_id?: string | null;
+  payload?: any;
 };
 
 const CATEGORY_ORDER = [
@@ -41,7 +42,7 @@ function categoryOf(t: Task): string {
   if (t.task_type === "message_draft_ready") return "messages";
   if (t.task_type === "check_in_review" || t.task_type === "missed_check_in") return "reviews";
   if (t.task_type === "record_weekly_video") return "videos";
-  if (t.task_type === "programme_adjustment") return "programme";
+  if (t.task_type === "programme_adjustment" || t.task_type === "habit_review") return "programme";
   if (t.task_type === "roster_expired") return "roster";
   return "other";
 }
@@ -71,6 +72,10 @@ export function CoachToDoFeed() {
   const open = (t: Task) => {
     if (t.task_type === "message_draft_ready" && t.message_draft_id) {
       router.push(`/coach/draft/${t.message_draft_id}` as any);
+      return;
+    }
+    if (t.task_type === "habit_review" && (t as any).payload?.habit_review_id) {
+      router.push(`/coach/habit-review/${(t as any).payload.habit_review_id}` as any);
       return;
     }
     if (t.check_in_id) {
@@ -182,6 +187,7 @@ function prettyType(t: string): string {
     coach_follow_up: "FOLLOW UP",
     roster_expired: "ROSTER EXPIRED",
     message_draft_ready: "MESSAGE DRAFT",
+    habit_review: "HABIT REVIEW",
   }[t] || t.toUpperCase().replace(/_/g, " ");
 }
 

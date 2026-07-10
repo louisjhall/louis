@@ -549,6 +549,8 @@ export default function ProfileScreen() {
           <Text style={styles.legacyText}>EDIT LEGACY PROFILE</Text>
         </Pressable>
 
+        <HabitsProfileSection />
+
         <WorkoutSettingsPanel />
       </ScrollView>
 
@@ -1006,4 +1008,119 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
   },
   systemBtnSecondaryT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+});
+
+/* -------------------------------------------------------------------------- */
+/*  Habits section — Coaching Headquarters                                    */
+/* -------------------------------------------------------------------------- */
+function HabitsProfileSection() {
+  const [active, setActive] = useState<any[]>([]);
+  const [paused, setPaused] = useState<any[]>([]);
+  const [remindersOn, setRemindersOn] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api<{ active: any[]; paused: any[] }>("/habits/mine");
+      setActive(r.active || []);
+      setPaused(r.paused || []);
+    } catch { /* ignore */ } finally { setLoading(false); }
+  }, []);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const toggle = async () => {
+    const next = !remindersOn;
+    setRemindersOn(next);
+    try {
+      await api("/habits/reminders/toggle", { method: "POST", body: { enabled: next } });
+    } catch {
+      setRemindersOn(!next);
+    }
+  };
+
+  const seed = async () => {
+    setBusy(true);
+    try {
+      await api("/habits/seed", { method: "POST" });
+      await load();
+    } catch (e: any) {
+      Alert.alert("Couldn't seed habits", e?.message || "Try again");
+    } finally { setBusy(false); }
+  };
+
+  if (loading) return null;
+
+  return (
+    <View style={hstyles.wrap}>
+      <View style={hstyles.headRow}>
+        <Text style={hstyles.head}>HABITS</Text>
+        <Pressable onPress={toggle} testID="habit-reminders-toggle" style={[hstyles.toggle, remindersOn && hstyles.toggleOn]}>
+          <Text style={[hstyles.toggleT, remindersOn && { color: "#fff" }]}>REMINDERS {remindersOn ? "ON" : "OFF"}</Text>
+        </Pressable>
+      </View>
+      {active.length === 0 && paused.length === 0 ? (
+        <Pressable onPress={seed} disabled={busy} style={hstyles.emptyCta}>
+          {busy ? <ActivityIndicator color={theme.color.brand} /> : (
+            <>
+              <Ionicons name="sparkles" size={16} color={theme.color.brand} />
+              <Text style={hstyles.emptyCtaT}>ATLAS · SEED MY STARTER HABITS</Text>
+            </>
+          )}
+        </Pressable>
+      ) : null}
+      {active.length > 0 ? (
+        <>
+          <Text style={hstyles.sub}>ACTIVE · {active.length}</Text>
+          <View style={{ gap: 8 }}>
+            {active.map((h) => (
+              <View key={h.id} style={hstyles.card}>
+                <Text style={hstyles.hTitle}>{h.title}</Text>
+                {h.reason ? <Text style={hstyles.hReason}>{h.reason}</Text> : null}
+                <View style={hstyles.metaRow}>
+                  {h.linked_goal ? <Text style={hstyles.metaChip}>{String(h.linked_goal).toUpperCase().replace(/_/g, " ")}</Text> : null}
+                  <Text style={hstyles.metaChip}>{String(h.habit_type).toUpperCase().replace(/-/g, " ")}</Text>
+                  {typeof h.streak === "number" && h.streak > 0 ? (
+                    <Text style={[hstyles.metaChip, { color: theme.color.brand }]}>🔥 {h.streak}d</Text>
+                  ) : null}
+                </View>
+              </View>
+            ))}
+          </View>
+        </>
+      ) : null}
+      {paused.length > 0 ? (
+        <>
+          <Text style={hstyles.sub}>PAUSED · {paused.length}</Text>
+          <View style={{ gap: 8 }}>
+            {paused.map((h) => (
+              <View key={h.id} style={[hstyles.card, { opacity: 0.6 }]}>
+                <Text style={hstyles.hTitle}>{h.title}</Text>
+                {h.reason ? <Text style={hstyles.hReason}>{h.reason}</Text> : null}
+              </View>
+            ))}
+          </View>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+const hstyles = StyleSheet.create({
+  wrap: { marginTop: 24, marginHorizontal: 20 },
+  headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  head: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  toggle: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  toggleOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  toggleT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  sub: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginTop: 12, marginBottom: 6 },
+  card: { padding: 12, backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border },
+  hTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
+  hReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, lineHeight: 15 },
+  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 },
+  metaChip: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  emptyCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 10, borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
+  emptyCtaT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 });

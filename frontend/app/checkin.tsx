@@ -45,7 +45,16 @@ export default function CheckinScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const all = useMemo(() => [...core, ...dynamic], [core, dynamic]);
+  // Optional habit questions — always appended, never required
+  const habitQuestions: Question[] = useMemo(() => ([
+    { id: "habits_overall", label: "How did your habits feel this week?", type: "choice",
+      options: ["Easy to follow", "Mostly manageable", "Mixed", "Too much", "Not realistic this week"] },
+    { id: "habits_helped_most", label: "Which habit helped you most? (optional)", type: "text" },
+    { id: "habits_hardest", label: "Which habit was the hardest? (optional)", type: "text" },
+    { id: "habits_changes_needed", label: "Do any habits need changing? (optional)", type: "text" },
+  ]), []);
+
+  const all = useMemo(() => [...core, ...dynamic, ...habitQuestions], [core, dynamic, habitQuestions]);
 
   const visible = (q: Question) => {
     if (!q.show_if) return true;
@@ -167,6 +176,25 @@ function QuestionCard({ q, value, onChange, index }: { q: Question; value: any; 
 }
 
 function SubmittedView({ ci, onDone }: { ci: any; onDone: () => void }) {
+  const [habitReview, setHabitReview] = useState<any>(null);
+  useEffect(() => {
+    // Poll for the freshly generated habit review a few times (Atlas runs it in background)
+    let cancelled = false;
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const r = await api<any>("/habits/reviews/latest");
+        if (!cancelled && r?.review && r.review.check_in_id === ci.id) {
+          setHabitReview(r.review);
+          return;
+        }
+      } catch { /* ignore */ }
+      if (attempts < 6 && !cancelled) setTimeout(tick, 3000);
+    };
+    tick();
+    return () => { cancelled = true; };
+  }, [ci?.id]);
   return (
     <View>
       <View style={styles.thanksCard}>
@@ -187,6 +215,17 @@ function SubmittedView({ ci, onDone }: { ci: any; onDone: () => void }) {
           <Text style={styles.blockBody}>{ci.next_week_focus}</Text>
         </View>
       )}
+      {habitReview ? (
+        <View style={[styles.summaryBlock, { borderColor: theme.color.brand }]}>
+          <Text style={styles.blockEyebrow}>HABIT UPDATE</Text>
+          <Text style={styles.blockBody}>{habitReview.atlas_summary}</Text>
+          {habitReview.coach_review_required || habitReview.coach_review_status === "pending" ? (
+            <Text style={[styles.blockBody, { marginTop: 8, color: theme.color.amber, fontStyle: "italic" }]}>
+              Atlas has prepared a habit update for Louis to review.
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       {ci.weekly_video_status === "sent" ? (
         <View style={[styles.summaryBlock, { backgroundColor: theme.color.brandTint, borderColor: theme.color.brand }]}>
           <Text style={styles.blockEyebrow}>VIDEO FROM LOUIS</Text>

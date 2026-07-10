@@ -58,18 +58,21 @@ export default function ClientDetail() {
   const [controls, setControls] = useState<Controls | null>(null);
   const [savingCtrl, setSavingCtrl] = useState(false);
   const [changeLog, setChangeLog] = useState<any[]>([]);
+  const [habitsData, setHabitsData] = useState<any>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [detail, ctrl, log] = await Promise.all([
+      const [detail, ctrl, log, habits] = await Promise.all([
         api<any>(`/coach/clients/${id}`),
         api<{ controls: Controls }>(`/coach/clients/${id}/controls`).catch(() => ({ controls: null as any })),
         api<{ entries: any[] }>(`/coach/clients/${id}/change-log`).catch(() => ({ entries: [] })),
+        api<any>(`/coach/clients/${id}/habits`).catch(() => null),
       ]);
       setData(detail);
       if (ctrl?.controls) setControls(ctrl.controls);
       setChangeLog(log.entries || []);
+      setHabitsData(habits);
     } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -246,6 +249,73 @@ export default function ClientDetail() {
           </View>
         )}
 
+        {habitsData ? (
+          <View style={styles.card}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <Text style={styles.sect}>HABITS · {(habitsData.active || []).length} ACTIVE</Text>
+              {habitsData.pending_review ? (
+                <Pressable
+                  testID="habits-review-open"
+                  onPress={() => router.push(`/coach/habit-review/${habitsData.pending_review.id}` as any)}
+                  style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, backgroundColor: theme.color.amber }}
+                >
+                  <Text style={{ color: "#000", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 }}>REVIEW READY</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {(habitsData.active || []).length === 0 && (habitsData.paused || []).length === 0 ? (
+              <Text style={{ color: theme.color.textMuted, fontSize: 12 }}>No habits yet — starter pack will be seeded after DNA finalises.</Text>
+            ) : null}
+            {(habitsData.active || []).map((h: any) => {
+              const stat = habitsData.completion?.[h.id];
+              return (
+                <View key={h.id} style={styles.habitRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.habitTitle}>{h.title}</Text>
+                    {h.reason ? <Text style={styles.habitReason} numberOfLines={2}>{h.reason}</Text> : null}
+                    <Text style={styles.habitMeta}>
+                      {String(h.habit_type).toUpperCase().replace(/-/g, " ")}
+                      {h.linked_goal ? ` · ${String(h.linked_goal).toUpperCase().replace(/_/g, " ")}` : ""}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    {stat ? (
+                      <Text style={[styles.completionPct, { color: stat.rate >= 0.8 ? theme.color.green : (stat.rate >= 0.4 ? theme.color.amber : "#c94a4a") }]}>
+                        {Math.round((stat.rate || 0) * 100)}%
+                      </Text>
+                    ) : null}
+                    {typeof h.streak === "number" && h.streak > 0 ? (
+                      <Text style={styles.streakT}>🔥 {h.streak}d</Text>
+                    ) : null}
+                  </View>
+                </View>
+              );
+            })}
+            {(habitsData.paused || []).length > 0 ? (
+              <Text style={styles.pausedHead}>PAUSED · {(habitsData.paused || []).length}</Text>
+            ) : null}
+            {(habitsData.paused || []).map((h: any) => (
+              <View key={h.id} style={[styles.habitRow, { opacity: 0.55 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.habitTitle}>{h.title}</Text>
+                </View>
+                <Text style={{ color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1 }}>PAUSED</Text>
+              </View>
+            ))}
+            {habitsData.latest_review ? (
+              <View style={styles.latestReviewCard}>
+                <Text style={styles.blockHead}>LATEST ATLAS REVIEW</Text>
+                <Text style={styles.blockBody}>{habitsData.latest_review.atlas_summary}</Text>
+                <Text style={styles.blockMeta}>
+                  {habitsData.latest_review.week_start} → {habitsData.latest_review.week_end} ·
+                  {" "}{Math.round((habitsData.latest_review.completion_rate || 0) * 100)}% completion ·
+                  {" "}{String(habitsData.latest_review.coach_review_status || "pending").toUpperCase()}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
         {changeLog.length > 0 ? (
           <View style={styles.card}>
             <Text style={styles.sect}>CHANGE LOG · {changeLog.length}</Text>
@@ -328,4 +398,15 @@ const styles = StyleSheet.create({
   logDate: { color: theme.color.textDim, fontSize: 10 },
   logTitle: { color: theme.color.text, fontSize: 12, fontWeight: "700", marginTop: 2 },
   logDesc: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
+  habitRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: 1, borderTopColor: theme.color.divider },
+  habitTitle: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
+  habitReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
+  habitMeta: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1, marginTop: 4 },
+  completionPct: { fontSize: 14, fontWeight: "900" },
+  streakT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  pausedHead: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1.5, marginTop: 14, marginBottom: 4 },
+  latestReviewCard: { marginTop: 12, padding: 10, backgroundColor: theme.color.brandTint, borderRadius: 8, borderWidth: 1, borderColor: theme.color.brand },
+  blockHead: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  blockBody: { color: theme.color.text, fontSize: 12, marginTop: 4, lineHeight: 16 },
+  blockMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 4 },
 });

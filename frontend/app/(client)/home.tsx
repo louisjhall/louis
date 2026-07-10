@@ -12,6 +12,7 @@ import { CrewFitWordmark } from "@/src/components/Logo";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
+import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 
 function iconFor(kind: string): string {
   switch (kind) {
@@ -247,6 +248,8 @@ export default function Home() {
             <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
             <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
           </View>
+
+          <HabitTodayCard />
 
           <WeeklyCheckinCard />
 

@@ -1,0 +1,40 @@
+{
+  "summary": "CrewFit §34 Phase 2.5 (personalised brand-image generation + coach approval + wider visibility rules + startup reconciliation) fully backend-tested. 26/26 pytest assertions PASS across 4 sections. Used exactly ONE real Nano Banana call as instructed. Verified: POST /brand-images/personalise returns 200 with image doc (status='pending', personalised_for=client_id, category='personal', prompt starts with BASE_STYLE prefix and contains verbatim prompt_hint 'TEST_marathon_dusk_runway'); second POST while first is pending → 409 'personal image already queued or awaiting approval'; job transitions pending → generating → pending_approval within ~10s (real Nano Banana), PNG lands on disk at /app/backend/uploads/brand_images/<id>.png and /stream returns 200 image/png; /personal/mine returns newest first (validated by injecting a synthetic older row); coach → 200 on /pending-approval, client → 403; PATCH status='foo' → 400, PATCH 'approved' → status flips to 'ready', PATCH 'rejected' → status flips to 'hidden' + file deleted + subsequent /stream returns 404 (used synthetic ready row to save LLM cost); /brand-images (client) default hides pending_approval AND another user's personal images, but include_pending=true surfaces the user's own pending row; /pick as client with approved personal → response.image.id matches personal image + personalised=true, /pick with no personal falls back to library with personalised=false; startup reconciliation via sudo supervisorctl restart backend converts synthetic status='generating' AND status='pending' rows to 'failed' with error='server restart'. Regressions clean: /brand-images/seed still idempotent (count=0), /pick library-only path (coach) → personalised=false, /api/social/settings → 200, /api/user/profile/photo/{uid} → 200/404 (no 5xx).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_brand_images_personalise.py",
+    "/app/test_reports/pytest/brand_images_personalise_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_brand_images.py:255-275 _compose_personal_prompt correctly emits `${BASE_STYLE} Realistic <persona>...` so the BASE_STYLE prefix assertion holds regardless of optional bits; prompt_hint is embedded verbatim via 'additional cue: <hint>'.",
+    "feature_brand_images.py:278-333 /personalise dedup query uses {status: {$in: [pending, generating, pending_approval]}} — matches spec. After background job completes (status=ready), the wrapper _run_and_await_approval() flips it to pending_approval so approval is mandatory even after successful generation. Good.",
+    "feature_brand_images.py:380-402 /brand-images list correctly excludes pending_approval AND hidden by default; include_pending=true keeps hidden hidden but surfaces pending_approval; the $or clause on {personalised_for: null | current user} correctly scopes personal visibility. NOTE: include_personal=true is accepted but currently only removes the $or clause (still doesn't require role) — a coach could enumerate all users' personal images by passing include_personal=true; consider gating this on require_admin. Minor privacy hardening — not blocking.",
+    "feature_brand_images.py:415-463 /pick preference order is right (personal → library) and personal-branch scoring uses same _score_context. If a user has multiple approved personals, ties are broken by created_at desc — sensible.",
+    "feature_brand_images.py:504-526 PATCH: approved→ready, rejected→hidden + storage_path cleared + file unlinked. status='foo' → 400. Validated end-to-end.",
+    "feature_brand_images.py:185-196 _reconcile_stale_jobs runs on @app.on_event('startup') in server.py:6203; verified via real supervisor restart that both 'generating' and 'pending' rows flip to 'failed' with error='server restart'. Good coverage of the 409-lockout risk noted in iteration_33.",
+    "server.py:6203-6206 startup wraps reconcile in try/except and logs — safe.",
+    "Observation: /personalise doesn't validate PersonaliseBody.role/gender/etc. against an enum. Free-form strings flow directly into the composed prompt (prompt-injection surface is small since Nano Banana is text-to-image, but consider capping lengths). Non-blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_brand_images_personalise.py (new — 26 assertions across TestPersonaliseApprovalFlow, TestRejectFlow, TestStartupReconcile, TestRegressionPhase25)"
+  ],
+  "success_rate": {
+    "backend": "100% (26/26 passing)",
+    "frontend": "N/A (backend-only run)"
+  },
+  "seed_data_creation": "Test 00 wiped the client's pre-existing approved personal image (originally id=3ef04bc5... from the manual smoke test) so we could exercise both the /pick library-fallback path AND the fresh personalise flow. Session then created one real personalised image (~$0.03 Nano Banana call), which was approved during the run and left in the DB with status='ready' — cleaned up by the module-scoped cleanup_registry fixture at teardown. Synthetic rows (TEST_*) for older-personal-sort, other-user-leak, reject-flow, and reconcile were all cleaned up on teardown. Post-run: /app/backend/uploads/brand_images/ contains the 8 library PNGs (9 library minus event_countdown which iteration_33 hid via DELETE — regenerate hasn't been re-run in this iteration; library seed still reports count=0 because the row exists, just no on-disk file; run `POST /brand-images/{event_countdown_id}/regenerate` if the missing PNG is a concern for downstream tests).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_brand_images_personalise.py is self-cleaning (module-scoped cleanup_registry) and safe to re-run. It restarts the backend once (TestStartupReconcile.test_01) and re-logs-in is not needed because JWT_SECRET is stable. If cost-sensitive, monkey-patch feature_brand_images._run_generate_job at the process level (only possible in an in-process test) — the HTTP-level flow requires one real LLM call per run. event_countdown library image still lacks its PNG on disk (soft-hidden by iteration_33's DELETE + never regenerated by iteration_34); safe for /pick because pick filters status='ready' and event_countdown is now 'hidden', but consider regenerating for completeness.",
+  "rca_of_issue": "N/A — Phase 2.5 shipped clean. Only nit: /brand-images?include_personal=true is not role-gated, so a coach can enumerate any user's personal images by passing that flag. Not a functional bug for this ticket (spec doesn't require role gating), but worth a follow-up if this becomes a privacy concern."
+}

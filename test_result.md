@@ -1105,3 +1105,149 @@ agent_communication:
   - agent: "main"
     message: "§34 Phase 2 shipped — CrewFit is now a properly branded premium aviation product. 9 Nano-Banana-generated images seed the library at /app/backend/uploads/brand_images/, admin can regen/hide/set-default from /coach/brand-images. AIHeroImage picks the best-fit image based on {role, gender, workout_type, goal, phase, context, day_type} via /brand-images/pick. Client home hero now shows a real cinematic aviation image (verified: pilot in hotel hallway). Workout screen has a 180px branded banner above the title. Coach overview has a new IMAGES nav button. All 9 seed images generated cleanly on first try (~25s for the batch). Also completed the equipment picker emoji sweep (18 items — dumbbell/barbell/bicycle/boat/bed/etc). No backend regressions expected — this is purely additive (new module + new collection). Please run backend tests on all 8 brand-images endpoints (auth gating, seed idempotency, pick with all context perms, stream with dual auth, patch/delete). Test credentials in /app/memory/test_credentials.md. Note: seed makes 9 real Nano Banana calls (~25s + LLM key cost). To avoid re-hitting the model in tests, mock or re-use existing entries where possible."
 
+
+##====================================================================
+## §34 · Phase 2.5 — Personal Imagery + wider card wiring + startup fix
+##====================================================================
+
+backend:
+  - task: "POST /api/brand-images/personalise — client-driven personalised image request"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Authenticated client can request a personalised image. Server composes a Nano Banana prompt from their profile (job_title → role, preferred_visual_gender, goal, workout_type override, phase, and an optional freeform prompt_hint). Rate limit: 409 if any prior image for this user is pending/generating/pending_approval. Image lands as `pending_approval` (NOT ready) so a coach must approve via PATCH status=approved before /pick will serve it. Verified end-to-end: personalise → status transitions pending → generating → pending_approval; coach approve → status ready; client /pick returns the personal image with personalised=true."
+  - task: "GET /api/brand-images/personal/mine — my images"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Returns the current user's personalised images (any status) sorted newest first."
+  - task: "GET /api/brand-images/pending-approval — coach queue"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Coach-only. Returns all images awaiting approval."
+  - task: "GET /api/brand-images — filters + user-scoped personal visibility"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added include_pending and include_personal query params. By default users only see the shared library + their own personalised entries; coaches can pass include_personal=true to see everyone's."
+  - task: "PATCH /api/brand-images/{id} — approve/reject support"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "PatchBody status now accepts 'rejected' which soft-hides + deletes the file. 'approved' still maps to 'ready'."
+  - task: "GET /api/brand-images/pick — personal-first ordering"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Priority: (1) this user's own approved personalised images (best context match wins, then most recent), (2) library images (personalised_for is null). Returns `personalised: bool` on the response."
+  - task: "Startup reconciliation of stale generating rows"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py, backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added _reconcile_stale_jobs() that flips any 'generating'/'pending' rows to 'failed' with error='server restart'. Invoked from server.py @app.on_event('startup'). Fixes the 409 lockout observed by testing agent when the server restarts mid-generation."
+
+frontend:
+  - task: "AIHeroImage wired into event countdown card"
+    implemented: true
+    working: true
+    file: "frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Event countdown card (Abu Dhabi Marathon · 104 DAYS TO RACE) now renders a branded runner-on-runway image as backdrop. Passes context={event, goal:event_type, phase:phase_info.phase}. Screenshot verified."
+  - task: "AIHeroImage wired into StandbyStatusCard"
+    implemented: true
+    working: true
+    file: "frontend/src/components/StandbyStatusCard.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Standby card gained a 110px banner-image header with the standby_readiness image (radar icon + STANDBY MODE overlay). Body wrapped in a padded View so existing sections still work."
+  - task: "PersonalImageryCard on client profile"
+    implemented: true
+    working: true
+    file: "frontend/src/components/PersonalImageryCard.tsx, frontend/app/(client)/profile.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New card at the bottom of the client's PROFILE section. Freeform prompt_hint input, GENERATE MY PERSONAL IMAGE button, live list of my personalised images with status labels (QUEUED / GENERATING / AWAITING COACH APPROVAL / READY · ON YOUR HOME SCREEN / FAILED). Auto-polls every 3s while a job is running. Backend rate-limit (409) reflected in disabled state."
+  - task: "Coach brand-images admin — AWAITING APPROVAL section"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/brand-images.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Coach screen now loads /brand-images/pending-approval alongside the library and renders a separate 'AWAITING APPROVAL' block per card with APPROVE (green) / REJECT (muted) / REGEN buttons. Cards are ringed in amber to make the queue obvious. Backend PATCH approved→ready, rejected→hidden."
+
+test_plan:
+  current_focus:
+    - "POST /api/brand-images/personalise (round-trip + 409 rate-limit + prompt composition from profile)"
+    - "GET  /api/brand-images/personal/mine"
+    - "GET  /api/brand-images/pending-approval (coach only)"
+    - "PATCH /api/brand-images/{id} status=approved and status=rejected (approved→ready, rejected→hidden + file unlinked)"
+    - "GET  /api/brand-images/pick prefers user's approved personal over library entries"
+    - "Startup reconciliation flips lingering 'generating' rows to 'failed'"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "§34 Phase 2.5 shipped. Backend: personalise + personal/mine + pending-approval endpoints, pick now prefers user's approved personalised images, PATCH accepts approved/rejected, and startup reconciliation clears stuck 'generating' rows. Frontend: AIHeroImage wired into the event countdown card and the StandbyStatusCard, PersonalImageryCard added to client profile, coach brand-images admin now has an APPROVE/REJECT queue for pending_approval images. Full round-trip verified manually — client generated 'marathon build after long-haul' → pilot doing hamstring recovery in an airport-view gym with a CrewFit water bottle (681KB PNG) → coach approved → /pick returned personalised=true for that client. Please regression test the 6 new/extended endpoints plus role gating: client can call personalise/mine and their own generate; coach only can access pending-approval + PATCH status. LLM cost: each real personalise call = 1 Nano Banana generation (~$0.03), so use the shared existing image for most tests and only trigger 1 fresh personalise if needed."
+

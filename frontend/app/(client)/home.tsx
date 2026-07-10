@@ -183,16 +183,24 @@ export default function Home() {
           )}
 
           {event ? (
-            <Pressable testID="event-card" onPress={() => router.push("/event")} style={styles.eventCard}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.eTop}>{String(event.event_type || "").toUpperCase()} · {String(event.phase_info?.phase || "").toUpperCase().replace("_", " ")}</Text>
-                <Text style={styles.eName}>{event.event_name}</Text>
-                <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
-              </View>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={styles.eBig}>{event.phase_info?.days_to_race ?? "—"}</Text>
-                <Text style={styles.eBigLbl}>DAYS TO RACE</Text>
-              </View>
+            <Pressable testID="event-card" onPress={() => router.push("/event")}>
+              <AIHeroImage
+                ctx={{ context: "event", goal: (event.event_type || "").toLowerCase(), phase: event.phase_info?.phase || "peak" }}
+                style={styles.eventCardWrap}
+                gradient
+              >
+                <View style={styles.eventCardInner}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.eTop}>{String(event.event_type || "").toUpperCase()} · {String(event.phase_info?.phase || "").toUpperCase().replace("_", " ")}</Text>
+                    <Text style={styles.eName}>{event.event_name}</Text>
+                    <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={styles.eBig}>{event.phase_info?.days_to_race ?? "—"}</Text>
+                    <Text style={styles.eBigLbl}>DAYS TO RACE</Text>
+                  </View>
+                </View>
+              </AIHeroImage>
             </Pressable>
           ) : (
             <Pressable testID="add-event-card" onPress={() => router.push("/event")} style={styles.addEventBtn}>
@@ -377,6 +385,8 @@ const styles = StyleSheet.create({
   rBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.surface3, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border },
   rBtnText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   eventCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md },
+  eventCardWrap: { borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md, overflow: "hidden", minHeight: 128 },
+  eventCardInner: { flexDirection: "row", alignItems: "center", padding: theme.space.md },
   eTop: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   eName: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4 },
   eDate: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },

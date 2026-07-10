@@ -23,18 +23,20 @@ import { theme } from "@/src/lib/theme";
 
 type BrandImage = {
   id: string; key: string; category: string;
-  status: "pending" | "generating" | "ready" | "failed" | "hidden";
+  status: "pending" | "generating" | "ready" | "failed" | "hidden" | "pending_approval";
   is_default: boolean; label?: string;
   context?: Record<string, string>;
   prompt?: string;
   size_bytes?: number;
   error?: string | null;
   updated_at?: string;
+  personalised_for?: string | null;
 };
 
 export default function BrandImagesScreen() {
   const router = useRouter();
   const [images, setImages] = useState<BrandImage[]>([]);
+  const [pending, setPending] = useState<BrandImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -44,8 +46,12 @@ export default function BrandImagesScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api<{ images: BrandImage[] }>(`/brand-images?include_hidden=${showHidden ? "true" : "false"}`);
-      setImages(r.images || []);
+      const [libR, pendR] = await Promise.all([
+        api<{ images: BrandImage[] }>(`/brand-images?include_hidden=${showHidden ? "true" : "false"}&include_personal=true`),
+        api<{ images: BrandImage[] }>(`/brand-images/pending-approval`).catch(() => ({ images: [] })),
+      ]);
+      setImages(libR.images || []);
+      setPending(pendR.images || []);
     } catch (e: any) {
       Alert.alert("Load failed", e?.message || "");
     } finally { setLoading(false); }
@@ -112,6 +118,24 @@ export default function BrandImagesScreen() {
     finally { setBusyId(null); }
   };
 
+  const doApprove = async (img: BrandImage) => {
+    setBusyId(img.id);
+    try {
+      await api(`/brand-images/${img.id}`, { method: "PATCH", body: { status: "approved" } });
+      await load();
+    } catch (e: any) { Alert.alert("Approve failed", e?.message || ""); }
+    finally { setBusyId(null); }
+  };
+
+  const doReject = async (img: BrandImage) => {
+    setBusyId(img.id);
+    try {
+      await api(`/brand-images/${img.id}`, { method: "PATCH", body: { status: "rejected" } });
+      await load();
+    } catch (e: any) { Alert.alert("Reject failed", e?.message || ""); }
+    finally { setBusyId(null); }
+  };
+
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.top}>
@@ -150,6 +174,57 @@ export default function BrandImagesScreen() {
             )}
           </Pressable>
         </View>
+
+        {/* AWAITING APPROVAL — client-generated personalised images */}
+        {pending.length > 0 ? (
+          <View style={styles.approvalHeader}>
+            <Ionicons name="hourglass" size={14} color={theme.color.amber} />
+            <Text style={styles.approvalHeaderT}>AWAITING APPROVAL · {pending.length}</Text>
+          </View>
+        ) : null}
+        {pending.map((img) => {
+          const url = token
+            ? `${API_BASE}/brand-images/${img.id}/stream?token=${encodeURIComponent(token)}`
+            : null;
+          const busy = busyId === img.id;
+          return (
+            <View key={img.id} style={[styles.card, { borderColor: theme.color.amber }]} testID={`pending-${img.id}`}>
+              <View style={styles.previewWrap}>
+                {url ? <Image source={{ uri: url }} style={styles.preview} contentFit="cover" /> : null}
+                <View style={[styles.statusPill, { backgroundColor: theme.color.amber }]}>
+                  <Text style={styles.statusPillT}>PENDING APPROVAL</Text>
+                </View>
+              </View>
+              <View style={styles.meta}>
+                <Text style={styles.metaKey} numberOfLines={1}>{img.label || img.key}</Text>
+                <Text style={styles.metaCat}>PERSONALISED · client {img.personalised_for?.slice(0, 8) || ""}</Text>
+                {img.context && Object.keys(img.context).length ? (
+                  <View style={styles.ctxRow}>
+                    {Object.entries(img.context).filter(([, v]) => v).map(([k, v]) => (
+                      <View key={k} style={styles.ctxChip}>
+                        <Text style={styles.ctxChipT}>{k}={String(v)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+              <View style={styles.actionRow}>
+                <Pressable disabled={busy} onPress={() => doApprove(img)} style={[styles.actionBtn, { borderColor: theme.color.green, backgroundColor: "rgba(16,185,129,0.12)" }]} testID={`approve-${img.id}`}>
+                  <Ionicons name="checkmark-circle" size={13} color={theme.color.green} />
+                  <Text style={[styles.actionBtnT, { color: theme.color.green }]}>APPROVE</Text>
+                </Pressable>
+                <Pressable disabled={busy} onPress={() => doReject(img)} style={styles.actionBtnMuted} testID={`reject-${img.id}`}>
+                  <Ionicons name="close-circle" size={13} color={theme.color.textMuted} />
+                  <Text style={styles.actionBtnMutedT}>REJECT</Text>
+                </Pressable>
+                <Pressable disabled={busy} onPress={() => doRegen(img)} style={styles.actionBtn}>
+                  <Ionicons name="refresh" size={13} color={theme.color.brand} />
+                  <Text style={styles.actionBtnT}>REGEN</Text>
+                </Pressable>
+              </View>
+            </View>
+          );
+        })}
 
         {loading && images.length === 0 ? (
           <ActivityIndicator color={theme.color.brand} style={{ marginTop: 40 }} />
@@ -293,4 +368,6 @@ const styles = StyleSheet.create({
   actionBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   actionBtnMuted: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface3 },
   actionBtnMutedT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  approvalHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
+  approvalHeaderT: { color: theme.color.amber, fontSize: 10, fontWeight: "900", letterSpacing: 2, fontFamily: theme.font.textSemi },
 });

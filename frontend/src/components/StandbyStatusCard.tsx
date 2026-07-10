@@ -10,6 +10,7 @@ import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { AIHeroImage } from "@/src/components/AIHeroImage";
 
 type Rec = { id: string; kind: string; title: string; duration_min: number; why: string };
 type StandbyToday = {
@@ -122,9 +123,15 @@ export function StandbyStatusCard() {
 
   return (
     <View style={styles.wrap}>
+      <AIHeroImage ctx={{ context: "standby" }} style={styles.bannerBg} gradient>
+        <View style={styles.bannerInner}>
+          <Ionicons name="radio" size={22} color={theme.color.amber} />
+          <Text style={styles.bannerT}>STANDBY MODE</Text>
+        </View>
+      </AIHeroImage>
+      <View style={styles.body}>
       <View style={styles.headRow}>
         <View>
-          <Text style={styles.head}>STANDBY MODE</Text>
           <Text style={styles.sub}>{TYPE_LABEL[sb.type] || "Standby"}
             {sb.start_time ? ` · ${sb.start_time}` : ""}{sb.end_time ? `–${sb.end_time}` : ""}
             {sb.location ? ` · ${sb.location}` : ""}
@@ -170,6 +177,7 @@ export function StandbyStatusCard() {
           </Pressable>
         </View>
       ) : null}
+      </View>
 
       {/* Called-out details modal */}
       <Modal visible={called} transparent animationType="slide" onRequestClose={() => setCalled(false)}>
@@ -243,7 +251,11 @@ function statusColor(status: string): any {
 }
 
 const styles = StyleSheet.create({
-  wrap: { marginTop: theme.space.md, marginBottom: theme.space.md, padding: 14, borderRadius: 14, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand },
+  wrap: { marginTop: theme.space.md, marginBottom: theme.space.md, borderRadius: 14, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand, overflow: "hidden" },
+  bannerBg: { height: 110 },
+  bannerInner: { flex: 1, flexDirection: "row", alignItems: "flex-end", gap: 10, padding: 14 },
+  bannerT: { color: theme.color.text, fontSize: 20, letterSpacing: 1.2, fontWeight: "900", fontFamily: theme.font.display },
+  body: { padding: 14, paddingTop: 10 },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 },
   head: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   sub: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },

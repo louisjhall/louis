@@ -13,6 +13,7 @@ import { DateField } from "@/src/components/DateField";
 import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
 import { NotificationPreferencesCard } from "@/src/components/NotificationPreferencesCard";
 import { ProfilePhotoRow } from "@/src/components/ProfilePhotoRow";
+import { PersonalImageryCard } from "@/src/components/PersonalImageryCard";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -203,6 +204,7 @@ export default function ProfileScreen() {
           <KV label="HEIGHT" value={user?.profile?.height_cm ? `${user.profile.height_cm} cm` : "—"} />
           <KV label="WEIGHT" value={user?.profile?.weight_kg ? `${user.profile.weight_kg} kg` : "—"} />
           <KV label="DOB" value={user?.profile?.dob || "—"} />
+          <PersonalImageryCard />
         </Section>
 
         {/* 2. COACHING DNA */}

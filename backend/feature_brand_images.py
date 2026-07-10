@@ -182,6 +182,20 @@ async def _generate_image_bytes(prompt: str, session_id: str) -> bytes:
     return base64.b64decode(data)
 
 
+async def _reconcile_stale_jobs() -> None:
+    """On startup, mark any images left in 'generating' as 'failed' so the
+    admin can retry them. Prevents 409 lock-out after a server restart."""
+    try:
+        result = await db.crewfit_images.update_many(
+            {"status": {"$in": ["generating", "pending"]}},
+            {"$set": {"status": "failed", "error": "server restart", "updated_at": now_iso()}},
+        )
+        if getattr(result, "modified_count", 0):
+            logger.info("brand_images: reconciled %s stale jobs", result.modified_count)
+    except Exception:
+        logger.exception("brand_images reconcile failed")
+
+
 async def _run_generate_job(image_id: str) -> None:
     doc = await db.crewfit_images.find_one({"id": image_id})
     if not doc:
@@ -219,8 +233,114 @@ class RegenBody(BaseModel):
 
 class PatchBody(BaseModel):
     is_default: Optional[bool] = None
-    status: Optional[str] = None       # "ready"|"hidden"|"approved" (approved==ready in V1)
+    status: Optional[str] = None       # "ready"|"hidden"|"approved"|"rejected" (approved==ready in V1)
     label: Optional[str] = None
+
+
+class PersonaliseBody(BaseModel):
+    """Client-facing request to generate a personalised hero image.
+
+    Only the client's own context is honoured (server pulls it from user doc),
+    but the client can pass an override for testing. Images land as
+    `pending_approval` and are hidden from /pick until a coach approves them.
+    """
+    role: Optional[str] = None
+    gender: Optional[str] = None
+    goal: Optional[str] = None
+    workout_type: Optional[str] = None
+    phase: Optional[str] = None
+    prompt_hint: Optional[str] = None       # short freeform focus, e.g. "recovery after night flight"
+
+
+def _compose_personal_prompt(u: dict, body: PersonaliseBody) -> str:
+    """Build a Nano Banana prompt tailored to a specific client."""
+    p = u.get("profile") or {}
+    role = body.role or ("cabin_crew" if "crew" in (p.get("job_title") or "").lower() else "pilot")
+    gender = body.gender or u.get("preferred_visual_gender") or ""
+    goal = body.goal or p.get("goal") or ""
+    workout_type = body.workout_type or ""
+    hint = (body.prompt_hint or "").strip()
+
+    persona = " ".join(x for x in [
+        gender.strip() if gender else "",
+        (role or "").replace("_", " "),
+    ] if x).strip() or "aviation professional"
+
+    goal_bit = f", training focus: {goal}" if goal else ""
+    wt_bit = f", session type: {workout_type}" if workout_type else ""
+    hint_bit = f", additional cue: {hint}" if hint else ""
+    return (
+        f"{BASE_STYLE} Realistic {persona}{goal_bit}{wt_bit}{hint_bit}, "
+        f"grounded in real airline lifestyle, professional performance coaching feel."
+    )
+
+
+@api.post("/brand-images/personalise")
+async def brand_images_personalise(body: PersonaliseBody = PersonaliseBody(),
+                                   user: dict = Depends(current_user)):
+    """Kick off a personalised image generation FOR THE CURRENT USER.
+
+    Rate limited: only 1 pending_approval image per user at a time.
+    Result lands as status='pending_approval' + `personalised_for=<user_id>`.
+    Coach must approve via PATCH status=approved before it can be picked.
+    """
+    existing = await db.crewfit_images.find_one({
+        "personalised_for": user["id"],
+        "status": {"$in": ["pending", "generating", "pending_approval"]},
+    })
+    if existing:
+        raise HTTPException(409, "personal image already queued or awaiting approval")
+
+    prompt = _compose_personal_prompt(user, body)
+    image_id = new_id()
+    now = now_iso()
+    doc = {
+        "id": image_id,
+        "key": f"personal_{user['id'][:8]}_{image_id[:6]}",
+        "category": "personal",
+        "context": {
+            "role": body.role or ("cabin_crew" if "crew" in ((user.get("profile") or {}).get("job_title") or "").lower() else "pilot"),
+            "gender": body.gender or user.get("preferred_visual_gender") or None,
+            "goal": body.goal or (user.get("profile") or {}).get("goal"),
+            "workout_type": body.workout_type,
+            "phase": body.phase,
+        },
+        "prompt": prompt,
+        "status": "pending",           # → generating → pending_approval → ready
+        "is_default": False,
+        "label": f"Personal · {user.get('name', 'client')}",
+        "personalised_for": user["id"],
+        "storage_path": None,
+        "size_bytes": None,
+        "mime": None,
+        "error": None,
+        "created_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.crewfit_images.insert_one(doc)
+
+    async def _run_and_await_approval():
+        await _run_generate_job(image_id)
+        # If the job succeeded, transition ready → pending_approval so a coach must approve
+        cur = await db.crewfit_images.find_one({"id": image_id})
+        if cur and cur.get("status") == "ready":
+            await db.crewfit_images.update_one({"id": image_id},
+                {"$set": {"status": "pending_approval", "updated_at": now_iso()}})
+    asyncio.create_task(_run_and_await_approval())
+
+    doc.pop("_id", None)
+    return {"image": doc}
+
+
+@api.get("/brand-images/personal/mine")
+async def brand_images_my_personal(user: dict = Depends(current_user)):
+    """List the current user's personalised images (any state)."""
+    rows = await db.crewfit_images.find(
+        {"personalised_for": user["id"]},
+        {"_id": 0, "storage_path": 0},
+    ).sort("created_at", -1).to_list(50)
+    return {"images": rows, "count": len(rows)}
 
 
 @api.post("/brand-images/seed")
@@ -246,6 +366,7 @@ async def brand_images_seed(admin: dict = Depends(require_admin())):
             "size_bytes": None,
             "mime": None,
             "error": None,
+            "personalised_for": None,
             "created_by": admin["id"],
             "created_at": now,
             "updated_at": now,
@@ -258,16 +379,36 @@ async def brand_images_seed(admin: dict = Depends(require_admin())):
 
 @api.get("/brand-images")
 async def brand_images_list(
-    _: dict = Depends(current_user),
+    user: dict = Depends(current_user),
     category: Optional[str] = None,
     include_hidden: bool = False,
+    include_pending: bool = False,
+    include_personal: bool = False,
 ):
     q: dict = {}
     if category:
         q["category"] = category
+    excluded_statuses = []
     if not include_hidden:
-        q["status"] = {"$ne": "hidden"}
+        excluded_statuses.append("hidden")
+    if not include_pending:
+        excluded_statuses.append("pending_approval")
+    if excluded_statuses:
+        q["status"] = {"$nin": excluded_statuses}
+    if not include_personal:
+        # Only include library entries + this user's own personal entries by default
+        q["$or"] = [{"personalised_for": None}, {"personalised_for": user["id"]}]
     rows = await db.crewfit_images.find(q, {"_id": 0, "storage_path": 0}).to_list(200)
+    return {"images": rows, "count": len(rows)}
+
+
+@api.get("/brand-images/pending-approval")
+async def brand_images_pending_approval(admin: dict = Depends(require_admin())):
+    """Coach queue of client-generated images awaiting approval."""
+    rows = await db.crewfit_images.find(
+        {"status": "pending_approval"},
+        {"_id": 0, "storage_path": 0},
+    ).sort("created_at", -1).to_list(200)
     return {"images": rows, "count": len(rows)}
 
 
@@ -280,29 +421,46 @@ async def brand_images_pick(
     phase: Optional[str] = None,
     context: Optional[str] = None,
     day_type: Optional[str] = None,
-    _: dict = Depends(current_user),
+    user: dict = Depends(current_user),
 ):
-    """Return the best-matching READY image for a context; falls back to hero_default."""
+    """Return the best-matching READY image for a context; falls back to hero_default.
+
+    Priority:
+      1. This user's own approved personalised images (status=ready + personalised_for=<uid>)
+      2. Library images (personalised_for is null) with best context score
+    """
     query_ctx = {k: v for k, v in {
         "role": role, "gender": gender, "goal": goal,
         "workout_type": workout_type, "phase": phase,
         "context": context, "day_type": day_type,
     }.items() if v}
 
+    # 1) Prefer this user's own approved personalised image if any
+    personal = await db.crewfit_images.find(
+        {"status": "ready", "personalised_for": user["id"]},
+        {"_id": 0, "storage_path": 0},
+    ).to_list(20)
+    if personal:
+        # Score them too — best match wins; if none match, still pick most-recent personal
+        scored = [(r, _score_context(r.get("context") or {}, query_ctx)) for r in personal]
+        scored.sort(key=lambda t: (t[1], t[0].get("created_at") or ""), reverse=True)
+        winner = scored[0][0]
+        return {"image": winner, "match_score": scored[0][1], "candidates": len(personal), "personalised": True}
+
     rows = await db.crewfit_images.find(
-        {"status": "ready"}, {"_id": 0, "storage_path": 0},
+        {"status": "ready", "personalised_for": None},
+        {"_id": 0, "storage_path": 0},
     ).to_list(200)
     if not rows:
         raise HTTPException(404, "no ready images yet")
 
     scored = [(r, _score_context(r.get("context") or {}, query_ctx)) for r in rows]
     scored.sort(key=lambda t: t[1], reverse=True)
-    # Prefer default among ties
     best_score = scored[0][1]
     winners = [r for r, s in scored if s == best_score]
     winners.sort(key=lambda r: (not r.get("is_default"), r.get("key") != "hero_default"))
     winner = winners[0]
-    return {"image": winner, "match_score": best_score, "candidates": len(rows)}
+    return {"image": winner, "match_score": best_score, "candidates": len(rows), "personalised": False}
 
 
 @api.get("/brand-images/{image_id}/stream")
@@ -352,9 +510,17 @@ async def brand_image_patch(image_id: str, body: PatchBody,
     updates: dict = {"updated_at": now_iso()}
     if body.is_default is not None: updates["is_default"] = body.is_default
     if body.status is not None:
-        if body.status not in ("ready", "hidden", "approved"):
+        if body.status not in ("ready", "hidden", "approved", "rejected"):
             raise HTTPException(400, "invalid status")
-        updates["status"] = "ready" if body.status == "approved" else body.status
+        # approved → ready. rejected → hidden + file cleanup.
+        target = {"approved": "ready", "rejected": "hidden"}.get(body.status, body.status)
+        updates["status"] = target
+        if target == "hidden":
+            p = doc.get("storage_path")
+            if p:
+                try: Path(p).unlink(missing_ok=True)
+                except Exception: pass
+            updates["storage_path"] = None
     if body.label is not None: updates["label"] = body.label
     await db.crewfit_images.update_one({"id": image_id}, {"$set": updates})
     return {"ok": True}

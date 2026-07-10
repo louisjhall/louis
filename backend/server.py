@@ -6198,6 +6198,12 @@ async def _startup():
             )
         except Exception:
             logger.exception("startup zombie cleanup failed for %s", coll)
+    # Reset stale brand-image generation jobs (see feature_brand_images).
+    try:
+        from feature_brand_images import _reconcile_stale_jobs
+        await _reconcile_stale_jobs()
+    except Exception:
+        logger.exception("brand_images reconciliation on startup failed")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 

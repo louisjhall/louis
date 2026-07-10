@@ -14,7 +14,7 @@ import { DateField } from "@/src/components/DateField";
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
 /* -------------------------------------------------------------------------- */
-type Option = { id: string; label: string; emoji?: string };
+type Option = { id: string; label: string; emoji?: string; icon?: any };
 type Question = {
   id: string;
   section: string;
@@ -203,7 +203,8 @@ function SingleSelect({ q, onSubmit, submitting }: any) {
           onPress={() => onSubmit(o.id)}
           style={({ pressed }) => [styles.selectRow, pressed && styles.selectRowPressed]}
         >
-          {o.emoji ? <Text style={styles.selEmoji}>{o.emoji}</Text> : null}
+          {o.icon ? <Ionicons name={o.icon} size={16} color={theme.color.brand} /> :
+            o.emoji ? <Text style={styles.selEmoji}>{o.emoji}</Text> : null}
           <Text style={styles.selLabel}>{o.label}</Text>
           <Ionicons name="chevron-forward" size={16} color={theme.color.brand} />
         </Pressable>
@@ -229,7 +230,8 @@ function MultiSelect({ q, onSubmit, submitting }: any) {
               onPress={() => toggle(o.id)}
               style={[styles.multiChip, on && styles.multiChipOn]}
             >
-              {o.emoji ? <Text style={styles.multiEmoji}>{o.emoji}</Text> : null}
+              {o.icon ? <Ionicons name={o.icon} size={14} color={on ? "#fff" : theme.color.brand} /> :
+                o.emoji ? <Text style={styles.multiEmoji}>{o.emoji}</Text> : null}
               <Text style={[styles.multiLbl, on && { color: "#fff" }]}>{o.label}</Text>
             </Pressable>
           );
@@ -377,24 +379,24 @@ function EventBuilder({ q, onSubmit, submitting }: any) {
 }
 
 const HOME_EQ: Option[] = [
-  { id: "no_equipment", label: "None", emoji: "🚫" },
-  { id: "yoga_mat", label: "Yoga mat", emoji: "🧘" },
-  { id: "resistance_bands", label: "Bands", emoji: "🎗" },
-  { id: "pull_up_bar", label: "Pull-up bar", emoji: "🎯" },
-  { id: "dumbbells", label: "Dumbbells", emoji: "🏋️" },
-  { id: "kettlebells", label: "Kettlebells", emoji: "💪" },
-  { id: "barbell", label: "Barbell", emoji: "⚡" },
-  { id: "squat_rack", label: "Squat rack", emoji: "🏗" },
-  { id: "bench", label: "Bench", emoji: "🪑" },
-  { id: "treadmill", label: "Treadmill", emoji: "🏃" },
-  { id: "bike", label: "Bike/turbo", emoji: "🚴" },
-  { id: "rower", label: "Rower", emoji: "🚣" },
-  { id: "assault_bike", label: "Assault bike", emoji: "🌀" },
-  { id: "trx", label: "TRX", emoji: "🎽" },
-  { id: "medicine_ball", label: "Med ball", emoji: "🏐" },
-  { id: "skipping_rope", label: "Rope", emoji: "🪢" },
-  { id: "foam_roller", label: "Foam roller", emoji: "🎳" },
-  { id: "mobility_tools", label: "Mobility tools", emoji: "🧰" },
+  { id: "no_equipment", label: "None", icon: "remove-circle-outline" },
+  { id: "yoga_mat", label: "Yoga mat", icon: "grid-outline" },
+  { id: "resistance_bands", label: "Bands", icon: "infinite" },
+  { id: "pull_up_bar", label: "Pull-up bar", icon: "reorder-two" },
+  { id: "dumbbells", label: "Dumbbells", icon: "barbell" },
+  { id: "kettlebells", label: "Kettlebells", icon: "fitness" },
+  { id: "barbell", label: "Barbell", icon: "barbell-outline" },
+  { id: "squat_rack", label: "Squat rack", icon: "construct" },
+  { id: "bench", label: "Bench", icon: "bed-outline" },
+  { id: "treadmill", label: "Treadmill", icon: "walk" },
+  { id: "bike", label: "Bike/turbo", icon: "bicycle" },
+  { id: "rower", label: "Rower", icon: "boat" },
+  { id: "assault_bike", label: "Assault bike", icon: "flash" },
+  { id: "trx", label: "TRX", icon: "link" },
+  { id: "medicine_ball", label: "Med ball", icon: "ellipse" },
+  { id: "skipping_rope", label: "Rope", icon: "trending-up" },
+  { id: "foam_roller", label: "Foam roller", icon: "swap-horizontal" },
+  { id: "mobility_tools", label: "Mobility tools", icon: "hand-left" },
 ];
 
 function EquipmentPicker({ q, onSubmit, submitting }: any) {
@@ -410,7 +412,8 @@ function EquipmentPicker({ q, onSubmit, submitting }: any) {
           const on = sel.includes(o.id);
           return (
             <Pressable key={o.id} onPress={() => toggle(o.id)} disabled={submitting} style={[styles.multiChip, on && styles.multiChipOn]}>
-              {o.emoji ? <Text style={styles.multiEmoji}>{o.emoji}</Text> : null}
+              {o.icon ? <Ionicons name={o.icon} size={14} color={on ? "#fff" : theme.color.brand} /> :
+                o.emoji ? <Text style={styles.multiEmoji}>{o.emoji}</Text> : null}
               <Text style={[styles.multiLbl, on && { color: "#fff" }]}>{o.label}</Text>
             </Pressable>
           );

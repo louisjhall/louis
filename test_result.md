@@ -1012,3 +1012,96 @@ agent_communication:
   - agent: "main"
     message: "§34 Phase 3 shipped — massive emoji cleanup + coach dashboard client card upgrade. Screenshot A (client home) shows the previous 🏁 ⏰ 🧠 emojis replaced by crimson-tinted circular icons (flag, alarm, ribbon-ish, compass). Screenshot B (coach dashboard) shows the client status widgets with clean colored dots + Alex Rivera's client card showing photo initials + 'First Officer · Emirates' + 'DUBAI (DXB) · in London' — exactly as briefed. NO backend changes in this phase — coach client summary was already returning the fields we needed via _client_summary(u). One known deferred: assessment.tsx equipment picker still has emojis (18 items — separate turn). Fonts (Creo Bold headers, Source Sans body) are visibly rendering. Everything else in the emoji audit is done."
 
+
+##====================================================================
+## §34 · Phase 2 — AI Imagery Library + Admin + Equipment Icons
+##====================================================================
+
+backend:
+  - task: "feature_brand_images.py — Nano Banana library generation + admin"
+    implemented: true
+    working: true
+    file: "backend/feature_brand_images.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New module. 8 endpoints — POST /brand-images/seed (kicks off 9 pending jobs, one per LIBRARY entry), GET /brand-images (list, filter by category, hide/show hidden), GET /brand-images/pick (best-fit context matcher — role/gender/goal/workout_type/phase/context/day_type — falls back to hero_default), GET /brand-images/{id}/stream (auth-signed via header OR ?token= query), POST /brand-images/{id}/regenerate, PATCH /brand-images/{id} (is_default / status / label), DELETE /brand-images/{id} (soft-hide + file unlink). Uses emergentintegrations LlmChat with model 'gemini-3.1-flash-image-preview' and modalities=['image','text']. LIBRARY constant defines 9 categories with BASE_STYLE + role/gender/context-specific prompt suffixes. Manual smoke test: seeded and all 9 images generated to /app/backend/uploads/brand_images in ~25s. Pick with workout_type=endurance+goal=marathon returned workout_endurance_marathon with score=6. Two generated images inspected — both premium cinematic aviation shots exactly matching the brief."
+
+frontend:
+  - task: "AIHeroImage component — contextual best-fit renderer"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AIHeroImage.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New component. Takes an ImageContext prop, calls /brand-images/pick, builds token-signed stream URL, renders <Image> with LinearGradient overlay for text legibility. In-memory pickCache keyed by sorted context so many cards on one screen don't hammer the endpoint. Graceful fallback (solid navy) when no library image is ready."
+  - task: "Client home — hero background switched to AIHeroImage"
+    implemented: true
+    working: true
+    file: "frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Removed Unsplash HERO import + LinearGradient wrapper. Passes user.profile.job_title-derived role (crew vs pilot), preferred_visual_gender, todaysWorkout.focus, standby state, and today's day_type. Screenshot verified — hero now shows the AI-generated male-pilot hotel-hallway image; text and STANDBY badges remain legible on top."
+  - task: "Workout screen — AI banner above title"
+    implemented: true
+    working: true
+    file: "frontend/app/workout/[id]/index.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added a 180px AIHeroImage banner card just below the top bar. Picks workout_type ∈ {endurance, strength} based on focus text and passes event_phase. Renders the focus eyebrow + workout title on the gradient overlay."
+  - task: "Coach · Brand Images admin screen"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/brand-images.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New /coach/brand-images route. Grid of every library image with status pill, DEFAULT pill, context chips, size + timestamp, REGEN / MAKE DEFAULT / HIDE / RESTORE actions. Auto-polls every 3s while any job is generating. SEED / TOP UP LIBRARY CTA for cold-start. Coach overview header now has a new IMAGES button (ov-goto-brand) alongside SOCIAL."
+  - task: "Assessment equipment picker — 18 emoji → 18 Ionicons"
+    implemented: true
+    working: true
+    file: "frontend/app/assessment.tsx"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Option type extended with optional `icon` field. HOME_EQ list rebuilt using Ionicons (barbell, fitness, boat, bicycle, walk, bed-outline, construct, link, ellipse, hand-left, swap-horizontal, remove-circle-outline, grid-outline, infinite, flash, trending-up, reorder-two). Renderers in SingleSelect / MultiSelect / EquipmentPicker prefer icon over emoji so legacy backend options with `emoji` still render but new local list uses icons."
+
+test_plan:
+  current_focus:
+    - "POST /api/brand-images/seed — 200 with created list; kicks off background jobs; second call is idempotent"
+    - "GET  /api/brand-images (client + coach can list ready images; hidden filtered out unless include_hidden=true)"
+    - "GET  /api/brand-images/pick with various context params (role/gender/workout_type/goal/phase/day_type/context) — deterministic best-match + hero_default fallback"
+    - "GET  /api/brand-images/{id}/stream — Authorization header AND ?token= query both work"
+    - "POST /api/brand-images/{id}/regenerate — admin only; resets status=pending; new file replaces old on disk"
+    - "PATCH /api/brand-images/{id} — is_default/status/label; invalid status → 400"
+    - "DELETE /api/brand-images/{id} — soft-hide, file unlinked, subsequent stream 404"
+    - "Role gating: client hitting admin endpoints (seed, regenerate, patch, delete) → 403"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "§34 Phase 2 shipped — CrewFit is now a properly branded premium aviation product. 9 Nano-Banana-generated images seed the library at /app/backend/uploads/brand_images/, admin can regen/hide/set-default from /coach/brand-images. AIHeroImage picks the best-fit image based on {role, gender, workout_type, goal, phase, context, day_type} via /brand-images/pick. Client home hero now shows a real cinematic aviation image (verified: pilot in hotel hallway). Workout screen has a 180px branded banner above the title. Coach overview has a new IMAGES nav button. All 9 seed images generated cleanly on first try (~25s for the batch). Also completed the equipment picker emoji sweep (18 items — dumbbell/barbell/bicycle/boat/bed/etc). No backend regressions expected — this is purely additive (new module + new collection). Please run backend tests on all 8 brand-images endpoints (auth gating, seed idempotency, pick with all context perms, stream with dual auth, patch/delete). Test credentials in /app/memory/test_credentials.md. Note: seed makes 9 real Nano Banana calls (~25s + LLM key cost). To avoid re-hitting the model in tests, mock or re-use existing entries where possible."
+

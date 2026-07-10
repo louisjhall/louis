@@ -10,6 +10,7 @@ import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { CrewFitWings } from "@/src/components/Logo";
 import { ClientProfileHeader } from "@/src/components/ClientProfileHeader";
+import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
@@ -118,9 +119,16 @@ export default function Home() {
         contentContainerStyle={{ paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
       >
-        <View style={styles.heroWrap}>
-          <Image source={HERO} style={StyleSheet.absoluteFill} contentFit="cover" />
-          <LinearGradient colors={["rgba(0,0,0,0.35)", "rgba(0,0,0,0.85)", "#000000"]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
+        <AIHeroImage
+          ctx={{
+            role: user?.profile?.job_title?.toLowerCase().includes("crew") ? "cabin_crew" : "pilot",
+            gender: user?.profile?.preferred_visual_gender || undefined,
+            workout_type: todaysWorkout?.focus?.toLowerCase() || undefined,
+            context: standbyToday?.is_standby ? "standby" : undefined,
+            day_type: todaysDay?.day_type || undefined,
+          }}
+          style={styles.heroWrap}
+        >
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
               <View style={styles.topBar}>
@@ -144,7 +152,7 @@ export default function Home() {
               ) : null}
             </View>
           </SafeAreaView>
-        </View>
+        </AIHeroImage>
 
         <View style={{ padding: theme.space.lg }}>
           {showBanner && (

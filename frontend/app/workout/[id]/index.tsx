@@ -10,6 +10,7 @@ import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/Exe
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 import { RealityModal } from "@/src/components/RealityModal";
 import { ModePickerModal } from "@/src/components/ModePickerModal";
+import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
 
 const PREFERRED_CHANNELS = [
@@ -111,6 +112,20 @@ export default function WorkoutDetail() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 160 }}>
+        <AIHeroImage
+          ctx={{
+            workout_type: (w.focus || "").toLowerCase().includes("run") ? "endurance"
+              : (w.focus || "").toLowerCase().includes("strength") ? "strength"
+              : "strength",
+            phase: w.event_phase || undefined,
+          }}
+          style={styles.workoutBanner}
+        >
+          <View style={styles.workoutBannerInner}>
+            <Text style={styles.workoutBannerEyebrow}>{String(w.focus || "SESSION").toUpperCase()}</Text>
+            <Text style={styles.workoutBannerTitle} numberOfLines={2}>{w.title}</Text>
+          </View>
+        </AIHeroImage>
         <Text style={styles.date}>{w.date}</Text>
         {(() => {
           const s = deriveStatus(w);
@@ -324,6 +339,10 @@ const styles = StyleSheet.create({
   metaChipRow: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.pill },
   metaChipT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", fontFamily: theme.font.textSemi },
   realityIconWrapW: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  workoutBanner: { height: 180, borderRadius: 14, marginBottom: 14, overflow: "hidden" },
+  workoutBannerInner: { flex: 1, justifyContent: "flex-end", padding: 14, gap: 4 },
+  workoutBannerEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "900", fontFamily: theme.font.textSemi },
+  workoutBannerTitle: { color: theme.color.text, fontSize: 22, letterSpacing: 0.4, fontWeight: "900", fontFamily: theme.font.display },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
   rLabel: { color: theme.color.brand, letterSpacing: 2, fontSize: 10, fontWeight: "800" },
   overrideBanner: { marginTop: theme.space.md, padding: theme.space.md, backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.amber },

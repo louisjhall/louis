@@ -76,6 +76,10 @@ export default function CoachOverview() {
             <Ionicons name="megaphone-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>SOCIAL</Text>
           </Pressable>
+          <Pressable testID="ov-goto-brand" onPress={() => router.push("/coach/brand-images" as any)} style={styles.headerBtn}>
+            <Ionicons name="images-outline" size={16} color={theme.color.brand} />
+            <Text style={styles.headerBtnText}>IMAGES</Text>
+          </Pressable>
           <NotificationBell testID="coach-notif-bell" />
         </View>
       </View>

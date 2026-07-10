@@ -6912,6 +6912,7 @@ import feature_notifications   # noqa: E402,F401  registers notification endpoin
 import feature_standby         # noqa: E402,F401  registers standby endpoints on `api`
 import feature_social_studio   # noqa: E402,F401  registers admin social-studio endpoints on `api`
 import feature_profile         # noqa: E402,F401  registers profile-photo + location endpoints on `api`
+import feature_brand_images    # noqa: E402,F401  registers CrewFit AI-image library endpoints on `api`
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

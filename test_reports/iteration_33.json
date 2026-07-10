@@ -1,0 +1,41 @@
+{
+  "summary": "CrewFit AI imagery library (feature_brand_images.py) fully backend-tested. 29/29 pytest assertions PASS across 8 endpoints. Verified: seed idempotency (2nd call returns count=0, created=[]), role gating on seed/regenerate/patch/delete (client → 403), 9 canonical library keys present in DB and on disk, list filter by category=hero, include_hidden default omits hidden entries, storage_path/_id excluded from responses, pick fallbacks (no-query → hero_default with match_score=0; role=pilot&gender=male → hero_pilot_male score>=6; workout_type=endurance&goal=marathon → workout_endurance_marathon score>=6; unmatched role=astronaut → hero_default fallback), streaming works via both Authorization header AND ?token= query (401 without either), client role CAN stream (public-ish), 404 on unknown image, PATCH invalid status→400 & approved→ready mapping & label/is_default persistence, PATCH 404 on missing, regenerate happy path (kicked-off → pending → generating → ready in ~8s using real Nano Banana call — ONE regen invoked as instructed), 409 while status=generating, regenerate 404 on missing, DELETE soft-hides + removes file + subsequent stream returns 404, DELETE 404 on missing. Regressions: /api/social/settings (coach) → 200 and /api/user/profile/photo/{user_id} → 200/404 (no 5xx). Artifact set restored to 9 PNGs on disk after DELETE test (used regenerate to rebuild event_countdown.png).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_brand_images.py",
+    "/app/test_reports/pytest/brand_images_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_brand_images.py:29-32 imports `EMERGENT_LLM_KEY, api, db, current_user, require_admin, new_id, now_iso, logger` from server; registered on `api` router at server.py:6915 via `import feature_brand_images`. Verified endpoints appear under /api prefix.",
+    "feature_brand_images.py:270 `list` excludes `_id` and `storage_path` via projection — good (no ObjectId leak, no absolute-path leak to clients).",
+    "feature_brand_images.py:274-305 `/pick` scoring correctly penalises mismatched-key entries with -1 so `role=astronaut` favours hero_default (empty ctx, score 0). Verified.",
+    "feature_brand_images.py:308-327 `/stream` handles both Bearer header AND ?token= query. Query path delegates to feature_profile._user_from_token — cross-feature dependency worth noting but working.",
+    "feature_brand_images.py:330-343 `/regenerate` correctly rejects `status == 'generating'` with 409 before kicking off the background task. Optional `prompt` override supported and applied.",
+    "feature_brand_images.py:346-360 PATCH maps status='approved' → 'ready' (documented as approved==ready in V1). Invalid values raise 400 before write. Good.",
+    "feature_brand_images.py:363-374 DELETE is soft: sets status='hidden', unlinks file, clears storage_path. Idempotent on re-DELETE would still succeed (200) but there's no ID cleanup. Acceptable for admin UX.",
+    "require_admin() (server.py:158-164) accepts BOTH admin and coach roles — matches spec ('coach/admin role should be allowed').",
+    "asyncio.create_task(_run_generate_job(...)) is fire-and-forget with no task tracking; on server restart mid-generation the entry stays 'generating' forever and future regenerates 409. Consider a startup-time reconciler that resets stale 'generating' rows older than N minutes. Minor / future-hardening, not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_brand_images.py (new — 29 pytest assertions covering all 8 endpoints + 2 regression checks)"
+  ],
+  "success_rate": {
+    "backend": "100% (29/29 passing)",
+    "frontend": "N/A (backend-only run)"
+  },
+  "seed_data_creation": "No new seed data. Library was pre-seeded (9 images). DELETE test soft-hid `event_countdown`; restored via /regenerate poll (real Nano Banana call, ~8s to ready). All 9 PNG artifacts intact on disk at /app/backend/uploads/brand_images/ post-run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_brand_images.py is idempotent: it soft-deletes event_countdown then callers should regenerate it (the test itself does NOT restore — a one-shot /tmp/restore_event_countdown.py was used this run and can be re-used). Two real Nano Banana calls are made per run (one for TestRegenerate.test_regenerate_kickoff_and_poll on standby_readiness + one for the manual restore). If cost matters, monkeypatch feature_brand_images._run_generate_job to write a 1x1 PNG synchronously (see comment in test file). Warnings about `Class-scoped fixture defined as instance method` are pytest 10 deprecations — harmless, not fixed here to keep code close to project style.",
+  "rca_of_issue": "N/A — no functional issues found."
+}

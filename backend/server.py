@@ -7831,6 +7831,10 @@ async def coach_habits_get(client_id: str, coach: dict = Depends(require_role("c
 
 @api.post("/coach/clients/{client_id}/habits")
 async def coach_habit_create(client_id: str, body: HabitCoachCreateBody, coach: dict = Depends(require_role("coach"))):
+    # Enforce max active habits (coach can still add if some are paused/archived)
+    active_count = await db.habits.count_documents({"user_id": client_id, "status": "active"})
+    if active_count >= MAX_ACTIVE_HABITS_DEFAULT:
+        raise HTTPException(400, f"client already has {MAX_ACTIVE_HABITS_DEFAULT} active habits — pause or archive one first")
     now = now_iso()
     doc = {
         "id": new_id(),

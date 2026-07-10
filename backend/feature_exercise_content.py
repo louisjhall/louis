@@ -19,7 +19,7 @@ Endpoints (all prefixed with /api):
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Header, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Any, Optional
@@ -37,6 +37,9 @@ from server import (
 
 IMG_ROOT = Path(os.environ.get("EXERCISE_IMAGE_ROOT", "/app/backend/uploads/exercise_images"))
 IMG_ROOT.mkdir(parents=True, exist_ok=True)
+
+import storage as _storage
+_STORAGE_NS = "exercise_images"
 
 MODEL_ID = "gemini-3.1-flash-image-preview"
 
@@ -175,11 +178,14 @@ def _build_ex_prompt(ex: dict, slot: str, extra: Optional[str], female: Optional
 async def _run_image_job(image_id: str, prompt: str) -> None:
     try:
         raw = await _generate_ex_image(prompt, session_id=f"ex-{image_id}")
+        key = f"{_STORAGE_NS}/{image_id}.png"
+        await _storage.storage.write_bytes(key, raw, content_type="image/png")
         path = IMG_ROOT / f"{image_id}.png"
-        path.write_bytes(raw)
         await db.exercise_content_images.update_one(
             {"id": image_id},
-            {"$set": {"status": "ready", "storage_path": str(path),
+            {"$set": {"status": "ready",
+                      "storage_key": key,
+                      "storage_path": str(path) if _storage.storage.name == "disk" else None,
                       "size_bytes": len(raw), "mime": "image/png",
                       "updated_at": now_iso()}},
         )
@@ -402,9 +408,19 @@ async def ex_img_stream(img_id: str,
         await _user_from_token(token)
     doc = await db.exercise_content_images.find_one({"id": img_id})
     if not doc: raise HTTPException(404, "image not found")
-    p = doc.get("storage_path")
-    if not p or not Path(p).exists(): raise HTTPException(404, "file missing")
-    return FileResponse(p, media_type=doc.get("mime") or "image/png")
+    mime = doc.get("mime") or "image/png"
+    key = doc.get("storage_key") or f"{_STORAGE_NS}/{img_id}.png"
+    if _storage.is_cloud():
+        data = await _storage.storage.read_bytes(key)
+        if data is None:
+            p = doc.get("storage_path")
+            if p and Path(p).exists():
+                return FileResponse(p, media_type=mime)
+            raise HTTPException(404, "file missing")
+        return Response(content=data, media_type=mime)
+    p = doc.get("storage_path") or str(IMG_ROOT / f"{img_id}.png")
+    if not Path(p).exists(): raise HTTPException(404, "file missing")
+    return FileResponse(p, media_type=mime)
 
 
 @api.get("/exercise-content/images/{img_id}")

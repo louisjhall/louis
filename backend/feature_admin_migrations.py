@@ -206,3 +206,113 @@ def _as_list(v) -> list[str]:
     if isinstance(v, str) and v.strip():
         return [p.strip() for p in v.replace(";", ",").split(",") if p.strip()]
     return []
+
+
+
+# ---------------------------------------------------------------------------
+# Check-in collection unification (checkins  ← check_ins)
+# ---------------------------------------------------------------------------
+#
+# History: the codebase grew two collections that both hold weekly check-in
+# submissions:
+#   * `checkins`    — used by legacy endpoints (server.py:2968, 4824, 5126,
+#                      5291, 4871).
+#   * `check_ins`   — used by the newer weekly reminder + coach dashboard
+#                      code (server.py:6339, 6506, 6575, 6607, 6659, 6704,
+#                      6730, 6744, 6833, 6906) plus feature_coach_v1,
+#                      feature_habits, feature_notifications.
+#
+# Chosen canonical: **`checkins`** (matches `workouts`, `habits`, `messages`).
+# Strategy:
+#   1. Snapshot both counts.
+#   2. Copy every doc from `check_ins` → `checkins`, keyed on `id` when
+#      present, else `(user_id, week_start)`.  Skip duplicates.
+#   3. Rename `check_ins` → `check_ins_legacy_backup_YYYYMMDD` so the source
+#      stays around for 30 days in case rollback is needed.
+#   4. Report counts.
+#
+# After migration: code will still write to both because the source files
+# reference `db.check_ins.*` and `db.checkins.*`.  A follow-up refactor will
+# unify code paths.  Until then, a **read-through view** trick makes the
+# migration safe:  we leave the app writing to both, but the migration only
+# needs to guarantee no data is lost when the legacy collection is renamed.
+
+@api.get("/admin/migrations/checkins/status")
+async def checkins_status(admin: dict = Depends(require_admin())):
+    count_new = await db.checkins.estimated_document_count()
+    count_legacy = await db.check_ins.estimated_document_count()
+    backup_names = [n for n in await db.list_collection_names()
+                    if n.startswith("check_ins_legacy_backup_")]
+    return {
+        "canonical": "checkins",
+        "checkins_count": count_new,
+        "check_ins_count": count_legacy,
+        "legacy_backups": backup_names,
+    }
+
+
+@api.post("/admin/migrations/checkins/unify")
+async def checkins_unify(dry_run: bool = Query(True), rename_legacy: bool = Query(False),
+                          admin: dict = Depends(require_admin())):
+    """Merge `check_ins` documents into `checkins`.
+
+    Args:
+        dry_run: when True (default), only report what would happen.
+        rename_legacy: when True (only in real run), rename `check_ins` to
+            `check_ins_legacy_backup_<yyyymmdd>` afterwards. Off by default so
+            you can verify the merge before losing the source.
+    """
+    inserted = 0
+    updated = 0
+    skipped = 0
+    errors: list[dict] = []
+
+    async for src in db.check_ins.find({}, {"_id": 0}):
+        try:
+            match = None
+            if src.get("id"):
+                match = {"id": src["id"]}
+            elif src.get("user_id") and src.get("week_start"):
+                match = {"user_id": src["user_id"], "week_start": src["week_start"]}
+            if not match:
+                skipped += 1
+                continue
+            existing = await db.checkins.find_one(match, {"_id": 0, "id": 1})
+            if existing:
+                # Prefer the more-recent record.
+                new_ts = src.get("submitted_at") or src.get("created_at") or ""
+                old_ts = existing.get("submitted_at") or existing.get("created_at") or ""
+                if new_ts and new_ts > old_ts:
+                    if not dry_run:
+                        await db.checkins.update_one(match, {"$set": src})
+                    updated += 1
+                else:
+                    skipped += 1
+                continue
+            if not dry_run:
+                await db.checkins.insert_one(src)
+            inserted += 1
+        except Exception as e:
+            logger.exception("checkin unify failed")
+            errors.append({"id": src.get("id"), "error": str(e)[:200]})
+
+    renamed = False
+    if not dry_run and rename_legacy:
+        import datetime as _dt
+        stamp = _dt.datetime.utcnow().strftime("%Y%m%d")
+        target = f"check_ins_legacy_backup_{stamp}"
+        try:
+            await db.check_ins.rename(target)
+            renamed = True
+        except Exception as e:
+            errors.append({"stage": "rename", "error": str(e)[:200]})
+
+    return {
+        "dry_run": dry_run,
+        "canonical": "checkins",
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+        "renamed_legacy": renamed,
+        "errors": errors[:20],
+    }

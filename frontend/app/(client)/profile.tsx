@@ -569,6 +569,14 @@ export default function ProfileScreen() {
         <NotificationPreferencesCard />
 
         <WorkoutSettingsPanel />
+
+        <View style={{ height: 32 }} />
+        <Pressable testID="hq-legal" onPress={() => router.push("/legal" as any)} style={styles.legacyCta}>
+          <Text style={styles.legacyText}>LEGAL &amp; PRIVACY</Text>
+        </Pressable>
+        <Pressable testID="hq-delete-account" onPress={() => router.push("/legal/delete-account" as any)} style={[styles.legacyCta, { borderColor: theme.color.brand, marginTop: 8 }]}>
+          <Text style={[styles.legacyText, { color: theme.color.brand }]}>DELETE MY ACCOUNT</Text>
+        </Pressable>
       </ScrollView>
 
       {/* Edit sheet */}

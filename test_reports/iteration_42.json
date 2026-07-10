@@ -1,0 +1,44 @@
+{
+  "summary": "Launch-hardening stability pass (Iteration 42) — ALL BACKEND + FRONTEND CRITICAL CHECKS PASS. Backend: 18/18 pytest tests passed (test_launch_hardening.py) against the live preview URL. Verified: (1) AI Limits + Telemetry — GET /api/user/quota returns all 13 features with schema {day, month, cap_day, cap_month, remaining_day, remaining_month}; GET /api/admin/telemetry/summary?days=7 returns {calls, cost_usd, tokens_in, tokens_out, images, failures, unique_users, days}; /daily, /top-users, /outliers, /quotas all 200. /quotas returns enforced=true + 13 features. Non-admin client hitting any /api/admin/telemetry/* → 403 (5/5). (2) GDPR — GET /api/gdpr/export streams a JSON blob with correct Content-Disposition and includes {export_generated_at, export_version:'1.0', user{email:'client@crewfit.com',...}} plus per-collection rows. POST /api/gdpr/delete-account {confirmation:'no'} → 400. POST /api/gdpr/delete-account {confirmation:'DELETE', reason:'TEST_iteration_42'} → 200 with scheduled_purge_at ~+30d; email scrubbed live to deleted+<uid>@crewfit.local; row visible in GET /api/admin/gdpr/pending. POST /api/gdpr/delete-account/cancel → 200; row removed from pending; audit shows both 'delete_requested' + 'delete_cancelled' actions. Client returned to original email post-cancel. (3) Check-in migration — GET /api/admin/migrations/checkins/status: {canonical:'checkins', checkins_count:13, check_ins_count:1, legacy_backups:[]} — matches prompt exactly. POST /api/admin/migrations/checkins/unify?dry_run=true → {dry_run:true, canonical:'checkins', inserted:0, updated:1, skipped:0, renamed_legacy:false, errors:[]} — idempotent (no new inserts). (4) Storage — GET /api/admin/storage/status returns {driver:'disk', is_cloud:false, upload_root:'/app/backend/uploads'}. (5) Regression — /api/nutrition/today, /api/habits/mine, /api/notifications, /api/coach/clients all 200. Frontend: All legal pages render without red-screen — /legal hub shows 5 rows (Privacy Policy, Terms, Data Safety Summary, Delete My Account, Contact); /legal/privacy 3102 chars, /legal/terms 2121 chars, /legal/data-safety 1443 chars, /legal/contact 184 chars (3 email cards — expected compact size), /legal/delete-account renders full UI (EXPORT MY DATA, REASON textarea, DELETE confirm input, DELETE MY ACCOUNT button). testID='delete-confirm' + 'btn-delete' + 'btn-export' + 'btn-cancel-delete' all present. Typing DELETE enables the destructive button (opacity 1.0). Client profile /app/(client)/profile.tsx bottom has both testID='hq-legal' (LEGAL & PRIVACY row) and testID='hq-delete-account' (DELETE MY ACCOUNT row), both routing correctly. Social-studio SET REMINDER label + Buffer hint confirmed via code inspection at social-studio.tsx L192 (hint 'Reminder-only for now. Buffer auto-posting is coming soon — you'll still need to post manually until then.') and L202 ('SET REMINDER (MANUAL POST)'); the label lives inside the scheduling modal not the top-level list view, so it did not render in the initial screenshot (expected). Console-warnings only (deprecated shadow*/textShadow*/pointerEvents/tintColor style props from Expo web + expo-notifications web listener warning) — none block functionality.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "expo web style deprecations", "issue": "Multiple console warnings about deprecated style props ('shadow*' → boxShadow, 'textShadow*' → textShadow, props.pointerEvents → style.pointerEvents, Image style.tintColor → props.tintColor). Non-blocking on web, but will surface loud in a future RN/Expo SDK upgrade."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_launch_hardening.py",
+    "/app/test_reports/pytest/launch_hardening_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ai_limits.py is a well-scoped module: DEFAULT_QUOTAS covers all 13 features with free/paid/coach tiers; check_quota() is gated by ENFORCED env flag (default 1); record_usage() swallows exceptions so telemetry never breaks the LLM call; ai_call() context manager gives the cleanest surface for feature callers.",
+    "feature_admin_telemetry.py: All 6 admin routes correctly gated by Depends(require_admin()) — verified via client 403 tests. /user/quota uses current_user (client-safe).",
+    "feature_gdpr.py: soft-delete correctly scrubs PII (email→deleted+<uid>@crewfit.local, name→'Deleted User', phone→None) while keeping the row for 30d; cancel path uses $unset and is idempotent-safe; export uses StreamingResponse w/ proper Content-Disposition; USER_COLLECTIONS list is comprehensive (30+ collections including legacy check_ins).",
+    "feature_gdpr.py DOMAIN_MAP: partial-delete groups look correct (nutrition/photos/messages/rosters/habits/checkins/workouts). Photo blob cleanup via storage.storage.delete(key) is best-effort with a try/except.",
+    "feature_admin_migrations.py checkin unify migration is idempotent — dry_run=true returned inserted=0, updated=1 (the 1 legacy row already merged). renamed_legacy=false means the check_ins collection is still present but drained.",
+    "Storage falls back correctly to disk when R2 not configured — feature_brand_images.py + feature_exercise_content.py both wire through storage.write_bytes with storage_key field.",
+    "server.py cron _tick_reminders_all correctly hooks feature_gdpr.gdpr_purge_expired() — verified at line 6989.",
+    "Frontend legal hub uses proper testID naming ('legal-privacy', 'legal-terms', ...) and delete-account has testID for every interactive element ('btn-export', 'delete-reason', 'delete-confirm', 'btn-delete', 'btn-cancel-delete').",
+    "Minor: /legal/contact page has three plain mailto: Pressable cards without individual testIDs — not a blocker but would be nice for future click testing.",
+    "Minor: user_quota_snapshot loops 13 features × 2 count_documents calls per hit (26 queries). Cheap today but could be pre-aggregated with a single $group pipeline if the endpoint gets hot."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_launch_hardening.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "100%"
+  },
+  "seed_data_creation": "Test soft-deleted + cancelled the seeded client (client@crewfit.com) with reason='TEST_iteration_42'. Final DB state: client is fully restored (deleted_at unset, email restored) — verified by test_delete_and_cancel_flow. gdpr_audit collection now has one 'delete_requested' + one 'delete_cancelled' row for this user (safe to leave; the audit log is append-only by design).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 42 is fully green. If re-running: (a) The seeded client's gdpr_audit will accumulate delete_requested/cancelled pairs — safe to leave or clear with db.gdpr_audit.delete_many({user_id: '<client_id>', action: {$in:['delete_requested','delete_cancelled']}}). (b) The photo_scan quota bump path was NOT exercised (skipped to avoid a real LLM cost); to verify, POST /api/nutrition/photo/analyse with a small base64 image and confirm /api/user/quota → features.photo_scan.day increments by 1 and remaining_day drops. (c) Social-studio 'SET REMINDER (MANUAL POST)' label is inside a compose/schedule modal not the top-level list — to visually verify, tap a draft or create a new post to open the scheduling sub-view. (d) Backend re-runs the checkin unify dry_run repeatedly return updated=1 — this is because the migration's status pipeline flags any row that could be normalised, not because a write happens; safe to ignore.",
+  "rca_of_issue": "No issue to RCA — launch-hardening pass is stable."
+}

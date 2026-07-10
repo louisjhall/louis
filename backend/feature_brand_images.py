@@ -18,7 +18,7 @@ Design decisions:
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Header, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response, RedirectResponse
 from pydantic import BaseModel
 from pathlib import Path
 from typing import Any, Optional
@@ -34,6 +34,11 @@ from server import (
 
 BRAND_ROOT = Path(os.environ.get("BRAND_IMAGE_ROOT", "/app/backend/uploads/brand_images"))
 BRAND_ROOT.mkdir(parents=True, exist_ok=True)
+
+# Storage abstraction — writes to R2 when configured, else local disk (same
+# path). All new writes go through this so switching to cloud is env-only.
+import storage as _storage
+_STORAGE_NS = "brand_images"
 
 
 # ---- Prompt template + library seed ---------------------------------------
@@ -204,12 +209,15 @@ async def _run_generate_job(image_id: str) -> None:
         await db.crewfit_images.update_one({"id": image_id},
             {"$set": {"status": "generating", "updated_at": now_iso()}})
         raw = await _generate_image_bytes(doc["prompt"], session_id=f"brand-{image_id}")
+        key = f"{_STORAGE_NS}/{image_id}.png"
+        await _storage.storage.write_bytes(key, raw, content_type="image/png")
+        # Keep legacy storage_path for backward compatibility with older docs.
         path = BRAND_ROOT / f"{image_id}.png"
-        path.write_bytes(raw)
         await db.crewfit_images.update_one({"id": image_id},
             {"$set": {
                 "status": "ready",
-                "storage_path": str(path),
+                "storage_key": key,
+                "storage_path": str(path) if _storage.storage.name == "disk" else None,
                 "size_bytes": len(raw),
                 "mime": "image/png",
                 "error": None,
@@ -479,10 +487,22 @@ async def brand_image_stream(
     doc = await db.crewfit_images.find_one({"id": image_id})
     if not doc:
         raise HTTPException(404, "image not found")
-    path = doc.get("storage_path")
-    if not path or not Path(path).exists():
+    mime = doc.get("mime") or "image/png"
+    key = doc.get("storage_key") or f"{_STORAGE_NS}/{image_id}.png"
+    # Cloud: read bytes & return; Disk: FileResponse for zero-copy.
+    if _storage.is_cloud():
+        data = await _storage.storage.read_bytes(key)
+        if data is None:
+            # Legacy fallback: try local file if it still exists.
+            path = doc.get("storage_path")
+            if path and Path(path).exists():
+                return FileResponse(path, media_type=mime)
+            raise HTTPException(404, "image file missing")
+        return Response(content=data, media_type=mime)
+    path = doc.get("storage_path") or str(BRAND_ROOT / f"{image_id}.png")
+    if not Path(path).exists():
         raise HTTPException(404, "image file missing")
-    return FileResponse(path, media_type=doc.get("mime") or "image/png")
+    return FileResponse(path, media_type=mime)
 
 
 @api.post("/brand-images/{image_id}/regenerate")
@@ -520,7 +540,12 @@ async def brand_image_patch(image_id: str, body: PatchBody,
             if p:
                 try: Path(p).unlink(missing_ok=True)
                 except Exception: pass
+            k = doc.get("storage_key")
+            if k:
+                try: await _storage.storage.delete(k)
+                except Exception: pass
             updates["storage_path"] = None
+            updates["storage_key"] = None
     if body.label is not None: updates["label"] = body.label
     await db.crewfit_images.update_one({"id": image_id}, {"$set": updates})
     return {"ok": True}
@@ -535,6 +560,10 @@ async def brand_image_delete(image_id: str, admin: dict = Depends(require_admin(
     if path:
         try: Path(path).unlink(missing_ok=True)
         except Exception: pass
+    k = doc.get("storage_key")
+    if k:
+        try: await _storage.storage.delete(k)
+        except Exception: pass
     await db.crewfit_images.update_one({"id": image_id},
-        {"$set": {"status": "hidden", "storage_path": None, "updated_at": now_iso()}})
+        {"$set": {"status": "hidden", "storage_path": None, "storage_key": None, "updated_at": now_iso()}})
     return {"ok": True}

@@ -727,6 +727,28 @@ async def call_claude(system: str, prompt: str, max_out: int = 8000) -> str:
     r = await chat.send_message(UserMessage(text=prompt))
     return r if isinstance(r, str) else str(r)
 
+
+async def call_claude_tracked(user: dict, feature: str, system: str, prompt: str,
+                               max_out: int = 8000, enforce: bool = True) -> str:
+    """Rate-limited + telemetered variant of call_claude. Prefer this in new
+    code — old sites can migrate incrementally."""
+    import ai_limits
+    MODEL = "claude-sonnet-4-5-20250929"
+    async with ai_limits.ai_call(db, user, feature, model=MODEL,
+                                  provider="anthropic", enforce=enforce) as call:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=new_id(),
+            system_message=system,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        r = await chat.send_message(UserMessage(text=prompt))
+        text = r if isinstance(r, str) else str(r)
+        call.set_tokens(
+            in_=ai_limits.estimate_tokens_from_text(system, prompt),
+            out_=ai_limits.estimate_tokens_from_text(text),
+        )
+        return text
+
 async def call_gemini_file(system: str, prompt: str, file_path: str, mime: str) -> str:
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
@@ -6931,6 +6953,8 @@ import feature_nutrition_photo   # noqa: E402,F401  Nutrition Centre — Phase 3
 import feature_nutrition_travel  # noqa: E402,F401  Nutrition Centre — Phase 4 (roster/airport/timing/guide)
 import feature_nutrition_insights  # noqa: E402,F401  Nutrition Centre — Phase 5 (adaptive insights + coach todos)
 import feature_admin_migrations  # noqa: E402,F401  Ops: storage backfill + exercise-library migration
+import feature_admin_telemetry   # noqa: E402,F401  Ops: AI usage + cost telemetry admin dashboard
+import feature_gdpr              # noqa: E402,F401  GDPR: soft-delete, data export, purge cron
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.
@@ -6960,6 +6984,11 @@ async def _tick_reminders_all() -> None:
         await feature_social_studio._tick_daily_social()
     except Exception:
         logger.exception("daily social tick failed")
+    # GDPR purge: cheap (bounded to 100 users per run) and idempotent.
+    try:
+        await feature_gdpr.gdpr_purge_expired()
+    except Exception:
+        logger.exception("gdpr purge tick failed")
 
 _tick_reminders = _tick_reminders_all
 

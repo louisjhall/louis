@@ -189,6 +189,7 @@ export default function SocialStudio() {
           </View>
 
           <Text style={styles.sect}>SCHEDULE</Text>
+          <Text style={styles.hint}>Reminder-only for now. Buffer auto-posting is coming soon — you&apos;ll still need to post manually until then.</Text>
           <TextInput
             testID="sched-input"
             value={schedDate}
@@ -198,7 +199,7 @@ export default function SocialStudio() {
             style={styles.input}
           />
           <Pressable testID="btn-schedule" onPress={() => schedule(selected.id)} disabled={!!busy || selected.status !== "Approved"} style={[styles.actBtn, { marginTop: 8, opacity: selected.status !== "Approved" ? 0.4 : 1 }]}>
-            <Text style={styles.actT}>SCHEDULE (MANUAL)</Text>
+            <Text style={styles.actT}>SET REMINDER (MANUAL POST)</Text>
           </Pressable>
           {selected.status !== "Approved" ? <Text style={styles.hint}>Approve first, then schedule.</Text> : null}
         </ScrollView>

@@ -233,6 +233,10 @@ def _normalise(payload: dict, mode: str) -> dict:
 
 @api.post("/nutrition/photo/analyse")
 async def photo_analyse(body: AnalyseIn, user: dict = Depends(current_user)):
+    # Rate limit + telemetry gate. Raises HTTP 429 if the user is over cap.
+    import ai_limits
+    await ai_limits.check_quota(db, user, "photo_scan")
+
     data, mime, ext = _decode_image(body.image_base64, body.mime or "image/jpeg")
 
     # Resolve goal from user's active target if not supplied.
@@ -272,8 +276,27 @@ async def photo_analyse(body: AnalyseIn, user: dict = Depends(current_user)):
     try:
         raw = await _call_vision(image_b64, mime, system, user_prompt)
         est = _normalise(raw, body.mode)
+        # Log a successful photo scan for telemetry + quota accounting.
+        try:
+            await ai_limits.record_usage(
+                db, user_id=user["id"], feature="photo_scan",
+                model=CLAUDE_VISION_MODEL, provider="anthropic",
+                tokens_in=ai_limits.estimate_tokens_from_text(system, user_prompt),
+                tokens_out=ai_limits.estimate_tokens_from_text(json.dumps(raw)),
+                images=1, success=True,
+            )
+        except Exception:
+            pass
     except HTTPException:
         # Best-effort fallback so the client still sees something meaningful.
+        try:
+            await ai_limits.record_usage(
+                db, user_id=user["id"], feature="photo_scan",
+                model=CLAUDE_VISION_MODEL, provider="anthropic",
+                images=1, success=False, error="vision_http_exception",
+            )
+        except Exception:
+            pass
         est = {
             "items": [], "calories": 0, "protein_g": 0, "carbs_g": 0, "fats_g": 0,
             "confidence": "low", "atlas_tip": "Atlas couldn't estimate this meal — please log it manually.",
@@ -281,6 +304,14 @@ async def photo_analyse(body: AnalyseIn, user: dict = Depends(current_user)):
         }
     except Exception:
         logger.exception("vision unexpected error")
+        try:
+            await ai_limits.record_usage(
+                db, user_id=user["id"], feature="photo_scan",
+                model=CLAUDE_VISION_MODEL, provider="anthropic",
+                images=1, success=False, error="vision_error",
+            )
+        except Exception:
+            pass
         est = {
             "items": [], "calories": 0, "protein_g": 0, "carbs_g": 0, "fats_g": 0,
             "confidence": "low", "atlas_tip": "Atlas couldn't estimate this meal — please log it manually.",

@@ -102,15 +102,34 @@ def _parse_json(text: str) -> dict:
         raise HTTPException(502, "Atlas returned invalid JSON")
 
 
-async def _call_atlas(prompt: str, session_seed: str) -> dict:
+async def _call_atlas(prompt: str, session_seed: str, user: dict | None = None,
+                       feature: str = "travel_guidance", enforce: bool = True) -> dict:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+    # Rate limit + telemetry gate. Callers that pre-check the quota can pass
+    # enforce=False to avoid a double check_quota round-trip.
+    import ai_limits
+    if user is not None and enforce:
+        await ai_limits.check_quota(db, user, feature)
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
         session_id=f"travel-{session_seed}-{new_id()}",
         system_message=_system(),
     ).with_model("anthropic", TRAVEL_MODEL)
     resp = await chat.send_message(UserMessage(text=prompt))
-    return _parse_json(resp or "")
+    text = resp or ""
+    # Non-blocking usage log so admin dashboard sees this feature.
+    if user is not None:
+        try:
+            await ai_limits.record_usage(
+                db, user_id=user["id"], feature=feature,
+                model=TRAVEL_MODEL, provider="anthropic",
+                tokens_in=ai_limits.estimate_tokens_from_text(_system(), prompt),
+                tokens_out=ai_limits.estimate_tokens_from_text(text),
+                success=True,
+            )
+        except Exception:
+            pass
+    return _parse_json(text)
 
 
 def _sanitise(text: str) -> str:
@@ -217,7 +236,7 @@ Return STRICT JSON only:
 Headline ≤ 12 words. Each list item ≤ 15 words. No markdown.
 """.strip()
 
-    raw = await _call_atlas(prompt, "decision")
+    raw = await _call_atlas(prompt, "decision", user)
     decision = _clean_dict({
         "headline": raw.get("headline", ""),
         "reason": raw.get("reason", ""),
@@ -275,7 +294,7 @@ Return STRICT JSON only:
 Each list item ≤ 18 words. Give 2-4 items per list. No markdown.
 """.strip()
 
-    raw = await _call_atlas(prompt, "airport")
+    raw = await _call_atlas(prompt, "airport", user)
     plan = _clean_dict({
         "headline": raw.get("headline", ""),
         "best_moves": raw.get("best_moves", [])[:5],
@@ -333,7 +352,7 @@ Return STRICT JSON only:
 Keep entries ≤ 20 words. 2-4 meal_plan entries. No markdown.
 """.strip()
 
-    raw = await _call_atlas(prompt, "timing")
+    raw = await _call_atlas(prompt, "timing", user)
     mp = raw.get("meal_plan") or []
     if not isinstance(mp, list): mp = []
     plan = _clean_dict({
@@ -382,7 +401,7 @@ Return STRICT JSON only:
 5-7 steps. Each ≤ 18 words. No markdown.
 """.strip()
 
-    raw = await _call_atlas(prompt, f"guide_{body.topic}")
+    raw = await _call_atlas(prompt, f"guide_{body.topic}", user)
     guide = _clean_dict({
         "topic": body.topic,
         "title": raw.get("title") or topic_label,

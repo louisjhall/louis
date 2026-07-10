@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Any, Optional
 from pathlib import Path
+import asyncio
 import datetime as _dt
 import json
 import os
@@ -817,39 +818,399 @@ async def social_asset_stream(
     return FileResponse(path, media_type=doc.get("mime") or "application/octet-stream")
 
 
-# ---- Subtitle stub (real whisper-1 integration ships next) ----------------
+# ---- Whisper-1 subtitle pipeline ------------------------------------------
+
+BURN_ROOT = MEDIA_ROOT   # burned files live alongside originals
+
+
+def _fmt_ts(seconds: float, vtt: bool = False) -> str:
+    if seconds is None or seconds < 0: seconds = 0.0
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int(round((seconds - int(seconds)) * 1000))
+    if ms >= 1000: ms, s = 0, s + 1
+    sep = "." if vtt else ","
+    return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
+
+
+def _segments_to_srt(segments: list[dict]) -> str:
+    lines = []
+    for i, seg in enumerate(segments, start=1):
+        lines.append(str(i))
+        lines.append(f"{_fmt_ts(seg.get('start', 0.0))} --> {_fmt_ts(seg.get('end', 0.0))}")
+        lines.append((seg.get("text") or "").strip())
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _segments_to_vtt(segments: list[dict]) -> str:
+    lines = ["WEBVTT", ""]
+    for seg in segments:
+        lines.append(f"{_fmt_ts(seg.get('start', 0.0), vtt=True)} --> {_fmt_ts(seg.get('end', 0.0), vtt=True)}")
+        lines.append((seg.get("text") or "").strip())
+        lines.append("")
+    return "\n".join(lines)
+
+
+async def _run_cmd(*args: str, timeout: int = 300) -> tuple[int, bytes, bytes]:
+    """Run a subprocess without blocking the event loop."""
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(504, f"ffmpeg timed out after {timeout}s")
+    return proc.returncode or 0, out, err
+
+
+async def _extract_audio_mp3(video_path: Path, out_path: Path) -> None:
+    """Extract compressed mono 64k mp3 to stay well under the 25MB Whisper cap."""
+    code, _out, err = await _run_cmd(
+        "ffmpeg", "-y", "-i", str(video_path),
+        "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k",
+        str(out_path),
+        timeout=180,
+    )
+    if code != 0:
+        raise HTTPException(500, f"audio extraction failed: {err.decode(errors='ignore')[-300:]}")
+
+
+async def _burn_subtitles(video_path: Path, srt_path: Path, out_path: Path,
+                          style: Optional[dict] = None) -> None:
+    """Burn hard-subs onto the video using ffmpeg subtitles filter.
+
+    Uses libx264/aac for broad Buffer/TikTok/LinkedIn compatibility.
+    """
+    # Escape SRT path for ffmpeg subtitles filter (colon + backslash sensitive)
+    esc = str(srt_path).replace("\\", "/").replace(":", "\\:").replace("'", r"\'")
+    force_style = None
+    if style:
+        force_style = (
+            f"Fontsize={int(style.get('font_size', 22))},"
+            f"PrimaryColour=&H{style.get('primary_hex', 'FFFFFF')}&,"
+            f"OutlineColour=&H{style.get('outline_hex', '000000')}&,"
+            f"BorderStyle=1,Outline={int(style.get('outline', 2))},"
+            f"Shadow=0,Alignment=2,MarginV={int(style.get('margin_v', 60))},"
+            f"Bold={int(style.get('bold', 1))}"
+        )
+    vf = f"subtitles='{esc}'"
+    if force_style:
+        vf += f":force_style='{force_style}'"
+    code, _out, err = await _run_cmd(
+        "ffmpeg", "-y", "-i", str(video_path),
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(out_path),
+        timeout=900,
+    )
+    if code != 0:
+        raise HTTPException(500, f"subtitle burn-in failed: {err.decode(errors='ignore')[-300:]}")
+
+
+# Emergent LLM key (loaded from server module)
+try:
+    from server import EMERGENT_LLM_KEY as _EMERGENT_KEY
+except Exception:
+    _EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+
+
+async def _whisper_transcribe(audio_path: Path) -> dict:
+    """Call whisper-1 via emergentintegrations and return {language, segments[], text}."""
+    from emergentintegrations.llm.openai import OpenAISpeechToText
+    stt = OpenAISpeechToText(api_key=_EMERGENT_KEY)
+    # LiteLLM expects a file-like object, NOT a path string.
+    with open(audio_path, "rb") as fh:
+        resp = await stt.transcribe(
+            file=fh,
+            model="whisper-1",
+            response_format="verbose_json",
+            timestamp_granularities=["segment"],
+        )
+    # LiteLLM/Whisper returns either a dict or an object with attrs
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict): return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    raw_segs = _get(resp, "segments", []) or []
+    segments = []
+    for i, s in enumerate(raw_segs):
+        segments.append({
+            "index": i,
+            "start": float(_get(s, "start", 0.0) or 0.0),
+            "end":   float(_get(s, "end", 0.0) or 0.0),
+            "text":  (_get(s, "text", "") or "").strip(),
+        })
+    return {
+        "language": _get(resp, "language", "en") or "en",
+        "duration": float(_get(resp, "duration", 0.0) or 0.0),
+        "text":     _get(resp, "text", "") or "",
+        "segments": segments,
+    }
+
+
+DEFAULT_SUB_STYLE = {
+    "primary_hex": "FFFFFF",     # ffmpeg ASS uses BBGGRR
+    "outline_hex": "000000",
+    "font_size": 22,
+    "outline": 2,
+    "margin_v": 90,
+    "bold": 1,
+}
+
+
+async def _run_subtitle_job(subtitle_id: str) -> None:
+    """Background worker: extract audio → whisper → write srt/vtt → done."""
+    doc = await db.social_subtitles.find_one({"id": subtitle_id})
+    if not doc:
+        return
+    asset = await db.social_media_assets.find_one({"id": doc["asset_id"]})
+    if not asset or not asset.get("file_path"):
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "failed", "error": "asset missing", "updated_at": now_iso()}})
+        return
+    video_path = Path(asset["file_path"])
+    if not video_path.exists():
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "failed", "error": "video file missing", "updated_at": now_iso()}})
+        return
+
+    audio_path = video_path.with_suffix(".mp3")
+    try:
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "generating", "updated_at": now_iso()}})
+        await _extract_audio_mp3(video_path, audio_path)
+        result = await _whisper_transcribe(audio_path)
+        srt = _segments_to_srt(result["segments"])
+        vtt = _segments_to_vtt(result["segments"])
+        srt_path = video_path.with_suffix(".srt")
+        vtt_path = video_path.with_suffix(".vtt")
+        srt_path.write_text(srt, encoding="utf-8")
+        vtt_path.write_text(vtt, encoding="utf-8")
+        await db.social_subtitles.update_one(
+            {"id": subtitle_id},
+            {"$set": {
+                "status": "ready",
+                "language": result["language"],
+                "duration": result["duration"],
+                "text": result["text"],
+                "segments": result["segments"],
+                "srt": srt,
+                "vtt": vtt,
+                "srt_path": str(srt_path),
+                "vtt_path": str(vtt_path),
+                "updated_at": now_iso(),
+            }},
+        )
+    except HTTPException as he:
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "failed", "error": he.detail, "updated_at": now_iso()}})
+    except Exception as e:
+        logger.exception("subtitle job failed")
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "failed", "error": str(e)[:400], "updated_at": now_iso()}})
+    finally:
+        try: audio_path.unlink(missing_ok=True)
+        except Exception: pass
+
+
+class SubtitleGenerateBody(BaseModel):
+    language: Optional[str] = None       # ISO-639-1 hint; whisper autodetects if None
+    prompt: Optional[str] = None         # domain glossary hint (aviation, crew, roster…)
+
 
 @api.post("/social/assets/{asset_id}/subtitles/generate")
-async def social_subtitle_generate_stub(asset_id: str, admin: dict = Depends(require_admin())):
-    """Placeholder subtitle generation. Real whisper-1 pipeline lands in the next release."""
+async def social_subtitle_generate(asset_id: str,
+                                   body: SubtitleGenerateBody = SubtitleGenerateBody(),
+                                   admin: dict = Depends(require_admin())):
+    """Kick off a real Whisper-1 transcription job (background)."""
     asset = await db.social_media_assets.find_one({"id": asset_id}, {"_id": 0})
     if not asset:
         raise HTTPException(404, "asset not found")
+    # Reuse a still-pending job if it exists
+    prior = await db.social_subtitles.find_one({"asset_id": asset_id, "status": {"$in": ["pending", "generating"]}})
+    if prior:
+        prior.pop("_id", None)
+        return {"subtitle": prior, "note": "job already in progress"}
+
     sub_id = new_id()
     now = now_iso()
     doc = {
         "id": sub_id,
         "asset_id": asset_id,
         "post_id": asset.get("post_id"),
-        "status": "pending",             # pending | generating | ready | failed
-        "provider": "whisper-1-stub",
-        "srt": None,
-        "vtt": None,
-        "segments": [],
-        "language": "en",
+        "status": "pending",
+        "provider": "whisper-1",
+        "language": body.language or "en",
+        "prompt": body.prompt,
+        "srt": None, "vtt": None, "segments": [], "text": None,
+        "burned_video_path": None,
+        "burned_at": None,
         "created_by": admin["id"],
         "created_at": now,
         "updated_at": now,
     }
     await db.social_subtitles.insert_one(doc)
-    await db.social_media_assets.update_one(
-        {"id": asset_id}, {"$set": {"subtitle_id": sub_id, "updated_at": now}},
-    )
+    await db.social_media_assets.update_one({"id": asset_id},
+        {"$set": {"subtitle_id": sub_id, "updated_at": now}})
+    # Fire and forget
+    asyncio.create_task(_run_subtitle_job(sub_id))
     doc.pop("_id", None)
-    return {"subtitle": doc, "note": "Subtitle generation is stubbed. Real Whisper integration ships next."}
+    return {"subtitle": doc, "note": "Whisper-1 job queued. Poll GET /social/subtitles/{id} for status."}
 
 
 @api.get("/social/assets/{asset_id}/subtitles")
-async def social_subtitle_get(asset_id: str, admin: dict = Depends(require_admin())):
+async def social_subtitle_get_by_asset(asset_id: str, admin: dict = Depends(require_admin())):
+    """Latest subtitle doc for an asset (used by the subtitle editor screen)."""
     doc = await db.social_subtitles.find_one({"asset_id": asset_id}, {"_id": 0}, sort=[("created_at", -1)])
     return {"subtitle": doc}
+
+
+@api.get("/social/subtitles/{subtitle_id}")
+async def social_subtitle_get_by_id(subtitle_id: str, admin: dict = Depends(require_admin())):
+    doc = await db.social_subtitles.find_one({"id": subtitle_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "subtitle not found")
+    return {"subtitle": doc}
+
+
+class SegmentBody(BaseModel):
+    index: int
+    start: float
+    end: float
+    text: str
+
+
+class SubtitlePatchBody(BaseModel):
+    segments: list[SegmentBody]
+
+
+@api.patch("/social/subtitles/{subtitle_id}")
+async def social_subtitle_patch(subtitle_id: str, body: SubtitlePatchBody,
+                                admin: dict = Depends(require_admin())):
+    """Save edited segment text/timing. Rebuilds SRT + VTT."""
+    doc = await db.social_subtitles.find_one({"id": subtitle_id})
+    if not doc:
+        raise HTTPException(404, "subtitle not found")
+    if doc.get("status") not in ("ready", "edited"):
+        raise HTTPException(400, "subtitle not ready for editing")
+    segs = [s.model_dump() for s in body.segments]
+    srt = _segments_to_srt(segs)
+    vtt = _segments_to_vtt(segs)
+    # Write side files
+    if doc.get("srt_path"):
+        try: Path(doc["srt_path"]).write_text(srt, encoding="utf-8")
+        except Exception: pass
+    if doc.get("vtt_path"):
+        try: Path(doc["vtt_path"]).write_text(vtt, encoding="utf-8")
+        except Exception: pass
+    await db.social_subtitles.update_one({"id": subtitle_id},
+        {"$set": {"segments": segs, "srt": srt, "vtt": vtt,
+                  "status": "edited", "updated_at": now_iso(),
+                  "burned_video_path": None, "burned_at": None}})    # invalidate any old burn
+    saved = await db.social_subtitles.find_one({"id": subtitle_id}, {"_id": 0})
+    return {"subtitle": saved}
+
+
+@api.get("/social/subtitles/{subtitle_id}/download")
+async def social_subtitle_download(subtitle_id: str, fmt: str = "srt",
+                                   token: Optional[str] = None,
+                                   authorization: Optional[str] = Header(None)):
+    """Download the SRT or VTT file. Accepts header OR query token auth."""
+    if authorization and authorization.startswith("Bearer "):
+        u = await current_user(authorization=authorization)
+        if u.get("role") not in ("admin", "coach"):
+            raise HTTPException(403, "admin role required")
+    else:
+        await _admin_from_query_token(token)
+    doc = await db.social_subtitles.find_one({"id": subtitle_id})
+    if not doc:
+        raise HTTPException(404, "subtitle not found")
+    if fmt not in ("srt", "vtt"):
+        raise HTTPException(400, "fmt must be srt or vtt")
+    content = (doc.get(fmt) or "").encode("utf-8")
+    if not content:
+        raise HTTPException(404, "no captions yet")
+    from fastapi.responses import Response
+    return Response(
+        content=content,
+        media_type="application/x-subrip" if fmt == "srt" else "text/vtt",
+        headers={"Content-Disposition": f'attachment; filename="{subtitle_id}.{fmt}"'},
+    )
+
+
+class BurnBody(BaseModel):
+    style: Optional[dict] = None            # override DEFAULT_SUB_STYLE fields
+
+
+async def _run_burn_job(subtitle_id: str, style: Optional[dict]) -> None:
+    doc = await db.social_subtitles.find_one({"id": subtitle_id})
+    if not doc: return
+    asset = await db.social_media_assets.find_one({"id": doc["asset_id"]})
+    if not asset or not asset.get("file_path"): return
+    video_path = Path(asset["file_path"])
+    srt_path = Path(doc.get("srt_path") or (video_path.with_suffix(".srt")))
+    if not srt_path.exists():
+        # Regenerate SRT on the fly from the DB copy
+        try: srt_path.write_text(doc.get("srt") or "", encoding="utf-8")
+        except Exception: pass
+    burned_path = video_path.with_name(f"{video_path.stem}_subtitled.mp4")
+    try:
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "burning", "updated_at": now_iso()}})
+        merged_style = {**DEFAULT_SUB_STYLE, **(style or {})}
+        await _burn_subtitles(video_path, srt_path, burned_path, style=merged_style)
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {
+                "status": "ready",
+                "burned_video_path": str(burned_path),
+                "burned_at": now_iso(),
+                "burn_style": merged_style,
+                "updated_at": now_iso(),
+            }})
+    except HTTPException as he:
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "burn_failed", "error": he.detail, "updated_at": now_iso()}})
+    except Exception as e:
+        logger.exception("burn job failed")
+        await db.social_subtitles.update_one({"id": subtitle_id},
+            {"$set": {"status": "burn_failed", "error": str(e)[:400], "updated_at": now_iso()}})
+
+
+@api.post("/social/subtitles/{subtitle_id}/burn")
+async def social_subtitle_burn(subtitle_id: str, body: BurnBody = BurnBody(),
+                               admin: dict = Depends(require_admin())):
+    doc = await db.social_subtitles.find_one({"id": subtitle_id})
+    if not doc:
+        raise HTTPException(404, "subtitle not found")
+    if doc.get("status") not in ("ready", "edited", "burn_failed"):
+        raise HTTPException(400, f"cannot burn while status={doc.get('status')}")
+    if not doc.get("srt") and not doc.get("srt_path"):
+        raise HTTPException(400, "no captions to burn")
+    asyncio.create_task(_run_burn_job(subtitle_id, body.style))
+    return {"ok": True, "note": "burn started; poll subtitle status for burned_video_path"}
+
+
+@api.get("/social/subtitles/{subtitle_id}/burned/stream")
+async def social_subtitle_burned_stream(subtitle_id: str,
+                                        token: Optional[str] = None,
+                                        authorization: Optional[str] = Header(None)):
+    if authorization and authorization.startswith("Bearer "):
+        u = await current_user(authorization=authorization)
+        if u.get("role") not in ("admin", "coach"):
+            raise HTTPException(403, "admin role required")
+    else:
+        await _admin_from_query_token(token)
+    doc = await db.social_subtitles.find_one({"id": subtitle_id})
+    if not doc or not doc.get("burned_video_path"):
+        raise HTTPException(404, "burned video not ready")
+    path = Path(doc["burned_video_path"])
+    if not path.exists():
+        raise HTTPException(404, "burned video file missing")
+    return FileResponse(str(path), media_type="video/mp4")

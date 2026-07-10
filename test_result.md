@@ -661,3 +661,117 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Recording Studio + Teleprompter integration shipped. NEW backend endpoints in feature_social_studio.py: POST /social/posts/{post_id}/assets (multipart upload — writes to /app/backend/uploads/social_assets/<post_id>/<asset_id><ext>, enforces 120MB cap + mime allow-list, transitions post.status to 'Recorded' + sets media_id when post was upstream, persists to social_media_assets), GET /social/posts/{post_id}/assets (list, hides file_path), GET /social/assets/{asset_id} (detail), DELETE /social/assets/{asset_id} (soft-archive + delete file + unlink post.media_id), GET /social/assets/{asset_id}/stream (accepts Authorization header OR ?token= query — needed for <video> tag which can't set headers), POST /social/assets/{asset_id}/subtitles/generate (placeholder — real Whisper-1 lands next). NEW frontend routes: /social-studio/record/[postId] (full-screen vertical camera + auto-scroll teleprompter, contextual perms with Open Settings fallback, 3-2-1 countdown, 60s auto-stop, retake/save-draft/send-to-subtitles) and /social-studio/subtitles/[assetId] (stub editor with token-signed video preview). Social Studio detail view now has a crimson RECORD VIDEO CTA and lists recorded drafts. New api helpers uploadFile() (XHR-based, supports progress + RN {uri,name,type}) + buildStreamUrl() in /src/lib/api.ts. Camera recording only works fully on a device build (Expo Go + web preview can start recording via MediaRecorder for QA, but final testing needs Publish). Please test all 6 new endpoints (with coach@crewfit.com/Coach123!) — role gating (client → 403), a real multipart upload (any small video works), status transition, list, stream via query token, delete then verify file gone from disk + media_id unlinked, subtitle stub creation. Skip actual native camera in testing — the recorder falls back to MediaRecorder on the web preview."
+
+##====================================================================
+## §33 — Whisper-1 subtitle pipeline + SRT editor
+##====================================================================
+
+backend:
+  - task: "POST /api/social/assets/{asset_id}/subtitles/generate — real Whisper-1"
+    implemented: true
+    working: true
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "REPLACED the stub with a real background pipeline: ffmpeg extracts a 16kHz mono 64kbps mp3 (stays under 25MB whisper cap) → OpenAISpeechToText (emergentintegrations, model=whisper-1, response_format=verbose_json, timestamp_granularities=[segment]) → SRT + VTT rebuilt from segments and written to disk alongside the source + persisted in the social_subtitles doc. status machine: pending → generating → ready | failed. Manual smoke test: 5-second silent test.mp4 → status=ready in ~4s with 1 segment ('you' — accurate for near-silent audio) + language=english + duration=5.05."
+  - task: "PATCH /api/social/subtitles/{subtitle_id} — segment edit + SRT/VTT rebuild"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Accepts {segments:[{index,start,end,text}]}. Rebuilds SRT + VTT from edited segments, writes to side files, transitions status to 'edited', invalidates any prior burn_video_path so a re-burn is required."
+  - task: "GET /api/social/subtitles/{subtitle_id}/download — .srt / .vtt file download"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Accepts fmt=srt|vtt and BOTH Authorization header OR ?token= query. Returns file with correct Content-Disposition."
+  - task: "POST /api/social/subtitles/{subtitle_id}/burn — ffmpeg subtitle burn-in"
+    implemented: true
+    working: true
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Async ffmpeg render with libx264 veryfast/CRF22 + AAC 128k + faststart. Uses force_style ASS overrides (default: white bold text, black outline, MarginV=90). Writes <name>_subtitled.mp4 alongside the source and updates subtitle doc with burned_video_path + burned_at + burn_style. status machine adds: burning → ready | burn_failed. Manual smoke test: 5-second video → burned file 12.7KB written to disk in ~1s."
+  - task: "GET /api/social/subtitles/{subtitle_id}/burned/stream — auth-signed burned mp4"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "FileResponse of the burned mp4. Accepts Authorization header OR ?token= query (needed by <video> tag)."
+  - task: "GET /api/social/subtitles/{subtitle_id} — poll status"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Returns full subtitle doc (segments, srt, vtt, status, burned_video_path, error). Used by frontend polling loop."
+  - task: "GET /api/social/assets/{asset_id}/subtitles — latest by asset"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_social_studio.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Restored on the new pipeline; returns the newest subtitle doc for a given asset (or null)."
+
+frontend:
+  - task: "Subtitle Editor screen (segment editing + burn-in + downloads)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/social-studio/subtitles/[assetId].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Full rewrite. Preview toggles between original and burned MP4 when burn is ready. Per-segment TextInput lets the coach edit text (V1 keeps timing untouched). SAVE EDITS uses the PATCH endpoint. BURN CAPTIONS INTO VIDEO kicks off ffmpeg render with a status banner (QUEUED / TRANSCRIBING / READY / BURNING / FAILED). Auto-polls every 2s while a job is in-flight; stops when terminal. Download buttons open .SRT / .VTT / burned .MP4 via token-signed URLs. Dirty state disables burn until saved."
+
+test_plan:
+  current_focus:
+    - "POST /api/social/assets/{asset_id}/subtitles/generate — real Whisper-1 round-trip"
+    - "PATCH /api/social/subtitles/{subtitle_id} — segment edit + SRT rebuild"
+    - "POST /api/social/subtitles/{subtitle_id}/burn — burned file lands on disk"
+    - "GET /api/social/subtitles/{subtitle_id}/download?fmt=srt|vtt"
+    - "GET /api/social/subtitles/{subtitle_id}/burned/stream (header + query token)"
+    - "GET /api/social/subtitles/{subtitle_id} (poll status transitions)"
+    - "Role gating: client role → 403 on ALL new subtitle endpoints"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "§33 shipped — real Whisper-1 subtitle pipeline replaces the stub, plus ffmpeg burn-in and a fully functional SRT editor UI. Key implementation notes: audio extraction is a compact 16kHz mono 64kbps mp3 to stay under the 25MB Whisper limit; transcription is done as a background asyncio task (POST returns queued immediately, frontend polls GET /social/subtitles/{id}); OpenAISpeechToText from emergentintegrations was passed a file-like object (open(...,'rb')) — passing a path string breaks with 'Expected entry at file to be bytes...'; SRT/VTT are rebuilt from segments on save so edits stick to both formats; burn-in writes a new <name>_subtitled.mp4 alongside the source with libx264+AAC+faststart for Buffer/TikTok/LinkedIn compatibility; edits invalidate any prior burn (burned_video_path cleared) so the coach must re-burn after editing. ffmpeg (5.1.9) installed via apt. Manual round-trip verified: generate → 5-second silent test.mp4 → status=ready in ~4s → 1 segment → burn → 12.7KB burned file on disk. Please regression-test the previous asset endpoints (§32) too — they share the same file. Test credentials in /app/memory/test_credentials.md. Note that Whisper on a truly silent audio track may hallucinate short 'you' tokens — this is expected and the coach's edit workflow handles it."
+

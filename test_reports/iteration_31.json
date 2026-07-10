@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only test of §33 Social Studio Whisper-1 subtitle pipeline + ffmpeg burn-in — all 30 tests PASSED (100%) in ~12s. End-to-end covered: (1) POST /social/assets/{id}/subtitles/generate returns {subtitle, note} with status 'pending'/'generating' + backgrounds the job + sets asset.subtitle_id; second call while in-flight is idempotent (returns same doc). (2) Poll GET /social/subtitles/{id} → reaches 'ready' with non-empty segments, srt starts with '1\\n00:00:', vtt starts with 'WEBVTT', language set, error null. (3) Sidecar .srt + .vtt files verified on disk under /app/backend/uploads/social_assets/<post_id>/. (4) PATCH /social/subtitles/{id} with new segments flips status to 'edited', rebuilds srt+vtt (new text substrings observed in both strings AND in the on-disk .srt sidecar), and clears burned_video_path to null. (5) POST /social/subtitles/{id}/burn returns {ok:true}, polls to 'ready' with burned_video_path = <post_id>/<asset>_subtitled.mp4, file exists on disk with non-zero size. Both header + query-token auth work on burned/stream (video/mp4 content-type, real bytes streamed). (6) burned/stream returns 404 for a subtitle that has never been burned; burn straight-after-generate (no PATCH first) also succeeds. (7) Burn while status='pending'/'generating' → 400. (8) Download endpoint: fmt=srt → application/x-subrip + Content-Disposition attachment; fmt=vtt → text/vtt; both header and ?token= paths work; fmt=invalid → 400. (9) GET /social/assets/{id}/subtitles returns latest doc or null. (10) Client role gating: all 9 new subtitle endpoints (generate, GET-by-id, GET-by-asset, PATCH, burn, download header, download query-token, burned/stream header, burned/stream query-token) return 401/403. (11) §32 asset regression (detail, list, stream header-auth) all still 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_social_subtitles.py",
+    "/app/test_reports/pytest/social_subtitles_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_social_studio.py:1200-1216 — GET /social/subtitles/{id}/burned/stream uses FileResponse with no Accept-Ranges / 206 partial-content handling. HTML5 <video> scrubbing on the coach preview will re-download from byte 0 on every seek. Same follow-up we flagged for /social/assets/{id}/stream in iteration 30 — worth centralising a Range-aware StreamingResponse helper.",
+    "feature_social_studio.py:1121-1145 — /download builds the response body from doc['srt'] / doc['vtt'] in memory. Fine for a 5s clip; for hour-long meetings the DB doc gets fat and every download pays the round-trip. Consider streaming from the sidecar .srt/.vtt on disk when srt_path is set (already persisted by _run_subtitle_job).",
+    "feature_social_studio.py:1068-1072 — GET /social/assets/{id}/subtitles projects out _id (good) but returns None literal-in-JSON when no doc exists; response is {subtitle: null} — matches the contract in the task, just noting for the frontend that .subtitle can be null.",
+    "feature_social_studio.py:1094-1118 — PATCH is idempotent-safe (status flips ready→edited→edited on repeated calls) but does NOT validate segment ordering (index/start monotonicity). A coach could send out-of-order or overlapping segments and we'd happily persist them. Non-blocking, but the frontend should sort before submit.",
+    "feature_social_studio.py:983-1017 — _run_subtitle_job unlinks the extracted .mp3 in the finally block (good, prevents disk bloat) but leaves the original .mp4 + .srt + .vtt forever. Ship-blocking? No. But there is no retention/cleanup story yet — worth a follow-up task for @coach admin.",
+    "feature_social_studio.py:889-890 — the SRT path escape for ffmpeg's subtitles filter handles `:`, `\\`, and `'` but not `,`. Since our paths are UUIDs under /app/backend/uploads/social_assets/<post_id>/, commas will never appear, but keep this in mind if SOCIAL_MEDIA_ROOT ever becomes user-controlled."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_social_subtitles.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (30/30)",
+    "frontend": "N/A (backend-only test as requested)"
+  },
+  "seed_data_creation": "Created 4 Draft social posts (titles prefixed TEST_subtitle_/TEST_no_sub/TEST_no_burn/TEST_burn_invalid) and uploaded /tmp/whispertest/test.mp4 against each. Ran real Whisper-1 transcription (3 subtitle docs reached 'ready') and 2 real ffmpeg burn-ins (2 *_subtitled.mp4 files on disk, ~12-17KB each). Per main-agent instructions, artifacts were LEFT IN PLACE on disk under /app/backend/uploads/social_assets/<post_id>/ for inspection. Verified _subtitled.mp4 files play back (16KB / 12KB, non-zero, video/mp4 content-type on /burned/stream).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "§33 subtitle backend is fully green. Test file lives at /app/backend/tests/test_social_subtitles.py and uses a module-scoped autouse fixture to (a) coach-login (b) create a Draft post (c) upload /tmp/whispertest/test.mp4 → shared via _state dict across test classes. Tests are order-sensitive: TestGenerateAndPoll → TestPatch → TestBurn (which then feeds TestBurnWithoutPatch via _state['second_sub_id']). Runtime ~12s total because the fixture video is only 5s @ 16kHz mono so whisper returns fast. If you re-run and see the second-sub burn poll timing out, bump deadline_s in _poll_subtitle; the current 120s allowance was comfortable in this env. ffmpeg 5.1.9 is installed system-wide. EMERGENT_LLM_KEY works for whisper-1 via emergentintegrations.llm.openai.OpenAISpeechToText (must pass file-like via open(path, 'rb'), NOT a path string — already correct in the code). Also worth surfacing to E1 for the NEXT iteration (non-blocking): (a) /burned/stream lacks Range/206 handling → scrubbing will be laggy; (b) /download builds response from DB doc in memory instead of streaming from the sidecar on disk; (c) no retention policy for original .mp4 + sidecar files (they persist forever).",
+  "rca_of_issue": "N/A — no bugs found. Real Whisper-1 + real ffmpeg subtitle burn-in end-to-end verified against the public HTTPS preview URL."
+}

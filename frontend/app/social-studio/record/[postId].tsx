@@ -427,8 +427,10 @@ export default function RecordScreen() {
         {/* Teleprompter overlay */}
         {showTeleprompter && teleprompter ? (
           <View pointerEvents={phase === "recording" ? "none" : "auto"} style={styles.telepromWrap}>
+            <Text style={styles.telepromEyebrow}>TELEPROMPTER · {scrollSpeed}px/s</Text>
             <ScrollView
               ref={scriptScroll}
+              style={styles.telepromScroll}
               showsVerticalScrollIndicator={false}
               contentContainerStyle={{ padding: 16 }}
             >
@@ -573,9 +575,12 @@ const styles = StyleSheet.create({
 
   // Teleprompter overlay
   telepromWrap: {
-    position: "absolute", top: 24, left: 16, right: 16, bottom: 160,
-    backgroundColor: "rgba(0,0,0,0.45)", borderRadius: 12, overflow: "hidden",
+    position: "absolute", top: 24, left: 16, right: 16, bottom: 170,
+    backgroundColor: "rgba(0,0,0,0.6)", borderRadius: 12, overflow: "hidden",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
   },
+  telepromScroll: { flex: 1 },
+  telepromEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, paddingHorizontal: 16, paddingTop: 10 },
   telepromT: { color: "#fff", fontWeight: "800", textShadowColor: "rgba(0,0,0,0.9)", textShadowRadius: 4 },
 
   overlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.55)" },

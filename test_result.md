@@ -531,70 +531,73 @@ agent_communication:
 backend:
   - task: "POST /api/social/posts/{post_id}/assets — multipart video upload"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_social_studio.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: "Accepts multipart/form-data with file + kind/duration_seconds/width/height/label. Streams to disk under /app/backend/uploads/social_assets/<post_id>/<asset_id>.<ext>. Enforces 120MB cap and ALLOWED_MIMES (mp4/mov/webm/mkv/mpeg/3gp/mp3/wav). Persists metadata to social_media_assets. Transitions post.status to 'Recorded' if currently Idea/Draft/Script Ready/Recording Needed, and links post.media_id. Admin-only via require_admin() (coach role is admin in dev)."
+      - working: true
+        agent: "testing"
+        comment: "27/27 pytest passed (iteration_30). Multipart upload, status transition Draft→Recorded, media_id set, size/mime/kind/storage correct. Image mime → 400. 130MB stream → 413."
   - task: "GET /api/social/posts/{post_id}/assets — list drafts"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_social_studio.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Returns non-archived assets for a post (newest first). Hides file_path from response."
+      - working: true
+        agent: "testing"
+        comment: "Verified: sorted created_at desc, no file_path leak."
   - task: "GET /api/social/assets/{asset_id} — detail"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_social_studio.py"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Returns single asset metadata."
+      - working: true
+        agent: "testing"
+        comment: "Verified: 404 on miss, correct payload on hit."
   - task: "DELETE /api/social/assets/{asset_id} — retake / archive"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_social_studio.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Soft-archives asset (status='archived') AND deletes file from disk. Unlinks post.media_id if it was pointing at this asset."
+      - working: true
+        agent: "testing"
+        comment: "Verified: soft-archive + disk unlink + post.media_id cleared + subsequent stream 404."
   - task: "GET /api/social/assets/{asset_id}/stream — auth-signed file streaming"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_social_studio.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Streams the raw media file via FileResponse. Accepts BOTH Authorization header OR ?token=<jwt> query param (needed because HTML5 <video> element can't send custom headers). Both paths enforce admin/coach role. Returns 404 if file was removed by DELETE."
+      - working: true
+        agent: "testing"
+        comment: "Both Authorization header AND ?token= query verified. 401 on missing/bad. Follow-up non-blocking: FileResponse lacks Range/206 support — HTML5 video scrubbing will re-download. Consider StreamingResponse with Range parsing later."
   - task: "POST /api/social/assets/{asset_id}/subtitles/generate — subtitle stub"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/feature_social_studio.py"
     stuck_count: 0
     priority: "medium"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
-      - working: "NA"
-        agent: "main"
-        comment: "Placeholder subtitle generator. Creates a social_subtitles doc with status='pending' and provider='whisper-1-stub'. Real Whisper-1 integration ships in the next release. Links asset.subtitle_id."
+      - working: true
+        agent: "testing"
+        comment: "Confirmed: doc created with status=pending, provider=whisper-1-stub, asset.subtitle_id set, note field present. Real Whisper-1 lands next release."
 
 frontend:
   - task: "Recording Studio screen with teleprompter overlay (9:16)"

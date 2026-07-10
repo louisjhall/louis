@@ -1,0 +1,32 @@
+{
+  "summary": "Nutrition Phase 4 — Travel Guidance (Atlas Decide / Airport / Timing / Travel Food Guides) is FULLY WORKING end-to-end. Backend: 13/13 pytest tests passed against /api/nutrition/travel/{context,decision,airport,timing,guide} using live Claude Sonnet 4.5 via Emergent LLM key. All response schemas verified (headline, do_this/avoid/protein_led_options for decision; best/ok/avoid/snack_backup + hydration + if_time_is_short for airport; meal_plan[when,what] + caffeine/hydration/post-flight for timing; steps 5-8 + watchouts + 3 goal variants for guide). Cache hit returned identical payload with cached:true on second call. Invalid situation/topic returned 400. Missing auth returned 401 across all endpoints. Sanitiser verified: 'cheat', 'bad food', 'dirty food', 'failed' absent from every response. Frontend: Nutrition home renders 4 Phase-4 ActionBtns (TRAVEL FOOD, ATLAS DECIDE, AIRPORT MODE, MEAL TIMING) with NO SOON pills. Atlas Decide screen renders ATLAS DECIDE · ONE-CALL MEAL DECISION header + ContextRibbon (MUSCLE GAIN goal + kcal/protein remaining); tapped sit-night_flight + SLEEP SOON + MEDIUM (default) + tapped atlas-decide-btn → LLM returned in ~1s (cached) with ATLAS CALL headline 'Skip the meal, prioritize rest and recovery now.', HIGH confidence pill, DO THIS + PROTEIN-LED OPTIONS + AVOID list blocks. Re-tap sit-airport + re-run produced a fresh (uncached) result in 7s with different content. Airport screen: filled DXB, picked 30-60 MIN + HIGH + HEADING TO DUTY, tapped airport-plan-btn → plan rendered in 11s with ATLAS CALL headline + BEST MOVES (4 items: Grilled chicken salad, Egg-white omelette, Greek yogurt, Sushi/poke) + OK MOVES + AVOID IF POSSIBLE + SNACK BACKUP + hydration_reminder + if_time_is_short. Timing screen: picked LONDON (home) + DUBAI (current) + LONG-HAUL + typed 22:30 + TOMORROW AM, tapped timing-plan-btn → rendered MEAL PLAN card with 'Now (if hungry) — Small protein-led option: Greek yogurt…' first row (multi-row plan), MEDIUM confidence, ATLAS CALL 'You've hit today's targets—lighter, protein-based option if hungry before 22:30 sleep.'; CAFFEINE / HYDRATION / POST-FLIGHT MEAL tiny cards present. Travel Guides screen: grid of 11 topic cards visible (all labels matched), tapped guide-hotel_buffet → page-sheet modal opened in ~1s (cached) with 'HOTEL BUFFET STRATEGY' title, one-liner card 'How to win the hotel buffet without turning it into a binge.', STEPS list (7 items), WATCH-OUTS list (2 items), 'FOR YOUR GOAL: MUSCLE GAIN' personalisation card. Closed modal and tapped another topic — grid remained tappable. No red-screen, no banned words in any rendered result.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nutrition_travel.py",
+    "/app/test_reports/pytest/nutrition_travel_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_nutrition_travel.py is compact (~398 lines) with a clean 5-endpoint layout, shared _context_summary + _call_atlas + _cache_get/put helpers, and a solid _sanitise scrub (regex-replaces cheat/diet/failed/bad food/dirty food). Prompt asks for STRICT JSON; _parse_json handles markdown fences and JSON-object extraction; _clean_dict deep-scrubs strings/lists/dicts. Cache key hashes user_id + intent + params + goal into a 16-char sha256 slice with per-day partitioning. All 5 endpoints Depends(current_user) → 401 enforced by FastAPI. Enums validated for situation/topic → 400.",
+    "Cache is DB-persisted on nutrition_travel_cache collection scoped by (user_id, key, date_local) with $set upsert — repeat calls return cached:true and never hit the LLM. On unique params (nonce in notes / airport_name / body change) the LLM is called fresh; verified by the pytest suite which mutated notes with a run-scoped uuid.",
+    "Frontend travel-shared.tsx components (ContextRibbon, ResultCard, ListBlock, Chips, TravelHeader) are consistently used across all 4 screens and match the coaching design language. testIDs present where required: sit-{situation}, atlas-decide-btn, airport-input, airport-plan-btn, timing-plan-btn, guide-{topic}.",
+    "Minor: /timing does not enforce meal_plan >= 2 items server-side; relies on the model prompt ('2-4 meal_plan entries'). Observed responses had 2-4 rows so it is fine in practice, but a min-length clamp on the server would harden it.",
+    "Minor: airport endpoint does not validate airport_code shape (3-letter IATA) — accepts any string. Not a bug, just something to consider if you ever want a validation error surface.",
+    "Home Nutrition screen (nutrition/index.tsx) no longer passes soon={true} to any of the 4 Phase-4 ActionBtns — confirmed by reading the file and by counting 'SOON' occurrences in the rendered DOM = 0."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nutrition_travel.py (new)"
+  ],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "seed_data_creation": "None. Used seeded client@crewfit.com. nutrition_travel_cache collection populated with entries for decision (night_flight+sleep_soon with nonce), airport (DXB + nonce airport_name), timing (LON→DXB long_haul 22:30 tomorrow_am), and guide (hotel_buffet). These auto-expire per-day scope.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 4 Travel Guidance is production-ready. When re-testing, either mutate a cache-key input (notes, airport_name) OR clear the nutrition_travel_cache collection to force a fresh Claude call — otherwise every re-run returns instantly with cached:true. Real LLM latency observed: 7-15s per call for decision/airport/timing/guide when uncached. All 4 screens rely on AsyncStorage cf_token on web; injecting the token via localStorage after login is sufficient to drive the UI in Playwright since the app reads cf_token directly.",
+  "rca_of_issue": "No issue to RCA."
+}

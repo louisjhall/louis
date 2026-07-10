@@ -175,10 +175,10 @@ export default function NutritionHome() {
         {/* Travel section */}
         <Text style={styles.sect}>TRAVEL &amp; ROSTER</Text>
         <View style={styles.actionsGrid}>
-          <ActionBtn icon="airplane" label="TRAVEL FOOD" onPress={() => router.push("/nutrition/travel" as any)} testID="nutr-travel" soon />
-          <ActionBtn icon="help-circle" label="ATLAS DECIDE" onPress={() => router.push("/nutrition/decision" as any)} testID="nutr-decide" soon />
-          <ActionBtn icon="business" label="AIRPORT MODE" onPress={() => router.push("/nutrition/airport" as any)} testID="nutr-airport" soon />
-          <ActionBtn icon="time" label="MEAL TIMING" onPress={() => router.push("/nutrition/timing" as any)} testID="nutr-timing" soon />
+          <ActionBtn icon="airplane" label="TRAVEL FOOD" onPress={() => router.push("/nutrition/travel" as any)} testID="nutr-travel" />
+          <ActionBtn icon="help-circle" label="ATLAS DECIDE" onPress={() => router.push("/nutrition/decision" as any)} testID="nutr-decide" />
+          <ActionBtn icon="business" label="AIRPORT MODE" onPress={() => router.push("/nutrition/airport" as any)} testID="nutr-airport" />
+          <ActionBtn icon="time" label="MEAL TIMING" onPress={() => router.push("/nutrition/timing" as any)} testID="nutr-timing" />
         </View>
 
         {/* Weekly summary */}

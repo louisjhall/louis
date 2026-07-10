@@ -105,6 +105,18 @@
 user_problem_statement: "Build a dedicated Coach Web Dashboard (Option C) for CrewFit — desktop-native routes inside the current Expo app that render a sidebar layout on wide screens (>=1024px web) with Overview, Clients, Calendar, Approvals, Library, Messages, Analytics and Profile."
 
 backend:
+  - task: "Nutrition Centre backend (Phase 4 · Roster/Airport/Timing/Guide)"
+    implemented: true
+    working: true
+    file: "backend/feature_nutrition_travel.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 4 shipped: travel-guidance Atlas engine. 5 endpoints — POST /nutrition/travel/decision (Atlas Meal Decision from 11 situation types), POST /nutrition/travel/airport (Airport Survival Mode with best/ok/avoid/snack lists), POST /nutrition/travel/timing (time-zone meal timing with meal_plan array + caffeine/hydration/post-flight blocks), POST /nutrition/travel/guide (11 topic library from airport_strategy to hydration_caffeine, goal-personalised via if_goal_is_* fields), GET /nutrition/travel/context (client-side prefill: goal + remaining kcal/protein/hydration). All calls go through Claude Sonnet 4.5 via emergentintegrations with a shared strict-JSON prompt + banned-word sanitizer ('cheat'→'flexible choice', 'diet'→'nutrition', 'failed'→'adjusted'). Per-day cache keyed by (user, intent, params-hash) in nutrition_travel_cache collection prevents repeat API calls. Verified end-to-end: decision(night_flight, sleep_soon) → 'Skip the meal, prioritize rest', do_this + avoid + protein_led_options populated. Airport(DXB) → contextual best/ok/avoid + hydration reminder."
+
   - task: "Nutrition Centre backend (Phase 3 · AI Photo Meal Scanner)"
     implemented: true
     working: true
@@ -1317,6 +1329,18 @@ backend:
         comment: "EXERCISE_STYLE constant + _build_ex_prompt compose slot-specific prompts (START POSITION / END POSITION / primary demonstration) with body area emphasis, equipment inline, and softly-shaded face instruction. Female/male toggle via body.female."
 
 frontend:
+  - task: "Client · Travel Food Guidance suite (Phase 4)"
+    implemented: true
+    working: true
+    file: "frontend/app/nutrition/travel.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "All 4 SOON placeholders replaced with real Atlas-powered screens plus a shared travel-shared.tsx component library. (a) /nutrition/decision — situation chip picker (11 options), hunger/next-context chips, notes, primary CTA calls /travel/decision, renders ResultCard + DO THIS / PROTEIN-LED / AVOID / hydration blocks. (b) /nutrition/airport — airport-code text input + time-available chips + hunger + next-context, renders BEST/OK/AVOID/SNACK BACKUP + hydration + short-time card. (c) /nutrition/timing — home-tz + current-tz chips (auto-detects current via Intl.DateTimeFormat), flight-context chips, sleep HH:MM input, next-workout chips, renders headline + MEAL PLAN timeline + caffeine/hydration/post-flight tiny cards. (d) /nutrition/travel — 11-topic grid (airport_strategy, hotel_breakfast, hotel_buffet, crew_meal, long_haul, night_flight, early_start, fat_loss_layover, muscle_gain_travel, endurance_fuelling, hydration_caffeine); tap → modal with one_liner + steps + watchouts + goal-tailored 'FOR YOUR GOAL: FAT LOSS' card. Every screen has a ContextRibbon showing goal + kcal/protein remaining. SOON pills removed from all 4 home ActionBtn. Screenshot verified: NIGHT FLIGHT decision returned 'Skip the meal, prioritize rest' with populated DO/AVOID lists."
+
   - task: "Client · AI Photo Meal Scan (Phase 3)"
     implemented: true
     working: true
@@ -1416,5 +1440,5 @@ agent_communication:
     message: "§36 shipped — CrewFit Nutrition Centre (Phase 1) + Alert.alert web bug fix. Backend: new feature_nutrition.py w/ 14 endpoints (targets, logs CRUD, hydration, favourites, today totals, week summary, Atlas tip via Claude Sonnet 4.5, coach dashboard endpoints w/ safety guardrails). Frontend: /nutrition tab now shows premium home screen w/ dual-metric rings, hydration ticker, Atlas insight (verified: Sonnet 4.5 returned a real coaching sentence), quick actions, weekly bar chart. Supporting routes: /nutrition/log (manual form), /nutrition/history (7-day grouped), /nutrition/targets (client read), /nutrition/favourites, plus 6 Phase-2/3/4 placeholder screens marked SOON. New coach screen /coach/nutrition (row-per-client + deep-dive modal + EDIT TARGETS modal + add-note). Coach overview gained NUTRITION nav button. New cross-platform ux helper (confirm() + toast() + <ToastHost/>) fixes RN-Web Alert.alert silent-failure — applied to Exercise Content Archive + Scan-todos."
 
   - agent: "main"
-    message: "§38 shipped — Nutrition Phase 3 (AI Photo Meal Scanner). Backend: new feature_nutrition_photo.py uses Claude Sonnet 4.5 vision via emergentintegrations LlmChat.ImageContent — strict-JSON prompt, safety clamps (≤3000 kcal etc), storage on disk under /app/backend/uploads/nutrition/{user}/{date}/{id}.{ext}, token-in-query-string image serving for RN-Web. 5 new endpoints: /photo/analyse, /photo/{id}, /photo/{id}/image, /photo/{id}/patch, /photo/{id}/save-log. Verified end-to-end w/ a real salmon poke-bowl → 9 items, 485 kcal, coaching-tone tip. Frontend: /nutrition/photo-scan is a real 3-phase screen (pick → analysing → review). Editable macros (+/- steppers + direct numeric input), editable items list (add/remove/rename), MEAL vs HOTEL BUFFET modes, confidence pill, warnings banner, save-as-favourite. TEST focus: (a) all 5 endpoints incl auth on GET /image, (b) 8MB size cap, (c) unsupported mime -> 415, (d) hotel_buffet mode prompt path, (e) save-log path writes nutrition_logs w/ source='photo' and preserves photo_scan_id + photo_url, (f) frontend UPLOAD PHOTO flow on web (playwright can upload a JPEG file via the hidden input), (g) macros editing, (h) LOG MEAL end-to-end. Testing playbook already saved at /app/image_testing.md. Do NOT re-test Phase 1/2. Photo test asset: any small real JPEG (Playwright can attach a fixture)."
+    message: "§39 shipped — Nutrition Phase 4 (Travel Guidance). Backend: new feature_nutrition_travel.py with 5 endpoints (decision / airport / timing / guide / context) all routed through Claude Sonnet 4.5 with a shared strict-JSON prompt, banned-word sanitizer, and per-day cache in nutrition_travel_cache. Frontend: 4 new premium screens replacing the SOON placeholders + one shared travel-shared.tsx component (Screen / TravelHeader / LoadingBlock / ContextRibbon / ResultCard / ListBlock / Chips / travelStyles). All screens auto-fetch /travel/context on mount so kcal/protein remaining is always visible. Screenshot-verified end-to-end for Atlas Decide (night_flight → 'Skip the meal, prioritize rest'). TEST: (a) 5 endpoints incl 400 on invalid situation/topic and 401 without auth, (b) cache hit returns same payload with cached:true on 2nd call, (c) banned-word sanitizer clamps 'cheat' etc., (d) all 4 frontend screens (decision / airport / timing / travel guides) — pick chips, submit, verify Atlas response renders (blocks are non-empty, confidence pill shows). Do NOT re-test Phases 1/2/3. Fresh caches so first call is real LLM. Roughly 15s per Atlas call; give timeouts of 30s."
 

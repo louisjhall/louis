@@ -1,0 +1,42 @@
+{
+  "summary": "REFACTOR REGRESSION VERIFICATION — server.py 8,462 → 6,909 lines with 3 new feature modules (feature_coach_v1.py 487 lines, feature_habits.py 789 lines, feature_notifications.py 429 lines). ALL 76/76 REGRESSION TESTS PASS (100%) across the full union of iteration_24 (habits — 25 tests), iteration_25/26 (notifications — 27 tests), and iteration_23 coach message drafts (24 tests). Combined wall clock: 98.54s. Verified endpoint contracts unchanged: /habits/{seed,today,mine,{id}/log,{id}/logs,reminders/toggle,reviews/latest}, /coach/clients/{id}/habits GET+POST, /coach/habits/{id} PATCH, /coach/habits/reviews/{id}/{approve,reject}, /notifications GET, /notifications/{settings GET+PUT,permission,{id}/read,read-all}, /coach/messages/{generate,{id}/regenerate,{id} PATCH,{id}/approve,{id}/dismiss,drafts,drafts/{id}}, /coach/clients/{id}/controls GET+PUT, /coach/change-log, /coach/clients/{id}/change-log. Hook wiring end-to-end verified via existing tests: (a) POST /coach/messages/generate → creates draft + coach_task + coach_draft_ready notification with dedupe_key='draft::{draft_id}' (two calls produce two rows); (b) POST /coach/messages/{id}/approve → sends real message + fires notify_coach_message with dedupe_key='coach_msg::{msg_id}'; (c) client → coach message triggers _bg_generate_message_draft background task which persists a draft AND coach_draft_ready notif; (d) POST /checkins/submit triggers _run_habit_review_after_checkin which produces a habit_reviews row + coach_task (habit_review) when review requires coach approval; (e) fresh signup + /assessment/finalize flow → _seed_habits_for_user_by_id (rebound feature_habits function) still seeds 3-5 habits (TestFreshSeed passes). Spot-checked untouched endpoints all still 200: /auth/login (both roles), /checkins/questions, /checkins/current, /coach/clients (list + detail), /coach/tasks, /coach/dashboard, /coach/messages/drafts, /coach/change-log. NOTE: /workouts/mine returns 404 both pre- and post-refactor — it was never a defined route (real route is /workouts/week). Backend uvicorn is up cleanly (INFO Application startup complete; no traceback in backend.err.log after last restart). Tick chain composition confirmed in server.py:6889-6902: _tick_reminders_all → _tick_base → feature_habits._tick_habit_reminders → feature_notifications._tick_roster_and_workout_reminders, and the reminder loop at server.py:6825 calls the composed _tick_reminders_all. ZERO regressions introduced by the refactor.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "module import order (feature_coach_v1.py / feature_habits.py / feature_notifications.py)",
+        "issue": "Feature modules do `from server import ...` at module load and server.py rebinds their symbols back at the bottom (server.py:6875-6902). Working correctly under uvicorn but importing a feature module standalone (e.g. `python -c 'import feature_coach_v1'`) raises AttributeError partially initialized module (circular import). Not a runtime defect — but any future tool that imports a feature module directly (linter plugin, script) will break. Consider moving the rebinding into an explicit `wire_feature_modules()` function called from a FastAPI startup event, or exporting a slim `shared.py` that both server and feature modules import from."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_notifications_v1.py",
+    "/app/backend/tests/test_habits.py",
+    "/app/backend/tests/test_coach_message_drafts.py",
+    "/app/test_reports/pytest/iteration_27_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 6,909 lines — great progress from 8,462, but still large. Next candidates for extraction: (a) /coach/dashboard + /coach/clients + /coach/tasks block, (b) /assessment/* + Coaching DNA seeding block, (c) roster + workouts schedule generation block. Each is 400-700 lines.",
+    "The rebinding pattern at server.py:6875-6902 (assign feature_*.symbol back to server namespace so pre-existing call sites keep working) is a load-bearing but fragile bridge. Any developer who moves an `import feature_X` line above the definition of a shared symbol will get a runtime failure only visible on server boot. Consider adding a comment block ABOVE the imports explaining the strict ordering, or a `_verify_rebindings()` startup sanity check that asserts each rebound symbol equals the imported one.",
+    "feature_coach_v1.py:39-45 defines two lazy wrapper functions (`notify_coach_draft_ready`, `notify_coach_message`) that import from feature_notifications only when called. This is fine, but note that neither wrapper is `async` while the real helpers are. They still work because the caller awaits the returned coroutine, but a static analyser (pyright/mypy) will flag them as returning non-awaitable. Consider marking the wrappers `async def ... : return await _f(...)` for clarity and type safety.",
+    "feature_notifications.py:370-374 leaves a dead `_ORIGINAL_TICK_2 = None` and a deprecated alias `_tick_reminders_full()`. Safe to delete now that composition happens in server.py.",
+    "feature_habits.py imports helpers _current_week_bounds, _in_quiet_hours from server — these are only used inside _tick_habit_reminders. If _current_week_bounds is not actually referenced (grep confirms only _in_quiet_hours is used), remove it from the import list to avoid an ImportError if server.py ever renames it."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (76/76 across 3 regression suites)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "seed_data_creation": "The regression suites created their usual test residue: (a) 2 fresh signup clients (TEST_habit_seed_*, TEST_review_flow_*, TEST_notif_*) — deleted on teardown, (b) 2 message_drafts on client@crewfit.com approved during TestHookWiring — remain as sent messages with coach_message notifications for the client and coach_draft_ready notifications for the coach (all with unique dedupe_keys, all in the DB), (c) 1 coach_message row created by TestApprove — remains in db.messages. No changes to the seeded client's 4 starter habits, roster, or coach_controls. No production data mutated.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The refactor is verified regression-free by the union of three suites: /app/backend/tests/test_habits.py (25 tests, ~50s — includes ~40s LLM wait in TestCheckinReviewGeneration), /app/backend/tests/test_notifications_v1.py (27 tests, ~15s — 2 LLM calls dominate), /app/backend/tests/test_coach_message_drafts.py (24 tests, ~35s — multiple LLM calls). Total 76 tests in ~99s. All read EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env. If backend supervisor restarts and takes a while to compose the reminder chain, the first request may 500 for ~2s while feature modules import — retry once. The feature modules are safely reload-hot under WatchFiles because server.py wires them post-import.",
+  "rca_of_issue": "N/A — pure code-organisation refactor verified zero-regression. The one previously-observed transient NameError in backend.err.log (`_tick_reminders is not defined` at feature_notifications.py:369) was thrown during an intermediate WatchFiles reload BEFORE the current final state of the file; it does not appear in the current process's startup and the current process boots cleanly (`Application startup complete`, no traceback). The dead `_ORIGINAL_TICK_2` assignment was moved to a safe no-op (line 370: `_ORIGINAL_TICK_2 = None`). All 76 regression tests confirm the runtime is stable."
+}

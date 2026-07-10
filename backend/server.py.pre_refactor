@@ -6431,27 +6431,6 @@ def _task_category_for(task_type: str) -> str:
     return "other"
 
 
-# --- Shared change-log helper (used by multiple feature modules) -----------
-async def _log_change(coach_id: Optional[str], client_id: Optional[str], category: str,
-                      title: str, description: str = "", actor: str = "coach",
-                      meta: Optional[dict] = None) -> None:
-    doc = {
-        "id": new_id(),
-        "coach_id": coach_id,
-        "client_id": client_id,
-        "category": category,          # message / programme / controls / script / workout / other
-        "title": title,
-        "description": description,
-        "actor": actor,                # coach / atlas / client / system
-        "meta": meta or {},
-        "created_at": now_iso(),
-    }
-    try:
-        await db.coach_change_log.insert_one(doc)
-    except Exception:
-        logger.exception("change log insert failed")
-
-
 @api.post("/checkins/submit")
 async def checkin_submit(body: CheckinSubmitBody, user: dict = Depends(current_user)):
     """Client submits their weekly check-in. Atlas analyses and creates coach tasks."""
@@ -6863,43 +6842,1616 @@ async def coach_checkins_list(coach: dict = Depends(require_role("coach")),
 
 
 
+# ------------------------------------------------------------------
+# Coach Message Drafts + Coach Controls + Change Log (V1)
+#
+# Collections:
+#   message_drafts     — Atlas-authored replies awaiting Louis's approval
+#   coach_change_log   — history of controls edits, message approvals, etc.
+#
+# Rules:
+#   * Atlas NEVER auto-sends. Every draft lands as `waiting_approval`.
+#   * Every message the client sends triggers a draft (regardless of risk).
+#   * Coach can Edit / Shorten / Warm / Send / Dismiss the draft.
+# ------------------------------------------------------------------
+
+MSG_DRAFT_SYSTEM = (
+    "You are Atlas, an assistant coach helping Louis run CrewFit — a personal "
+    "training service for airline cabin crew. Louis is the human coach; you are "
+    "his silent drafter. NEVER auto-send. Louis reviews and approves every reply.\n\n"
+    "Draft a message reply Louis could send to this client. Match Louis's tone: "
+    "warm but direct, practical, uses first names, avoids corporate fitness jargon. "
+    "Keep it under 90 words unless the client asked for detailed info. British English. "
+    "Do not sign off with a name — Louis will add that.\n\n"
+    "Return STRICT JSON with these keys:\n"
+    "  atlas_draft         — the reply text (string, plain text, no markdown)\n"
+    "  risk_level          — 'low' | 'medium' | 'high'  (see rules below)\n"
+    "  risk_reason         — one-line reason (string)\n"
+    "  action_hint         — one of 'answer' | 'adjust_programme' | 'escalate' | 'safety_check'\n"
+    "  tone_used           — 'warm' | 'direct' | 'shorter' | 'clearer' | 'custom'\n"
+    "  summary             — one-line summary of the client's message for the To-Do feed (string)\n\n"
+    "Risk rules:\n"
+    "  * low     — routine acknowledgement, encouragement, simple question that has a clear answer.\n"
+    "  * medium  — programme change, deload, kit swap, missed sessions, motivation dip, "
+    "sleep/nutrition query that needs Louis's judgement.\n"
+    "  * high    — pain, injury, medical, dizziness, chest, sharp pain, mental health, "
+    "safety-of-flight concerns, disordered eating flags, extreme fatigue. Escalate always.\n"
+)
 
 
+async def _summarise_thread(client_id: str, coach_id: str, limit: int = 20) -> list[dict]:
+    msgs = await db.messages.find(
+        {"$or": [{"from_user_id": client_id, "to_user_id": coach_id},
+                 {"from_user_id": coach_id, "to_user_id": client_id}]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(limit)
+    msgs.reverse()
+    out = []
+    for m in msgs:
+        who = "client" if m.get("from_user_id") == client_id else "coach"
+        out.append({"who": who, "text": (m.get("text") or "")[:600], "at": m.get("created_at")})
+    return out
 
-# ---------------------------------------------------------------------------
-# Extracted feature modules — imported at the bottom so they can `from server
-# import ...` all the symbols they need (which are all defined above).
-# ---------------------------------------------------------------------------
-import feature_coach_v1        # noqa: E402,F401  registers coach draft/controls/change-log endpoints on `api`
-import feature_habits          # noqa: E402,F401  registers habit endpoints on `api`
-import feature_notifications   # noqa: E402,F401  registers notification endpoints on `api`
 
-# Rebind feature-module functions into the server namespace so pre-existing
-# call sites in server.py (which look these up at runtime) continue to work.
-_seed_habits_for_user_by_id = feature_habits._seed_habits_for_user_by_id
-_run_habit_review_after_checkin = feature_habits._run_habit_review_after_checkin
-_bg_generate_message_draft = feature_coach_v1._bg_generate_message_draft
-notify_coach_message = feature_notifications.notify_coach_message
-notify_coach_draft_ready = feature_notifications.notify_coach_draft_ready
-notify_weekly_video_ready = feature_notifications.notify_weekly_video_ready
-notify_programme_updated = feature_notifications.notify_programme_updated
-enqueue_notification = feature_notifications.enqueue_notification
+async def _build_draft_context(client: dict, incoming_message: Optional[dict], tone_hint: Optional[str], custom_instruction: Optional[str]) -> dict:
+    dna = client.get("coaching_dna") or {}
+    controls = client.get("coach_controls") or {}
+    latest_checkin = await db.check_ins.find_one({"user_id": client["id"]}, {"_id": 0}, sort=[("submitted_at", -1)])
+    last_workouts = await db.workouts.find(
+        {"user_id": client["id"]}, {"_id": 0, "title": 1, "date": 1, "completed": 1, "day_type": 1, "day_load": 1}
+    ).sort("date", -1).to_list(6)
+    coach = await db.users.find_one({"role": "coach"}, {"_id": 0, "name": 1, "id": 1})
+    coach_id = (coach or {}).get("id") or ""
+    thread = await _summarise_thread(client["id"], coach_id, limit=20)
+    return {
+        "client": {
+            "name": client.get("name"),
+            "first_name": (client.get("name") or "").split(" ")[0],
+            "crew_role": dna.get("crew_role") or client.get("crew_role"),
+            "primary_goals": dna.get("primary_goals") or [],
+            "training_style": dna.get("training_style"),
+            "obstacles": dna.get("obstacles") or [],
+            "communication_preference": dna.get("communication_style"),
+        },
+        "coach_controls": {
+            "programme_flexibility": controls.get("programme_flexibility", "flexible"),
+            "progression_speed": controls.get("progression_speed", "standard"),
+            "injury_caution": controls.get("injury_caution", "medium"),
+            "video_frequency": controls.get("video_frequency", "weekly"),
+            "auto_approval_risk_threshold": controls.get("auto_approval_risk_threshold", "none"),
+        },
+        "latest_check_in": (latest_checkin or {}).get("atlas_coach_summary") if latest_checkin else None,
+        "check_in_flags": {
+            "urgent_safety_flag": (latest_checkin or {}).get("urgent_safety_flag"),
+            "injury_flag": (latest_checkin or {}).get("injury_flag"),
+            "recovery_score": (latest_checkin or {}).get("recovery_score"),
+        } if latest_checkin else None,
+        "recent_workouts": last_workouts,
+        "thread_history": thread,
+        "incoming_message": (incoming_message or {}).get("text"),
+        "coach_tone_hint": tone_hint,
+        "custom_instruction": custom_instruction,
+    }
 
-# Compose the reminder tick chain now that all feature modules are loaded.
-_tick_base = _tick_reminders
 
-async def _tick_reminders_all() -> None:
-    await _tick_base()
+async def _atlas_draft_reply(client: dict, incoming_message: Optional[dict], tone_hint: Optional[str] = None, custom_instruction: Optional[str] = None) -> dict:
+    ctx = await _build_draft_context(client, incoming_message, tone_hint, custom_instruction)
+    prompt = "Draft Louis's reply for this thread. CLIENT + CONTEXT:\n" + json.dumps(ctx, default=str)[:8000]
+    parsed: dict[str, Any] = {}
     try:
-        await feature_habits._tick_habit_reminders()
+        raw = await call_claude(MSG_DRAFT_SYSTEM, prompt, max_out=1200)
+        parsed = parse_json_from_text(raw) or {}
     except Exception:
-        logger.exception("habit tick failed")
-    try:
-        await feature_notifications._tick_roster_and_workout_reminders()
-    except Exception:
-        logger.exception("roster/workout tick failed")
+        logger.exception("Atlas message draft failed")
+    if not parsed.get("atlas_draft"):
+        parsed = {
+            "atlas_draft": "Thanks for the message — I'll come back to you shortly.",
+            "risk_level": "medium",
+            "risk_reason": "Atlas draft failed; coach must write from scratch.",
+            "action_hint": "answer",
+            "tone_used": tone_hint or "warm",
+            "summary": (incoming_message or {}).get("text", "")[:120] if incoming_message else "Coach initiated draft",
+        }
+    parsed.setdefault("risk_level", "medium")
+    parsed.setdefault("tone_used", tone_hint or "warm")
+    return parsed
 
-_tick_reminders = _tick_reminders_all
+
+def _priority_from_risk(risk: str) -> str:
+    if risk == "high":
+        return "urgent"
+    if risk == "medium":
+        return "high"
+    return "normal"
+
+
+async def _persist_draft(client: dict, coach_id: str, incoming_message: Optional[dict], atlas_result: dict, previous_draft_id: Optional[str] = None) -> dict:
+    draft_id = new_id()
+    doc = {
+        "id": draft_id,
+        "client_id": client["id"],
+        "client_name": client.get("name") or client.get("email"),
+        "coach_id": coach_id,
+        "thread_id": f"{client['id']}::{coach_id}",
+        "source_message_id": (incoming_message or {}).get("id"),
+        "source_message_text": (incoming_message or {}).get("text"),
+        "source_message_at": (incoming_message or {}).get("created_at"),
+        "atlas_draft": atlas_result.get("atlas_draft"),
+        "coach_edited_text": None,
+        "tone_used": atlas_result.get("tone_used"),
+        "risk_level": atlas_result.get("risk_level", "medium"),
+        "risk_reason": atlas_result.get("risk_reason"),
+        "action_hint": atlas_result.get("action_hint"),
+        "summary": atlas_result.get("summary"),
+        "status": "waiting_approval",
+        "regenerated_from": previous_draft_id,
+        "created_at": now_iso(),
+        "sent_at": None,
+        "dismissed_at": None,
+        "sent_message_id": None,
+    }
+    await db.message_drafts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _bg_generate_message_draft(client: dict, incoming_message: dict) -> None:
+    """Background task: fetch coach, run Atlas, persist draft, create coach_task."""
+    try:
+        coach = await db.users.find_one({"role": "coach"}, {"_id": 0, "id": 1, "name": 1})
+        coach_id = (coach or {}).get("id") or ""
+        result = await _atlas_draft_reply(client, incoming_message)
+        draft = await _persist_draft(client, coach_id, incoming_message, result)
+        summary = (result.get("summary") or (incoming_message.get("text") or "")[:80]).strip()
+        risk = draft["risk_level"]
+        prefix = "URGENT · " if risk == "high" else ("REVIEW · " if risk == "medium" else "")
+        title = f"{prefix}Reply to {client.get('name') or client.get('email')}"
+        await _create_coach_task(
+            client, "message_draft_ready", title,
+            summary or "Atlas has drafted a reply. Review, edit and send.",
+            priority=_priority_from_risk(risk),
+            message_draft_id=draft["id"],
+            risk_level=risk,
+            category="messages",
+            payload={"source_message_id": incoming_message.get("id")},
+        )
+        # Notify the coach in-app about the ready draft
+        try:
+            coach_id_now = coach_id or (await db.users.find_one({"role": "coach"}, {"id": 1}) or {}).get("id")
+            if coach_id_now:
+                await notify_coach_draft_ready(coach_id_now, client.get("name") or client.get("email"), draft["id"])
+        except Exception:
+            logger.exception("coach draft notify failed")
+    except Exception:
+        logger.exception("_bg_generate_message_draft failed")
+
+
+# --- Coach change log helper ------------------------------------------------
+async def _log_change(coach_id: Optional[str], client_id: Optional[str], category: str,
+                      title: str, description: str = "", actor: str = "coach",
+                      meta: Optional[dict] = None) -> None:
+    doc = {
+        "id": new_id(),
+        "coach_id": coach_id,
+        "client_id": client_id,
+        "category": category,          # message / programme / controls / script / workout / other
+        "title": title,
+        "description": description,
+        "actor": actor,                # coach / atlas / client / system
+        "meta": meta or {},
+        "created_at": now_iso(),
+    }
+    try:
+        await db.coach_change_log.insert_one(doc)
+    except Exception:
+        logger.exception("change log insert failed")
+
+
+# ---- Endpoints -------------------------------------------------------------
+
+@api.post("/coach/messages/generate")
+async def coach_msg_generate(body: MessageDraftGenerateBody, coach: dict = Depends(require_role("coach"))):
+    """Manually ask Atlas to draft a reply (e.g. coach opens the thread and wants a suggestion)."""
+    client = await db.users.find_one({"id": body.client_id}, {"_id": 0, "password_hash": 0})
+    if not client:
+        raise HTTPException(404, "client not found")
+    incoming = None
+    if body.source_message_id:
+        incoming = await db.messages.find_one({"id": body.source_message_id}, {"_id": 0})
+    else:
+        incoming = await db.messages.find_one(
+            {"from_user_id": body.client_id, "to_user_id": coach["id"]}, {"_id": 0}, sort=[("created_at", -1)]
+        )
+    result = await _atlas_draft_reply(client, incoming, tone_hint=body.tone_hint, custom_instruction=body.custom_instruction)
+    draft = await _persist_draft(client, coach["id"], incoming, result)
+    # Only create a task if there wasn't one already for this message
+    existing = None
+    if incoming:
+        existing = await db.coach_tasks.find_one({"task_type": "message_draft_ready",
+                                                  "payload.source_message_id": incoming.get("id"),
+                                                  "status": {"$in": ["todo", "in_progress"]}})
+    if not existing:
+        risk = draft["risk_level"]
+        await _create_coach_task(
+            client, "message_draft_ready",
+            f"Reply to {client.get('name') or client.get('email')}",
+            (result.get("summary") or "Atlas has drafted a reply.")[:200],
+            priority=_priority_from_risk(risk),
+            message_draft_id=draft["id"],
+            risk_level=risk, category="messages",
+            payload={"source_message_id": (incoming or {}).get("id")},
+        )
+    # Notify the coach in-app about the ready draft (manual path)
+    try:
+        await notify_coach_draft_ready(coach["id"], client.get("name") or client.get("email"), draft["id"])
+    except Exception:
+        logger.exception("notify_coach_draft_ready failed")
+    return {"draft": draft}
+
+
+@api.post("/coach/messages/{draft_id}/regenerate")
+async def coach_msg_regenerate(draft_id: str, body: MessageDraftToneBody, coach: dict = Depends(require_role("coach"))):
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "draft not found")
+    if d["status"] != "waiting_approval":
+        raise HTTPException(400, "draft is not editable")
+    client = await db.users.find_one({"id": d["client_id"]}, {"_id": 0, "password_hash": 0})
+    incoming = await db.messages.find_one({"id": d.get("source_message_id")}, {"_id": 0}) if d.get("source_message_id") else None
+    result = await _atlas_draft_reply(client, incoming, tone_hint=body.tone, custom_instruction=body.custom_instruction)
+    # Update in place — we keep same draft record but stash the previous atlas text into history
+    history = d.get("regeneration_history") or []
+    history.append({"atlas_draft": d.get("atlas_draft"), "tone_used": d.get("tone_used"), "at": now_iso()})
+    updates = {
+        "atlas_draft": result.get("atlas_draft"),
+        "tone_used": result.get("tone_used") or body.tone,
+        "risk_level": result.get("risk_level", d.get("risk_level")),
+        "risk_reason": result.get("risk_reason", d.get("risk_reason")),
+        "action_hint": result.get("action_hint", d.get("action_hint")),
+        "regeneration_history": history[-5:],
+        "updated_at": now_iso(),
+    }
+    await db.message_drafts.update_one({"id": draft_id}, {"$set": updates})
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    return {"draft": d}
+
+
+@api.patch("/coach/messages/{draft_id}")
+async def coach_msg_edit(draft_id: str, body: MessageDraftEditBody, coach: dict = Depends(require_role("coach"))):
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "draft not found")
+    if d["status"] != "waiting_approval":
+        raise HTTPException(400, "draft is not editable")
+    await db.message_drafts.update_one({"id": draft_id}, {"$set": {
+        "coach_edited_text": body.coach_edited_text,
+        "edited_at": now_iso(),
+    }})
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    return {"draft": d}
+
+
+@api.post("/coach/messages/{draft_id}/approve")
+async def coach_msg_approve(draft_id: str, body: Optional[MessageDraftEditBody] = None, coach: dict = Depends(require_role("coach"))):
+    """Send the drafted (and optionally edited) reply as a real message from the coach."""
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "draft not found")
+    if d["status"] != "waiting_approval":
+        raise HTTPException(400, "draft already resolved")
+    final_text = None
+    if body and body.coach_edited_text is not None:
+        final_text = body.coach_edited_text
+    else:
+        final_text = d.get("coach_edited_text") or d.get("atlas_draft") or ""
+    final_text = (final_text or "").strip()
+    if not final_text:
+        raise HTTPException(400, "empty message")
+    msg = {
+        "id": new_id(),
+        "from_user_id": coach["id"],
+        "to_user_id": d["client_id"],
+        "text": final_text,
+        "created_at": now_iso(),
+        "read": False,
+        "source_draft_id": draft_id,
+    }
+    await db.messages.insert_one(msg)
+    clean_doc(msg)
+    now = now_iso()
+    await db.message_drafts.update_one({"id": draft_id}, {"$set": {
+        "status": "sent",
+        "coach_edited_text": final_text,
+        "sent_at": now,
+        "sent_message_id": msg["id"],
+    }})
+    await db.coach_tasks.update_many(
+        {"message_draft_id": draft_id, "status": {"$in": ["todo", "in_progress"]}},
+        {"$set": {"status": "done", "completed_at": now}},
+    )
+    try:
+        await send_push([d["client_id"]], {"title": coach.get("name", "CrewFit"), "message": final_text[:120], "action_url": "/(client)/messages"})
+    except Exception as e:
+        logger.warning("push send fail: %s", e)
+    # In-app notification record for the client
+    try:
+        await notify_coach_message(coach["id"], d["client_id"], final_text, source_message_id=msg["id"])
+    except Exception:
+        logger.exception("coach message notify failed")
+    await _log_change(coach["id"], d["client_id"], "message",
+                      f"Sent reply to {d.get('client_name')}",
+                      final_text[:180], actor="coach",
+                      meta={"draft_id": draft_id, "risk_level": d.get("risk_level"),
+                            "atlas_original": d.get("atlas_draft"), "was_edited": d.get("atlas_draft") != final_text})
+    return {"ok": True, "message": msg, "draft_id": draft_id}
+
+
+@api.post("/coach/messages/{draft_id}/dismiss")
+async def coach_msg_dismiss(draft_id: str, coach: dict = Depends(require_role("coach"))):
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "draft not found")
+    now = now_iso()
+    await db.message_drafts.update_one({"id": draft_id}, {"$set": {
+        "status": "dismissed", "dismissed_at": now,
+    }})
+    await db.coach_tasks.update_many(
+        {"message_draft_id": draft_id, "status": {"$in": ["todo", "in_progress"]}},
+        {"$set": {"status": "dismissed", "dismissed_at": now, "completed_at": now}},
+    )
+    await _log_change(coach["id"], d["client_id"], "message",
+                      f"Dismissed Atlas draft for {d.get('client_name')}",
+                      d.get("atlas_draft", "")[:180], actor="coach",
+                      meta={"draft_id": draft_id, "risk_level": d.get("risk_level")})
+    return {"ok": True}
+
+
+@api.get("/coach/messages/drafts")
+async def coach_msg_drafts_list(coach: dict = Depends(require_role("coach")),
+                                status: Optional[str] = None,
+                                client_id: Optional[str] = None,
+                                limit: int = 100):
+    q: dict[str, Any] = {}
+    q["status"] = status or "waiting_approval"
+    if client_id:
+        q["client_id"] = client_id
+    rows = await db.message_drafts.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"drafts": rows, "count": len(rows)}
+
+
+@api.get("/coach/messages/drafts/{draft_id}")
+async def coach_msg_draft_get(draft_id: str, coach: dict = Depends(require_role("coach"))):
+    d = await db.message_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "draft not found")
+    # attach thread history
+    thread = await db.messages.find(
+        {"$or": [{"from_user_id": d["client_id"], "to_user_id": coach["id"]},
+                 {"from_user_id": coach["id"], "to_user_id": d["client_id"]}]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(200)
+    return {"draft": d, "thread": thread}
+
+
+# ---- Per-client Coach Controls --------------------------------------------
+
+DEFAULT_COACH_CONTROLS = {
+    "programme_flexibility": "flexible",
+    "progression_speed": "standard",
+    "injury_caution": "medium",
+    "video_frequency": "weekly",
+    "auto_approval_risk_threshold": "none",
+}
+
+
+@api.get("/coach/clients/{client_id}/controls")
+async def coach_controls_get(client_id: str, coach: dict = Depends(require_role("coach"))):
+    c = await db.users.find_one({"id": client_id}, {"_id": 0, "coach_controls": 1, "name": 1})
+    if not c:
+        raise HTTPException(404, "client not found")
+    controls = {**DEFAULT_COACH_CONTROLS, **(c.get("coach_controls") or {})}
+    return {"controls": controls, "defaults": DEFAULT_COACH_CONTROLS}
+
+
+@api.put("/coach/clients/{client_id}/controls")
+async def coach_controls_put(client_id: str, body: CoachClientControlsBody, coach: dict = Depends(require_role("coach"))):
+    c = await db.users.find_one({"id": client_id}, {"_id": 0, "coach_controls": 1, "name": 1, "email": 1})
+    if not c:
+        raise HTTPException(404, "client not found")
+    prev = {**DEFAULT_COACH_CONTROLS, **(c.get("coach_controls") or {})}
+    updates: dict[str, Any] = {}
+    for k in ("programme_flexibility", "progression_speed", "injury_caution",
+              "video_frequency", "auto_approval_risk_threshold"):
+        v = getattr(body, k)
+        if v is not None:
+            updates[k] = v
+    if not updates:
+        raise HTTPException(400, "no updates")
+    merged = {**prev, **updates}
+    await db.users.update_one({"id": client_id}, {"$set": {"coach_controls": merged}})
+    # log which fields changed
+    diff = {k: {"from": prev.get(k), "to": merged[k]} for k in updates if prev.get(k) != merged[k]}
+    if diff:
+        await _log_change(coach["id"], client_id, "controls",
+                          f"Updated controls for {c.get('name') or c.get('email')}",
+                          ", ".join(f"{k}: {v['from']}→{v['to']}" for k, v in diff.items()),
+                          actor="coach", meta={"diff": diff})
+    return {"controls": merged}
+
+
+# ---- Change Log endpoints --------------------------------------------------
+
+@api.get("/coach/change-log")
+async def coach_change_log_all(coach: dict = Depends(require_role("coach")),
+                               client_id: Optional[str] = None,
+                               category: Optional[str] = None,
+                               limit: int = 100):
+    q: dict[str, Any] = {}
+    if client_id:
+        q["client_id"] = client_id
+    if category:
+        q["category"] = category
+    rows = await db.coach_change_log.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"entries": rows, "count": len(rows)}
+
+
+@api.get("/coach/clients/{client_id}/change-log")
+async def coach_change_log_client(client_id: str, coach: dict = Depends(require_role("coach")), limit: int = 60):
+    rows = await db.coach_change_log.find({"client_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"entries": rows, "count": len(rows)}
+
+
+# ============================================================================
+# GOAL-BASED HABIT TRACKING (V1)
+#
+# Collections:
+#   habits          — per-user habit definitions (active + paused + archived)
+#   habit_logs      — daily done/skipped/not_possible entries
+#   habit_reviews   — weekly Atlas-generated review with recommendations
+#
+# Principles:
+#   * Atlas seeds 3-5 starter habits at end of Coaching DNA.
+#   * Habits are day-type-aware — filtered by roster/workout context.
+#   * Reviews run after each Sunday check-in; scale up/down/pause/replace/etc.
+#   * Coach approves only meaningful changes (respecting coach_controls.auto_approval_risk_threshold).
+#   * Skipped or "not possible" never breaks streak — kind by design.
+# ============================================================================
+
+MAX_ACTIVE_HABITS_DEFAULT = 5
+
+HABIT_SEED_SYSTEM = (
+    "You are Atlas, an assistant coach for CrewFit — a personal training service for airline "
+    "cabin crew (pilots + cabin crew). You are drafting the FIRST 3-5 daily habits for a new "
+    "client based on their Coaching DNA and lifestyle. Louis (the coach) approves anything major.\n\n"
+    "RULES:\n"
+    "1. Produce 3, 4 or 5 habits — never more. Fewer is better if the client has heavy roster/injury load.\n"
+    "2. Mix: aim for ~2 goal habits, 1 recovery, 1 nutrition, 1 aviation/lifestyle habit if relevant.\n"
+    "3. Habits must be simple, specific, realistic, roster-aware.\n"
+    "4. Do NOT create workout duplicates (the programme handles training).\n"
+    "5. Each habit must link back to a goal or lifestyle need in the DNA.\n"
+    "6. Use realistic targets. Start small.\n\n"
+    "Return STRICT JSON: { \"habits\": [ { title, reason, linked_goal, habit_type, "
+    "day_type_rules, frequency, target, unit, difficulty_level } ] }.\n\n"
+    "habit_type values: daily | weekly | training-day-only | rest-day-only | flight-day | "
+    "layover-day | home-day | post-flight | pre-flight | recovery-day | after-workout | event-specific | custom.\n"
+    "day_type_rules examples: [\"home_day\",\"rest\"], [\"layover_arrival\",\"layover_full\"], [\"flight\",\"duty\"].\n"
+    "difficulty_level: starter | standard | stretch.\n"
+    "Use British English. Keep title <= 60 chars. Keep reason to one warm supportive sentence."
+)
+
+HABIT_REVIEW_SYSTEM = (
+    "You are Atlas, running the weekly HABIT REVIEW for a CrewFit client after their Sunday check-in.\n"
+    "You are given: their active habits, last 7 days of habit logs, this week's check-in answers, "
+    "workout adherence, roster context, coach_controls and any injury flag.\n\n"
+    "Recommend adjustments so habits SUPPORT — never overwhelm — the client. Consistency first, "
+    "then progression. Never shame. Never keep pushing habits that clearly aren't working.\n\n"
+    "Rules:\n"
+    "- If completion < 40% for two weeks OR client says habits are too much → SCALE DOWN or PAUSE.\n"
+    "- If completion > 80% for two weeks AND client feels good → suggest small SCALE UP.\n"
+    "- If a habit is repeatedly skipped for the same environmental reason (layover, night flight, "
+    "no equipment, family) → REPLACE with something that fits.\n"
+    "- Injury/pain reported → PAUSE loading habits, require coach review.\n"
+    "- Never exceed 5 active habits total after applying changes.\n"
+    "- Assign risk_level: low (frequency tweak, wording, day-scope) | medium (target change, replace, "
+    "add habit, pause) | high (injury-related change, event-window change).\n\n"
+    "Return STRICT JSON with keys:\n"
+    "  atlas_summary          — one-line reassurance-first summary Atlas will show the client\n"
+    "  coach_summary          — one-line summary Atlas will show Louis if approval needed\n"
+    "  completion_rate        — 0.0 to 1.0 across all habits this week (compute from logs)\n"
+    "  what_worked            — string\n"
+    "  what_did_not           — string\n"
+    "  recommendations        — array of { habit_id, action, change, reason, risk_level, "
+    "                             new_target?, new_frequency?, new_day_type_rules?, new_title?, new_reason?, replacement? }\n"
+    "  new_habits             — array of { title, reason, linked_goal, habit_type, day_type_rules, "
+    "                             frequency, target, unit, difficulty_level, risk_level }\n"
+    "  requires_coach_review  — boolean (true if ANY recommendation is medium/high risk OR injury-related)\n"
+    "action values: keep | scale_down | scale_up | pause | resume | replace | simplify | make_specific | remove.\n"
+    "Use British English. Warm, non-judgemental."
+)
+
+
+# ---- Helpers ---------------------------------------------------------------
+
+def _today_local_str(user: dict) -> str:
+    tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    try:
+        tz = ZoneInfo(tz_name)
+        return _dt.datetime.now(tz).date().isoformat()
+    except Exception:
+        return _dt.datetime.utcnow().date().isoformat()
+
+
+def _clean_habit_row(h: dict) -> dict:
+    h.pop("_id", None)
+    return h
+
+
+def _habit_relevant_today(habit: dict, day_type: Optional[str], has_workout: bool, is_flight_day: bool) -> bool:
+    """Decide whether a habit should appear on the client's home screen today."""
+    ht = (habit.get("habit_type") or "daily").lower()
+    dt = (day_type or "").lower()
+    rules = [r.lower() for r in (habit.get("day_type_rules") or [])]
+    if ht == "daily":
+        return True
+    if ht == "weekly":
+        # Weekly habits show every day so the client can tick them off at any point
+        return True
+    if ht in ("training-day-only", "training-day", "after-workout"):
+        return has_workout
+    if ht in ("rest-day-only", "rest-day", "recovery-day", "recovery-day-only"):
+        return any(k in dt for k in ("rest", "home_day", "home training", "annual leave"))
+    if ht in ("flight-day", "flight-day-only", "pre-flight"):
+        return is_flight_day
+    if ht in ("post-flight",):
+        return is_flight_day or any(k in dt for k in ("layover", "flight"))
+    if ht in ("layover-day", "layover-day-only"):
+        return "layover" in dt
+    if ht in ("home-day", "home-day-only"):
+        return "home_day" in dt or "home" in dt or "rest" in dt
+    if ht in ("event-specific",):
+        return True  # calendar filters this elsewhere
+    # custom or unknown → obey day_type_rules if provided, otherwise show daily
+    if rules:
+        return any(r in dt for r in rules)
+    return True
+
+
+def _is_flight_day(day_type: Optional[str]) -> bool:
+    dt = (day_type or "").lower()
+    return any(k in dt for k in ("flight", "duty", "standby", "layover"))
+
+
+def _log_effective_status_counts(logs: list[dict]) -> tuple[int, int, int, int]:
+    """(done, skipped, not_possible, total_qualifying) where qualifying excludes not_possible for completion calc."""
+    done = sum(1 for l in logs if l.get("status") == "done")
+    skipped = sum(1 for l in logs if l.get("status") == "skipped")
+    not_possible = sum(1 for l in logs if l.get("status") == "not_possible")
+    total = done + skipped  # not_possible ignored for completion — kind design
+    return done, skipped, not_possible, total
+
+
+async def _compute_streak(habit_id: str, user_id: str, tz_name: str) -> int:
+    """Preserve streak on skipped/not_possible per user's requirement (option b).
+    Count backwards from today: consecutive days where the habit was DONE, SKIPPED or NOT_POSSIBLE.
+    A streak breaks only when a day has ZERO log and the habit was expected that day.
+    """
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("Europe/London")
+    today = _dt.datetime.now(tz).date()
+    logs = await db.habit_logs.find(
+        {"habit_id": habit_id, "user_id": user_id}, {"_id": 0}
+    ).sort("date_local", -1).to_list(180)
+    log_by_date = {l["date_local"]: l for l in logs}
+    streak = 0
+    for i in range(0, 60):
+        d = (today - _dt.timedelta(days=i)).isoformat()
+        if d in log_by_date:
+            streak += 1
+        else:
+            # allow first missing day if today isn't logged yet
+            if i == 0:
+                continue
+            break
+    return streak
+
+
+# ---- Atlas seeding ---------------------------------------------------------
+
+def _default_habit_pack(dna: dict) -> list[dict]:
+    """Deterministic fallback pack if the LLM call fails — always shippable."""
+    goals = [str(g).lower() for g in (dna.get("primary_goals") or [])]
+    packs: list[dict] = []
+    if any(k in " ".join(goals) for k in ("fat", "loss", "leaner", "cutting", "weight")):
+        packs.append({"title": "Protein with first meal", "reason": "Supports fat loss, appetite control and muscle retention.", "linked_goal": "fat_loss", "habit_type": "daily", "day_type_rules": [], "frequency": "daily", "target": "1 palm of protein", "unit": "portion", "difficulty_level": "starter"})
+    else:
+        packs.append({"title": "Protein with first meal", "reason": "Sets recovery + energy up early in your day.", "linked_goal": (goals[0] if goals else "general"), "habit_type": "daily", "day_type_rules": [], "frequency": "daily", "target": "1 palm of protein", "unit": "portion", "difficulty_level": "starter"})
+    packs.append({"title": "8,000 steps on home days", "reason": "Keeps daily movement up without adding gym time.", "linked_goal": (goals[0] if goals else "general_health"), "habit_type": "home-day", "day_type_rules": ["home_day","rest","annual leave"], "frequency": "daily", "target": "8000", "unit": "steps", "difficulty_level": "starter"})
+    packs.append({"title": "Hydrate after landing", "reason": "Supports recovery after flying.", "linked_goal": "recovery", "habit_type": "post-flight", "day_type_rules": ["layover","flight","layover_arrival"], "frequency": "per_flight", "target": "500ml", "unit": "ml", "difficulty_level": "starter"})
+    packs.append({"title": "5-minute mobility after duty", "reason": "Reduces stiffness after flights and layovers.", "linked_goal": "mobility", "habit_type": "post-flight", "day_type_rules": ["layover","flight","standby"], "frequency": "per_flight", "target": "5", "unit": "minutes", "difficulty_level": "starter"})
+    packs.append({"title": "Sunday weekly check-in", "reason": "Keeps Atlas + Louis honest about your week.", "linked_goal": "coaching", "habit_type": "weekly", "day_type_rules": [], "frequency": "weekly", "target": "1", "unit": "check-in", "difficulty_level": "starter"})
+    return packs[:5]
+
+
+async def _atlas_seed_habits(user: dict) -> list[dict]:
+    dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("version", -1)])
+    ctx = {
+        "client_name": user.get("name"),
+        "crew_role": user.get("crew_role"),
+        "primary_goals": (dna or {}).get("primary_goals"),
+        "obstacles": (dna or {}).get("obstacles"),
+        "training_style": (dna or {}).get("training_style"),
+        "coaching_style": (dna or {}).get("coaching_style"),
+        "injury_history": (dna or {}).get("injury_history"),
+        "event_timeline": (dna or {}).get("event_timeline"),
+        "sleep_notes": (dna or {}).get("sleep_notes"),
+        "nutrition_notes": (dna or {}).get("nutrition_notes"),
+    }
+    parsed: dict[str, Any] = {}
+    try:
+        raw = await call_claude(HABIT_SEED_SYSTEM, "Seed the starter habits for this client.\n\nDNA CONTEXT:\n" + json.dumps(ctx, default=str)[:5000], max_out=1400)
+        parsed = parse_json_from_text(raw) or {}
+    except Exception:
+        logger.exception("Atlas habit seeding LLM failed — using deterministic pack")
+    habits = parsed.get("habits") if isinstance(parsed, dict) else None
+    if not isinstance(habits, list) or not habits:
+        habits = _default_habit_pack(dna or {})
+    return habits[:MAX_ACTIVE_HABITS_DEFAULT]
+
+
+async def _seed_habits_for_user_by_id(user_id: str) -> int:
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        return 0
+    # Idempotent — skip if the user already has any active habits
+    existing = await db.habits.count_documents({"user_id": user_id, "status": {"$in": ["active", "paused"]}})
+    if existing:
+        return 0
+    habits = await _atlas_seed_habits(user)
+    now = now_iso()
+    docs = []
+    for h in habits:
+        docs.append({
+            "id": new_id(),
+            "user_id": user_id,
+            "coach_id": None,
+            "title": (h.get("title") or "").strip()[:80],
+            "reason": (h.get("reason") or "").strip(),
+            "linked_goal": h.get("linked_goal") or "general",
+            "habit_type": h.get("habit_type") or "daily",
+            "day_type_rules": h.get("day_type_rules") or [],
+            "frequency": h.get("frequency") or "daily",
+            "target": h.get("target"),
+            "unit": h.get("unit"),
+            "difficulty_level": h.get("difficulty_level") or "starter",
+            "status": "active",
+            "current_level": 1,
+            "created_by": "atlas",
+            "requires_coach_approval": False,
+            "approved_by": "atlas",
+            "created_at": now,
+            "updated_at": now,
+            "paused_at": None,
+            "deleted_at": None,
+        })
+    if docs:
+        await db.habits.insert_many(docs)
+    await _log_change(None, user_id, "programme",
+                      f"Atlas seeded {len(docs)} starter habits", "", actor="atlas",
+                      meta={"count": len(docs)})
+    return len(docs)
+
+
+# ---- Habit review ----------------------------------------------------------
+
+async def _run_habit_review_after_checkin(user_id: str, checkin_id: str, ws: str, we: str) -> None:
+    try:
+        user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+        if not user:
+            return
+        habits = await db.habits.find({"user_id": user_id, "status": "active"}, {"_id": 0}).to_list(50)
+        if not habits:
+            return
+        habit_ids = [h["id"] for h in habits]
+        logs = await db.habit_logs.find(
+            {"user_id": user_id, "habit_id": {"$in": habit_ids}, "date_local": {"$gte": ws, "$lte": we}}, {"_id": 0}
+        ).to_list(1000)
+        by_habit: dict[str, list[dict]] = {hid: [] for hid in habit_ids}
+        for l in logs:
+            by_habit.setdefault(l["habit_id"], []).append(l)
+        stats = []
+        total_done, total_expected = 0, 0
+        for h in habits:
+            hlogs = by_habit.get(h["id"], [])
+            done, skipped, np_, total = _log_effective_status_counts(hlogs)
+            total_done += done
+            total_expected += (total or 1)
+            stats.append({
+                "habit_id": h["id"], "title": h["title"], "habit_type": h["habit_type"],
+                "linked_goal": h.get("linked_goal"),
+                "done": done, "skipped": skipped, "not_possible": np_,
+                "completion": (done / total) if total else 0.0,
+                "skipped_reasons": [l.get("reason") for l in hlogs if l.get("status") == "skipped" and l.get("reason")],
+                "not_possible_reasons": [l.get("reason") for l in hlogs if l.get("status") == "not_possible" and l.get("reason")],
+                "notes": [l.get("note") for l in hlogs if l.get("note")],
+            })
+        checkin = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
+        controls = user.get("coach_controls") or {}
+        ctx = {
+            "client_name": user.get("name"),
+            "crew_role": user.get("crew_role"),
+            "week_start": ws, "week_end": we,
+            "habits": stats,
+            "check_in_answers": (checkin or {}).get("answers"),
+            "energy": (checkin or {}).get("energy_score"),
+            "sleep": (checkin or {}).get("sleep_score"),
+            "stress": (checkin or {}).get("stress_score"),
+            "recovery": (checkin or {}).get("recovery_score"),
+            "training_adherence": (checkin or {}).get("training_adherence"),
+            "injury_flag": (checkin or {}).get("injury_flag"),
+            "urgent_safety_flag": (checkin or {}).get("urgent_safety_flag"),
+            "nutrition_flag": (checkin or {}).get("nutrition_flag"),
+            "coach_controls": {
+                "injury_caution": controls.get("injury_caution", "medium"),
+                "progression_speed": controls.get("progression_speed", "standard"),
+                "auto_approval_risk_threshold": controls.get("auto_approval_risk_threshold", "none"),
+            },
+        }
+        parsed: dict[str, Any] = {}
+        try:
+            raw = await call_claude(HABIT_REVIEW_SYSTEM,
+                                    "Run the weekly habit review for this client.\n\nCONTEXT:\n" + json.dumps(ctx, default=str)[:8000],
+                                    max_out=2000)
+            parsed = parse_json_from_text(raw) or {}
+        except Exception:
+            logger.exception("habit review LLM failed")
+        recs = parsed.get("recommendations") or []
+        new_habits = parsed.get("new_habits") or []
+        rate = float(parsed.get("completion_rate") or ((total_done / total_expected) if total_expected else 0.0))
+        requires_review = bool(parsed.get("requires_coach_review"))
+        # Determine automatic vs coach-review based on coach_controls.auto_approval_risk_threshold
+        threshold = (controls.get("auto_approval_risk_threshold") or "none").lower()
+        auto_apply_low = threshold in ("low", "low_medium")
+        auto_apply_medium = threshold == "low_medium"
+        # If any injury-related recommendation exists → force coach review
+        any_high = any((r.get("risk_level") == "high") for r in recs) or any(("injur" in (r.get("reason") or "").lower()) for r in recs)
+        any_medium = any((r.get("risk_level") == "medium") for r in recs)
+        any_low = any((r.get("risk_level") == "low") for r in recs)
+        coach_review_required = requires_review or any_high or (any_medium and not auto_apply_medium) or (any_low and not auto_apply_low)
+        review_doc = {
+            "id": new_id(),
+            "user_id": user_id,
+            "user_name": user.get("name") or user.get("email"),
+            "check_in_id": checkin_id,
+            "week_start": ws,
+            "week_end": we,
+            "completion_rate": round(rate, 3),
+            "atlas_summary": parsed.get("atlas_summary") or "Habits reviewed for this week.",
+            "coach_summary": parsed.get("coach_summary") or "Weekly habit review ready.",
+            "what_worked": parsed.get("what_worked") or "",
+            "what_did_not": parsed.get("what_did_not") or "",
+            "stats": stats,
+            "recommendations": recs,
+            "new_habits": new_habits,
+            "coach_review_required": coach_review_required,
+            "coach_review_status": "pending" if coach_review_required else "auto_applied",
+            "reviewed_by": None,
+            "reviewed_at": None,
+            "created_at": now_iso(),
+            "applied_at": None,
+        }
+        await db.habit_reviews.insert_one(review_doc)
+        # If no coach review required → auto-apply now
+        if not coach_review_required:
+            await _apply_habit_review(review_doc, actor="atlas")
+        else:
+            # Create a coach To-Do task for this review
+            risk = "high" if any_high else ("medium" if any_medium else "low")
+            priority = "urgent" if any_high else ("high" if any_medium else "normal")
+            await _create_coach_task(user, "habit_review",
+                                     f"Habit review needed for {user.get('name') or user.get('email')}",
+                                     (parsed.get("coach_summary") or "Atlas has prepared habit changes.")[:220],
+                                     priority=priority,
+                                     risk_level=risk,
+                                     category="programme",
+                                     check_in_id=checkin_id,
+                                     payload={"habit_review_id": review_doc["id"]})
+        await _log_change(None, user_id, "programme",
+                          "Weekly habit review",
+                          review_doc["atlas_summary"], actor="atlas",
+                          meta={"review_id": review_doc["id"], "coach_review_required": coach_review_required,
+                                "completion_rate": review_doc["completion_rate"]})
+    except Exception:
+        logger.exception("_run_habit_review_after_checkin failed")
+
+
+async def _apply_habit_review(review: dict, actor: str = "coach", coach_id: Optional[str] = None) -> dict:
+    user_id = review["user_id"]
+    now = now_iso()
+    applied = {"updated": 0, "paused": 0, "resumed": 0, "removed": 0, "created": 0}
+    # Apply recommendations
+    for r in (review.get("recommendations") or []):
+        hid = r.get("habit_id")
+        action = (r.get("action") or "").lower()
+        if not hid or action == "keep":
+            continue
+        updates: dict[str, Any] = {"updated_at": now, "last_review_id": review["id"]}
+        if action in ("scale_down", "scale_up", "simplify", "make_specific", "replace"):
+            if r.get("new_title"): updates["title"] = r["new_title"]
+            if r.get("new_reason"): updates["reason"] = r["new_reason"]
+            if r.get("new_target") is not None: updates["target"] = r["new_target"]
+            if r.get("new_frequency"): updates["frequency"] = r["new_frequency"]
+            if r.get("new_day_type_rules") is not None: updates["day_type_rules"] = r["new_day_type_rules"]
+            if action == "scale_down": updates["difficulty_level"] = "starter"
+            if action == "scale_up": updates["difficulty_level"] = "standard"
+            if action == "replace" and r.get("replacement"):
+                rep = r["replacement"]
+                if isinstance(rep, dict):
+                    if rep.get("title"): updates["title"] = rep["title"]
+                    if rep.get("reason"): updates["reason"] = rep["reason"]
+                    if rep.get("habit_type"): updates["habit_type"] = rep["habit_type"]
+                    if rep.get("day_type_rules") is not None: updates["day_type_rules"] = rep["day_type_rules"]
+                    if rep.get("target") is not None: updates["target"] = rep["target"]
+                    if rep.get("unit"): updates["unit"] = rep["unit"]
+            applied["updated"] += 1
+        elif action == "pause":
+            updates.update({"status": "paused", "paused_at": now})
+            applied["paused"] += 1
+        elif action == "resume":
+            updates.update({"status": "active", "paused_at": None})
+            applied["resumed"] += 1
+        elif action == "remove":
+            updates.update({"status": "archived", "deleted_at": now})
+            applied["removed"] += 1
+        await db.habits.update_one({"id": hid, "user_id": user_id}, {"$set": updates})
+    # Add new habits (respect max)
+    active_count = await db.habits.count_documents({"user_id": user_id, "status": "active"})
+    for nh in (review.get("new_habits") or []):
+        if active_count >= MAX_ACTIVE_HABITS_DEFAULT:
+            break
+        doc = {
+            "id": new_id(),
+            "user_id": user_id,
+            "coach_id": coach_id,
+            "title": (nh.get("title") or "").strip()[:80],
+            "reason": nh.get("reason") or "",
+            "linked_goal": nh.get("linked_goal") or "general",
+            "habit_type": nh.get("habit_type") or "daily",
+            "day_type_rules": nh.get("day_type_rules") or [],
+            "frequency": nh.get("frequency") or "daily",
+            "target": nh.get("target"),
+            "unit": nh.get("unit"),
+            "difficulty_level": nh.get("difficulty_level") or "starter",
+            "status": "active",
+            "current_level": 1,
+            "created_by": actor,
+            "requires_coach_approval": False,
+            "approved_by": actor,
+            "created_at": now,
+            "updated_at": now,
+            "paused_at": None,
+            "deleted_at": None,
+            "last_review_id": review["id"],
+        }
+        await db.habits.insert_one(doc)
+        active_count += 1
+        applied["created"] += 1
+    await db.habit_reviews.update_one({"id": review["id"]}, {"$set": {
+        "coach_review_status": "auto_applied" if actor == "atlas" else "approved",
+        "applied_at": now,
+        "reviewed_by": coach_id or actor,
+        "reviewed_at": now,
+    }})
+    return applied
+
+
+# ---- Client endpoints ------------------------------------------------------
+
+@api.post("/habits/seed")
+async def habits_seed(user: dict = Depends(current_user)):
+    """Idempotent: seed 3-5 starter habits (used if the DNA-finalize hook missed)."""
+    seeded = await _seed_habits_for_user_by_id(user["id"])
+    return {"seeded": seeded}
+
+
+@api.get("/habits/today")
+async def habits_today(user: dict = Depends(current_user)):
+    today = _today_local_str(user)
+    # Determine today's roster day-type + whether there's a workout
+    todays_wk = await db.workouts.find_one({"user_id": user["id"], "date": today}, {"_id": 0, "day_type": 1, "id": 1, "completed": 1})
+    day_type = (todays_wk or {}).get("day_type")
+    if not day_type:
+        # try roster
+        roster = await db.rosters.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+        if roster:
+            for d in roster.get("days", []):
+                if d.get("date") == today:
+                    day_type = d.get("type") or d.get("day_type")
+                    break
+    is_flight = _is_flight_day(day_type)
+    habits = await db.habits.find({"user_id": user["id"], "status": "active"}, {"_id": 0}).to_list(50)
+    habits = [h for h in habits if _habit_relevant_today(h, day_type, bool(todays_wk), is_flight)]
+    # Load today's logs
+    logs = await db.habit_logs.find(
+        {"user_id": user["id"], "habit_id": {"$in": [h["id"] for h in habits]}, "date_local": today}, {"_id": 0}
+    ).to_list(50)
+    log_by_habit = {l["habit_id"]: l for l in logs}
+    tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    for h in habits:
+        h["today_log"] = log_by_habit.get(h["id"])
+        h["streak"] = await _compute_streak(h["id"], user["id"], tz_name)
+    return {"habits": habits, "date_local": today, "day_type": day_type, "flight_day": is_flight}
+
+
+@api.get("/habits/mine")
+async def habits_mine(user: dict = Depends(current_user)):
+    active = await db.habits.find({"user_id": user["id"], "status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    paused = await db.habits.find({"user_id": user["id"], "status": "paused"}, {"_id": 0}).sort("paused_at", -1).to_list(50)
+    tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    for h in active:
+        h["streak"] = await _compute_streak(h["id"], user["id"], tz_name)
+    return {"active": active, "paused": paused}
+
+
+@api.post("/habits/{habit_id}/log")
+async def habits_log(habit_id: str, body: HabitLogBody, user: dict = Depends(current_user)):
+    if body.status not in ("done", "skipped", "not_possible"):
+        raise HTTPException(400, "invalid status")
+    h = await db.habits.find_one({"id": habit_id, "user_id": user["id"]}, {"_id": 0, "id": 1})
+    if not h:
+        raise HTTPException(404, "habit not found")
+    date_local = body.date_local or _today_local_str(user)
+    tz_name = body.time_zone or user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    now = now_iso()
+    # Upsert on (habit_id, user_id, date_local)
+    set_doc = {
+        "log_id": new_id(),
+        "habit_id": habit_id,
+        "user_id": user["id"],
+        "date_local": date_local,
+        "time_zone": tz_name,
+        "status": body.status,
+        "reason": body.reason,
+        "note": body.note,
+        "updated_at": now,
+    }
+    await db.habit_logs.update_one(
+        {"habit_id": habit_id, "user_id": user["id"], "date_local": date_local},
+        {"$set": set_doc, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+    saved = await db.habit_logs.find_one({"habit_id": habit_id, "user_id": user["id"], "date_local": date_local}, {"_id": 0})
+    streak = await _compute_streak(habit_id, user["id"], tz_name)
+    return {"log": saved, "streak": streak}
+
+
+@api.get("/habits/{habit_id}/logs")
+async def habits_logs(habit_id: str, user: dict = Depends(current_user), limit: int = 90):
+    h = await db.habits.find_one({"id": habit_id, "user_id": user["id"]}, {"_id": 0, "id": 1})
+    if not h:
+        raise HTTPException(404, "habit not found")
+    rows = await db.habit_logs.find({"habit_id": habit_id, "user_id": user["id"]}, {"_id": 0}).sort("date_local", -1).to_list(limit)
+    return {"logs": rows}
+
+
+@api.post("/habits/reminders/toggle")
+async def habits_reminders_toggle(body: HabitRemindersToggleBody, user: dict = Depends(current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"habit_reminders_enabled": bool(body.enabled)}})
+    return {"enabled": bool(body.enabled)}
+
+
+@api.get("/habits/reviews/latest")
+async def habits_reviews_latest(user: dict = Depends(current_user)):
+    r = await db.habit_reviews.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    return {"review": r}
+
+
+# ---- Coach endpoints -------------------------------------------------------
+
+@api.get("/coach/clients/{client_id}/habits")
+async def coach_habits_get(client_id: str, coach: dict = Depends(require_role("coach"))):
+    client = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    if not client:
+        raise HTTPException(404, "client not found")
+    active = await db.habits.find({"user_id": client_id, "status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    paused = await db.habits.find({"user_id": client_id, "status": "paused"}, {"_id": 0}).sort("paused_at", -1).to_list(50)
+    archived = await db.habits.find({"user_id": client_id, "status": "archived"}, {"_id": 0}).sort("deleted_at", -1).to_list(30)
+    tz_name = client.get("current_time_zone") or client.get("home_time_zone") or "Europe/London"
+    # Compute simple 4-week completion + last-7-day trend
+    ws_all = [d for d in [ (_dt.datetime.utcnow().date() - _dt.timedelta(days=i)).isoformat() for i in range(28) ] ]
+    all_logs = await db.habit_logs.find({"user_id": client_id, "date_local": {"$in": ws_all}}, {"_id": 0}).to_list(2000)
+    completion = {}
+    for h in active:
+        hlogs = [l for l in all_logs if l["habit_id"] == h["id"]]
+        d, s, np_, tot = _log_effective_status_counts(hlogs)
+        completion[h["id"]] = {"done": d, "skipped": s, "not_possible": np_, "rate": (d / tot) if tot else 0.0}
+        h["streak"] = await _compute_streak(h["id"], client_id, tz_name)
+    latest_review = await db.habit_reviews.find_one({"user_id": client_id}, {"_id": 0}, sort=[("created_at", -1)])
+    pending_review = await db.habit_reviews.find_one({"user_id": client_id, "coach_review_status": "pending"}, {"_id": 0}, sort=[("created_at", -1)])
+    return {
+        "active": active, "paused": paused, "archived": archived,
+        "completion": completion,
+        "latest_review": latest_review,
+        "pending_review": pending_review,
+    }
+
+
+@api.post("/coach/clients/{client_id}/habits")
+async def coach_habit_create(client_id: str, body: HabitCoachCreateBody, coach: dict = Depends(require_role("coach"))):
+    # Enforce max active habits (coach can still add if some are paused/archived)
+    active_count = await db.habits.count_documents({"user_id": client_id, "status": "active"})
+    if active_count >= MAX_ACTIVE_HABITS_DEFAULT:
+        raise HTTPException(400, f"client already has {MAX_ACTIVE_HABITS_DEFAULT} active habits — pause or archive one first")
+    now = now_iso()
+    doc = {
+        "id": new_id(),
+        "user_id": client_id,
+        "coach_id": coach["id"],
+        "title": body.title[:80],
+        "reason": body.reason or "",
+        "linked_goal": body.linked_goal or "coach_defined",
+        "habit_type": body.habit_type or "daily",
+        "day_type_rules": body.day_type_rules or [],
+        "frequency": body.frequency or "daily",
+        "target": body.target,
+        "unit": body.unit,
+        "difficulty_level": body.difficulty_level or "starter",
+        "status": "active",
+        "current_level": 1,
+        "created_by": "coach",
+        "requires_coach_approval": False,
+        "approved_by": coach["id"],
+        "created_at": now,
+        "updated_at": now,
+        "paused_at": None,
+        "deleted_at": None,
+    }
+    await db.habits.insert_one(doc)
+    await _log_change(coach["id"], client_id, "programme",
+                      f"Coach added habit: {doc['title']}", doc["reason"], actor="coach",
+                      meta={"habit_id": doc["id"]})
+    doc.pop("_id", None)
+    return {"habit": doc}
+
+
+@api.patch("/coach/habits/{habit_id}")
+async def coach_habit_patch(habit_id: str, body: HabitCoachEditBody, coach: dict = Depends(require_role("coach"))):
+    h = await db.habits.find_one({"id": habit_id}, {"_id": 0})
+    if not h:
+        raise HTTPException(404, "habit not found")
+    updates: dict[str, Any] = {"updated_at": now_iso()}
+    for k in ("title", "reason", "target", "unit", "frequency", "habit_type", "day_type_rules", "difficulty_level"):
+        v = getattr(body, k)
+        if v is not None:
+            updates[k] = v
+    if body.status is not None:
+        updates["status"] = body.status
+        if body.status == "paused":
+            updates["paused_at"] = now_iso()
+        elif body.status == "archived":
+            updates["deleted_at"] = now_iso()
+        elif body.status == "active":
+            updates["paused_at"] = None
+    if len(updates) == 1:
+        raise HTTPException(400, "no updates")
+    await db.habits.update_one({"id": habit_id}, {"$set": updates})
+    saved = await db.habits.find_one({"id": habit_id}, {"_id": 0})
+    await _log_change(coach["id"], h["user_id"], "programme",
+                      f"Coach edited habit: {saved['title']}", "", actor="coach",
+                      meta={"habit_id": habit_id, "diff": {k: v for k, v in updates.items() if k != "updated_at"}})
+    return {"habit": saved}
+
+
+@api.post("/coach/habits/reviews/{review_id}/approve")
+async def coach_habit_review_approve(review_id: str, body: HabitReviewApproveBody, coach: dict = Depends(require_role("coach"))):
+    r = await db.habit_reviews.find_one({"id": review_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "review not found")
+    if r.get("coach_review_status") not in ("pending", None):
+        raise HTTPException(400, "review already resolved")
+    if body.modified_recommendations is not None:
+        r["recommendations"] = body.modified_recommendations
+    applied = await _apply_habit_review(r, actor="coach", coach_id=coach["id"])
+    await db.habit_reviews.update_one({"id": review_id}, {"$set": {"coach_note": body.coach_note or ""}})
+    # Resolve related coach task
+    await db.coach_tasks.update_many(
+        {"payload.habit_review_id": review_id, "status": {"$in": ["todo", "in_progress"]}},
+        {"$set": {"status": "done", "completed_at": now_iso()}},
+    )
+    await _log_change(coach["id"], r["user_id"], "programme",
+                      f"Coach approved habit review · {applied.get('updated', 0)} updated, {applied.get('created', 0)} new",
+                      body.coach_note or "", actor="coach",
+                      meta={"review_id": review_id, "applied": applied})
+    saved = await db.habit_reviews.find_one({"id": review_id}, {"_id": 0})
+    return {"review": saved, "applied": applied}
+
+
+@api.post("/coach/habits/reviews/{review_id}/reject")
+async def coach_habit_review_reject(review_id: str, body: HabitReviewRejectBody, coach: dict = Depends(require_role("coach"))):
+    r = await db.habit_reviews.find_one({"id": review_id}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "review not found")
+    if r.get("coach_review_status") not in ("pending", None):
+        raise HTTPException(400, "review already resolved")
+    now = now_iso()
+    await db.habit_reviews.update_one({"id": review_id}, {"$set": {
+        "coach_review_status": "rejected",
+        "reviewed_by": coach["id"],
+        "reviewed_at": now,
+        "coach_note": body.coach_note or "",
+    }})
+    await db.coach_tasks.update_many(
+        {"payload.habit_review_id": review_id, "status": {"$in": ["todo", "in_progress"]}},
+        {"$set": {"status": "dismissed", "dismissed_at": now, "completed_at": now}},
+    )
+    await _log_change(coach["id"], r["user_id"], "programme",
+                      "Coach rejected habit review", body.coach_note or "", actor="coach",
+                      meta={"review_id": review_id})
+    return {"ok": True}
+
+
+# ---- Reminder integration --------------------------------------------------
+
+async def _tick_habit_reminders() -> None:
+    """Enqueue at most one habit reminder per user per day, respecting quiet hours + toggle."""
+    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(2000)
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    for u in users:
+        try:
+            if u.get("habit_reminders_enabled") is False:
+                continue
+            tz_name = u.get("current_time_zone") or u.get("home_time_zone") or "Europe/London"
+            try: tz = ZoneInfo(tz_name)
+            except Exception: continue
+            local_now = now_utc.astimezone(tz)
+            # Send at 10:00 local, ±10min
+            if local_now.hour != 10 or not (0 <= local_now.minute < 10):
+                continue
+            if _in_quiet_hours(local_now, u.get("quiet_hours_start", "21:00"), u.get("quiet_hours_end", "07:00")):
+                continue
+            date_local = local_now.date().isoformat()
+            # skip if we already queued a habit reminder for this user today
+            if await db.scheduled_messages.find_one({"user_id": u["id"], "message_type": "habit_daily", "date_local": date_local}, {"id": 1}):
+                continue
+            # Do the client have any relevant habits today? (rough check by day-type from today's workout)
+            todays_wk = await db.workouts.find_one({"user_id": u["id"], "date": date_local}, {"_id": 0, "day_type": 1})
+            day_type = (todays_wk or {}).get("day_type")
+            is_flight = _is_flight_day(day_type)
+            habits = await db.habits.find({"user_id": u["id"], "status": "active"}, {"_id": 0}).to_list(20)
+            relevant = [h for h in habits if _habit_relevant_today(h, day_type, bool(todays_wk), is_flight)]
+            if not relevant:
+                continue
+            body = f"Your habits today: {relevant[0]['title']}" + (f" · +{len(relevant)-1} more" if len(relevant) > 1 else "")
+            await db.scheduled_messages.insert_one({
+                "id": new_id(),
+                "user_id": u["id"],
+                "message_type": "habit_daily",
+                "date_local": date_local,
+                "title": "Habits today",
+                "body": body,
+                "scheduled_time_zone": tz_name,
+                "scheduled_local_datetime": local_now.isoformat(),
+                "scheduled_utc_datetime": now_utc.isoformat(),
+                "status": "ready",
+                "quiet_hours_checked": True,
+                "created_at": now_iso(),
+                "sent_at": None,
+                "cancelled_at": None,
+                "delivery_attempts": 0,
+            })
+        except Exception:
+            logger.exception("habit reminder tick failed for a user")
+
+
+# Extend the existing reminder loop by also ticking habit reminders each cycle
+_ORIGINAL_TICK_REMINDERS = _tick_reminders
+
+
+async def _tick_reminders_with_habits() -> None:
+    await _ORIGINAL_TICK_REMINDERS()
+    await _tick_habit_reminders()
+
+
+_tick_reminders = _tick_reminders_with_habits  # override — _reminder_scheduler_loop uses this name
+
+
+# ============================================================================
+# NOTIFICATIONS + REMINDERS V1
+#
+# Collections:
+#   notifications      — in-app notification centre (bell)
+#   scheduled_messages — reminder queue (existing)
+#
+# Rules:
+#   * Every enqueue also writes an in-app notification (fallback when push is off).
+#   * Deduplicate on (user_id, notif_type, related_id, dedupe_key).
+#   * Respect quiet hours + notification_settings toggles + flight duty context.
+#   * Never break existing scheduling. Extend _tick_reminders in place.
+# ============================================================================
+
+DEFAULT_NOTIFICATION_SETTINGS = {
+    "check_ins": True,
+    "habits": True,
+    "workouts": True,
+    "coach_messages": True,
+    "weekly_videos": True,
+    "roster": True,
+    "programme_updates": True,
+    "quiet_hours_start": "21:00",
+    "quiet_hours_end": "07:00",
+    "preferred_reminder_time": "07:30",
+    "travel_use_current_tz": True,
+    "permission_status": "not_requested",
+}
+
+# Map notif_type → category key inside notification_settings
+NOTIF_CATEGORY: dict[str, str] = {
+    "weekly_check_in_available": "check_ins",
+    "reminder_1": "check_ins",
+    "reminder_2": "check_ins",
+    "reminder_last": "check_ins",
+    "missed_check_in": "check_ins",
+    "habit_daily": "habits",
+    "workout_today": "workouts",
+    "coach_message": "coach_messages",
+    "coach_draft_ready": "coach_messages",
+    "weekly_video_ready": "weekly_videos",
+    "programme_updated": "programme_updates",
+    "roster_low": "roster",
+    "roster_due": "roster",
+    "roster_expired": "roster",
+}
+
+
+def _get_notif_settings(user: dict) -> dict:
+    stored = user.get("notification_settings") or {}
+    out = {**DEFAULT_NOTIFICATION_SETTINGS, **stored}
+    # top-level quiet_hours override (older schema)
+    if user.get("quiet_hours_start"): out["quiet_hours_start"] = user["quiet_hours_start"]
+    if user.get("quiet_hours_end"):   out["quiet_hours_end"]   = user["quiet_hours_end"]
+    return out
+
+
+def _user_local_now(user: dict) -> tuple[_dt.datetime, str]:
+    tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("Europe/London")
+        tz_name = "Europe/London"
+    return _dt.datetime.now(tz), tz_name
+
+
+async def _is_on_duty_now(user_id: str, today: str) -> bool:
+    """Heuristic — active flight/duty from today's roster row or today's workout day_type."""
+    wk = await db.workouts.find_one({"user_id": user_id, "date": today}, {"_id": 0, "day_type": 1})
+    if wk and _is_flight_day(wk.get("day_type")):
+        return True
+    roster = await db.rosters.find_one({"user_id": user_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if roster:
+        for d in roster.get("days", []):
+            if d.get("date") == today:
+                dt = (d.get("type") or d.get("day_type") or "").lower()
+                return any(k in dt for k in ("flight", "duty", "standby"))
+    return False
+
+
+def _duty_safe_body(body: str) -> str:
+    """Soften copy for clients on duty."""
+    return body + " (when you're off duty and settled.)"
+
+
+async def enqueue_notification(
+    user_id: str,
+    notif_type: str,
+    title: str,
+    body: str,
+    *,
+    action_url: Optional[str] = None,
+    related_id: Optional[str] = None,
+    dedupe_key: Optional[str] = None,
+    respect_settings: bool = True,
+    respect_quiet_hours: bool = False,      # in-app rows can be created any time; push may be delayed
+    send_push_now: bool = True,
+    idempotency_key: Optional[str] = None,
+) -> Optional[dict]:
+    """Create an in-app notification, dedupe by (user_id, notif_type, related_id, dedupe_key).
+    Also attempts to send a push if the user granted permission and category is enabled.
+    Never raises — push failure only downgrades to in-app.
+    """
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        return None
+    settings = _get_notif_settings(user)
+    cat = NOTIF_CATEGORY.get(notif_type)
+    category_enabled = True
+    if respect_settings and cat and cat in settings:
+        category_enabled = bool(settings.get(cat, True))
+    # Dedupe query
+    dedupe_query: dict[str, Any] = {"user_id": user_id, "notif_type": notif_type}
+    if related_id: dedupe_query["related_id"] = related_id
+    if dedupe_key: dedupe_query["dedupe_key"] = dedupe_key
+    existing = await db.notifications.find_one(dedupe_query, {"_id": 0})
+    if existing:
+        # Refresh body/title if changed but keep read state
+        await db.notifications.update_one(
+            {"id": existing["id"]},
+            {"$set": {"title": title, "body": body, "action_url": action_url, "updated_at": now_iso()}},
+        )
+        existing.update({"title": title, "body": body, "action_url": action_url, "updated_at": now_iso()})
+        return existing
+    # Flight-duty rewording
+    on_duty = False
+    if notif_type in ("workout_today", "habit_daily", "reminder_1", "reminder_2", "weekly_check_in_available"):
+        try:
+            local_now, _ = _user_local_now(user)
+            today = local_now.date().isoformat()
+            on_duty = await _is_on_duty_now(user_id, today)
+        except Exception:
+            on_duty = False
+    final_body = _duty_safe_body(body) if on_duty else body
+    doc = {
+        "id": new_id(),
+        "user_id": user_id,
+        "notif_type": notif_type,
+        "category": cat,
+        "title": title,
+        "body": final_body,
+        "action_url": action_url,
+        "related_id": related_id,
+        "dedupe_key": dedupe_key,
+        "flight_duty_safe": on_duty,
+        "created_at": now_iso(),
+        "read_at": None,
+        "updated_at": now_iso(),
+    }
+    await db.notifications.insert_one(doc)
+    doc.pop("_id", None)
+    # Push (best-effort, non-blocking)
+    if send_push_now and category_enabled and settings.get("permission_status") == "granted":
+        try:
+            await send_push(
+                recipients=[user_id],
+                data={"title": title, "message": final_body, **({"action_url": action_url} if action_url else {})},
+                idempotency_key=idempotency_key,
+            )
+        except Exception as e:
+            logger.warning("push failed (in-app still created): %s", e)
+            await db.notifications.update_one({"id": doc["id"]}, {"$set": {"push_error": str(e)[:180]}})
+    return doc
+
+
+# ---- Endpoints -------------------------------------------------------------
+
+@api.get("/notifications")
+async def notifications_list(user: dict = Depends(current_user), unread_only: bool = False, limit: int = 60):
+    q: dict[str, Any] = {"user_id": user["id"]}
+    if unread_only:
+        q["read_at"] = None
+    rows = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    unread = await db.notifications.count_documents({"user_id": user["id"], "read_at": None})
+    return {"notifications": rows, "unread": unread}
+
+
+@api.get("/notifications/unread-count")
+async def notifications_unread_count(user: dict = Depends(current_user)):
+    n = await db.notifications.count_documents({"user_id": user["id"], "read_at": None})
+    return {"unread": n}
+
+
+@api.post("/notifications/{notif_id}/read")
+async def notifications_read(notif_id: str, user: dict = Depends(current_user)):
+    r = await db.notifications.update_one(
+        {"id": notif_id, "user_id": user["id"]},
+        {"$set": {"read_at": now_iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, "notification not found")
+    return {"ok": True}
+
+
+@api.post("/notifications/read-all")
+async def notifications_read_all(user: dict = Depends(current_user)):
+    now = now_iso()
+    r = await db.notifications.update_many(
+        {"user_id": user["id"], "read_at": None},
+        {"$set": {"read_at": now}},
+    )
+    return {"marked": r.modified_count}
+
+
+@api.get("/notifications/settings")
+async def notifications_settings_get(user: dict = Depends(current_user)):
+    return {"settings": _get_notif_settings(user), "defaults": DEFAULT_NOTIFICATION_SETTINGS}
+
+
+@api.put("/notifications/settings")
+async def notifications_settings_put(body: NotificationSettingsBody, user: dict = Depends(current_user)):
+    stored = user.get("notification_settings") or {}
+    updates: dict[str, Any] = {}
+    for k in ("check_ins", "habits", "workouts", "coach_messages", "weekly_videos", "roster", "programme_updates",
+              "quiet_hours_start", "quiet_hours_end", "preferred_reminder_time", "travel_use_current_tz"):
+        v = getattr(body, k)
+        if v is not None:
+            updates[k] = v
+    if not updates:
+        raise HTTPException(400, "no updates")
+    merged = {**stored, **updates}
+    top_level: dict[str, Any] = {"notification_settings": merged}
+    # Mirror quiet hours to top-level for backwards compatibility with _tick_reminders
+    if "quiet_hours_start" in updates: top_level["quiet_hours_start"] = updates["quiet_hours_start"]
+    if "quiet_hours_end" in updates:   top_level["quiet_hours_end"]   = updates["quiet_hours_end"]
+    await db.users.update_one({"id": user["id"]}, {"$set": top_level})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return {"settings": _get_notif_settings(fresh)}
+
+
+@api.post("/notifications/permission")
+async def notifications_permission(body: NotificationPermissionBody, user: dict = Depends(current_user)):
+    if body.status not in ("granted", "denied", "not_requested"):
+        raise HTTPException(400, "invalid status")
+    stored = user.get("notification_settings") or {}
+    stored["permission_status"] = body.status
+    stored["permission_updated_at"] = now_iso()
+    if body.platform:
+        stored["last_platform"] = body.platform
+    if body.device_info:
+        stored["last_device_info"] = body.device_info
+    await db.users.update_one({"id": user["id"]}, {"$set": {"notification_settings": stored}})
+    return {"status": body.status}
+
+
+# ---- Additional scheduled reminder ticks -----------------------------------
+
+async def _tick_roster_and_workout_reminders() -> None:
+    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(2000)
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    for u in users:
+        try:
+            settings = _get_notif_settings(u)
+            tz_name = u.get("current_time_zone") or u.get("home_time_zone") or "Europe/London"
+            try: tz = ZoneInfo(tz_name)
+            except Exception: continue
+            local_now = now_utc.astimezone(tz)
+            in_quiet = _in_quiet_hours(local_now, settings.get("quiet_hours_start", "21:00"), settings.get("quiet_hours_end", "07:00"))
+            today = local_now.date().isoformat()
+
+            # ---- Roster expiry ----
+            if settings.get("roster", True) and not in_quiet:
+                roster = await db.rosters.find_one({"user_id": u["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+                if roster:
+                    last_dates = sorted([d.get("date") for d in roster.get("days", []) if d.get("date")])
+                    if last_dates:
+                        last = last_dates[-1]
+                        try:
+                            last_dt = _dt.date.fromisoformat(last)
+                            delta = (last_dt - local_now.date()).days
+                        except Exception:
+                            delta = None
+                        if delta is not None:
+                            plan: Optional[tuple[str, str, str]] = None
+                            if delta == 7:
+                                plan = ("roster_low", "Roster running low",
+                                        "Your roster is running low. Upload your next roster when you can.")
+                            elif delta == 3:
+                                plan = ("roster_due", "Roster nearly due",
+                                        "Your next roster is nearly due.")
+                            elif delta == 1:
+                                plan = ("roster_due", "Upload your roster",
+                                        "Upload your next roster so CrewFit can keep your training accurate.")
+                            elif delta < 0:
+                                plan = ("roster_expired", "Roster expired",
+                                        "Your roster has expired. Upload your latest roster to keep your programme aligned.")
+                            if plan and local_now.hour == 9 and local_now.minute < 10:
+                                dedupe = f"{plan[0]}::{today}"
+                                await enqueue_notification(u["id"], plan[0], plan[1], plan[2],
+                                                            action_url="/roster-upload",
+                                                            related_id=roster.get("id"),
+                                                            dedupe_key=dedupe)
+
+            # ---- Workout reminder ----
+            if settings.get("workouts", True) and not in_quiet:
+                preferred = settings.get("preferred_reminder_time") or "07:30"
+                try:
+                    hh, mm = int(preferred.split(":")[0]), int(preferred.split(":")[1])
+                except Exception:
+                    hh, mm = 7, 30
+                if local_now.hour == hh and (mm <= local_now.minute < mm + 10):
+                    todays_wk = await db.workouts.find_one({"user_id": u["id"], "date": today}, {"_id": 0, "id": 1, "completed": 1, "skipped": 1, "status": 1})
+                    if todays_wk and not todays_wk.get("completed") and not todays_wk.get("skipped") and todays_wk.get("status") != "coach_review":
+                        dedupe = f"workout_today::{today}"
+                        await enqueue_notification(u["id"], "workout_today",
+                                                    "CrewFit session ready",
+                                                    "Your CrewFit session is ready for today.",
+                                                    action_url=f"/workout/{todays_wk['id']}",
+                                                    related_id=todays_wk["id"],
+                                                    dedupe_key=dedupe)
+
+            # ---- Missed check-in coach task on Tuesday morning ----
+            # weekday: Monday=0, Tuesday=1
+            if local_now.weekday() == 1 and local_now.hour == 9 and local_now.minute < 10:
+                ws, _we = _current_week_bounds(u)
+                # Compute *previous* week's start (checkins reference the just-completed week)
+                try:
+                    ws_prev = (_dt.date.fromisoformat(ws) - _dt.timedelta(days=7)).isoformat()
+                except Exception:
+                    ws_prev = ws
+                already_task = await db.coach_tasks.find_one({"user_id": u["id"], "task_type": "missed_check_in",
+                                                              "payload.week_start": ws_prev})
+                completed = await db.check_ins.find_one({"user_id": u["id"], "week_start": ws_prev}, {"id": 1})
+                if not completed and not already_task:
+                    await _create_coach_task(u, "missed_check_in",
+                                              f"Missed check-in · {u.get('name') or u.get('email')}",
+                                              f"No check-in submitted for the week starting {ws_prev}.",
+                                              priority="high",
+                                              risk_level="medium",
+                                              category="reviews",
+                                              payload={"week_start": ws_prev})
+        except Exception:
+            logger.exception("_tick_roster_and_workout_reminders failed for a user")
+
+
+_ORIGINAL_TICK_2 = _tick_reminders  # already extended to include habits above
+
+
+async def _tick_reminders_full() -> None:
+    await _ORIGINAL_TICK_2()
+    await _tick_roster_and_workout_reminders()
+
+
+_tick_reminders = _tick_reminders_full
+
+
+# ---- Hook helpers used by other endpoints (message send, video sent, etc.) ---
+
+async def notify_coach_message(from_user_id: str, to_user_id: str, text: str, source_message_id: Optional[str] = None) -> None:
+    from_user = await db.users.find_one({"id": from_user_id}, {"_id": 0, "name": 1, "role": 1})
+    if not from_user or from_user.get("role") != "coach":
+        return
+    await enqueue_notification(
+        to_user_id, "coach_message",
+        f"Message from {from_user.get('name', 'Louis')}",
+        text[:120],
+        action_url="/(client)/messages",
+        related_id=source_message_id,
+        dedupe_key=(f"coach_msg::{source_message_id}" if source_message_id else f"coach_msg::{now_iso()}"),
+    )
+
+
+async def notify_weekly_video_ready(user_id: str, video_id: Optional[str] = None) -> None:
+    await enqueue_notification(
+        user_id, "weekly_video_ready",
+        "Weekly review from Louis",
+        "Your weekly coaching review from Louis is ready.",
+        action_url="/(client)/videos" if not video_id else f"/(client)/videos?v={video_id}",
+        related_id=video_id,
+        dedupe_key=f"weekly_video::{video_id or ''}",
+    )
+
+
+async def notify_programme_updated(user_id: str, meta: Optional[dict] = None) -> None:
+    key = f"programme::{(meta or {}).get('week_start') or _dt.date.today().isoformat()}"
+    await enqueue_notification(
+        user_id, "programme_updated",
+        "Programme updated",
+        "Louis has reviewed your week and updated your plan.",
+        action_url="/(client)/schedule",
+        related_id=(meta or {}).get("workout_id"),
+        dedupe_key=key,
+    )
+
+
+async def notify_coach_draft_ready(coach_id: str, client_name: str, draft_id: str) -> None:
+    """In-app notification for the coach when Atlas produces a draft (V1: in-app only)."""
+    await enqueue_notification(
+        coach_id, "coach_draft_ready",
+        f"Draft ready · {client_name}",
+        "Atlas has drafted a reply. Review, edit and send.",
+        action_url=f"/coach/draft/{draft_id}",
+        related_id=draft_id,
+        dedupe_key=f"draft::{draft_id}",
+        respect_settings=False,   # coaches always see these
+    )
+
 
 app.include_router(api)
 app.add_middleware(

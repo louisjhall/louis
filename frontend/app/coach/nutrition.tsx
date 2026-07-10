@@ -41,13 +41,52 @@ export default function CoachNutrition() {
   const [selected, setSelected] = useState<ClientRow | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [pending, setPending] = useState<any[]>([]);
+  const [showPending, setShowPending] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ clients: ClientRow[] }>("/coach/nutrition/clients");
+      const [r, p] = await Promise.all([
+        api<{ clients: ClientRow[] }>("/coach/nutrition/clients"),
+        api<{ insights: any[] }>("/coach/nutrition/insights/pending").catch(() => ({ insights: [] })),
+      ]);
       setRows(r.clients);
+      setPending(p.insights || []);
     } catch (e: any) { toast(e?.message || "Load failed", "error"); }
   }, []);
+
+  const scanTodos = async () => {
+    setScanning(true);
+    try {
+      const r = await api<{ scanned: number; tasks_created: number }>("/coach/nutrition/scan-todos", { method: "POST", body: { force: false } });
+      toast(`Scan · ${r.tasks_created} coach task${r.tasks_created === 1 ? "" : "s"} created`, "success");
+      await load();
+    } catch (e: any) { toast(e?.message || "Failed", "error"); }
+    finally { setScanning(false); }
+  };
+
+  const approveInsight = async (id: string, applyChange: boolean) => {
+    setApprovingId(id);
+    try {
+      await api(`/coach/nutrition/insights/${id}/approve`, { method: "POST", body: { apply_target_change: applyChange } });
+      setPending((prev) => prev.filter((x) => x.id !== id));
+      toast(applyChange ? "Target updated" : "Reviewed", "success");
+      await load();
+    } catch (e: any) { toast(e?.message || "Failed", "error"); }
+    finally { setApprovingId(null); }
+  };
+
+  const dismissInsight = async (id: string) => {
+    setApprovingId(id);
+    try {
+      await api(`/coach/nutrition/insights/${id}/dismiss`, { method: "POST", body: {} });
+      setPending((prev) => prev.filter((x) => x.id !== id));
+      toast("Dismissed", "success");
+    } catch (e: any) { toast(e?.message || "Failed", "error"); }
+    finally { setApprovingId(null); }
+  };
 
   useFocusEffect(useCallback(() => { setLoading(true); load().finally(() => setLoading(false)); }, [load]));
 
@@ -66,8 +105,24 @@ export default function CoachNutrition() {
           <Ionicons name="chevron-back" size={24} color={theme.color.text} />
         </Pressable>
         <Text style={styles.headerT}>NUTRITION</Text>
-        <View style={{ width: 24 }} />
+        <Pressable onPress={scanTodos} hitSlop={12} disabled={scanning} testID="coach-nutr-scan">
+          {scanning ? <ActivityIndicator size="small" color={theme.color.brand} /> : (
+            <Ionicons name="scan" size={20} color={theme.color.brand} />
+          )}
+        </Pressable>
       </View>
+
+      {pending.length ? (
+        <View style={styles.pendingBar}>
+          <View style={styles.pendingIcon}>
+            <Ionicons name="flag" size={12} color="#fff" />
+          </View>
+          <Text style={styles.pendingT}>{pending.length} pending Atlas review{pending.length === 1 ? "" : "s"}</Text>
+          <Pressable onPress={() => setShowPending(true)}>
+            <Text style={styles.pendingLink}>OPEN</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {loading && !rows.length ? (
         <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>
@@ -196,6 +251,65 @@ export default function CoachNutrition() {
           />
         ) : null}
       </Modal>
+
+      {/* Pending Insights modal */}
+      <Modal visible={showPending} animationType="slide" onRequestClose={() => setShowPending(false)} presentationStyle="pageSheet">
+        <SafeAreaView style={styles.root} edges={["top"]}>
+          <View style={styles.header}>
+            <Pressable onPress={() => setShowPending(false)} hitSlop={12}>
+              <Ionicons name="close" size={22} color={theme.color.text} />
+            </Pressable>
+            <Text style={styles.headerT}>ATLAS REVIEWS · {pending.length}</Text>
+            <View style={{ width: 22 }} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 14, gap: 10, paddingBottom: 40 }}>
+            {pending.length === 0 ? (
+              <Text style={styles.empty}>No pending Atlas reviews.</Text>
+            ) : pending.map((i: any) => (
+              <View key={i.id} style={styles.pendingCard}>
+                <View style={styles.pendingHead}>
+                  <Text style={styles.pendingClient}>{i.client_name}</Text>
+                  <View style={[styles.actionBadge, actionBadgeColor(i.action)]}>
+                    <Text style={styles.actionBadgeT}>{i.action.replace(/_/g, " ").toUpperCase()}</Text>
+                  </View>
+                </View>
+                <Text style={styles.pendingSummary}>{i.atlas_summary}</Text>
+                <Text style={styles.pendingMain}>{i.main_issue}</Text>
+                {i.suggested_action ? <Text style={styles.pendingSug}>ATLAS SUGGESTS: {i.suggested_action}</Text> : null}
+                {i.target_change_suggestion?.calories || i.target_change_suggestion?.protein_g ? (
+                  <View style={styles.tcsCard}>
+                    <Text style={styles.tcsHead}>TARGET SUGGESTION</Text>
+                    <Text style={styles.tcsBody}>
+                      {i.target_change_suggestion.calories ? `Calories → ${i.target_change_suggestion.calories} kcal` : ""}
+                      {i.target_change_suggestion.calories && i.target_change_suggestion.protein_g ? " · " : ""}
+                      {i.target_change_suggestion.protein_g ? `Protein → ${i.target_change_suggestion.protein_g}g` : ""}
+                    </Text>
+                  </View>
+                ) : null}
+                <View style={styles.pendingBtnRow}>
+                  <Pressable onPress={() => dismissInsight(i.id)} disabled={approvingId === i.id}
+                    style={[styles.pBtn, styles.pBtnGhost, approvingId === i.id && { opacity: 0.4 }]}>
+                    <Text style={styles.pBtnGhostT}>DISMISS</Text>
+                  </Pressable>
+                  {i.target_change_suggestion?.calories || i.target_change_suggestion?.protein_g ? (
+                    <Pressable onPress={() => approveInsight(i.id, true)} disabled={approvingId === i.id}
+                      style={[styles.pBtn, styles.pBtnPri, approvingId === i.id && { opacity: 0.4 }]}>
+                      {approvingId === i.id ? <ActivityIndicator color="#fff" size="small" /> :
+                        <Text style={styles.pBtnT}>APPROVE + APPLY</Text>}
+                    </Pressable>
+                  ) : (
+                    <Pressable onPress={() => approveInsight(i.id, false)} disabled={approvingId === i.id}
+                      style={[styles.pBtn, styles.pBtnPri, approvingId === i.id && { opacity: 0.4 }]}>
+                      {approvingId === i.id ? <ActivityIndicator color="#fff" size="small" /> :
+                        <Text style={styles.pBtnT}>MARK REVIEWED</Text>}
+                    </Pressable>
+                  )}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -211,6 +325,15 @@ function Stat({ k, v }: { k: string; v: string }) {
 
 function goalLabel(g?: string) {
   return ({ fat_loss: "Fat loss", muscle_gain: "Muscle gain", endurance: "Endurance", general_health: "General health", recovery: "Recovery" } as any)[g || ""] || "General";
+}
+
+function actionBadgeColor(a: string) {
+  if (a === "keep") return { backgroundColor: theme.color.green };
+  if (a === "flag_coach_review") return { backgroundColor: "#c94a4a" };
+  if (a === "protein_focus" || a === "adjust_calories") return { backgroundColor: theme.color.brand };
+  if (a === "simplify") return { backgroundColor: theme.color.amber };
+  if (a === "add_travel_strategy") return { backgroundColor: "#3B82F6" };
+  return { backgroundColor: theme.color.textDim };
 }
 
 /* -------------------- Edit Targets modal -------------------- */
@@ -351,6 +474,29 @@ const styles = StyleSheet.create({
   empty: { color: theme.color.textDim, fontStyle: "italic", textAlign: "center", padding: 20 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   headerT: { color: theme.color.text, fontSize: 14, letterSpacing: 3, fontWeight: "900", fontFamily: theme.font.display },
+
+  pendingBar: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.color.brandTint, borderBottomWidth: 1, borderBottomColor: theme.color.brand },
+  pendingIcon: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  pendingT: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 0.5, flex: 1, fontFamily: theme.font.textSemi },
+  pendingLink: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "900" },
+
+  pendingCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand, gap: 8 },
+  pendingHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  pendingClient: { color: theme.color.text, fontSize: 14, fontWeight: "900", fontFamily: theme.font.display },
+  actionBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
+  actionBadgeT: { color: "#fff", fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  pendingSummary: { color: theme.color.text, fontSize: 12, lineHeight: 18, fontFamily: theme.font.text },
+  pendingMain: { color: theme.color.textMuted, fontSize: 11, lineHeight: 16 },
+  pendingSug: { color: theme.color.brand, fontSize: 11, fontStyle: "italic" },
+  tcsCard: { padding: 10, borderRadius: 8, backgroundColor: theme.color.surface3 },
+  tcsHead: { color: theme.color.brand, fontSize: 9, letterSpacing: 1.5, fontWeight: "900" },
+  tcsBody: { color: theme.color.text, fontSize: 13, marginTop: 4, fontWeight: "800" },
+  pendingBtnRow: { flexDirection: "row", gap: 8, marginTop: 4 },
+  pBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  pBtnGhost: { backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border },
+  pBtnGhostT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  pBtnPri: { backgroundColor: theme.color.brand },
+  pBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
 
   card: { padding: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 8 },
   cardHead: { flexDirection: "row", alignItems: "center" },

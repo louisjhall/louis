@@ -105,6 +105,18 @@
 user_problem_statement: "Build a dedicated Coach Web Dashboard (Option C) for CrewFit — desktop-native routes inside the current Expo app that render a sidebar layout on wide screens (>=1024px web) with Overview, Clients, Calendar, Approvals, Library, Messages, Analytics and Profile."
 
 backend:
+  - task: "Nutrition Centre backend (Phase 5 · Adaptive insights + Coach To-Do)"
+    implemented: true
+    working: true
+    file: "backend/feature_nutrition_insights.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 5 shipped: closes the Nutrition Centre spec. 9 endpoints. (a) Adaptive Weekly Atlas Insights — analyses 14-day rolling window (logs, hydration, protein trend, layover count, photo/barcode usage) and picks ONE of 6 actions (keep / simplify / protein_focus / adjust_calories / add_travel_strategy / flag_coach_review) using Claude Sonnet 4.5 with a deterministic rule-based fallback. Stored in nutrition_insights with dedupe per (user, week_start). (b) Sunday check-in enrichment — GET /nutrition/checkin/questions returns 5-7 goal-personalised nutrition questions the frontend appends to /checkins/questions. (c) Coach To-Do integration — POST /coach/nutrition/scan-todos sweeps all clients, generates insights, and creates dedupe'd coach_tasks with task_type='nutrition_review' whenever coach_review_required=true. Coach approve/dismiss endpoints; approve+applyTargetChange automatically writes a new nutrition_targets row with target_type='coach_from_atlas' and safety floors applied. Verified end-to-end: scan-todos across 23 clients created 22 nutrition_review tasks (client with 0 logs → flag_coach_review action). Endpoints tested manually via curl: /insights/generate, /insights/latest, /insights/mine, /checkin/questions, /coach/insights/pending, /coach/scan-todos, /coach/insights/{id}/approve, /coach/insights/{id}/dismiss."
+
   - task: "Nutrition Centre backend (Phase 4 · Roster/Airport/Timing/Guide)"
     implemented: true
     working: true
@@ -1329,6 +1341,30 @@ backend:
         comment: "EXERCISE_STYLE constant + _build_ex_prompt compose slot-specific prompts (START POSITION / END POSITION / primary demonstration) with body area emphasis, equipment inline, and softly-shaded face instruction. Female/male toggle via body.female."
 
 frontend:
+  - task: "Client · Adaptive Atlas Insights + Sunday check-in enrichment (Phase 5)"
+    implemented: true
+    working: true
+    file: "frontend/app/nutrition/insights.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New /nutrition/insights route (big card for the latest insight + history list). Nutrition home now shows a WEEKLY ATLAS INSIGHT preview card between the daily Atlas tip and the quick-actions grid — clicking navigates to the full screen. Screenshot verified: card renders 'Only one day logged in fourteen days...' with 'REVIEW' badge + 'AWAITING LOUIS' + 'VIEW ALL' link. The full /insights screen shows big action-tag badge (KEEP/SIMPLIFY/PROTEIN FOCUS/ADJUST CALORIES/TRAVEL STRATEGY/FLAGGED FOR REVIEW), atlas_summary, MAIN ISSUE + SUGGESTED ACTION + optional ATLAS TARGET SUGGESTION card, and 4-stat mini row (logged/avg kcal/avg P/low-P days). Refresh button in header force-generates a new insight. Empty state includes a GENERATE ANYWAY button. Sunday check-in (/app/checkin.tsx) now also fetches /nutrition/checkin/questions and appends the goal-personalised nutrition question block."
+
+  - task: "Coach · Nutrition dashboard — pending Atlas insights (Phase 5)"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/nutrition.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Coach nutrition dashboard extended with (a) a pending-reviews bar at the top ('23 pending Atlas reviews · OPEN'), (b) a scan-icon in the header (testID `coach-nutr-scan`) that triggers /coach/nutrition/scan-todos with a toast, (c) a page-sheet modal listing every pending insight per-client with action badge, atlas_summary, main_issue, suggested_action, optional target-change card, and DISMISS / APPROVE + APPLY (or MARK REVIEWED) buttons. Approve+apply writes a new nutrition_targets row with target_type='coach_from_atlas'; dismiss just marks the insight status. Screenshot verified end-to-end w/ 23 pending reviews visible."
+
   - task: "Client · Travel Food Guidance suite (Phase 4)"
     implemented: true
     working: true
@@ -1441,4 +1477,7 @@ agent_communication:
 
   - agent: "main"
     message: "§39 shipped — Nutrition Phase 4 (Travel Guidance). Backend: new feature_nutrition_travel.py with 5 endpoints (decision / airport / timing / guide / context) all routed through Claude Sonnet 4.5 with a shared strict-JSON prompt, banned-word sanitizer, and per-day cache in nutrition_travel_cache. Frontend: 4 new premium screens replacing the SOON placeholders + one shared travel-shared.tsx component (Screen / TravelHeader / LoadingBlock / ContextRibbon / ResultCard / ListBlock / Chips / travelStyles). All screens auto-fetch /travel/context on mount so kcal/protein remaining is always visible. Screenshot-verified end-to-end for Atlas Decide (night_flight → 'Skip the meal, prioritize rest'). TEST: (a) 5 endpoints incl 400 on invalid situation/topic and 401 without auth, (b) cache hit returns same payload with cached:true on 2nd call, (c) banned-word sanitizer clamps 'cheat' etc., (d) all 4 frontend screens (decision / airport / timing / travel guides) — pick chips, submit, verify Atlas response renders (blocks are non-empty, confidence pill shows). Do NOT re-test Phases 1/2/3. Fresh caches so first call is real LLM. Roughly 15s per Atlas call; give timeouts of 30s."
+
+  - agent: "main"
+    message: "§40 shipped — Nutrition Phase 5 (Adaptive insights + Sunday check-in enrichment + Coach To-Do integration). Closes out the full Nutrition Centre spec. Backend: feature_nutrition_insights.py with 9 endpoints (client insights CRUD + coach approve/dismiss/scan-todos). Adaptive analyser looks at 14-day rolling window (logs, hydration, protein trend, layover count, tool usage) and picks ONE of 6 actions via Claude Sonnet 4.5 with a deterministic rule-based fallback. Dedupes per (user, week_start). Sanitises banned words. Coach scan-todos creates nutrition_review coach_tasks with dedupe (verified: 23 clients scanned → 22 tasks created; 2nd run creates 0). Frontend: (a) new /nutrition/insights screen with big action-badge card + previous-insights list + Refresh button, (b) Weekly Atlas Insight preview card on /nutrition home (screenshot-verified: renders correctly with REVIEW badge + AWAITING LOUIS + VIEW ALL link), (c) Sunday check-in fetches /nutrition/checkin/questions and appends 5-7 goal-personalised nutrition questions to the form, (d) coach nutrition dashboard has a '23 pending Atlas reviews · OPEN' bar + scan-icon in header + page-sheet modal with DISMISS / APPROVE + APPLY buttons (approve+apply writes new nutrition_targets row with target_type='coach_from_atlas'). TEST: backend all 9 endpoints, verify scan-todos dedupe, verify approve+applyTargetChange writes a target row. Frontend: (i) client home Weekly Insight card, (ii) coach dashboard pending bar + approve/dismiss modal. TESTING_TYPE: both. Do NOT re-test Phase 1-4."
 

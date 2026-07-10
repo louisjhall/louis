@@ -36,6 +36,7 @@ export default function NutritionHome() {
   const [today, setToday] = useState<Today | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [tip, setTip] = useState<string>("");
+  const [insight, setInsight] = useState<{ id: string; action: string; atlas_summary: string; coach_review_required: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [hydrating, setHydrating] = useState(false);
@@ -49,6 +50,8 @@ export default function NutritionHome() {
       setToday(t); setSummary(s);
       // Atlas tip is a separate async call — fire and forget.
       api<{ tip: string }>("/nutrition/atlas-tip").then((r) => setTip(r.tip)).catch(() => setTip(""));
+      // Weekly insight — same fire-and-forget.
+      api<{ insight: any }>("/nutrition/insights/latest").then((r) => setInsight(r.insight || null)).catch(() => setInsight(null));
     } catch (e: any) {
       toast(e?.message || "Load failed", "error");
     }
@@ -163,6 +166,32 @@ export default function NutritionHome() {
           <Text style={styles.tipT}>{tip || "Analysing today\u2019s nutrition\u2026"}</Text>
         </View>
 
+        {/* Weekly Insight card */}
+        {insight ? (
+          <Pressable onPress={() => router.push("/nutrition/insights" as any)} style={styles.weeklyCard}
+            testID="weekly-insight-card">
+            <View style={styles.weeklyHead}>
+              <View style={styles.weeklyIcon}>
+                <Ionicons name="analytics" size={13} color={theme.color.brand} />
+              </View>
+              <Text style={styles.weeklyHeadT}>WEEKLY ATLAS INSIGHT</Text>
+              <View style={[styles.weeklyBadge, actionBadgeColor(insight.action)]}>
+                <Text style={styles.weeklyBadgeT}>{actionLabel(insight.action)}</Text>
+              </View>
+            </View>
+            <Text style={styles.weeklyT} numberOfLines={3}>{insight.atlas_summary}</Text>
+            <View style={styles.weeklyFoot}>
+              {insight.coach_review_required ? (
+                <View style={styles.weeklyPending}>
+                  <Ionicons name="hourglass" size={10} color={theme.color.amber} />
+                  <Text style={styles.weeklyPendingT}>AWAITING LOUIS</Text>
+                </View>
+              ) : <View />}
+              <Text style={styles.weeklyLink}>VIEW ALL <Ionicons name="chevron-forward" size={11} color={theme.color.brand} /></Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         {/* Quick actions */}
         <Text style={styles.sect}>LOG A MEAL</Text>
         <View style={styles.actionsGrid}>
@@ -274,6 +303,23 @@ function goalLabel(g?: string) {
   return m[g || ""] || "General health";
 }
 
+function actionLabel(a: string) {
+  const m: Record<string, string> = {
+    keep: "KEEP", simplify: "SIMPLIFY", protein_focus: "PROTEIN FOCUS",
+    adjust_calories: "ADJUST", add_travel_strategy: "TRAVEL", flag_coach_review: "REVIEW",
+  };
+  return m[a] || a.toUpperCase();
+}
+
+function actionBadgeColor(a: string) {
+  if (a === "keep") return { backgroundColor: theme.color.green };
+  if (a === "flag_coach_review") return { backgroundColor: "#c94a4a" };
+  if (a === "protein_focus" || a === "adjust_calories") return { backgroundColor: theme.color.brand };
+  if (a === "simplify") return { backgroundColor: theme.color.amber };
+  if (a === "add_travel_strategy") return { backgroundColor: "#3B82F6" };
+  return { backgroundColor: theme.color.textDim };
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface },
@@ -314,6 +360,18 @@ const styles = StyleSheet.create({
   tipHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   tipHeadT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi },
   tipT: { color: theme.color.text, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
+
+  weeklyCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand, gap: 8 },
+  weeklyHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  weeklyIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center" },
+  weeklyHeadT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", flex: 1, fontFamily: theme.font.textSemi },
+  weeklyBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
+  weeklyBadgeT: { color: "#fff", fontSize: 8, letterSpacing: 0.8, fontWeight: "900" },
+  weeklyT: { color: theme.color.text, fontSize: 13, lineHeight: 19, fontFamily: theme.font.text },
+  weeklyFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
+  weeklyPending: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "#1F1608", borderWidth: 1, borderColor: theme.color.amber },
+  weeklyPendingT: { color: theme.color.amber, fontSize: 8, letterSpacing: 0.8, fontWeight: "900" },
+  weeklyLink: { color: theme.color.brand, fontSize: 10, letterSpacing: 1, fontWeight: "900" },
 
   sect: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", marginTop: 8, fontFamily: theme.font.textSemi },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

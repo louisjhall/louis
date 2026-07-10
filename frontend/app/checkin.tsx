@@ -29,14 +29,18 @@ export default function CheckinScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<any>(null);
 
+  const [nutrQs, setNutrQs] = useState<Question[]>([]);
+
   const load = useCallback(async () => {
     try {
-      const [q, cur] = await Promise.all([
+      const [q, cur, nq] = await Promise.all([
         api<any>("/checkins/questions"),
         api<any>("/checkins/current"),
+        api<any>("/nutrition/checkin/questions").catch(() => ({ questions: [] })),
       ]);
       setCore(q.core || []);
       setDynamic(q.dynamic || []);
+      setNutrQs((nq?.questions || []) as Question[]);
       if (cur?.check_in) setSubmitted(cur.check_in);
     } catch (e: any) {
       Alert.alert("Could not load check-in", e?.message || "");
@@ -54,7 +58,7 @@ export default function CheckinScreen() {
     { id: "habits_changes_needed", label: "Do any habits need changing? (optional)", type: "text" },
   ]), []);
 
-  const all = useMemo(() => [...core, ...dynamic, ...habitQuestions], [core, dynamic, habitQuestions]);
+  const all = useMemo(() => [...core, ...dynamic, ...nutrQs, ...habitQuestions], [core, dynamic, nutrQs, habitQuestions]);
 
   const visible = (q: Question) => {
     if (!q.show_if) return true;

@@ -46,7 +46,7 @@ export default function Terms() {
         </Section>
 
         <Section title="6. Subscriptions and payment">
-          <P>Where applicable, subscription terms, pricing and renewal will be shown at checkout. Payments are processed by Apple, Google or Stripe. Refunds follow the store’s policy or, for Stripe, our published policy.</P>
+          <P>CrewFit is currently free. When paid features are introduced, subscription terms, pricing and renewal will be shown before purchase. Payments made through the iOS app will use Apple in-app purchase where required.</P>
         </Section>
 
         <Section title="7. Content ownership">

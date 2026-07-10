@@ -47,7 +47,7 @@ export default function Welcome() {
             <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
             <View style={styles.videoBadge}>
               <Ionicons name="film" size={10} color={theme.color.brand} />
-              <Text style={styles.videoBadgeT}>WELCOME VIDEO · COMING SOON</Text>
+              <Text style={styles.videoBadgeT}>WELCOME MESSAGE</Text>
             </View>
           </View>
         </View>

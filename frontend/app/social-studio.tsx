@@ -189,7 +189,7 @@ export default function SocialStudio() {
           </View>
 
           <Text style={styles.sect}>SCHEDULE</Text>
-          <Text style={styles.hint}>Reminder-only for now. Buffer auto-posting is coming soon — you&apos;ll still need to post manually until then.</Text>
+          <Text style={styles.hint}>You&apos;ll be reminded at this time — post manually to your channels.</Text>
           <TextInput
             testID="sched-input"
             value={schedDate}

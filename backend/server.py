@@ -199,6 +199,9 @@ class SignupBody(BaseModel):
     password: str = Field(min_length=6)
     name: str
     role: Role = "client"
+    # Apple + Play require age gating. Privacy policy states 16+.
+    # Field is required for new accounts; older seed rows are grandfathered.
+    age_confirmed: bool = False
 
 class LoginBody(BaseModel):
     email: EmailStr
@@ -813,12 +816,17 @@ def day_location(day: dict) -> str:
 # ------------------------------------------------------------------
 @api.post("/auth/signup")
 async def signup(body: SignupBody):
+    if not body.age_confirmed:
+        raise HTTPException(400, "You must confirm you are 16 or older to sign up.")
     if await db.users.find_one({"email": body.email.lower()}):
         raise HTTPException(400, "Email already registered")
+    now = now_iso()
     u = {
         "id": new_id(), "email": body.email.lower(), "name": body.name,
         "role": body.role, "password_hash": hash_pw(body.password),
-        "created_at": now_iso(), "onboarded": False, "coach_id": None, "profile": {},
+        "created_at": now, "onboarded": False, "coach_id": None, "profile": {},
+        "age_confirmed": True,
+        "age_confirmed_at": now,
     }
     await db.users.insert_one(u)
     token = make_token(u["id"], u["role"])

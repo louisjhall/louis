@@ -17,7 +17,7 @@ interface AuthCtx {
   user: UserT | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<UserT>;
-  signup: (email: string, password: string, name: string, role: Role) => Promise<UserT>;
+  signup: (email: string, password: string, name: string, role: Role, ageConfirmed: boolean) => Promise<UserT>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   setUser: (u: UserT | null) => void;
@@ -61,10 +61,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return r.user;
   };
 
-  const signup = async (email: string, password: string, name: string, role: Role) => {
+  const signup = async (email: string, password: string, name: string, role: Role, ageConfirmed: boolean) => {
     const r = await api<{ token: string; user: UserT }>("/auth/signup", {
       method: "POST",
-      body: { email, password, name, role },
+      body: { email, password, name, role, age_confirmed: ageConfirmed },
       noAuth: true,
     });
     await setToken(r.token);

@@ -66,8 +66,8 @@ export default function Targets() {
 
         <Text style={styles.disclaimer}>
           These are coaching estimates. Louis can adjust them via the coach dashboard
-          based on your training load and roster. Atlas will refine automatically once
-          you have consistent nutrition logs (coming soon).
+          based on your training load and roster. Personalised targets update as you
+          log meals consistently.
         </Text>
       </ScrollView>
     </SafeAreaView>

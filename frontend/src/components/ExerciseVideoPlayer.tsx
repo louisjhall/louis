@@ -166,7 +166,7 @@ export function ExerciseVideoPlayer({
     return (
       <View style={[styles.card, styles.cardEmpty, compact && styles.cardCompact]} testID={`${testIDPrefix}-empty`}>
         <Ionicons name="videocam-off-outline" size={16} color={theme.color.textMuted} />
-        <Text style={styles.emptyText}>Demo coming soon. Follow the written coaching cues.</Text>
+        <Text style={styles.emptyText}>Follow the written coaching cues below.</Text>
       </View>
     );
   }

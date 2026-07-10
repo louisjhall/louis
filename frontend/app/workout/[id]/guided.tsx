@@ -686,7 +686,7 @@ function HowToSheet({
             )}
             {instr.length === 0 && cues.length === 0 && !hasVideo && (
               <Text style={{ color: theme.color.textMuted, marginTop: 12, fontStyle: "italic" }}>
-                Atlas content coming soon for this move.
+                Move guidance will appear once your coach adds it.
               </Text>
             )}
             <Pressable onPress={onSwap} style={sheetStyles.swapBtn}>

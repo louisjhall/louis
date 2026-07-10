@@ -9,14 +9,14 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "net.crewfit.app",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Upload your profile photo and progress shots",
-        "NSPhotoLibraryAddUsageDescription": "Save recorded videos to your library",
-        "NSCameraUsageDescription": "Take a profile photo and record coaching videos",
-        "NSMicrophoneUsageDescription": "Record audio for weekly coaching videos",
-        "NSLocationWhenInUseUsageDescription": "Show your current city and time zone for smarter roster context"
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryUsageDescription": "Upload profile photos, meal photos and roster documents from your library.",
+        "NSPhotoLibraryAddUsageDescription": "Save recorded videos to your library.",
+        "NSCameraUsageDescription": "Scan food barcodes, capture meal photos for AI analysis, take a profile photo, and record coaching videos.",
+        "NSMicrophoneUsageDescription": "Record audio for coaching videos."
       }
     },
     "android": {
@@ -27,12 +27,9 @@
       "edgeToEdgeEnabled": true,
       "package": "net.crewfit.app",
       "permissions": [
-        "READ_EXTERNAL_STORAGE",
         "READ_MEDIA_IMAGES",
         "CAMERA",
         "RECORD_AUDIO",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
         "POST_NOTIFICATIONS"
       ]
     },

@@ -5,6 +5,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { useAuth, Role } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 
@@ -15,14 +16,21 @@ export default function Signup() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState<Role>("client");
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const canSubmit = !!name.trim() && !!email.trim() && password.length >= 6 && ageConfirmed && !loading;
+
   const submit = async () => {
     setErr(null);
+    if (!ageConfirmed) {
+      setErr("You must confirm you are 16 or older to sign up.");
+      return;
+    }
     setLoading(true);
     try {
-      const u = await signup(email.trim(), password, name.trim(), role);
+      const u = await signup(email.trim(), password, name.trim(), role, ageConfirmed);
       if (u.role === "coach") router.replace("/(coach)/clients");
       else router.replace("/assessment");
     } catch (e: any) {
@@ -66,11 +74,31 @@ export default function Signup() {
             ))}
           </View>
 
+          <Pressable
+            testID="signup-age-gate"
+            onPress={() => setAgeConfirmed(!ageConfirmed)}
+            style={styles.ageRow}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: ageConfirmed }}
+          >
+            <View style={[styles.checkbox, ageConfirmed && styles.checkboxOn]}>
+              {ageConfirmed ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+            </View>
+            <Text style={styles.ageText}>I confirm I am 16 or older.</Text>
+          </Pressable>
+
           {err && <Text style={styles.err} testID="signup-error">{err}</Text>}
 
-          <Pressable testID="signup-submit-button" onPress={submit} disabled={loading} style={[styles.cta, loading && { opacity: 0.6 }]}>
+          <Pressable testID="signup-submit-button" onPress={submit} disabled={!canSubmit} style={[styles.cta, !canSubmit && { opacity: 0.5 }]}>
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>CREATE ACCOUNT</Text>}
           </Pressable>
+
+          <Text style={styles.legalNote}>
+            By continuing you accept our{" "}
+            <Text onPress={() => router.push("/legal/terms" as any)} style={styles.legalLink}>Terms</Text>
+            {" "}and{" "}
+            <Text onPress={() => router.push("/legal/privacy" as any)} style={styles.legalLink}>Privacy Policy</Text>.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -92,7 +120,13 @@ const styles = StyleSheet.create({
   },
   roleBtnActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   roleText: { color: theme.color.textMuted, fontWeight: "800", letterSpacing: 1.5 },
+  ageRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: theme.space.lg, paddingVertical: 4, minHeight: 44 },
+  checkbox: { width: 24, height: 24, borderRadius: 6, borderWidth: 1.5, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface2 },
+  checkboxOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  ageText: { color: theme.color.text, fontSize: 14, flex: 1 },
   err: { color: theme.color.red, marginTop: theme.space.md, fontSize: 13 },
   cta: { backgroundColor: theme.color.brand, marginTop: theme.space.xl, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 14 },
+  legalNote: { color: theme.color.textDim, fontSize: 12, textAlign: "center", marginTop: 16, lineHeight: 18 },
+  legalLink: { color: theme.color.brand, fontWeight: "700" },
 });

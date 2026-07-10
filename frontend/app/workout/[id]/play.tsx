@@ -340,8 +340,8 @@ function TileImage({ ex }: { ex: any }) {
           {tried ? (
             <>
               <Ionicons name="body" size={70} color={theme.color.brand} />
-              <Text style={styles.imgFbT}>ATLAS IMAGE COMING SOON</Text>
-              <Text style={styles.imgFbS}>Louis demos will be generated in a later update.</Text>
+              <Text style={styles.imgFbT}>DEMO IMAGE</Text>
+              <Text style={styles.imgFbS}>Follow the written coaching cues below.</Text>
             </>
           ) : (
             <ActivityIndicator color={theme.color.brand} />
@@ -917,7 +917,7 @@ function WarmupCard({ item, index }: { item: any; index: number }) {
             </View>
           )}
           {!thumb && !hasVideo && instrs.length === 0 && (
-            <Text style={styles.wuEmpty}>Atlas content coming soon for this move.</Text>
+            <Text style={styles.wuEmpty}>Move guidance will appear once your coach adds it.</Text>
           )}
         </View>
       )}

@@ -480,7 +480,7 @@ function DetailPanel({ detail, onReload, busy, setBusy }: any) {
                   )}
                 </>
               ) : (
-                <Text style={styles.slotEmpty}>{s.disabled ? "AI illustrations coming soon (Phase D)." : "No video set. Paste a YouTube URL below to add one."}</Text>
+                <Text style={styles.slotEmpty}>{s.disabled ? "Not available for this workout." : "No video set. Paste a YouTube URL below to add one."}</Text>
               )}
             </View>
           );

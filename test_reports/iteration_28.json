@@ -1,0 +1,60 @@
+{
+  "summary": "STANDBY MODE V1 — ALL 34/34 BACKEND TESTS PASS (100%) in 2.63s. Full coverage of feature_standby.py + regression smoke on prior modules. Verified: (a) GET /standby/today shape for non-standby (is_standby=false, reason=null, recommendations=[]), home_standby (4 recs — Standby Mobility/Strength/Bodyweight/Easy Zone 2), short_call (exactly 2 recs — 5-min Mobility + Activation Set), night_standby (first rec is Recovery Routine or Wind-down Mobility), and unknown_standby (needs_confirmation=true, confirmed_by_client=false). Every recommendation carries {id, kind, title, duration_min, why}. (b) POST /standby/status accepts waiting/not_called_out/cancelled/too_tired/have_time; rejects unknown status with 400; returns 404 on non-standby dates; confirm_type='home_standby' persists standby_type + confirmed_by_client=true + standby_needs_confirmation=false. (c) POST /standby/called-out on a normal workout auto-swaps (standby_adjusted=true, original_workout_id set, title becomes rec title, an 'atlas' actor change-log entry is written); on a key_session workout does NOT swap and creates a coach_task task_type='standby_key_affected' priority=high risk_level=medium category=programme payload.date+payload.workout_id; with can_train='no' applies NO_TRAINING_REC (id='no_training', title='No Training'). (d) POST /standby/apply-workout swaps in place with proper archive snapshot, unknown recommendation_id falls back to top rec, coach_locked workout returns 409 'coach-locked — Louis will review' AND creates a standby_key_affected coach task, non-standby day returns 404, missing workout returns 404. (e) POST /standby/restore-original restores title/exercises/duration/focus/day_load and clears standby_adjusted/original_workout_id/standby_recommendation/standby_reason; a second restore-original returns 400 'nothing to restore'; when workouts_archive snapshot is deleted the restore returns 404. (f) GET /coach/clients/{id}/standby returns {client, days:[...], workouts:[...], count} for coach; client-role token gets 401/403. (g) In-app notification created after each swap with notif_type='programme_updated' and dedupe_key='standby::<date>'. (h) Change-log entries with actor='client' and actor='atlas' both present after the flows. (i) ROSTER_SYSTEM in server.py contains STANDBY DETECTION block with all required tokens STBY, SBY, RES, RSV, RESERVE, HSBY, ASBY, SC, LC. (j) Uvicorn is up cleanly (INFO Application startup complete, no traceback in current process). All 4 feature modules load without ImportError at final state. REGRESSION SMOKE: /notifications/settings, /notifications, /habits/today, /coach/messages/drafts, /coach/change-log, /coach/clients/{id}/controls all return 200 with expected shapes. NOTE: backend.err.log shows a transient historical ImportError ('cannot import name enqueue_notification from partially initialized module server') from an intermediate WatchFiles reload — the current running process boots cleanly, but the ordering is fragile — see minor issues below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "feature_standby.py import order",
+        "issue": "feature_standby.py:40 does `from feature_notifications import enqueue_notification` at module load. That import must happen AFTER feature_notifications is imported by server.py (server.py:6895 imports feature_notifications, then :6896 imports feature_standby — currently correct). During a WatchFiles reload of a partial state we captured `ImportError: cannot import name 'enqueue_notification' from partially initialized module 'server'` in backend.err.log. Not a runtime defect in the current process, but any future edit that moves the `import feature_standby` line above feature_notifications will crash. Same fragility flagged in iteration_27 for the other feature modules — consider a `wire_feature_modules()` explicit startup call or a slim `shared.py`."
+      },
+      {
+        "endpoint": "GET /standby/today",
+        "issue": "workout field is null when no workout doc exists for the date (correct behaviour), but the response still returns 200 with is_standby=true and full recommendations — consumers must handle workout=null even on a standby day (e.g. our 'no_wk' test date). Not a bug, just worth documenting for the mobile client."
+      },
+      {
+        "endpoint": "POST /standby/status",
+        "issue": "The endpoint accepts status='called_out' from STANDBY_STATUSES (feature_standby.py:44) but there is no dedicated code path for it inside the handler beyond persisting `standby_status=called_out`. The real called-out flow lives in POST /standby/called-out. Fine, but the status value being valid in both endpoints is slightly redundant — consider tightening validation or documenting the difference (status flips a flag; called-out does the swap)."
+      },
+      {
+        "endpoint": "POST /standby/apply-workout on already-adjusted workout",
+        "issue": "If a workout is already standby_adjusted and the client calls apply-workout again with a different rec, feature_standby.py:354 correctly skips re-snapshotting (idempotent) but overwrites the swap with the new rec — meaning restore-original still restores the ORIGINAL (correct). However, standby_recommendation is updated but there's no change_log entry to say 'switched from rec A → rec B' explicitly — the log title only says 'Standby workout applied · <new title>'. Consider including previous rec id in meta for auditing."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_standby.py",
+    "/app/test_reports/pytest/standby_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Tighten module import ordering — add a comment above server.py:6893-6896 noting that feature_notifications MUST come before feature_standby, or refactor to an explicit wire_feature_modules() called from FastAPI startup. Iteration_27 already flagged the same fragility.",
+    "OPTIONAL: Add previous recommendation id to change-log meta when apply-workout re-swaps a workout that was already standby_adjusted — improves audit trail.",
+    "OPTIONAL: Document behaviour that POST /standby/status accepts 'called_out' but does not perform the swap flow — the /called-out endpoint is the intended entrypoint for that transition. Consider rejecting 'called_out' in /status to force use of /called-out (would be a behavioural change — not required).",
+    "OPTIONAL: In /standby/today response, when workout=null on a standby day, ensure the client card handles that gracefully."
+  ],
+  "critical_code_review_comments": [
+    "feature_standby.py:79 `_today_local(user)` ignores the user's time-zone and uses server-local date. For a client in a non-UTC zone whose 'today' differs from the server, /standby/today without ?date could return the wrong day's standby. Consider deriving the local date from user.current_time_zone (already available on the user doc — see server.py:6411). Right now the mobile client passes ?date explicitly (per feature_standby.py:194 signature accepts it), so this is minor.",
+    "feature_standby.py:107 the persist helper sets `changed=True` unconditionally after entering the day branch, even when the updates dict has no non-None values, so `standby_updated_at` is refreshed on every call. Harmless but slightly noisy in the DB. Consider gating the update by whether any real field changed.",
+    "feature_standby.py:238 STANDBY_STATUSES contains 'called_out' but the /status endpoint does not create the workout swap; only /called-out does. The tuple should probably drop 'called_out' from user-facing statuses OR /status should delegate to _apply_standby_workout when body.status == 'called_out'. Right now setting status='called_out' via /status leaves the workout untouched, which could confuse the mobile client.",
+    "feature_standby.py:314 falls back to the top rec when body.recommendation_id is unknown. Good UX, but the response has no indicator that a fallback happened — the client sees {ok:true, workout:{title:'Standby Mobility'}} and may not realise it wasn't their choice. Consider echoing back {applied_recommendation_id, requested_recommendation_id, fell_back:true}.",
+    "feature_standby.py:353 the archive-copy uses the SAME id as the live workout (`snapshot['id'] = wk['id']`) so restore-original at feature_standby.py:330 can look it up. This works but relies on `db.workouts_archive` NOT having a unique index on `id`. Confirm via `db.workouts_archive.list_indexes()` — if a unique index exists on `id`, the second swap would silently swallow the InsertOne (see try/except at :360-362) and stale data would be restored. Currently silent — worth an explicit uniqueness check or moving the archive id to a compound (id, archived_at).",
+    "feature_standby.py:439 the coach_standby window uses server-local date arithmetic (weeks*7 back, 14 days forward). Consistent with the rest of the codebase but the coach may miss standby days at the edge of their client's timezone."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_standby.py (NEW — 34 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (34/34 in 2.63s)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "seed_data_creation": "Test suite seeds 9 dates in 2030-01-01..09 into Alex Rivera's active roster (test dates are safely in the future) and 7 matching workouts (one key_session, one coach_locked, one with can_train=no). Teardown deletes all inserted workouts, workouts_archive snapshots, notifications with dedupe_key='standby::2030-01-XX', and restores the roster.days array to its pre-test state. Idempotent — safe to re-run. The pre-existing seeded standby day at 2026-07-10 for Alex Rivera is left untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_standby.py is fully self-contained — seeds its own dates in 2030 and cleans them up. Runs in ~2.6s locally, no LLM calls. If backend supervisor restarts during a WatchFiles reload the ImportError may reappear transiently — see minor issue #1. To run: `pytest /app/backend/tests/test_standby.py -v`. Full suite (including habits + notifications + drafts) still passes — see iteration_27_regression.xml.",
+  "rca_of_issue": "N/A — feature verified end-to-end."
+}

@@ -42,7 +42,7 @@ function categoryOf(t: Task): string {
   if (t.task_type === "message_draft_ready") return "messages";
   if (t.task_type === "check_in_review" || t.task_type === "missed_check_in") return "reviews";
   if (t.task_type === "record_weekly_video") return "videos";
-  if (t.task_type === "programme_adjustment" || t.task_type === "habit_review") return "programme";
+  if (t.task_type === "programme_adjustment" || t.task_type === "habit_review" || t.task_type === "standby_key_affected") return "programme";
   if (t.task_type === "roster_expired") return "roster";
   return "other";
 }
@@ -188,6 +188,7 @@ function prettyType(t: string): string {
     roster_expired: "ROSTER EXPIRED",
     message_draft_ready: "MESSAGE DRAFT",
     habit_review: "HABIT REVIEW",
+    standby_key_affected: "STANDBY · KEY SESSION",
   }[t] || t.toUpperCase().replace(/_/g, " ");
 }
 

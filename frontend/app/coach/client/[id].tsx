@@ -59,20 +59,23 @@ export default function ClientDetail() {
   const [savingCtrl, setSavingCtrl] = useState(false);
   const [changeLog, setChangeLog] = useState<any[]>([]);
   const [habitsData, setHabitsData] = useState<any>(null);
+  const [standbyData, setStandbyData] = useState<any>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [detail, ctrl, log, habits] = await Promise.all([
+      const [detail, ctrl, log, habits, standby] = await Promise.all([
         api<any>(`/coach/clients/${id}`),
         api<{ controls: Controls }>(`/coach/clients/${id}/controls`).catch(() => ({ controls: null as any })),
         api<{ entries: any[] }>(`/coach/clients/${id}/change-log`).catch(() => ({ entries: [] })),
         api<any>(`/coach/clients/${id}/habits`).catch(() => null),
+        api<any>(`/coach/clients/${id}/standby`).catch(() => null),
       ]);
       setData(detail);
       if (ctrl?.controls) setControls(ctrl.controls);
       setChangeLog(log.entries || []);
       setHabitsData(habits);
+      setStandbyData(standby);
     } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -316,6 +319,26 @@ export default function ClientDetail() {
           </View>
         ) : null}
 
+        {standbyData && standbyData.days?.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.sect}>STANDBY · {standbyData.days.length} DAYS</Text>
+            {standbyData.days.slice(0, 8).map((d: any) => (
+              <View key={d.date} style={styles.habitRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.habitTitle}>{d.date} · {(d.standby_type || "standby").toUpperCase().replace(/_/g, " ")}</Text>
+                  <Text style={styles.habitMeta}>
+                    {d.start_time || "?"}{d.end_time ? `–${d.end_time}` : ""} · {d.location || "unknown"}
+                    {d.needs_confirmation ? " · NEEDS CONFIRMATION" : ""}
+                  </Text>
+                </View>
+                <View style={[styles.sbBadge, sbStatusColor(d.standby_status)]}>
+                  <Text style={styles.sbBadgeT}>{(d.standby_status || "waiting").toUpperCase().replace(/_/g, " ")}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
         {changeLog.length > 0 ? (
           <View style={styles.card}>
             <Text style={styles.sect}>CHANGE LOG · {changeLog.length}</Text>
@@ -355,6 +378,14 @@ function logColor(category: string): string {
     case "workout": return theme.color.green;
     default: return theme.color.textDim;
   }
+}
+
+function sbStatusColor(status: string): any {
+  if (status === "called_out") return { backgroundColor: "#c94a4a" };
+  if (status === "not_called_out") return { backgroundColor: theme.color.green };
+  if (status === "cancelled") return { backgroundColor: theme.color.textDim };
+  if (status === "too_tired") return { backgroundColor: theme.color.amber };
+  return { backgroundColor: theme.color.brand };
 }
 
 const styles = StyleSheet.create({
@@ -409,4 +440,6 @@ const styles = StyleSheet.create({
   blockHead: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
   blockBody: { color: theme.color.text, fontSize: 12, marginTop: 4, lineHeight: 16 },
   blockMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 4 },
+  sbBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  sbBadgeT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
 });

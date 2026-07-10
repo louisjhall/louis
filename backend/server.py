@@ -1993,6 +1993,26 @@ For each date output ONE object with these fields (populate what you can, leave 
   notes (short free text of any airline codes/duty codes you saw)
   confidence 0..1 — how sure you are about this day; put low confidence and day_type "Unknown/Needs Confirmation" if unsure.
 
+STANDBY DETECTION — when the row's code contains any of these tokens, day_type MUST be "Standby":
+  STBY, SBY, RES, RSV, RESERVE, STDBY, HSBY, ASBY, SC (short-call), LC (long-call), on-call, "on call",
+  "airport standby", "home standby", "available", "reserve duty", "night standby", "early standby".
+For any Standby day ALSO output these extra fields:
+  standby_type — one of: "home_standby" | "airport_standby" | "reserve" | "short_call" | "long_call" |
+                          "night_standby" | "early_standby" | "unknown_standby"
+                  Rules:
+                    * HSBY / "home standby" → home_standby
+                    * ASBY / "airport standby" → airport_standby
+                    * RES / RSV / RESERVE → reserve
+                    * SC / "short call" / "short-call" → short_call
+                    * LC / "long call" / "long-call" → long_call
+                    * night/late-evening standby window → night_standby
+                    * early-morning standby window → early_standby
+                    * anything else → unknown_standby (also set standby_needs_confirmation=true)
+  standby_start_time (HH:MM)   — start of the standby window if visible
+  standby_end_time   (HH:MM)   — end of the window if visible
+  standby_location   — "home" | "airport" | "unknown"
+  standby_needs_confirmation — true when the type is uncertain
+
 Classify carefully:
  - single-day duty starting and ending at the same base = Turnaround Duty (also Short-Haul or Long-Haul as appropriate)
  - overnight in another city = Layover Arrival Day (arrival day) followed by Layover Full Day(s) and Layover Departure Day (last)
@@ -6873,6 +6893,7 @@ async def coach_checkins_list(coach: dict = Depends(require_role("coach")),
 import feature_coach_v1        # noqa: E402,F401  registers coach draft/controls/change-log endpoints on `api`
 import feature_habits          # noqa: E402,F401  registers habit endpoints on `api`
 import feature_notifications   # noqa: E402,F401  registers notification endpoints on `api`
+import feature_standby         # noqa: E402,F401  registers standby endpoints on `api`
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

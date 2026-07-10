@@ -15,6 +15,7 @@ import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
+import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
 
 function iconFor(kind: string): string {
   switch (kind) {
@@ -255,6 +256,8 @@ export default function Home() {
           </View>
 
           <HabitTodayCard />
+
+          <StandbyStatusCard />
 
           <WeeklyCheckinCard />
           <PushPermissionPrompt />

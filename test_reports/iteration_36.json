@@ -1,0 +1,69 @@
+{
+  "summary": "Frontend-only test of Coach Exercise Content Library on Expo web preview. All backend wiring verified via network trace. Modal-based flows (Create, Edit list/text, Change Log, Approve) work end-to-end. However, TWO flows silently fail on web because they rely on React Native `Alert.alert` which is not implemented in react-native-web 0.21.0: (1) ARCHIVE — confirmation buttons never render, so DELETE is never fired; (2) SCAN-TODOS — POST fires but user receives no visible feedback (also affects error toasts across the screen). All other 10 tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "exercise-content.tsx / archiveExercise",
+        "issue": "Archive confirmation uses Alert.alert(title, message, [Cancel, Archive]) which does not render buttons on react-native-web 0.21.0. Tapping ARCHIVE btn produces zero UI feedback and DELETE /api/exercise-content/{id} is never fired. Verified by playwright: no dialog event, no network call. Direct curl DELETE with same coach token returns 200, so backend is fine — the block is purely the RN web Alert polyfill.",
+        "testID": "archive-ex",
+        "priority": "HIGH"
+      },
+      {
+        "component": "exercise-content.tsx / scanTodos & other Alert.alert callers",
+        "issue": "Alert.alert('Scan complete', 'N tasks created') does not display on web. POST /api/exercise-content/scan-todos returns 200 but coach sees no feedback. Same silent failure for Alert.alert('Failed', ...) error toasts (genImage, patchExercise, createExercise, load, archive, approve, openLog). On native the alerts will work, but on the web preview all user-visible feedback is lost.",
+        "testID": "scan-todos",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Archive exercise (web preview)",
+        "issue": "End-to-end broken on web because confirmation dialog can't be shown. Coach cannot archive from web preview at all.",
+        "affected_testIDs": ["archive-ex"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "Alert.alert (react-native-web 0.21.0)",
+        "issue": "react-native-web 0.21 does not implement Alert.alert with buttons — no native confirm/OK is rendered. Recommend replacing Alert.alert calls with a cross-platform custom modal (the ModalShell in ExerciseEditModals.tsx already provides the pattern). Affected file: /app/frontend/app/coach/exercise-content.tsx lines 91, 118, 119, 132, 143, 160, 170, 176-190, 199, 212."
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Replace Alert.alert(...) usages in /app/frontend/app/coach/exercise-content.tsx with a custom Modal-based confirm (for archive) and toast/inline banner (for scan-todos + error messages). Reuse ModalShell from ExerciseEditModals.tsx or introduce a small ConfirmModal + Toast component. This is required so ARCHIVE works and user gets visible success/error feedback on the Expo web preview.",
+    "Optionally: verify same pattern on native (iOS/Android build) — Alert.alert works natively, so a Platform.OS === 'web' branch could also solve it without touching native UX."
+  ],
+  "critical_code_review_comments": [
+    "exercise-content.tsx (453 lines) — approaching the 700-line threshold; consider moving styles & helper components (ImgSlot, ApproveBtn, SectionHeader, statusColor, videoBadgeStyle) into a co-located file to keep the screen lean.",
+    "Alert.alert relied on for both confirmations and feedback → not cross-platform reliable; introduce a Toast/Confirm abstraction."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "83% (10/12 flows pass; archive + scan-todos feedback silently fail on web)"},
+  "seed_data_creation": "Created and then cleaned up TEST_Squat exercise (id 0e3dd79d-760b-482c-9373-d540773d2b19) via UI create + direct DELETE curl for cleanup.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Coach login credentials: coach@crewfit.com / Coach123!. Direct URL /coach/exercise-content works after login. `new-exercise`, `scan-todos`, `gen-start`, `change-log`, `archive-ex` testIDs are all present. To dismiss the mid-flow login redirect to /welcome, navigate directly to /(auth)/login. React-native-web Alert.alert is a no-op — do not rely on page.on('dialog'); instead check network requests. Test flows 1–7, 8 (approve/needs-update), 9 (spinner + POST), 10 (change log modal) all pass. Flow 11 (archive) and flow 12 (scan-todos feedback) will remain broken on web until Alert.alert is replaced with a Modal-based confirm/toast.",
+  "rca_of_issue": "Root cause: react-native-web 0.21.0 does not implement Alert.alert. The default web build ships a no-op stub. Confirmed with two independent probes: (1) window.dialog event never fired for scan-todos alert nor archive confirm; (2) archive Pressable click triggered zero /api/exercise-content network calls whereas direct curl DELETE with the same coach bearer token succeeded (200). Fix path: wrap Alert.alert calls with a Platform.OS check or, better, introduce a ConfirmModal & Toast (small components) so the flows behave identically across web and native.",
+  "verified_working_flows": [
+    "1. Login as Coach + navigate to Coach Overview → EXERCISES (ov-goto-exercises) → /coach/exercise-content ✔",
+    "2. Create Exercise modal (name/category/training_type/body_area/equipment chips + CREATE) → list refreshes, new item auto-selected ✔",
+    "3. Edit Coaching Points (2 items) ✔",
+    "4. Edit Common Mistakes (Heels lifting) ✔",
+    "5. Edit Client Instructions (multi-line) ✔",
+    "6. Edit Alternatives (Bodyweight Squat) ✔",
+    "7. Edit Video URL (https://youtu.be/abc123) → shows in metaCard ✔",
+    "8. APPROVE ALL → status pill APPROVED (green); NEEDS UPDATE → status pill NEEDS UPDATE (red) ✔",
+    "9. gen-start button fires POST /generate-image and toggles to REGEN (spinner briefly shown) ✔ (actual image not awaited to save Nano Banana cost)",
+    "10. Change Log modal shows CREATED, COACHING EDITED, UPDATED, VIDEO CHANGED, APPROVAL CHANGED entries with timestamps ✔"
+  ],
+  "failing_flows_on_web_only": [
+    "11. Archive — Alert confirm never shows, no DELETE fired. Backend endpoint verified working via direct curl.",
+    "12. Scan-todos user feedback — POST returns 200 but 'Scan complete' Alert never renders."
+  ]
+}

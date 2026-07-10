@@ -5,7 +5,7 @@
  * Right — selected exercise detail: images, start/end demo, coaching points,
  *         video, alternatives, approval controls, content log.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, View,
@@ -16,6 +16,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import {
+  EditListModal, EditTextModal, CreateExerciseModal, ChangeLogModal,
+} from "@/src/components/coach/ExerciseEditModals";
 
 type Exercise = {
   id: string;
@@ -65,6 +68,17 @@ export default function ExerciseContentScreen() {
   const [token, setToken] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  // Modals
+  const [showEditPoints, setShowEditPoints] = useState(false);
+  const [showEditMistakes, setShowEditMistakes] = useState(false);
+  const [showEditAlts, setShowEditAlts] = useState(false);
+  const [showEditVideo, setShowEditVideo] = useState(false);
+  const [showEditInstr, setShowEditInstr] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [logRows, setLogRows] = useState<any[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -82,15 +96,20 @@ export default function ExerciseContentScreen() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const refreshDetail = useCallback(async (id?: string) => {
+    const targetId = id || detail?.id || selected?.id;
+    if (!targetId) return;
+    try {
+      const r = await api<{ exercise: Exercise }>(`/exercise-content/${targetId}`);
+      setDetail(r.exercise);
+      setItems((prev) => prev.map((x) => (x.id === r.exercise.id ? { ...x, ...r.exercise } : x)));
+    } catch { /* silent */ }
+  }, [detail?.id, selected?.id]);
+
   useEffect(() => {
     if (!selected) { setDetail(null); return; }
-    (async () => {
-      try {
-        const r = await api<{ exercise: Exercise }>(`/exercise-content/${selected.id}`);
-        setDetail(r.exercise);
-      } catch { /* silent */ }
-    })();
-  }, [selected]);
+    refreshDetail(selected.id);
+  }, [selected, refreshDetail]);
 
   const scanTodos = async () => {
     setBusy("scan");
@@ -105,11 +124,80 @@ export default function ExerciseContentScreen() {
     if (!detail) return;
     setBusy(`gen-${slot}`);
     try {
-      await api(`/exercise-content/${detail.id}/generate-image`, { method: "POST", body: { slot } });
-      Alert.alert("Generating", "Nano Banana is generating your exercise image. Refresh in ~15s.");
-      setTimeout(load, 15000);
+      const r = await api<{ image_id: string }>(`/exercise-content/${detail.id}/generate-image`, { method: "POST", body: { slot } });
+      // Optimistic detail refresh so the "generating…" state shows immediately.
+      await refreshDetail(detail.id);
+      // Poll the image doc until ready/failed (max ~45s)
+      pollImage(r.image_id, detail.id);
     } catch (e: any) { Alert.alert("Failed", e?.message || ""); }
     finally { setBusy(null); }
+  };
+
+  const pollImage = async (imageId: string, exerciseId: string) => {
+    const start = Date.now();
+    const tick = async () => {
+      if (Date.now() - start > 60000) return;
+      try {
+        const r = await api<{ image: { status: string } }>(`/exercise-content/images/${imageId}`);
+        if (r.image.status === "ready" || r.image.status === "failed") {
+          if (r.image.status === "failed") Alert.alert("Image failed", "Nano Banana returned no image. Try again.");
+          await refreshDetail(exerciseId);
+          return;
+        }
+      } catch { /* silent */ }
+      setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 4000);
+  };
+
+  const patchExercise = async (patch: Record<string, any>, kind: string) => {
+    if (!detail) return;
+    setBusy(`patch-${kind}`);
+    try {
+      const r = await api<{ exercise: Exercise }>(`/exercise-content/${detail.id}`, { method: "PATCH", body: patch });
+      setDetail(r.exercise);
+      setItems((prev) => prev.map((x) => (x.id === r.exercise.id ? { ...x, ...r.exercise } : x)));
+    } catch (e: any) { Alert.alert("Save failed", e?.message || ""); }
+    finally { setBusy(null); }
+  };
+
+  const createExercise = async (body: any) => {
+    setBusy("create");
+    try {
+      const r = await api<{ exercise: Exercise }>("/exercise-content", { method: "POST", body });
+      await load();
+      setSelected(r.exercise);
+    } catch (e: any) { Alert.alert("Create failed", e?.message || ""); throw e; }
+    finally { setBusy(null); }
+  };
+
+  const archiveExercise = async () => {
+    if (!detail) return;
+    Alert.alert("Archive exercise?",
+      `"${detail.exercise_name}" will be moved to Archived. This can be undone by editing status.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Archive", style: "destructive", onPress: async () => {
+          setBusy("archive");
+          try {
+            await api(`/exercise-content/${detail.id}`, { method: "DELETE" });
+            setSelected(null); setDetail(null);
+            await load();
+          } catch (e: any) { Alert.alert("Failed", e?.message || ""); }
+          finally { setBusy(null); }
+        } },
+      ]
+    );
+  };
+
+  const openLog = async () => {
+    if (!detail) return;
+    setShowLog(true); setLogLoading(true);
+    try {
+      const r = await api<{ log: any[] }>(`/exercise-content/${detail.id}/log`);
+      setLogRows(r.log || []);
+    } catch (e: any) { Alert.alert("Log failed", e?.message || ""); }
+    finally { setLogLoading(false); }
   };
 
   const approve = async (scope: string) => {
@@ -134,11 +222,16 @@ export default function ExerciseContentScreen() {
           <Ionicons name="chevron-back" size={24} color={theme.color.text} />
         </Pressable>
         <Text style={styles.topT}>EXERCISE CONTENT</Text>
-        <Pressable onPress={scanTodos} hitSlop={12} disabled={!!busy}>
-          {busy === "scan" ? <ActivityIndicator color={theme.color.brand} size="small" /> : (
-            <Ionicons name="notifications" size={20} color={theme.color.brand} />
-          )}
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: 14 }}>
+          <Pressable onPress={() => setShowCreate(true)} hitSlop={12} disabled={!!busy} testID="new-exercise">
+            <Ionicons name="add-circle" size={22} color={theme.color.brand} />
+          </Pressable>
+          <Pressable onPress={scanTodos} hitSlop={12} disabled={!!busy} testID="scan-todos">
+            {busy === "scan" ? <ActivityIndicator color={theme.color.brand} size="small" /> : (
+              <Ionicons name="notifications" size={20} color={theme.color.brand} />
+            )}
+          </Pressable>
+        </View>
       </View>
 
       <View style={{ paddingHorizontal: 14, paddingTop: 10 }}>
@@ -149,7 +242,7 @@ export default function ExerciseContentScreen() {
         />
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 10, gap: 6 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent}>
         {FILTERS.map((f) => (
           <Pressable key={f.key} onPress={() => setFilter(f.key)}
             style={[styles.filter, filter === f.key && styles.filterOn]}>
@@ -219,32 +312,47 @@ export default function ExerciseContentScreen() {
               </View>
 
               {/* Coaching points */}
-              <Text style={styles.sect}>COACHING POINTS · {detail.coaching_points?.length || 0}</Text>
+              <SectionHeader label={`COACHING POINTS · ${detail.coaching_points?.length || 0}`}
+                onEdit={() => setShowEditPoints(true)} />
               {(detail.coaching_points || []).length ? (detail.coaching_points || []).map((p, i) => (
                 <View key={i} style={styles.cpRow}>
                   <Ionicons name="checkmark-circle" size={13} color={theme.color.brand} />
                   <Text style={styles.cpT}>{p}</Text>
                 </View>
-              )) : <Text style={styles.empty}>No coaching points yet.</Text>}
+              )) : <Text style={styles.empty}>No coaching points yet. Tap edit to add.</Text>}
 
-              {(detail.common_mistakes || []).length ? (
-                <>
-                  <Text style={styles.sect}>COMMON MISTAKES</Text>
-                  {(detail.common_mistakes || []).map((m, i) => (
-                    <View key={i} style={styles.cpRow}>
-                      <Ionicons name="warning" size={13} color={theme.color.amber} />
-                      <Text style={styles.cpT}>{m}</Text>
-                    </View>
-                  ))}
-                </>
-              ) : null}
+              {/* Common Mistakes */}
+              <SectionHeader label={`COMMON MISTAKES · ${detail.common_mistakes?.length || 0}`}
+                onEdit={() => setShowEditMistakes(true)} />
+              {(detail.common_mistakes || []).length ? (detail.common_mistakes || []).map((m, i) => (
+                <View key={i} style={styles.cpRow}>
+                  <Ionicons name="warning" size={13} color={theme.color.amber} />
+                  <Text style={styles.cpT}>{m}</Text>
+                </View>
+              )) : <Text style={styles.empty}>None recorded.</Text>}
+
+              {/* Client-Facing Instructions */}
+              <SectionHeader label="CLIENT INSTRUCTIONS" onEdit={() => setShowEditInstr(true)} />
+              <Text style={detail.client_facing_instructions ? styles.instrT : styles.empty}>
+                {detail.client_facing_instructions || "No instructions yet. Tap edit."}
+              </Text>
+
+              {/* Alternatives */}
+              <SectionHeader label={`ALTERNATIVES · ${detail.alternatives?.length || 0}`}
+                onEdit={() => setShowEditAlts(true)} />
+              {(detail.alternatives || []).length ? (detail.alternatives || []).map((a, i) => (
+                <View key={i} style={styles.cpRow}>
+                  <Ionicons name="swap-horizontal" size={13} color={theme.color.textMuted} />
+                  <Text style={styles.cpT}>{a}</Text>
+                </View>
+              )) : <Text style={styles.empty}>None linked.</Text>}
 
               {/* Video */}
-              <Text style={styles.sect}>VIDEO</Text>
+              <SectionHeader label="VIDEO" onEdit={() => setShowEditVideo(true)} />
               <View style={styles.metaCard}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.metaCardK}>PRIMARY</Text>
-                  <Text style={styles.metaCardV} numberOfLines={1}>{detail.primary_video_url || "— none —"}</Text>
+                  <Text style={styles.metaCardK}>PRIMARY URL</Text>
+                  <Text style={styles.metaCardV} numberOfLines={2}>{detail.primary_video_url || "— none —"}</Text>
                 </View>
                 <View style={[styles.videoBadge, videoBadgeStyle(detail.approved_video_status)]}>
                   <Text style={styles.videoBadgeT}>{(detail.approved_video_status || "MISSING").toUpperCase()}</Text>
@@ -261,11 +369,100 @@ export default function ExerciseContentScreen() {
                 <ApproveBtn label="MARK LIVE" onPress={() => approve("mark_live")} busy={busy === "approve-mark_live"} primary />
                 <ApproveBtn label="NEEDS UPDATE" onPress={() => approve("needs_update")} busy={busy === "approve-needs_update"} muted />
               </View>
+
+              {/* Footer actions */}
+              <View style={styles.footerActs}>
+                <Pressable onPress={openLog} style={styles.footerBtn} testID="change-log">
+                  <Ionicons name="time-outline" size={13} color={theme.color.textMuted} />
+                  <Text style={styles.footerBtnT}>CHANGE LOG</Text>
+                </Pressable>
+                <Pressable onPress={archiveExercise} disabled={busy === "archive"}
+                  style={[styles.footerBtn, styles.footerBtnDanger]} testID="archive-ex">
+                  {busy === "archive" ? <ActivityIndicator size="small" color="#c94a4a" /> : (
+                    <>
+                      <Ionicons name="archive-outline" size={13} color="#c94a4a" />
+                      <Text style={[styles.footerBtnT, { color: "#c94a4a" }]}>ARCHIVE</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
             </>
           )}
         </ScrollView>
       </View>
+
+      {/* Modals */}
+      {detail ? (
+        <>
+          <EditListModal
+            visible={showEditPoints}
+            title="EDIT COACHING POINTS"
+            items={detail.coaching_points || []}
+            placeholder="e.g. Drive through the heel"
+            onSave={(next) => patchExercise({ coaching_points: next }, "coaching")}
+            onClose={() => setShowEditPoints(false)}
+          />
+          <EditListModal
+            visible={showEditMistakes}
+            title="EDIT COMMON MISTAKES"
+            items={detail.common_mistakes || []}
+            placeholder="e.g. Knees caving inward"
+            onSave={(next) => patchExercise({ common_mistakes: next }, "mistakes")}
+            onClose={() => setShowEditMistakes(false)}
+          />
+          <EditListModal
+            visible={showEditAlts}
+            title="EDIT ALTERNATIVES"
+            items={detail.alternatives || []}
+            placeholder="Related exercise name"
+            onSave={(next) => patchExercise({ alternatives: next }, "alts")}
+            onClose={() => setShowEditAlts(false)}
+          />
+          <EditTextModal
+            visible={showEditVideo}
+            title="EDIT VIDEO URL"
+            value={detail.primary_video_url || ""}
+            placeholder="https://…"
+            multiline={false}
+            onSave={(v) => patchExercise({ primary_video_url: v }, "video")}
+            onClose={() => setShowEditVideo(false)}
+          />
+          <EditTextModal
+            visible={showEditInstr}
+            title="CLIENT-FACING INSTRUCTIONS"
+            value={detail.client_facing_instructions || ""}
+            placeholder="What the client sees before starting the movement…"
+            onSave={(v) => patchExercise({ client_facing_instructions: v }, "instr")}
+            onClose={() => setShowEditInstr(false)}
+          />
+          <ChangeLogModal
+            visible={showLog}
+            loading={logLoading}
+            log={logRows}
+            onClose={() => setShowLog(false)}
+          />
+        </>
+      ) : null}
+      <CreateExerciseModal
+        visible={showCreate}
+        onCreate={createExercise}
+        onClose={() => setShowCreate(false)}
+      />
     </SafeAreaView>
+  );
+}
+
+function SectionHeader({ label, onEdit }: { label: string; onEdit?: () => void }) {
+  return (
+    <View style={styles.sectHeadRow}>
+      <Text style={[styles.sect, { marginTop: 0, marginBottom: 0 }]}>{label}</Text>
+      {onEdit ? (
+        <Pressable onPress={onEdit} hitSlop={10} style={styles.sectEditBtn}>
+          <Ionicons name="create-outline" size={13} color={theme.color.brand} />
+          <Text style={styles.sectEditT}>EDIT</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -324,7 +521,9 @@ const styles = StyleSheet.create({
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   topT: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.display },
   search: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.color.text, fontSize: 13 },
-  filter: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  filter: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignSelf: "center" },
+  filterScroll: { flexGrow: 0, maxHeight: 46 },
+  filterContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 6, alignItems: "center" },
   filterOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   filterT: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
   filterTOn: { color: "#fff" },
@@ -351,6 +550,14 @@ const styles = StyleSheet.create({
   statusPillT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
 
   sect: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi, marginTop: 14, marginBottom: 6 },
+  sectHeadRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14, marginBottom: 6 },
+  sectEditBtn: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
+  sectEditT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  instrT: { color: theme.color.text, fontSize: 13, fontFamily: theme.font.text, lineHeight: 19 },
+  footerActs: { flexDirection: "row", gap: 8, marginTop: 20, marginBottom: 6 },
+  footerBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  footerBtnDanger: { borderColor: "#3a1216", backgroundColor: "#180608" },
+  footerBtnT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   imgGrid: { flexDirection: "row", gap: 8 },
   imgSlot: { flex: 1, alignItems: "stretch", gap: 4 },
   imgBox: { aspectRatio: 3 / 4, borderRadius: 10, backgroundColor: "#000", borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", overflow: "hidden" },

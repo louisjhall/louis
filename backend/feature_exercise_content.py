@@ -227,10 +227,19 @@ def _default_status_flags() -> dict:
 async def ex_create(body: ExerciseCreate, admin: dict = Depends(require_admin())):
     ex_id = new_id()
     now = now_iso()
+    payload = body.model_dump()
+    flags = _default_status_flags()
+    # Auto-flip content_status flags based on body content at creation time
+    cs = dict(flags["content_status"])
+    if payload.get("coaching_points"):
+        cs["coaching_points"] = True
+    if payload.get("primary_video_url"):
+        cs["video"] = True
+    flags["content_status"] = cs
     doc = {
         "id": ex_id,
-        **body.model_dump(),
-        **_default_status_flags(),
+        **payload,
+        **flags,
         "created_by": admin["id"],
         "reviewed_by": None,
         "reviewed_at": None,
@@ -464,11 +473,13 @@ async def ex_scan_todos(admin: dict = Depends(require_admin())):
 
         kind = f"exercise_needs_{missing[0]}" if len(missing) == 1 else "exercise_needs_full_approval"
         due = _tomorrow_iso_date()
-        # Dedupe: don't create if an open task of same type exists for this exercise
+        # Dedupe: don't create if an open task of same type exists for this exercise.
+        # server._create_coach_task writes status='todo'; keep the other lifecycle
+        # values here defensive against future refactors.
         existing = await db.coach_tasks.find_one({
             "task_type": kind,
             "payload.exercise_id": ex["id"],
-            "status": {"$in": ["open", "snoozed", "pending"]},
+            "status": {"$in": ["todo", "open", "snoozed", "pending"]},
         })
         if existing:
             continue

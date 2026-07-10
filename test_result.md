@@ -1287,11 +1287,14 @@ frontend:
     file: "frontend/app/coach/exercise-content.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
       - working: true
         agent: "main"
         comment: "New /coach/exercise-content route. Two-pane layout: left = filter tabs (ALL/WARM-UP/MOBILITY/STRENGTH/CARDIO/REHAB/COOLDOWN/TOMORROW/MISSING/APPROVED) + search + list with status dots + MISSING badges + TMW badges; right = detail with START/END/PRIMARY image slots (each with GENERATE/REGEN button), coaching points, common mistakes, video card with status badge, and 6 approval buttons (APPROVE ALL, IMAGES, COACHING, VIDEO, MARK LIVE, NEEDS UPDATE). Bell icon in top-right triggers POST /exercise-content/scan-todos which reports how many coach tasks were created. Coach overview now has a new EXERCISES nav button next to IMAGES."
+      - working: true
+        agent: "main"
+        comment: "Phase-2 UI wiring complete. Added: (a) '+' header button that opens CreateExerciseModal (name/category/training_type/body_area/equipment chips → POST /api/exercise-content), (b) SectionHeader with EDIT button for COACHING POINTS, COMMON MISTAKES, ALTERNATIVES, CLIENT INSTRUCTIONS, VIDEO URL — each opens the appropriate modal and PATCHes the exercise, (c) reusable EditListModal (add/remove/reorder items) + EditTextModal (single/multiline field), (d) image polling: on generate-image success, poll /images/{id} every 3s until ready/failed and refresh detail, (e) CHANGE LOG button opens ChangeLogModal fetching /exercise-content/{id}/log, (f) ARCHIVE button with confirm → DELETE /exercise-content/{id}. New reusable modal component at frontend/src/components/coach/ExerciseEditModals.tsx. Also fixed filter tabs stretching bug (added flexGrow:0 maxHeight:46 and alignItems:center)."
 
 test_plan:
   current_focus:
@@ -1310,4 +1313,6 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "§35 Phase 1 shipped. Unified Exercise Content Library backend (feature_exercise_content.py) + coach admin console (/coach/exercise-content). 11 endpoints, new exercise-specific Nano Banana prompt (solid black bg, softly-shaded face, portrait 3:4), start/end/primary image slots per exercise, one-click approval scopes, change-log, and a scan-todos endpoint that plugs into the existing Coach To-Do Feed for demand-driven approval requests. Old exercises + videos collections deliberately left alone (Phase 3 migration). Screenshot verified: 3 seed exercises visible, DRAFT+MISSING status badges, right pane detail with START/END/PRIMARY slots + APPROVE controls, filter tabs and search wired. Please test all 11 endpoints — auth gating, filters, approval scope transitions, and one image generation round-trip (each call ~$0.03). scan-todos will only create tasks when there are actual workouts scheduled tomorrow referencing exercises_v2 — right now the seeded exercises are not yet referenced so scan-todos returns created=0, which is correct."
+  - agent: "main"
+    message: "§35 Phase 2 shipped — Coach Exercise Content full UI wiring. New file frontend/src/components/coach/ExerciseEditModals.tsx (EditListModal, EditTextModal, CreateExerciseModal, ChangeLogModal). exercise-content.tsx now has (1) '+' header button → CreateExerciseModal → POST /api/exercise-content, (2) EDIT buttons next to Coaching Points/Common Mistakes/Alternatives/Client Instructions/Video URL sections → PATCH the exercise, (3) generate-image now polls /images/{id} every 3s until ready and auto-refreshes the detail, (4) CHANGE LOG button → GET /exercise-content/{id}/log rendered in modal, (5) ARCHIVE button with confirmation → DELETE /exercise-content/{id}. Also fixed a filter-tab vertical-stretch bug on web. Please run FRONTEND tests on this screen: login as coach (coach@crewfit.com / Coach123!), navigate to Coach Overview → EXERCISES button → verify: create flow, edit each list/text field, approve controls, image generation polling (Nano Banana ~15s), change log, and archive. Do not need to re-test the backend endpoints — they were tested in iteration 35 and passed."
 

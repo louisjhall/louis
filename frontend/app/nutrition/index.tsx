@@ -167,7 +167,7 @@ export default function NutritionHome() {
         <Text style={styles.sect}>LOG A MEAL</Text>
         <View style={styles.actionsGrid}>
           <ActionBtn icon="restaurant" label="MANUAL LOG" onPress={() => router.push("/nutrition/log" as any)} testID="nutr-manual" primary />
-          <ActionBtn icon="barcode-outline" label="BARCODE" onPress={() => router.push("/nutrition/barcode" as any)} testID="nutr-barcode" soon />
+          <ActionBtn icon="barcode-outline" label="BARCODE" onPress={() => router.push("/nutrition/barcode" as any)} testID="nutr-barcode" />
           <ActionBtn icon="camera" label="PHOTO SCAN" onPress={() => router.push("/nutrition/photo-scan" as any)} testID="nutr-photo" soon />
           <ActionBtn icon="heart" label="FAVOURITES" onPress={() => router.push("/nutrition/favourites" as any)} testID="nutr-favs" />
         </View>

@@ -8,7 +8,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
@@ -30,6 +30,8 @@ const ROSTER = [
 
 export default function LogMeal() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ barcode?: string }>();
+  const barcodeParam = typeof params?.barcode === "string" ? params.barcode : undefined;
   const [name, setName] = useState("");
   const [mealType, setMealType] = useState("snack");
   const [cal, setCal] = useState("");
@@ -37,11 +39,11 @@ export default function LogMeal() {
   const [carb, setCarb] = useState("");
   const [fat, setFat] = useState("");
   const [portion, setPortion] = useState("");
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(barcodeParam ? `Barcode ${barcodeParam}` : "");
   const [location, setLocation] = useState("");
   const [rosterCtx, setRosterCtx] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveAsFav, setSaveAsFav] = useState(false);
+  const [saveAsFav, setSaveAsFav] = useState(!!barcodeParam);
 
   const save = async () => {
     if (!name.trim()) { toast("Please enter a food name", "error"); return; }

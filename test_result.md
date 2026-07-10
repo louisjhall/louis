@@ -105,6 +105,18 @@
 user_problem_statement: "Build a dedicated Coach Web Dashboard (Option C) for CrewFit — desktop-native routes inside the current Expo app that render a sidebar layout on wide screens (>=1024px web) with Overview, Clients, Calendar, Approvals, Library, Messages, Analytics and Profile."
 
 backend:
+  - task: "Nutrition Centre backend (Phase 2 · Barcode)"
+    implemented: true
+    working: true
+    file: "backend/feature_nutrition_barcode.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 2 shipped: barcode + food-DB provider abstraction. Endpoints: GET /nutrition/barcode/lookup?code=..., POST /nutrition/logs/from-barcode (adjusts by servings, optionally saves favourite), GET /nutrition/food/search?q= (OFF free-text). Providers list is ordered Nutritionix (no-op until keys) → Open Food Facts (free, no key). Barcode results cached 30 days in barcode_cache collection (negative results cached 1 day). Manual verification: EAN 5449000000996 → Coca-Cola 139 kcal, 35g carbs, 0g protein/fat, image + brand pulled. New env vars supported: NUTRITIONIX_APP_ID, NUTRITIONIX_APP_KEY, OFF_TIMEOUT_S, OFF_USER_AGENT."
+
   - task: "Nutrition Centre backend (Phase 1)"
     implemented: true
     working: true
@@ -1293,6 +1305,18 @@ backend:
         comment: "EXERCISE_STYLE constant + _build_ex_prompt compose slot-specific prompts (START POSITION / END POSITION / primary demonstration) with body area emphasis, equipment inline, and softly-shaded face instruction. Female/male toggle via body.female."
 
 frontend:
+  - task: "Client · Barcode Scanner (Phase 2)"
+    implemented: true
+    working: true
+    file: "frontend/app/nutrition/barcode.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Placeholder replaced with the real Barcode scanner. Native: full-screen CameraView (expo-camera v17) with onBarcodeScanned covering EAN-13/8, UPC-A/E, Code-128/39, QR. Custom-drawn scan-frame + corner brackets + auto duplicate debounce. Contextual pre-permission screen w/ Open-Settings fallback if canAskAgain=false. Product review card: image, brand, source badge, live-calculated macros × servings, 44px +/- serving buttons + [0.5, 1, 1.5, 2]x quick chips, meal-type chip row, Save-as-Favourite toggle, LOG MEAL primary button. Not-found fallback: routes to /nutrition/log?barcode=... with barcode pre-filled in notes and Save-as-Favourite pre-ticked. Web: manual barcode-entry field (Playwright test verified: EAN 5449000000996 → Coca-Cola review card renders w/ 139 kcal, 35g carbs). SOON pill removed from home ActionBtn."
+
   - task: "Client · Nutrition Centre (Phase 1)"
     implemented: true
     working: true
@@ -1365,5 +1389,8 @@ agent_communication:
     message: "§35 Phase 2 shipped — Coach Exercise Content full UI wiring. New file frontend/src/components/coach/ExerciseEditModals.tsx (EditListModal, EditTextModal, CreateExerciseModal, ChangeLogModal). exercise-content.tsx now has (1) '+' header button → CreateExerciseModal → POST /api/exercise-content, (2) EDIT buttons next to Coaching Points/Common Mistakes/Alternatives/Client Instructions/Video URL sections → PATCH the exercise, (3) generate-image now polls /images/{id} every 3s until ready and auto-refreshes the detail, (4) CHANGE LOG button → GET /exercise-content/{id}/log rendered in modal, (5) ARCHIVE button with confirmation → DELETE /exercise-content/{id}. Also fixed a filter-tab vertical-stretch bug on web. Please run FRONTEND tests on this screen: login as coach (coach@crewfit.com / Coach123!), navigate to Coach Overview → EXERCISES button → verify: create flow, edit each list/text field, approve controls, image generation polling (Nano Banana ~15s), change log, and archive. Do not need to re-test the backend endpoints — they were tested in iteration 35 and passed."
 
   - agent: "main"
-    message: "§36 shipped — CrewFit Nutrition Centre (Phase 1) + Alert.alert web bug fix. Backend: new feature_nutrition.py w/ 14 endpoints (targets, logs CRUD, hydration, favourites, today totals, week summary, Atlas tip via Claude Sonnet 4.5, coach dashboard endpoints w/ safety guardrails). Frontend: /nutrition tab now shows premium home screen w/ dual-metric rings, hydration ticker, Atlas insight (verified: Sonnet 4.5 returned a real coaching sentence), quick actions, weekly bar chart. Supporting routes: /nutrition/log (manual form), /nutrition/history (7-day grouped), /nutrition/targets (client read), /nutrition/favourites, plus 6 Phase-2/3/4 placeholder screens marked SOON. New coach screen /coach/nutrition (row-per-client + deep-dive modal + EDIT TARGETS modal + add-note). Coach overview gained NUTRITION nav button. New cross-platform ux helper (confirm() + toast() + <ToastHost/>) fixes RN-Web Alert.alert silent-failure — applied to Exercise Content Archive + Scan-todos. TEST_CREDENTIALS: /app/memory/test_credentials.md unchanged (coach@crewfit.com / Coach123!, client@crewfit.com / Client123!). Please run BACKEND tests on all 14 nutrition endpoints (Phase-1 flows only — I skipped the legacy /nutrition/meals + /nutrition/summary paths since they are unchanged), and FRONTEND tests on the new Nutrition Centre + coach dashboard. High-value flows: (a) client logs a meal → today totals update, (b) add hydration → hydration_ml persists, (c) atlas tip returns a real sentence within 8s, (d) coach opens client → edits target → target_is_default becomes false, (e) low-protein flag appears when protein <75% target for 4+ days (backend logic), (f) archive-exercise & scan-todos now show visible confirm/toast on web."
+    message: "§36 shipped — CrewFit Nutrition Centre (Phase 1) + Alert.alert web bug fix. Backend: new feature_nutrition.py w/ 14 endpoints (targets, logs CRUD, hydration, favourites, today totals, week summary, Atlas tip via Claude Sonnet 4.5, coach dashboard endpoints w/ safety guardrails). Frontend: /nutrition tab now shows premium home screen w/ dual-metric rings, hydration ticker, Atlas insight (verified: Sonnet 4.5 returned a real coaching sentence), quick actions, weekly bar chart. Supporting routes: /nutrition/log (manual form), /nutrition/history (7-day grouped), /nutrition/targets (client read), /nutrition/favourites, plus 6 Phase-2/3/4 placeholder screens marked SOON. New coach screen /coach/nutrition (row-per-client + deep-dive modal + EDIT TARGETS modal + add-note). Coach overview gained NUTRITION nav button. New cross-platform ux helper (confirm() + toast() + <ToastHost/>) fixes RN-Web Alert.alert silent-failure — applied to Exercise Content Archive + Scan-todos."
+
+  - agent: "main"
+    message: "§37 shipped — Nutrition Phase 2 (Barcode Scanner). Backend: new feature_nutrition_barcode.py w/ provider abstraction (Nutritionix placeholder → Open Food Facts free, no key), 30-day barcode_cache (1-day negative cache), 3 new endpoints (/nutrition/barcode/lookup, /nutrition/logs/from-barcode, /nutrition/food/search). Frontend: /nutrition/barcode is now a real CameraView-based scanner on native (EAN-13/8, UPC-A/E, Code-128/39, QR) with custom scan-frame overlay + duplicate-debounce + pre-permission screen + Open-Settings fallback. Web preview shows manual-entry field. Product review card supports serving multiplier + quick chips (0.5x/1x/1.5x/2x), meal-type chips, and save-as-favourite. Not-found flow deep-links to /nutrition/log?barcode=... with prefill. TEST: please verify (a) backend lookup+cache+from-barcode+search endpoints, (b) manual-entry flow on web preview (real barcodes: Coca-Cola 5449000000996, Nutella 3017624010701), (c) log written into nutrition_logs w/ source='barcode', (d) save-as-favourite adds a nutrition_favourites row. Do NOT re-test Phase 1 endpoints (validated in iter 37)."
 

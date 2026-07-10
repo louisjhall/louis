@@ -7080,6 +7080,11 @@ async def coach_msg_generate(body: MessageDraftGenerateBody, coach: dict = Depen
             risk_level=risk, category="messages",
             payload={"source_message_id": (incoming or {}).get("id")},
         )
+    # Notify the coach in-app about the ready draft (manual path)
+    try:
+        await notify_coach_draft_ready(coach["id"], client.get("name") or client.get("email"), draft["id"])
+    except Exception:
+        logger.exception("notify_coach_draft_ready failed")
     return {"draft": draft}
 
 
@@ -7169,7 +7174,7 @@ async def coach_msg_approve(draft_id: str, body: Optional[MessageDraftEditBody] 
         logger.warning("push send fail: %s", e)
     # In-app notification record for the client
     try:
-        await notify_coach_message(coach["id"], d["client_id"], final_text)
+        await notify_coach_message(coach["id"], d["client_id"], final_text, source_message_id=msg["id"])
     except Exception:
         logger.exception("coach message notify failed")
     await _log_change(coach["id"], d["client_id"], "message",
@@ -8398,7 +8403,7 @@ _tick_reminders = _tick_reminders_full
 
 # ---- Hook helpers used by other endpoints (message send, video sent, etc.) ---
 
-async def notify_coach_message(from_user_id: str, to_user_id: str, text: str) -> None:
+async def notify_coach_message(from_user_id: str, to_user_id: str, text: str, source_message_id: Optional[str] = None) -> None:
     from_user = await db.users.find_one({"id": from_user_id}, {"_id": 0, "name": 1, "role": 1})
     if not from_user or from_user.get("role") != "coach":
         return
@@ -8407,6 +8412,8 @@ async def notify_coach_message(from_user_id: str, to_user_id: str, text: str) ->
         f"Message from {from_user.get('name', 'Louis')}",
         text[:120],
         action_url="/(client)/messages",
+        related_id=source_message_id,
+        dedupe_key=(f"coach_msg::{source_message_id}" if source_message_id else f"coach_msg::{now_iso()}"),
     )
 
 

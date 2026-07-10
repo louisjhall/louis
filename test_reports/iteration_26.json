@@ -1,0 +1,38 @@
+{
+  "summary": "Retest after E1's fixes for the 2 previously-failing notification hooks. All 27/27 tests PASS (up from 23/26 in iteration 25). Both root-cause fixes are verified in code and end-to-end: (1) POST /api/coach/messages/generate now calls notify_coach_draft_ready(coach_id, client_name, draft_id) after _persist_draft (server.py:7085-7087) — the coach's /api/notifications now contains a row with notif_type='coach_draft_ready', category='coach_messages', action_url='/coach/draft/{draft_id}', dedupe_key='draft::{draft_id}', related_id=draft_id. Two generate calls create TWO distinct notification rows (unique dedupe_keys per draft_id). (2) notify_coach_message now accepts source_message_id and uses dedupe_key='coach_msg::{msg_id}' (server.py:8406-8417) — when coach_msg_approve is invoked for two separate drafts, the client's /api/notifications shows TWO distinct coach_message rows (one per sent message id), each with related_id=msg_id and a unique dedupe_key. Regression on 23 previously-passing tests (settings defaults + partial-merge + empty-body 400, permission granted/denied/not_requested/invalid, list/unread shape, read-nonexistent 404, read-all int, role guards on all 3 routes, sort-desc + unread_only, mark-single + read-all, habits/today, habits/{id}/log, coach/messages/drafts, coach/clients/{id}/controls, coach/change-log, coach/clients/{id}/habits, coach/habits/reviews/bogus/approve) all still PASS. Test suite total wall-clock: 12.23s. Extended /app/backend/tests/test_notifications_v1.py from 26→27 tests by adding TestHookWiring::test_second_approve_creates_second_coach_message_unique_dedupe which explicitly validates the source_message_id dedupe_key behaviour requested by E1.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/coach/messages/{draft_id}/approve",
+        "issue": "Cosmetic: when called with empty JSON body `{}`, the endpoint returns 400 ('empty message') only if the underlying draft.coach_edited_text/atlas_draft are also empty. Not a defect; behaviour is correct."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_notifications_v1.py",
+    "/app/test_reports/pytest/notifications_v1_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has now reached ~8,462 lines. Extracting the NOTIFICATIONS + REMINDERS block (8053-8453) and coach-messages block (7051-7203) into /app/backend/routers/{notifications,coach_messages}.py is still recommended for maintainability.",
+    "Small suggestion: notify_coach_message's fallback dedupe_key `coach_msg::{now_iso()}` (used when source_message_id is None) will still cause dedupe collisions across two calls that happen within the same second. Since all current call sites (coach_msg_approve) always pass source_message_id, this is a defensive fallback only — but consider using new_id() rather than now_iso() to make it collision-proof.",
+    "In coach_msg_approve (server.py:7171-7174), send_push still fires BEFORE notify_coach_message. If push succeeds but the DB write for the in-app row fails, the client gets a push but no in-app row. Consider swapping order or wrapping both in a single try/finally.",
+    "The `_load_frontend_env()` helper at the top of test_notifications_v1.py should ideally live in conftest.py so every test file in /app/backend/tests/ gets EXPO_PUBLIC_BACKEND_URL loaded automatically."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_notifications_v1.py (added TestHookWiring::test_second_approve_creates_second_coach_message_unique_dedupe — approves a second pending draft and verifies client has two coach_message rows with unique dedupe_keys)"
+  ],
+  "success_rate": {"backend": "100% (27/27 passed, 0 skipped, 0 failed)", "frontend": "not tested (backend-only per request)"},
+  "seed_data_creation": "Pre-run cleanup: deleted 3 stale waiting_approval drafts + 1 stale coach_message notif for client from iteration 25. During run: 1 fresh TEST_notif_<uuid>@example.com signup (used for defaults/permission/list tests). Two message_drafts created via /coach/messages/generate — BOTH now approved (both drafts and their coach_tasks are in status='done'/'sent'). Two coach_message rows on client user + two coach_draft_ready rows on coach user remain in the DB with unique dedupe_keys, all with related_id set to the correct draft_id / sent message_id respectively.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_notifications_v1.py is now the complete regression suite for CrewFit Notifications V1 (27 tests, ~12s wall-clock). Reads EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env at import. Two coach_msg_generate calls per run dominate the wall-clock (Claude via _atlas_draft_reply); reduce this only if EMERGENT_LLM budget becomes a concern. To rerun cleanly, first delete stale message_drafts with status='waiting_approval' and coach_draft_ready/coach_message notifications for the seeded users (see the delete_many snippet in this iteration's shell log).",
+  "rca_of_issue": "Both hooks previously reported failing in iteration 25 are now resolved. (a) coach_msg_generate at server.py:7085-7087 now runs `await notify_coach_draft_ready(coach['id'], client.get('name') or client.get('email'), draft['id'])` inside try/except AFTER _persist_draft — this makes the coach see a Draft Ready · <client> row in the notification bell with dedupe_key='draft::<draft_id>' immediately after every manual Generate reply. Since dedupe_key is unique per draft_id, N successive generate calls create N distinct notifications. (b) notify_coach_message at server.py:8406-8417 now accepts source_message_id and sets dedupe_key=f'coach_msg::{source_message_id}' (falling back to now_iso() when None) — coach_msg_approve at server.py:7177 passes source_message_id=msg['id'], so each approved draft produces its own message row (unique id) which in turn produces its own coach_message notification (unique dedupe_key). End-to-end verified: after two approvals on client@crewfit.com, GET /api/notifications returns two coach_message rows with distinct dedupe_keys and correct related_id fields."
+}

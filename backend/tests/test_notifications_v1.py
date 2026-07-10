@@ -344,6 +344,50 @@ class TestHookWiring:
                    json={"coach_edited_text": "second attempt"}, timeout=30)
         assert r.status_code == 400, r.text
 
+    def test_second_approve_creates_second_coach_message_unique_dedupe(self, s, client_and_coach):
+        """Approve draft_id_1 (still pending from test #1) → client should now have
+        TWO coach_message rows (one per approved draft) with different dedupe_keys
+        because each sent message has a unique id."""
+        coach = client_and_coach["coach"]
+        client = client_and_coach["client"]
+        draft_id_a = self.__class__.draft_id_1  # still 'waiting_approval'
+
+        # Approve draft A
+        r = s.post(f"{API}/coach/messages/{draft_id_a}/approve",
+                   headers=coach["headers"],
+                   json={"coach_edited_text": "TEST_notif approved reply A."},
+                   timeout=30)
+        assert r.status_code == 200, r.text
+        sent_msg_a = r.json().get("message", {})
+        assert sent_msg_a.get("id"), "approve didn't return a message id"
+        msg_id_a = sent_msg_a["id"]
+
+        # Poll client notifications until we see two distinct coach_message rows
+        dedupe_a = f"coach_msg::{msg_id_a}"
+        rows = []
+        for _ in range(15):
+            n = s.get(f"{API}/notifications", headers=client["headers"], timeout=15).json()
+            rows = [r for r in n.get("notifications", []) if r.get("notif_type") == "coach_message"]
+            if any(row.get("dedupe_key") == dedupe_a for row in rows):
+                break
+            time.sleep(0.5)
+
+        # Must contain dedupe_key for msg_a
+        keys = [row.get("dedupe_key") for row in rows]
+        assert dedupe_a in keys, (
+            f"dedupe_key for approved draft A ({dedupe_a}) missing; found keys={keys}"
+        )
+        # And at least one OTHER coach_message row (from the earlier approve of draft_2)
+        other_rows = [row for row in rows if row.get("dedupe_key") != dedupe_a]
+        assert len(other_rows) >= 1, (
+            f"expected a second coach_message row from earlier approve; got rows={rows}"
+        )
+        # All dedupe_keys must be unique per message
+        assert len(set(keys)) == len(keys), f"duplicate dedupe_keys found: {keys}"
+        # Verify related_id points to the sent message id
+        row_a = next(r for r in rows if r.get("dedupe_key") == dedupe_a)
+        assert row_a.get("related_id") == msg_id_a
+
 
 # ---------- 6) List sorting + unread_only ----------
 

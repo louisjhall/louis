@@ -10,6 +10,7 @@ import * as Linking from "expo-linking";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
 import { AuthProvider } from "@/src/lib/auth";
+import { ToastHost } from "@/src/lib/ux";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -71,6 +72,7 @@ export default function RootLayout() {
         <AuthProvider>
           <StatusBar barStyle="light-content" backgroundColor="#000000" />
           <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+          <ToastHost />
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

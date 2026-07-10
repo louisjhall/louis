@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { confirm, toast } from "@/src/lib/ux";
 import {
   EditListModal, EditTextModal, CreateExerciseModal, ChangeLogModal,
 } from "@/src/components/coach/ExerciseEditModals";
@@ -115,8 +116,8 @@ export default function ExerciseContentScreen() {
     setBusy("scan");
     try {
       const r = await api<{ created: number }>("/exercise-content/scan-todos", { method: "POST", body: {} });
-      Alert.alert("Scan complete", `${r.created} coach task${r.created === 1 ? "" : "s"} created.`);
-    } catch (e: any) { Alert.alert("Scan failed", e?.message || ""); }
+      toast(`Scan complete · ${r.created} task${r.created === 1 ? "" : "s"} created`, "success");
+    } catch (e: any) { toast(e?.message || "Scan failed", "error"); }
     finally { setBusy(null); }
   };
 
@@ -173,21 +174,21 @@ export default function ExerciseContentScreen() {
 
   const archiveExercise = async () => {
     if (!detail) return;
-    Alert.alert("Archive exercise?",
-      `"${detail.exercise_name}" will be moved to Archived. This can be undone by editing status.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Archive", style: "destructive", onPress: async () => {
-          setBusy("archive");
-          try {
-            await api(`/exercise-content/${detail.id}`, { method: "DELETE" });
-            setSelected(null); setDetail(null);
-            await load();
-          } catch (e: any) { Alert.alert("Failed", e?.message || ""); }
-          finally { setBusy(null); }
-        } },
-      ]
-    );
+    const ok = await confirm({
+      title: "Archive exercise?",
+      message: `"${detail.exercise_name}" will be moved to Archived. You can restore it by editing status.`,
+      confirmLabel: "ARCHIVE",
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy("archive");
+    try {
+      await api(`/exercise-content/${detail.id}`, { method: "DELETE" });
+      setSelected(null); setDetail(null);
+      await load();
+      toast("Archived", "success");
+    } catch (e: any) { toast(e?.message || "Failed", "error"); }
+    finally { setBusy(null); }
   };
 
   const openLog = async () => {

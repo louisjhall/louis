@@ -105,6 +105,18 @@
 user_problem_statement: "Build a dedicated Coach Web Dashboard (Option C) for CrewFit — desktop-native routes inside the current Expo app that render a sidebar layout on wide screens (>=1024px web) with Overview, Clients, Calendar, Approvals, Library, Messages, Analytics and Profile."
 
 backend:
+  - task: "Nutrition Centre backend (Phase 1)"
+    implemented: true
+    working: true
+    file: "backend/feature_nutrition.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New feature_nutrition module with 14 endpoints. Collections: nutrition_logs, nutrition_targets, nutrition_hydration, nutrition_favourites, nutrition_notes, nutrition_atlas_tips. Safety guardrails (min 1500 kcal, min 60g protein, min 1500ml hydration) enforced in _sanitize_target. Atlas defaults auto-computed from user weight when target row missing. Atlas tip cached per (user, date) — Claude Sonnet 4.5 via emergentintegrations. Coach endpoints (require_admin): list clients w/ 7-day averages + flags, per-client deep dive, PATCH targets, POST notes. Note: legacy /nutrition/summary and /nutrition/meals in server.py are UNTOUCHED; new weekly summary lives at /nutrition/week-summary to avoid path collision."
+
   - task: "GET /api/coach/calendar — per-client roster+workout grid for next N days"
     implemented: true
     working: "NA"
@@ -1281,6 +1293,42 @@ backend:
         comment: "EXERCISE_STYLE constant + _build_ex_prompt compose slot-specific prompts (START POSITION / END POSITION / primary demonstration) with body area emphasis, equipment inline, and softly-shaded face instruction. Female/male toggle via body.female."
 
 frontend:
+  - task: "Client · Nutrition Centre (Phase 1)"
+    implemented: true
+    working: true
+    file: "frontend/app/nutrition/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 1 of the travel-aware Nutrition Centre. New /nutrition/index (mounted on the existing NUTRITION tab). Shows today's calorie + protein rings, carbs/fats/hydration micro-cards, 3-tap hydration ticker (+250/+500/+750/-250ml), Atlas insight card (Claude Sonnet 4.5), quick-actions grid (Manual Log LIVE + Barcode/Photo/Favourites/Travel/Decide/Airport/Timing SOON pills), weekly summary bar-chart, and a safety disclaimer. Additional routes: /nutrition/log (full form with meal-type + roster-context chips + Save-as-Favourite + all macros), /nutrition/history (7-day grouped), /nutrition/targets (read-only view with Atlas-default vs Coach-set badge + safety copy), /nutrition/favourites (tap-to-log). Placeholders: /nutrition/barcode, /photo-scan, /travel, /decision, /airport, /timing. Cross-platform confirm+toast helper new: /src/lib/ux.tsx (fixes RN-Web Alert.alert bug across the whole app; ToastHost mounted in root _layout.tsx). Legacy (client) nutrition tab now re-exports the new home."
+
+  - task: "Coach · Nutrition Dashboard (Phase 1)"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/nutrition.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New /coach/nutrition route. One-row-per-client cards showing goal, targets, today's kcal+protein, 7-day averages, days-logged, and low-protein/no-logs/coach-set/Atlas-default badges. Tap → deep-dive modal with recent 7-day logs list, coach notes (create + list), and an Edit Targets modal (goal chips + calories/protein/carbs/fats/hydration numeric inputs). All values pass through backend safety floors (1500 kcal / 60g protein / 1500ml). Coach overview screen now has a new NUTRITION button (Ionicons nutrition-outline) between EXERCISES and the notification bell."
+
+  - task: "Alert.alert web bug fix (Exercise Content Archive + Scan-todos)"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/exercise-content.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Replaced Alert.alert-based Archive confirm and Scan-todos success alerts with new cross-platform confirm() and toast() from @/src/lib/ux. Native (iOS/Android) still uses Alert.alert internally; web now uses a real Modal-based confirm and animated toast (mounted in root _layout.tsx via <ToastHost/>)."
+
   - task: "Coach · Exercise Content Library screen"
     implemented: true
     working: true
@@ -1315,4 +1363,7 @@ agent_communication:
     message: "§35 Phase 1 shipped. Unified Exercise Content Library backend (feature_exercise_content.py) + coach admin console (/coach/exercise-content). 11 endpoints, new exercise-specific Nano Banana prompt (solid black bg, softly-shaded face, portrait 3:4), start/end/primary image slots per exercise, one-click approval scopes, change-log, and a scan-todos endpoint that plugs into the existing Coach To-Do Feed for demand-driven approval requests. Old exercises + videos collections deliberately left alone (Phase 3 migration). Screenshot verified: 3 seed exercises visible, DRAFT+MISSING status badges, right pane detail with START/END/PRIMARY slots + APPROVE controls, filter tabs and search wired. Please test all 11 endpoints — auth gating, filters, approval scope transitions, and one image generation round-trip (each call ~$0.03). scan-todos will only create tasks when there are actual workouts scheduled tomorrow referencing exercises_v2 — right now the seeded exercises are not yet referenced so scan-todos returns created=0, which is correct."
   - agent: "main"
     message: "§35 Phase 2 shipped — Coach Exercise Content full UI wiring. New file frontend/src/components/coach/ExerciseEditModals.tsx (EditListModal, EditTextModal, CreateExerciseModal, ChangeLogModal). exercise-content.tsx now has (1) '+' header button → CreateExerciseModal → POST /api/exercise-content, (2) EDIT buttons next to Coaching Points/Common Mistakes/Alternatives/Client Instructions/Video URL sections → PATCH the exercise, (3) generate-image now polls /images/{id} every 3s until ready and auto-refreshes the detail, (4) CHANGE LOG button → GET /exercise-content/{id}/log rendered in modal, (5) ARCHIVE button with confirmation → DELETE /exercise-content/{id}. Also fixed a filter-tab vertical-stretch bug on web. Please run FRONTEND tests on this screen: login as coach (coach@crewfit.com / Coach123!), navigate to Coach Overview → EXERCISES button → verify: create flow, edit each list/text field, approve controls, image generation polling (Nano Banana ~15s), change log, and archive. Do not need to re-test the backend endpoints — they were tested in iteration 35 and passed."
+
+  - agent: "main"
+    message: "§36 shipped — CrewFit Nutrition Centre (Phase 1) + Alert.alert web bug fix. Backend: new feature_nutrition.py w/ 14 endpoints (targets, logs CRUD, hydration, favourites, today totals, week summary, Atlas tip via Claude Sonnet 4.5, coach dashboard endpoints w/ safety guardrails). Frontend: /nutrition tab now shows premium home screen w/ dual-metric rings, hydration ticker, Atlas insight (verified: Sonnet 4.5 returned a real coaching sentence), quick actions, weekly bar chart. Supporting routes: /nutrition/log (manual form), /nutrition/history (7-day grouped), /nutrition/targets (client read), /nutrition/favourites, plus 6 Phase-2/3/4 placeholder screens marked SOON. New coach screen /coach/nutrition (row-per-client + deep-dive modal + EDIT TARGETS modal + add-note). Coach overview gained NUTRITION nav button. New cross-platform ux helper (confirm() + toast() + <ToastHost/>) fixes RN-Web Alert.alert silent-failure — applied to Exercise Content Archive + Scan-todos. TEST_CREDENTIALS: /app/memory/test_credentials.md unchanged (coach@crewfit.com / Coach123!, client@crewfit.com / Client123!). Please run BACKEND tests on all 14 nutrition endpoints (Phase-1 flows only — I skipped the legacy /nutrition/meals + /nutrition/summary paths since they are unchanged), and FRONTEND tests on the new Nutrition Centre + coach dashboard. High-value flows: (a) client logs a meal → today totals update, (b) add hydration → hydration_ml persists, (c) atlas tip returns a real sentence within 8s, (d) coach opens client → edits target → target_is_default becomes false, (e) low-protein flag appears when protein <75% target for 4+ days (backend logic), (f) archive-exercise & scan-todos now show visible confirm/toast on web."
 

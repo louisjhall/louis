@@ -84,6 +84,10 @@ export default function CoachOverview() {
             <Ionicons name="barbell-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>EXERCISES</Text>
           </Pressable>
+          <Pressable testID="ov-goto-nutrition" onPress={() => router.push("/coach/nutrition" as any)} style={styles.headerBtn}>
+            <Ionicons name="nutrition-outline" size={16} color={theme.color.brand} />
+            <Text style={styles.headerBtnText}>NUTRITION</Text>
+          </Pressable>
           <NotificationBell testID="coach-notif-bell" />
         </View>
       </View>

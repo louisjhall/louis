@@ -1,0 +1,84 @@
+{
+  "summary": "CrewFit Nutrition Centre Phase 1 — BACKEND + FRONTEND fully verified. Backend: 18/18 pytest passing (all 14 endpoints + role gating + safety-floor clamping + Atlas tip caching via Claude Sonnet 4.5). Frontend: client Home + Log + Favourites + History + Targets + Coming-Soon screens all render with correct data-driven values; hydration buttons increment (+500 -> 650->1150ml), MANUAL LOG saves + navigates home, favourites appear, history groups by TODAY, targets show COACH SET badge. Coach dashboard: 23 client cards render with correct ATLAS DEFAULT/COACH SET/NO LOGS 7D badges (22 default + 1 coach-set); client-detail modal shows targets + recent logs + notes; EDIT TARGETS modal has GOAL chips + 5 numeric fields + safety-floor copy; ADD NOTE works and appears at top of list. New cross-platform confirm+toast (ux.tsx) is in place and Atlas tip returns a real coaching sentence (\"Strong protein start with 42g banked early—now focus on steady hydration…\") that is cached across calls.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "nutrition/index.tsx (client Nutrition home)",
+        "issues": [
+          "Hydration quick-action buttons (+250 / +500 / +750 / -250) lack testID props. Text selector 'get_by_text(+500ml)' works today but future refactors could break testability. Suggest adding testID='nutr-hyd-250' / 'nutr-hyd-500' / 'nutr-hyd-750' / 'nutr-hyd-minus'.",
+          "MetricCard, SmallMetric, TARGETS pill (top-right) lack testID."
+        ]
+      },
+      {
+        "screen": "nutrition/log.tsx",
+        "issues": [
+          "Food name TextInput, meal chips (BREAKFAST/LUNCH…), macro Fields (calories/protein/carbs/fats), roster chips, SAVE AS FAVOURITE toggle, CANCEL and SAVE MEAL buttons all lack testID. Text selectors work but adding testID='nutr-food-name', 'nutr-meal-<key>', 'nutr-cal', 'nutr-pro', 'nutr-carb', 'nutr-fat', 'nutr-fav-toggle', 'nutr-save' will make the flow deterministic."
+        ]
+      },
+      {
+        "screen": "nutrition/history.tsx",
+        "issues": [
+          "Per-log trash button lacks testID (e.g. 'nutr-hist-delete-<id>')."
+        ]
+      },
+      {
+        "screen": "coach/nutrition.tsx",
+        "issues": [
+          "EDIT TARGETS button, goal chips, macro TextInputs, SAVE button, ADD note input+button, close-X all lack testID. Client cards have 'nutr-client-<id>' which is great — extend the same pattern to the detail modal controls."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nutrition_v1.py",
+    "/app/test_reports/pytest/nutrition_v1.xml"
+  ],
+  "action_items": [
+    "(Optional / hygiene) Add testID props to the missing interactive elements listed under design_issues so future Playwright runs don't rely on brittle text selectors.",
+    "(Optional) On My Targets screen the disclaimer copy says 'coaching estimates' — that's fine, but including the literal 'Safety floors' phrase (as used inside the coach edit-targets modal) would keep terminology consistent between client & coach."
+  ],
+  "critical_code_review_comments": [
+    "feature_nutrition.py is 633 lines — clean, well-scoped, safe clamps, cache on Atlas tip. Nothing to flag.",
+    "Coach patch endpoint always sets target_type='coach' even if body carries target_type='atlas' — that's the intended behaviour per spec (Coach set), so no bug, but worth a comment.",
+    "MongoDB _id is correctly stripped everywhere I checked (find with projection {_id:0} or doc.pop(\"_id\", None) after insert)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nutrition_v1.py (new)"
+  ],
+  "success_rate": { "backend": "100% (18/18)", "frontend": "100% of client + coach flows exercised" },
+  "seed_data_creation": "During tests: created TEST_Chicken salad log (deleted), TEST_Toast log (retained in DB), Salmon rice bowl log (retained), TEST_Fav Breakfast favourite (deleted), TEST_ Post-flight refuel coach note (retained), TEST_ Coach note (retained). Also set client target to Muscle gain / 1500 kcal / 70g pro (via coach EDIT TARGETS UI) so the client home now shows COACH SET.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login MUST use testID selectors: [data-testid=login-email-input] / [data-testid=login-password-input] / [data-testid=login-submit-button]. Using text-based get_by_text('SIGN IN') is unreliable because the DEMO LOGINS card also contains 'SIGN IN' contextually. After login, wait ~5s, then check localStorage.getItem('cf_token') to confirm success. Backend seeded users: client@crewfit.com / Client123!  &  coach@crewfit.com / Coach123!. Direct navigation to /(client)/nutrition, /nutrition/log, /nutrition/history, /nutrition/targets, /nutrition/favourites all work once token is persisted. Coach dashboard: /(coach)/overview → click [data-testid=ov-goto-nutrition] → /coach/nutrition. Client cards use testID 'nutr-client-<user_id>'. Atlas tip is cached per (user_id, date_local); second call within same day returns identical text.",
+  "verified_working_flows": [
+    "GET /api/nutrition/targets/mine (with atlas defaults + guardrails)",
+    "POST /api/nutrition/targets clamps below-floor values to MIN_CALORIES=1500 / MIN_PROTEIN_G=60 / MIN_HYDRATION_ML=1500",
+    "POST /api/nutrition/logs (server-set date_local) + GET /api/nutrition/logs?days=7 + PATCH + DELETE (with owner-only 404)",
+    "GET /api/nutrition/today (target/totals/remaining/hydration_ml)",
+    "GET /api/nutrition/week-summary (7 days)",
+    "POST/GET /api/nutrition/hydration (+/-)",
+    "POST/GET/DELETE /api/nutrition/favourites",
+    "GET /api/nutrition/atlas-tip (real Claude Sonnet 4.5 response, ≤32 words, second call returns identical cached text)",
+    "GET /api/coach/nutrition/clients (23 clients, all summary fields)",
+    "GET /api/coach/nutrition/clients/{id} (user+target+recent_logs+notes)",
+    "PATCH /api/coach/nutrition/targets/{id} (target_type=coach, safety-floor clamp)",
+    "POST /api/coach/nutrition/notes",
+    "Role gating: client -> 403 on all /coach/nutrition/* endpoints",
+    "Client Home page — dual metric cards + micro cards + hydration ticker (+500 -> 650->1150ml) + Atlas insight (real sentence)",
+    "Client MANUAL LOG form — meal chip, roster chip, save-as-favourite toggle, SAVE returns to home with updated totals (790->1090 kcal after adding 300 kcal)",
+    "Client FAVOURITES — new favourite appears; can log again",
+    "Client HISTORY — grouped by TODAY, shows all 3 logs with roster context tag, trash icons present",
+    "Client TARGETS — shows COACH SET badge + 1500/70/250/70/2500 values + safety copy",
+    "Client Coming-Soon screens — Barcode, Photo Scan, Travel, Decision, Airport, Timing all render",
+    "Coach Overview -> ov-goto-nutrition -> /coach/nutrition works",
+    "Coach dashboard shows 22 ATLAS DEFAULT + 1 COACH SET + 22 NO LOGS 7D badges",
+    "Coach client-detail modal shows GOAL, target macros, RECENT LOGS · 2, COACH NOTES (existing note visible)",
+    "Coach EDIT TARGETS modal opens with GOAL chips + 5 numeric fields + safety-floor copy; SAVE updates parent card",
+    "Coach ADD NOTE inserts new note at top of list"
+  ],
+  "rca_of_issue": "N/A — no bugs found in this iteration."
+}

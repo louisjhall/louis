@@ -8,6 +8,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
 import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
 import { NotificationBell } from "@/src/components/NotificationBell";
+import { PreviewLauncher } from "@/src/components/PreviewLauncher";
 
 type Client = any;
 
@@ -120,6 +121,13 @@ export default function CoachOverview() {
           )}
 
           <CoachToDoFeed />
+
+          <PreviewLauncher />
+
+          <Pressable onPress={() => router.push("/coach/ui-issues" as any)} style={styles.uiIssuesLink} testID="link-ui-issues">
+            <Ionicons name="bug-outline" size={14} color={theme.color.textMuted} />
+            <Text style={styles.uiIssuesT}>UI ISSUES REPORTED FROM PREVIEW MODE →</Text>
+          </Pressable>
 
           <View style={[styles.twoCol, !isWide && { flexDirection: "column" }]}>
             <View style={[styles.section, isWide ? { flex: 1 } : {}]}>
@@ -286,6 +294,9 @@ const styles = StyleSheet.create({
   link: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
 
   twoCol: { flexDirection: "row", gap: 20, alignItems: "flex-start" },
+
+  uiIssuesLink: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 20, padding: 12, backgroundColor: theme.color.surface2, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
+  uiIssuesT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   alertRow: {
     flexDirection: "row", alignItems: "center", gap: 12,

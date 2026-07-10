@@ -145,6 +145,11 @@ async def current_user(authorization: Optional[str] = Header(None)) -> dict:
     u = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not u:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    # Preview-mode claims flow through so handlers/audit can see them.
+    if payload.get("preview"):
+        u["_is_preview"] = True
+        u["_preview_by"] = payload.get("preview_by")
+        u["_preview_by_email"] = payload.get("preview_by_email")
     return u
 
 def require_role(role: str):
@@ -6963,6 +6968,7 @@ import feature_nutrition_insights  # noqa: E402,F401  Nutrition Centre — Phase
 import feature_admin_migrations  # noqa: E402,F401  Ops: storage backfill + exercise-library migration
 import feature_admin_telemetry   # noqa: E402,F401  Ops: AI usage + cost telemetry admin dashboard
 import feature_gdpr              # noqa: E402,F401  GDPR: soft-delete, data export, purge cron
+import feature_preview           # noqa: E402,F401  Coach preview-as-client + UI issue reporter
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.
@@ -6997,10 +7003,56 @@ async def _tick_reminders_all() -> None:
         await feature_gdpr.gdpr_purge_expired()
     except Exception:
         logger.exception("gdpr purge tick failed")
+    # Preview throwaway purge: removes new-client preview accounts past 24h.
+    try:
+        await feature_preview.preview_purge_throwaways()
+    except Exception:
+        logger.exception("preview purge tick failed")
 
 _tick_reminders = _tick_reminders_all
 
 app.include_router(api)
+
+
+# ---------------------------------------------------------------------------
+# Preview-mode write guard.
+# Blocks all POST/PUT/PATCH/DELETE requests when the JWT has preview:true,
+# with a small allow-list for exit + issue reporting. This is the safety net
+# that keeps coaches from accidentally mutating a real client's data while
+# they are inspecting the app from the client perspective.
+# ---------------------------------------------------------------------------
+_PREVIEW_WRITE_ALLOWLIST = {
+    "/api/coach/preview/exit",
+    "/api/preview/ui-issue",
+    "/api/auth/logout",   # allow the coach to escape via logout too
+}
+
+
+@app.middleware("http")
+async def preview_readonly_guard(request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        auth = request.headers.get("authorization") or ""
+        if auth.startswith("Bearer "):
+            try:
+                payload = jwt.decode(auth.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALGO])
+            except Exception:
+                payload = None
+            if payload and payload.get("preview"):
+                path = request.url.path
+                if path not in _PREVIEW_WRITE_ALLOWLIST:
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": {
+                                "error": "preview_readonly",
+                                "message": "Preview mode is read-only. Exit preview to make changes.",
+                            }
+                        },
+                    )
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,

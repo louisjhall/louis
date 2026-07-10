@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
+import { PreviewClientButton } from "@/src/components/PreviewLauncher";
 
 const FILTERS = [
   { key: "all", label: "ALL" },
@@ -99,7 +100,10 @@ export default function Clients() {
                 )}
                 <View style={styles.actionRow}>
                   <Text style={styles.metaSmall}>{cl.missed_workouts > 0 ? `${cl.missed_workouts} missed` : ""}</Text>
-                  <Text style={styles.action}>REVIEW →</Text>
+                  <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+                    <PreviewClientButton clientId={cl.id} clientName={cl.name} />
+                    <Text style={styles.action}>REVIEW →</Text>
+                  </View>
                 </View>
               </Pressable>
             );

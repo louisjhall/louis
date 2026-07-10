@@ -1,6 +1,6 @@
+import React, { useEffect } from "react";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
 import { LogBox, Platform, StatusBar } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -9,8 +9,10 @@ import * as Linking from "expo-linking";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
-import { AuthProvider } from "@/src/lib/auth";
+import { AuthProvider, useAuth } from "@/src/lib/auth";
 import { ToastHost } from "@/src/lib/ux";
+import { PreviewProvider } from "@/src/lib/preview";
+import { PreviewBanner } from "@/src/components/PreviewBanner";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -70,11 +72,22 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000000" }}>
       <SafeAreaProvider>
         <AuthProvider>
-          <StatusBar barStyle="light-content" backgroundColor="#000000" />
-          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
-          <ToastHost />
+          <PreviewWiring>
+            <StatusBar barStyle="light-content" backgroundColor="#000000" />
+            <PreviewBanner />
+            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+            <ToastHost />
+          </PreviewWiring>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
+}
+
+// Bridges PreviewProvider with AuthProvider: refresh the auth context
+// whenever the coach swaps token (into or out of preview) so the app
+// re-routes correctly.
+function PreviewWiring({ children }: { children: React.ReactNode }) {
+  const { refresh } = useAuth();
+  return <PreviewProvider onSwap={refresh}>{children}</PreviewProvider>;
 }

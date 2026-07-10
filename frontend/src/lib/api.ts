@@ -36,8 +36,16 @@ export async function api<T = any>(
     let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
+      // Preview-mode friendly error: bubble up a clean toast, don't spam consoles.
+      if (res.status === 403 && j?.detail && typeof j.detail === "object" && j.detail.error === "preview_readonly") {
+        const err: any = new Error(j.detail.message || "Preview mode is read-only.");
+        err.preview_readonly = true;
+        throw err;
+      }
       msg = j.detail || JSON.stringify(j);
-    } catch {}
+    } catch (e: any) {
+      if (e?.preview_readonly) throw e;
+    }
     throw new Error(msg);
   }
   const ct = res.headers.get("content-type") || "";

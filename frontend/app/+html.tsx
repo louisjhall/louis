@@ -24,6 +24,11 @@ export default function Root({ children }: PropsWithChildren) {
               body > div:first-child { position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; }
               [role="tablist"] [role="tab"] * { overflow: visible !important; }
               [role="heading"], [role="heading"] * { overflow: visible !important; }
+              /* Coach Preview Mode: constrain layout width when device-picker is set. */
+              @media (min-width: 800px) {
+                :root { --cf-preview-width: none; }
+                body > div:first-child { max-width: var(--cf-preview-width, none); margin: 0 auto !important; box-shadow: 0 0 0 999px #0a0a0a; }
+              }
             `,
           }}
         />

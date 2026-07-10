@@ -6204,6 +6204,11 @@ async def _startup():
         await _reconcile_stale_jobs()
     except Exception:
         logger.exception("brand_images reconciliation on startup failed")
+    try:
+        from feature_exercise_content import _reconcile_ex_stale
+        await _reconcile_ex_stale()
+    except Exception:
+        logger.exception("exercise image reconciliation on startup failed")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 
@@ -6919,6 +6924,7 @@ import feature_standby         # noqa: E402,F401  registers standby endpoints on
 import feature_social_studio   # noqa: E402,F401  registers admin social-studio endpoints on `api`
 import feature_profile         # noqa: E402,F401  registers profile-photo + location endpoints on `api`
 import feature_brand_images    # noqa: E402,F401  registers CrewFit AI-image library endpoints on `api`
+import feature_exercise_content  # noqa: E402,F401  unified Exercise Content Library endpoints
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

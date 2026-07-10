@@ -1251,3 +1251,63 @@ agent_communication:
   - agent: "main"
     message: "§34 Phase 2.5 shipped. Backend: personalise + personal/mine + pending-approval endpoints, pick now prefers user's approved personalised images, PATCH accepts approved/rejected, and startup reconciliation clears stuck 'generating' rows. Frontend: AIHeroImage wired into the event countdown card and the StandbyStatusCard, PersonalImageryCard added to client profile, coach brand-images admin now has an APPROVE/REJECT queue for pending_approval images. Full round-trip verified manually — client generated 'marathon build after long-haul' → pilot doing hamstring recovery in an airport-view gym with a CrewFit water bottle (681KB PNG) → coach approved → /pick returned personalised=true for that client. Please regression test the 6 new/extended endpoints plus role gating: client can call personalise/mine and their own generate; coach only can access pending-approval + PATCH status. LLM cost: each real personalise call = 1 Nano Banana generation (~$0.03), so use the shared existing image for most tests and only trigger 1 fresh personalise if needed."
 
+
+##====================================================================
+## §35 — Unified Exercise Content Library
+##====================================================================
+
+backend:
+  - task: "feature_exercise_content.py — unified exercise CRUD + approvals"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_exercise_content.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New module + `exercises_v2` collection (old exercises/videos untouched — Phase 3 migration). 11 endpoints: POST/GET/PATCH/DELETE /exercise-content (list has q + category + training_type + body_area + status + missing_content + used_tomorrow + approved_only filters), POST /{id}/approve with scope ∈ {all, images, coaching, video, mark_live, needs_update}, POST /{id}/generate-image (slot ∈ primary|start|end — kicks off Nano Banana job with new exercise style: solid black bg, athletic person in dark kit, softly shaded face, equipment visible, portrait 3:4), GET /images/{id}/stream (dual auth), GET /images/{id}, GET /{id}/log (change history), POST /scan-todos (bumps used_in_tomorrow_workouts_count then creates coach tasks via _create_coach_task for missing artwork/coaching/video/approval — dedupe by task_type + payload.exercise_id + open/snoozed status). Status enum: Draft/Needs Review/Artwork Needed/Coaching Points Needed/Video Needed/Ready for Approval/Approved/Live/Needs Update/Rejected/Archived. Startup reconciliation _reconcile_ex_stale wired via server.py on_event('startup'). Manual smoke test: 3 exercises created (Band Lateral Raise, Deep Bodyweight Squat, World's Greatest Stretch)."
+  - task: "New exercise-image style prompt template"
+    implemented: true
+    working: true
+    file: "backend/feature_exercise_content.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "EXERCISE_STYLE constant + _build_ex_prompt compose slot-specific prompts (START POSITION / END POSITION / primary demonstration) with body area emphasis, equipment inline, and softly-shaded face instruction. Female/male toggle via body.female."
+
+frontend:
+  - task: "Coach · Exercise Content Library screen"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/exercise-content.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New /coach/exercise-content route. Two-pane layout: left = filter tabs (ALL/WARM-UP/MOBILITY/STRENGTH/CARDIO/REHAB/COOLDOWN/TOMORROW/MISSING/APPROVED) + search + list with status dots + MISSING badges + TMW badges; right = detail with START/END/PRIMARY image slots (each with GENERATE/REGEN button), coaching points, common mistakes, video card with status badge, and 6 approval buttons (APPROVE ALL, IMAGES, COACHING, VIDEO, MARK LIVE, NEEDS UPDATE). Bell icon in top-right triggers POST /exercise-content/scan-todos which reports how many coach tasks were created. Coach overview now has a new EXERCISES nav button next to IMAGES."
+
+test_plan:
+  current_focus:
+    - "POST /api/exercise-content (create) — admin only; default flags applied"
+    - "GET /api/exercise-content with each filter combination — search + used_tomorrow + missing_content + approved_only"
+    - "PATCH /api/exercise-content/{id} — status enum guard; content_status.coaching_points auto-updates when coaching_points array set"
+    - "POST /api/exercise-content/{id}/approve — each scope transitions the right fields"
+    - "POST /api/exercise-content/{id}/generate-image slot=start|end|primary — kicks off Nano Banana and updates the correct slot key on the parent doc"
+    - "GET /api/exercise-content/images/{id}/stream — dual auth"
+    - "POST /api/exercise-content/scan-todos — creates dedup'd tasks for exercises used tomorrow with missing content"
+    - "Role gating: client hitting admin endpoints (create/patch/delete/approve/generate/scan) → 403"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "§35 Phase 1 shipped. Unified Exercise Content Library backend (feature_exercise_content.py) + coach admin console (/coach/exercise-content). 11 endpoints, new exercise-specific Nano Banana prompt (solid black bg, softly-shaded face, portrait 3:4), start/end/primary image slots per exercise, one-click approval scopes, change-log, and a scan-todos endpoint that plugs into the existing Coach To-Do Feed for demand-driven approval requests. Old exercises + videos collections deliberately left alone (Phase 3 migration). Screenshot verified: 3 seed exercises visible, DRAFT+MISSING status badges, right pane detail with START/END/PRIMARY slots + APPROVE controls, filter tabs and search wired. Please test all 11 endpoints — auth gating, filters, approval scope transitions, and one image generation round-trip (each call ~$0.03). scan-todos will only create tasks when there are actual workouts scheduled tomorrow referencing exercises_v2 — right now the seeded exercises are not yet referenced so scan-todos returns created=0, which is correct."
+

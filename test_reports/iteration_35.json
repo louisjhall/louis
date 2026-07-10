@@ -1,0 +1,59 @@
+{
+  "summary": "Backend-only test of new feature_exercise_content module (§35 unified library). Ran 36 pytest tests against public URL. 34/36 passing. Two real backend bugs found: (a) CREATE endpoint does NOT auto-flip content_status.coaching_points to true when coaching_points is provided (spec violation — PATCH does honour this, CREATE does not); (b) scan-todos dedupe is broken — the dedupe lookup searches for coach_tasks.status in {'open','snoozed','pending'} but server._create_coach_task writes status='todo', so every rescan re-creates duplicate coach tasks. Image-generation (Nano Banana, slot=start) worked end-to-end (~11-14s to ready, file on disk, /stream returns image/*). Role gating (client → 403) verified on all admin endpoints. Startup reconcile flips generating→failed with error='server restart'. Regression endpoints (/api/brand-images list+pick, /api/social/settings, /api/user/profile/photo/{user_id}) all healthy.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/exercise-content",
+        "issue": "Spec violation: content_status.coaching_points must be auto-true when coaching_points is supplied in create body. Currently _default_status_flags() hard-codes coaching_points=false and the create handler never re-evaluates it against the incoming body. PATCH does apply this rule correctly (line ~293-294). Fix: in ex_create, after building doc, if body.coaching_points is truthy, set doc['content_status']['coaching_points']=True. Reference: /app/backend/feature_exercise_content.py:210-243.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/exercise-content/scan-todos",
+        "issue": "Dedupe query never matches → tasks duplicated on every run. feature_exercise_content.py:468-472 looks for coach_tasks with status ∈ {'open','snoozed','pending'}, but server._create_coach_task (server.py:6453) sets status='todo'. Verified: running scan-todos twice with the same synthetic workout produced created=1 then created=1 (should be 1 then 0). Fix: either add 'todo' to the status set in the dedupe query, or change _create_coach_task default to 'open'. Reference: /app/backend/feature_exercise_content.py:468 and /app/backend/server.py:6453.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "startup",
+        "issue": "FastAPI on_event('startup'/'shutdown') is deprecated (server.py:6185, 6215). Migrate to lifespan handler when convenient. Not blocking."
+      },
+      {
+        "endpoint": "POST /api/exercise-content/{id}/approve scope=all",
+        "issue": "Handler force-sets content_status.coaching_points = bool(ex.coaching_points) — which is fine — but it does NOT flip content_status.video based on the exercise having a video. It hard-codes cs['video']=True. Same for cs['images']. Cosmetic (feature description accepts this), but note the flags no longer reflect reality after 'approve all'. Reference: /app/backend/feature_exercise_content.py:340-344."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_exercise_content.py",
+    "/app/test_reports/pytest/exercise_content_results.xml"
+  ],
+  "action_items": [
+    "Fix ex_create in /app/backend/feature_exercise_content.py so that content_status.coaching_points is set to True when coaching_points is provided in the create payload (mirror the PATCH behaviour).",
+    "Fix scan-todos dedupe: change the coach_tasks status filter in feature_exercise_content.py:468-472 from ['open','snoozed','pending'] to include 'todo' (matches server._create_coach_task), OR update _create_coach_task's default status.",
+    "(Optional) After fixing the two bugs, re-run: pytest /app/backend/tests/test_exercise_content.py -v — all 36 should pass. No further LLM cost required for the retest of the two failing tests (they don't invoke Nano Banana)."
+  ],
+  "critical_code_review_comments": [
+    "feature_exercise_content.py — content_status.coaching_points logic is duplicated between _default_status_flags (hard-coded false) and PATCH handler (conditional). Consolidate into a helper that always computes flags from the body/doc together.",
+    "scan-todos: coach_tasks status vocabulary is inconsistent across modules ('todo' vs 'open'/'pending'). Introduce a single constant module (e.g. TASK_STATUS_OPEN) shared by server.py and feature modules to prevent this class of bug.",
+    "generate-image: parent doc's content_status.images is set to True immediately when the job is queued (before image is ready). If the job fails, the flag remains True — leaves stale state. Consider flipping images=True only after status='ready'.",
+    "generate-image starts asyncio.create_task without a tracker; if server restarts mid-generation, _reconcile_ex_stale correctly cleans up. Good.",
+    "ex_list uses re.escape(q) — safe against regex injection. Good.",
+    "STATUS_VALUES is a set literal — 400 for invalid status works correctly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_exercise_content.py (new file — 36 pytest cases)"
+  ],
+  "success_rate": {"backend": "94.4% (34/36)", "frontend": "n/a"},
+  "seed_data_creation": "Test creates one exercise (TEST_Content Library Push) which is auto-cleaned via DELETE. Scan-todos test inserts a synthetic workout doc id='TEST_SYNTH_WORKOUT_SCAN' referencing a Draft seed exercise; cleans up workouts and generated coach_tasks in the finally block. Reconcile test inserts id='TEST_RECON_ROW' into exercise_content_images and cleans it up. One real Nano Banana call was made (~$0.03) for slot='start'.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_exercise_content.py covers all 11 endpoints. The failing generate-image test triggers a REAL Nano Banana call (~$0.03) — if re-running, comment out TestGenerateImage or monkey-patch feature_exercise_content._run_image_job to skip cost. The two currently-failing tests (test_admin_create_defaults, test_scan_with_synthetic_workout) are correct — they expose real bugs; do NOT weaken them.",
+  "rca_of_issue": "Bug 1 (create defaults): _default_status_flags() returns coaching_points=false unconditionally; ex_create merges body then flags via ** so flags overwrite, but the create handler never re-runs the flag-from-body logic that PATCH runs. Repro: POST /api/exercise-content with coaching_points=['x'] → response.content_status.coaching_points=false. Bug 2 (dedupe): _create_coach_task writes status='todo' (server.py:6453) while scan-todos dedupe filters for status ∈ {'open','snoozed','pending'} (feature_exercise_content.py:468). Query never matches → duplicates. Repro: insert workout for tomorrow referencing a Draft exercise, POST scan-todos twice → both return created≥1. Mitigation: include 'todo' in the dedupe status list, or standardise task status vocabulary across modules."
+}

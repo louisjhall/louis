@@ -105,6 +105,30 @@
 user_problem_statement: "Build a dedicated Coach Web Dashboard (Option C) for CrewFit — desktop-native routes inside the current Expo app that render a sidebar layout on wide screens (>=1024px web) with Overview, Clients, Calendar, Approvals, Library, Messages, Analytics and Profile."
 
 backend:
+  - task: "Media storage abstraction (S3/R2) + ops endpoints"
+    implemented: true
+    working: true
+    file: "backend/storage.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New /app/backend/storage.py exposes a single `storage` singleton with two drivers: DiskDriver (default, matches today's on-disk behaviour) and R2Driver (Cloudflare R2 via boto3 s3v4). Driver is auto-selected at import time based on R2_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY + R2_BUCKET env vars. Optional R2_PUBLIC_HOSTNAME uses your CNAME for direct public URLs (else presigned). New feature_admin_migrations.py exposes admin-only ops routes: GET /admin/storage/status, POST /admin/storage/backfill?dry_run=true (walks /app/backend/uploads, idempotent, skips files already in R2). feature_nutrition_photo.py refactored to write through storage.storage.write_bytes(); its GET /photo/{id}/image endpoint now issues a 302 to a 10-min signed URL when R2 is live and continues serving FileResponse locally otherwise — zero client changes required. Verified live: storage/status → {'driver':'disk','is_cloud':false}. Backfill correctly reports 'no cloud driver configured' when idle. Ready to activate: paste R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET in backend/.env, restart, then POST /admin/storage/backfill?dry_run=false to move existing media."
+
+  - task: "Exercise Library data migration (v1 → exercise_content)"
+    implemented: true
+    working: true
+    file: "backend/feature_admin_migrations.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "One-shot idempotent migrator: POST /admin/exercises/migrate?dry_run=[true|false]. Reads legacy `exercises` collection (v1) plus any linked rows from `videos` and upserts into `exercise_content` (v2) with training_type/body_area/category coerced, equipment_type + alternatives normalised to string lists, coaching_points parsed from cues/notes/tips (best-effort), image_url → primary_image_url, video url → primary_video_url. All migrated rows are tagged migrated_from_v1: true and start at status='draft' with approved_*_status='pending' (or 'missing') so the coach can review via the existing Exercise Content UI (Phase 35). Live result: 248 v1 exercises → 248 upserts on first run, 0 inserts + 248 updates on 2nd run (idempotency verified). Sample verified: Goblet Squat/Push-Up/Dumbbell Row all present in exercise_content with migrated_from_v1=true. Companion status endpoint: GET /admin/exercises/migrate/status → {exercises_v1, exercise_content_v2, videos}."
+
   - task: "Nutrition Centre backend (Phase 5 · Adaptive insights + Coach To-Do)"
     implemented: true
     working: true
@@ -1455,6 +1479,9 @@ frontend:
 test_plan:
   current_focus:
     - "POST /api/exercise-content (create) — admin only; default flags applied"
+
+  - agent: "main"
+    message: "§41 shipped — Backlog Sweep #1: Media Storage Abstraction (S3/R2) + Exercise Library data migration. Backend: new storage.py with StorageDriver interface, DiskDriver (default) + R2Driver (auto-activates when R2_* env vars present). feature_nutrition_photo.py refactored to write via storage.write_bytes() and serve via 302→presigned when R2 is live. New feature_admin_migrations.py exposes admin-only ops routes for both features: GET/POST /admin/storage/{status,backfill}, GET/POST /admin/exercises/migrate{/status}. Exercise migration ran live: 248 v1 exercises → 248 upserted into exercise_content with migrated_from_v1=true, status=draft, approved_*=pending; 2nd run confirmed 0 inserts / 248 updates (idempotent). All in-flight features (nutrition today, exercise-content list, photo scan 404 path) still return healthy status codes and no new errors in backend logs. TO ACTIVATE R2: paste R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET into backend/.env (optionally R2_PUBLIC_HOSTNAME + R2_ENDPOINT_URL), restart backend, then POST /admin/storage/backfill?dry_run=false to move existing media. TESTING: this is an infra/ops delivery — no user-facing screens changed. Backend sanity was covered by curl. No frontend flows changed. Do NOT re-test Phase 1-5 (all green)."
     - "GET /api/exercise-content with each filter combination — search + used_tomorrow + missing_content + approved_only"
     - "PATCH /api/exercise-content/{id} — status enum guard; content_status.coaching_points auto-updates when coaching_points array set"
     - "POST /api/exercise-content/{id}/approve — each scope transitions the right fields"

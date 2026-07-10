@@ -6930,6 +6930,7 @@ import feature_nutrition_barcode  # noqa: E402,F401  Nutrition Centre — Phase 
 import feature_nutrition_photo   # noqa: E402,F401  Nutrition Centre — Phase 3 (AI photo meal scanner)
 import feature_nutrition_travel  # noqa: E402,F401  Nutrition Centre — Phase 4 (roster/airport/timing/guide)
 import feature_nutrition_insights  # noqa: E402,F401  Nutrition Centre — Phase 5 (adaptive insights + coach todos)
+import feature_admin_migrations  # noqa: E402,F401  Ops: storage backfill + exercise-library migration
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

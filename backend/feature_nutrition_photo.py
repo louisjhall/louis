@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field
 from server import (
     api, db, current_user, new_id, now_iso, logger, EMERGENT_LLM_KEY,
 )
+import storage as _storage
 
 UPLOADS_ROOT = Path(os.environ.get("NUTR_UPLOAD_DIR", "/app/backend/uploads/nutrition"))
 UPLOADS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -252,10 +253,18 @@ async def photo_analyse(body: AnalyseIn, user: dict = Depends(current_user)):
     # even if the vision call fails.
     scan_id = new_id()
     day = _dt.date.today().isoformat()
-    user_dir = UPLOADS_ROOT / user["id"] / day
-    user_dir.mkdir(parents=True, exist_ok=True)
-    path = user_dir / f"{scan_id}.{ext}"
-    path.write_bytes(data)
+    # Write via storage abstraction — DiskDriver by default, R2 when configured.
+    storage_key = f"nutrition/{user['id']}/{day}/{scan_id}.{ext}"
+    await _storage.storage.write_bytes(storage_key, data, content_type=mime)
+    # For back-compat with the existing FileResponse endpoint, also record the
+    # equivalent on-disk path when disk driver is active. When R2 is active
+    # the DiskDriver falls away and we serve via presigned URL.
+    disk_path = None
+    if not _storage.is_cloud():
+        user_dir = UPLOADS_ROOT / user["id"] / day
+        user_dir.mkdir(parents=True, exist_ok=True)
+        disk_path = user_dir / f"{scan_id}.{ext}"
+        disk_path.write_bytes(data)
 
     # Base64 for the LLM (strip any data-URI prefix that may have been present)
     image_b64 = base64.b64encode(data).decode("ascii")
@@ -282,7 +291,8 @@ async def photo_analyse(body: AnalyseIn, user: dict = Depends(current_user)):
         "id": scan_id,
         "user_id": user["id"],
         "created_at": now_iso(),
-        "storage_path": str(path),
+        "storage_key": storage_key,
+        "storage_path": str(disk_path) if disk_path else None,
         "mime": mime,
         "size_bytes": len(data),
         "mode": body.mode,
@@ -328,10 +338,24 @@ async def photo_image(scan_id: str, token: Optional[str] = None,
     doc = await db.nutrition_photo_scans.find_one({"id": scan_id, "user_id": user["id"]})
     if not doc:
         raise HTTPException(404, "not found")
+    # Prefer storage_key (works for both disk + R2). Fall back to legacy disk path.
+    key = doc.get("storage_key")
+    mime = doc.get("mime") or "image/jpeg"
+    if key and _storage.is_cloud():
+        # Redirect to a short-lived signed URL — client `<Image>` follows the 302.
+        from fastapi.responses import RedirectResponse
+        url = await _storage.storage.public_url(key, ttl=600, signed=True)
+        return RedirectResponse(url, status_code=302)
     path = doc.get("storage_path")
-    if not path or not Path(path).exists():
-        raise HTTPException(404, "image missing")
-    return FileResponse(path, media_type=doc.get("mime") or "image/jpeg")
+    if path and Path(path).exists():
+        return FileResponse(path, media_type=mime)
+    if key:
+        # Disk driver via abstraction (post-migration path)
+        data = await _storage.storage.read_bytes(key)
+        if data:
+            from fastapi.responses import Response
+            return Response(content=data, media_type=mime)
+    raise HTTPException(404, "image missing")
 
 
 @api.post("/nutrition/photo/{scan_id}/patch")

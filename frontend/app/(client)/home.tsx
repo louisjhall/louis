@@ -18,15 +18,15 @@ import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
 
-function iconFor(kind: string): string {
+function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
-    case "roster_uploaded": return "📅";
-    case "injury_flagged": return "🤕";
-    case "annual_leave": return "🏖️";
-    case "missed_workouts": return "⏰";
-    case "event_completed": return "🏁";
-    case "life_change": return "🔀";
-    default: return "🧠";
+    case "roster_uploaded": return "calendar";
+    case "injury_flagged": return "medkit";
+    case "annual_leave": return "sunny";
+    case "missed_workouts": return "alarm";
+    case "event_completed": return "flag";
+    case "life_change": return "swap-horizontal";
+    default: return "pulse";
   }
 }
 
@@ -200,7 +200,9 @@ export default function Home() {
                   {prompts.slice(0, 3).map((p) => (
                     <View key={p.id} style={styles.promptCard}>
                       <View style={styles.promptLeft}>
-                        <Text style={styles.promptEmoji}>{iconFor(p.kind)}</Text>
+                        <View style={styles.promptIconWrap}>
+                          <Ionicons name={iconFor(p.kind)} size={20} color={theme.color.brand} />
+                        </View>
                         <View style={{ flex: 1 }}>
                           <Text style={styles.promptTitle}>{titleFor(p.kind)}</Text>
                           <Text style={styles.promptReason} numberOfLines={3}>{p.reason}</Text>
@@ -229,7 +231,9 @@ export default function Home() {
                 style={styles.realityBtn}
               >
                 <View style={styles.realityBtnLeft}>
-                  <Text style={styles.realityEmoji}>🧠</Text>
+                  <View style={styles.realityIconWrap}>
+                    <Ionicons name="compass" size={20} color={theme.color.brand} />
+                  </View>
                   <View>
                     <Text style={styles.realityTitle}>TODAY&apos;S REALITY</Text>
                     <Text style={styles.realitySub}>Tell CrewFit what has changed</Text>
@@ -293,20 +297,20 @@ export default function Home() {
           <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>DID TODAY GO TO PLAN?</Text>
-            <Text style={styles.sheetSub}>We'll adjust tomorrow's plan based on your answer.</Text>
+            <Text style={styles.sheetSub}>We&apos;ll adjust tomorrow&apos;s plan based on your answer.</Text>
             {[
-              ["yes_as_planned", "✅ Yes, exactly as planned"],
-              ["workout_completed", "💪 Workout completed"],
-              ["flight_delayed", "✈️ Flight delayed"],
-              ["called_from_standby", "✈️ Called from standby"],
-              ["slept_badly", "😴 Slept badly"],
-              ["ill", "🤒 I'm ill"],
-              ["family_plans", "👨‍👩‍👧 Family plans changed"],
-              ["hotel_changed", "🏨 Hotel changed"],
-              ["workout_missed", "❌ Workout missed"],
-              ["less_time", "⏳ Had less time than expected"],
-              ["other", "✍️ Something else"],
-            ].map(([tag, label]) => (
+              ["yes_as_planned", "Yes, exactly as planned", "checkmark-circle"],
+              ["workout_completed", "Workout completed", "barbell"],
+              ["flight_delayed", "Flight delayed", "airplane"],
+              ["called_from_standby", "Called from standby", "radio"],
+              ["slept_badly", "Slept badly", "moon"],
+              ["ill", "I'm ill", "medkit"],
+              ["family_plans", "Family plans changed", "people"],
+              ["hotel_changed", "Hotel changed", "business"],
+              ["workout_missed", "Workout missed", "close-circle"],
+              ["less_time", "Had less time than expected", "hourglass"],
+              ["other", "Something else", "create"],
+            ].map(([tag, label, icon]) => (
               <Pressable
                 key={tag}
                 testID={`happened-${tag}`}
@@ -314,6 +318,7 @@ export default function Home() {
                 disabled={happenedSaving}
                 style={styles.sheetRow}
               >
+                <Ionicons name={icon as any} size={16} color={theme.color.brand} />
                 <Text style={styles.sheetRowText}>{label}</Text>
               </Pressable>
             ))}
@@ -381,6 +386,8 @@ const styles = StyleSheet.create({
   },
   realityBtnLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   realityEmoji: { fontSize: 22 },
+  realityIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  promptIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   realityTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   realitySub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
   promptWrap: { marginBottom: theme.space.md, gap: 8 },
@@ -429,6 +436,6 @@ const styles = StyleSheet.create({
   sheetHandle: { alignSelf: "center", width: 40, height: 4, backgroundColor: theme.color.borderStrong, borderRadius: 2, marginBottom: theme.space.md },
   sheetTitle: { color: theme.color.text, fontSize: 16, letterSpacing: 1.5, fontWeight: "900" },
   sheetSub: { color: theme.color.textMuted, fontSize: 12, marginBottom: theme.space.md },
-  sheetRow: { padding: theme.space.md, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, marginBottom: 6 },
-  sheetRowText: { color: theme.color.text, fontSize: 14 },
+  sheetRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: theme.space.md, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, marginBottom: 6 },
+  sheetRowText: { color: theme.color.text, fontSize: 14, fontFamily: theme.font.text },
 });

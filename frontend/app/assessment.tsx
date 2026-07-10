@@ -337,7 +337,7 @@ function EventBuilder({ q, onSubmit, submitting }: any) {
     <View>
       {events.map((e, i) => (
         <View key={i} style={styles.evPill}>
-          <Text style={styles.evEmoji}>🎯</Text>
+          <Ionicons name="flag" size={16} color={theme.color.brand} />
           <View style={{ flex: 1 }}>
             <Text style={styles.evName}>{e.name}</Text>
             <Text style={styles.evMeta}>{e.date} · Priority {e.priority}</Text>

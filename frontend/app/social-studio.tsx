@@ -217,7 +217,7 @@ export default function SocialStudio() {
           ) : posts.length === 0 ? (
             <View style={styles.emptyBox}>
               <Ionicons name="megaphone-outline" size={30} color={theme.color.textDim} />
-              <Text style={styles.emptyT}>No posts yet. Tap ✨ to generate today&apos;s.</Text>
+              <Text style={styles.emptyT}>No posts yet. Tap the sparkle to generate today&apos;s.</Text>
             </View>
           ) : (
             posts.map((p) => (

@@ -93,7 +93,10 @@ export function HabitTodayCard() {
                   <View style={styles.metaRow}>
                     {h.linked_goal ? <Text style={styles.metaChip}>{h.linked_goal.toUpperCase().replace(/_/g, " ")}</Text> : null}
                     {typeof h.streak === "number" && h.streak > 0 ? (
-                      <Text style={[styles.metaChip, { color: theme.color.brand }]}>🔥 {h.streak} day{h.streak === 1 ? "" : "s"}</Text>
+                      <View style={[styles.metaChipRow, { borderColor: theme.color.brand }]}>
+                        <Ionicons name="flame" size={11} color={theme.color.brand} />
+                        <Text style={[styles.metaChipT, { color: theme.color.brand }]}>{h.streak} day{h.streak === 1 ? "" : "s"}</Text>
+                      </View>
                     ) : null}
                   </View>
                 </View>
@@ -185,8 +188,10 @@ const styles = StyleSheet.create({
   card: { padding: 12, backgroundColor: theme.color.surface2, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border },
   hTitle: { color: theme.color.text, fontSize: 14, fontWeight: "800" },
   hReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, lineHeight: 15 },
-  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" },
   metaChip: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  metaChipRow: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border },
+  metaChipT: { color: theme.color.text, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   actionRow: { flexDirection: "row", gap: 6, marginTop: 10 },
   doneBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.brand },
   doneBtnActive: { backgroundColor: theme.color.green },

@@ -21,8 +21,8 @@ export default function RealityHistoryScreen() {
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const emojiFor = (kind: string) =>
-    REALITY_KINDS.find((k) => k.key === kind)?.emoji || "📝";
+  const iconFor = (kind: string) =>
+    (REALITY_KINDS.find((k) => k.key === kind)?.icon as any) || "document-text";
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
@@ -54,7 +54,9 @@ export default function RealityHistoryScreen() {
           rows.map((h) => (
             <View key={h.id} style={styles.card}>
               <View style={styles.cardHead}>
-                <Text style={styles.cardEmoji}>{emojiFor(h.reality_kind)}</Text>
+                <View style={styles.cardIconWrap}>
+                  <Ionicons name={iconFor(h.reality_kind)} size={16} color={theme.color.brand} />
+                </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardLabel}>{h.reality_label || h.reality_kind}</Text>
                   <Text style={styles.cardDate}>
@@ -117,6 +119,7 @@ const styles = StyleSheet.create({
   },
   cardHead: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   cardEmoji: { fontSize: 26 },
+  cardIconWrap: { width: 32, height: 32, borderRadius: 16, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   cardLabel: { color: theme.color.text, fontSize: 13, fontWeight: "800", letterSpacing: 0.5 },
   cardDate: { color: theme.color.textDim, fontSize: 10, fontWeight: "700", letterSpacing: 1.5, marginTop: 2 },
   optPill: {

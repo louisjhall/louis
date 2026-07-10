@@ -150,7 +150,12 @@ export default function Nutrition() {
                 <Text style={styles.mealMeta}>
                   {m.calories ? `${m.calories} kcal` : "—"} · {m.protein_g ? `${m.protein_g}g protein` : "—"}
                 </Text>
-                {m.ai_feedback?.tip && <Text style={styles.aiTip}>💡 {m.ai_feedback.tip}</Text>}
+                {m.ai_feedback?.tip && (
+                  <View style={styles.aiTipRow}>
+                    <Ionicons name="bulb" size={12} color={theme.color.amber} />
+                    <Text style={styles.aiTip}>{m.ai_feedback.tip}</Text>
+                  </View>
+                )}
               </View>
             </View>
           ))
@@ -201,5 +206,6 @@ const styles = StyleSheet.create({
   mealType: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   mealDesc: { color: theme.color.text, marginTop: 2, fontSize: 14 },
   mealMeta: { color: theme.color.textDim, marginTop: 4, fontSize: 12 },
-  aiTip: { color: theme.color.amber, marginTop: 6, fontSize: 12, fontStyle: "italic" },
+  aiTip: { color: theme.color.amber, fontSize: 12, fontStyle: "italic", flex: 1 },
+  aiTipRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
 });

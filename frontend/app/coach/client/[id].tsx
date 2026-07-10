@@ -200,7 +200,7 @@ export default function ClientDetail() {
                   <Text style={styles.wTitle}>{w.title}</Text>
                   <Text style={styles.wMeta}>{w.date} · {w.exercises?.length || 0} ex</Text>
                 </View>
-                {w.approved && <Text style={styles.approved}>✓</Text>}
+                {w.approved && <Ionicons name="checkmark-circle" size={20} color={theme.color.green} />}
                 {!w.approved && <StatusBadge status={deriveStatus(w)} />}
               </Pressable>
             ))
@@ -288,7 +288,10 @@ export default function ClientDetail() {
                       </Text>
                     ) : null}
                     {typeof h.streak === "number" && h.streak > 0 ? (
-                      <Text style={styles.streakT}>🔥 {h.streak}d</Text>
+                      <View style={styles.streakChip}>
+                        <Ionicons name="flame" size={11} color={theme.color.brand} />
+                        <Text style={styles.streakT}>{h.streak}d</Text>
+                      </View>
                     ) : null}
                   </View>
                 </View>
@@ -435,6 +438,7 @@ const styles = StyleSheet.create({
   habitMeta: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1, marginTop: 4 },
   completionPct: { fontSize: 14, fontWeight: "900" },
   streakT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  streakChip: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.brand },
   pausedHead: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1.5, marginTop: 14, marginBottom: 4 },
   latestReviewCard: { marginTop: 12, padding: 10, backgroundColor: theme.color.brandTint, borderRadius: 8, borderWidth: 1, borderColor: theme.color.brand },
   blockHead: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },

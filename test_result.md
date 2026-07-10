@@ -924,3 +924,91 @@ agent_communication:
   - agent: "main"
     message: "§34 Phase 1 shipped (foundation for premium brand refresh). New feature_profile.py module (5 endpoints) + UserProfilePatch extended in server.py. Client home has a brand-new hero: ProfileAvatar + HELLO eyebrow + first name in Creo ExtraBold + role · airline + home-base chip + city + local time + load pill + STANDBY pill + day-title. Profile page has a new ProfilePhotoRow (Take/Upload/Remove) plus editable job_title/airline/home_base/aircraft_type/route_focus fields. CrewFit wings logo transparent-bg version saved. Source Sans 3 + Creo ExtraBold fonts loaded via expo-font (user's licensed Creo file). app.json updated with photo/library/location permissions. Please test the 6 new/extended endpoints (upload, delete, GET-photo dual-auth, location upsert, permission, profile PATCH). Test credentials in /app/memory/test_credentials.md. Phase 2 (AI imagery + storage abstraction) + Phase 3 (icon sweep) still pending."
 
+
+##====================================================================
+## §34 · Phase 3 — Emoji sweep + Icon system + Coach client cards
+##====================================================================
+
+frontend:
+  - task: "Client home — emoji-free hero + card icons"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Removed 🏁 ⏰ 🧠 🔀 🏖️ 🤕 📅 emojis from `iconFor(kind)`. Reassessment prompt cards now render an Ionicons in a brand-tinted circle (calendar/medkit/sunny/alarm/flag/swap-horizontal/pulse). Reality bubble renders a compass icon in a brand circle. 'Did today go to plan?' modal replaces ✅ 💪 ✈️ 😴 🤒 👨‍👩‍👧 🏨 ❌ ⏳ ✍️ with proper Ionicons (checkmark-circle / barbell / airplane / radio / moon / medkit / people / business / close-circle / hourglass / create). Also fixes unescaped apostrophe in 'We'll adjust...'."
+  - task: "Reality modal — icon-first"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/RealityModal.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Kind grid now uses each REALITY_KINDS entry's `icon` prop (already existed alongside `emoji`) in a brand-tinted round wrapper. Selected-kind chip in loading state also uses icon."
+  - task: "Client profile — icon-only section headers + stats"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(client)/profile.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Section renderer no longer branches on emoji — always uses Ionicons. Check-in stats (💤/⚡/😣) replaced with icon chips (moon/flash/pulse). Event 🎯 replaced with flag icon. `emoji` prop retained on Section signature for backwards-compat but ignored."
+  - task: "Workout screen — chip icons + reality bubble"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/workout/[id]/index.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "📍 location chip → Ionicons location; ⏱ time chip → time icon; ⭐ KEY SESSION → star icon on brand background; 🧠 reality bubble → compass icon in tinted circle."
+  - task: "Habit + coach habit — flame streak icon"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/HabitTodayCard.tsx, frontend/app/coach/client/[id].tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "🔥 streak → Ionicons flame in brand-outlined chip in both places."
+  - task: "Coach dashboard clients — colored dots + ProfileAvatar cards"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(coach)/clients.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "🟢🟠🔴⚪ widget prefixes replaced with 10px colored dots (green/amber/red/textDim). Each client card now shows a ProfileAvatar (44px, ringless — softer look), name, role · airline (First Officer · Emirates), and home base + current location line (DUBAI (DXB) · in London). Backend already returns these fields via _client_summary spreading the user doc."
+  - task: "Small emoji sweep — coach scripts, coaching-dna, nutrition, social-studio, reality-history"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/coach/scripts/[id].tsx, frontend/app/coaching-dna.tsx, frontend/app/(client)/nutrition.tsx, frontend/app/social-studio.tsx, frontend/app/reality-history.tsx, frontend/app/assessment.tsx"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Individual sweeps: coach scripts 'SENT ✓' → 'SENT'. coaching-dna 🎯 → flag icon. nutrition 💡 → bulb icon in row. social-studio ✨ empty-state copy softened. reality-history 📝 → document icon in tinted circle. assessment.tsx event pill 🎯 → flag icon. NOTE: assessment.tsx equipment picker (18 emoji strings) intentionally deferred to a future turn — it's a lower-visibility onboarding screen and each emoji needs a considered icon mapping."
+
+agent_communication:
+  - agent: "main"
+    message: "§34 Phase 3 shipped — massive emoji cleanup + coach dashboard client card upgrade. Screenshot A (client home) shows the previous 🏁 ⏰ 🧠 emojis replaced by crimson-tinted circular icons (flag, alarm, ribbon-ish, compass). Screenshot B (coach dashboard) shows the client status widgets with clean colored dots + Alex Rivera's client card showing photo initials + 'First Officer · Emirates' + 'DUBAI (DXB) · in London' — exactly as briefed. NO backend changes in this phase — coach client summary was already returning the fields we needed via _client_summary(u). One known deferred: assessment.tsx equipment picker still has emojis (18 items — separate turn). Fonts (Creo Bold headers, Source Sans body) are visibly rendering. Everything else in the emoji audit is done."
+

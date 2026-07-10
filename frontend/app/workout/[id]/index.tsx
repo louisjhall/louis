@@ -127,10 +127,21 @@ export default function WorkoutDetail() {
           <Text style={styles.title}>{w.title}</Text>
         )}
         <View style={styles.metaRow}>
-          <Text style={styles.metaChip}>📍 {w.location || "Home Workout"}</Text>
-          <Text style={styles.metaChip}>⏱ {w.duration_min}min</Text>
+          <View style={styles.metaChipRow}>
+            <Ionicons name="location" size={11} color={theme.color.textMuted} />
+            <Text style={styles.metaChipT}>{w.location || "Home Workout"}</Text>
+          </View>
+          <View style={styles.metaChipRow}>
+            <Ionicons name="time" size={11} color={theme.color.textMuted} />
+            <Text style={styles.metaChipT}>{w.duration_min}min</Text>
+          </View>
           <Text style={styles.metaChip}>{String(w.focus || "").toUpperCase()}</Text>
-          {w.key_session && <Text style={[styles.metaChip, { color: "#fff", backgroundColor: theme.color.brand, borderColor: theme.color.brand }]}>⭐ KEY SESSION</Text>}
+          {w.key_session && (
+            <View style={[styles.metaChipRow, { backgroundColor: theme.color.brand, borderColor: theme.color.brand }]}>
+              <Ionicons name="star" size={11} color="#fff" />
+              <Text style={[styles.metaChipT, { color: "#fff" }]}>KEY SESSION</Text>
+            </View>
+          )}
           {w.event_phase && <Text style={[styles.metaChip, { color: theme.color.brand, borderColor: theme.color.brand }]}>{String(w.event_phase).toUpperCase().replace("_", " ")}</Text>}
         </View>
 
@@ -148,7 +159,9 @@ export default function WorkoutDetail() {
             style={styles.realityBtn}
           >
             <View style={styles.realityBtnLeft}>
-              <Text style={styles.realityEmojiW}>🧠</Text>
+              <View style={styles.realityIconWrapW}>
+                <Ionicons name="compass" size={20} color={theme.color.brand} />
+              </View>
               <View>
                 <Text style={styles.realityTitleW}>TODAY&apos;S REALITY</Text>
                 <Text style={styles.realitySubW}>What has changed today?</Text>
@@ -308,6 +321,9 @@ const styles = StyleSheet.create({
   titleInput: { color: theme.color.text, fontSize: 26, fontWeight: "900", marginTop: 6, backgroundColor: theme.color.surface2, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   metaChip: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.pill },
+  metaChipRow: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.pill },
+  metaChipT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", fontFamily: theme.font.textSemi },
+  realityIconWrapW: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
   rLabel: { color: theme.color.brand, letterSpacing: 2, fontSize: 10, fontWeight: "800" },
   overrideBanner: { marginTop: theme.space.md, padding: theme.space.md, backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.amber },

@@ -4,6 +4,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
+import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 
 const FILTERS = [
   { key: "all", label: "ALL" },
@@ -38,10 +39,10 @@ export default function Clients() {
       </View>
 
       <View style={styles.widgets}>
-        <Widget icon="🟢" label="Active" value={Math.max(0, (data.total || 0) - Math.max(c.expired || 0, c.no_roster || 0))} />
-        <Widget icon="🟠" label="Expiring" value={c.expiring_soon || 0} tint={theme.color.amber} />
-        <Widget icon="🔴" label="Expired" value={c.expired || 0} tint={theme.color.red} />
-        <Widget icon="⚪" label="No Roster" value={c.no_roster || 0} />
+        <Widget dotColor={theme.color.green} label="Active" value={Math.max(0, (data.total || 0) - Math.max(c.expired || 0, c.no_roster || 0))} />
+        <Widget dotColor={theme.color.amber} label="Expiring" value={c.expiring_soon || 0} tint={theme.color.amber} />
+        <Widget dotColor={theme.color.red}   label="Expired"  value={c.expired || 0} tint={theme.color.red} />
+        <Widget dotColor={theme.color.textDim} label="No Roster" value={c.no_roster || 0} />
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersRow}>
@@ -61,10 +62,24 @@ export default function Clients() {
             const exp = cl.roster_expiry || {};
             return (
               <Pressable key={cl.id} testID={`client-card-${cl.id}`} onPress={() => router.push(`/coach/client/${cl.id}`)} style={styles.card}>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <ProfileAvatar userId={cl.id} name={cl.name} photoUrl={cl.profile_photo_url || null} size={44} ring={false} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.name}>{cl.name}</Text>
-                    <Text style={styles.email}>{cl.email}</Text>
+                    {cl.profile?.job_title || cl.profile?.airline ? (
+                      <Text style={styles.roleLine} numberOfLines={1}>
+                        {cl.profile?.job_title || "Crew"}
+                        {cl.profile?.airline ? ` · ${cl.profile.airline}` : ""}
+                      </Text>
+                    ) : null}
+                    {cl.profile?.home_base || cl.current_location_city ? (
+                      <Text style={styles.locLine} numberOfLines={1}>
+                        {cl.profile?.home_base ? String(cl.profile.home_base).toUpperCase() : ""}
+                        {cl.current_location_city ? `  ·  in ${cl.current_location_city}` : ""}
+                      </Text>
+                    ) : (
+                      <Text style={styles.email} numberOfLines={1}>{cl.email}</Text>
+                    )}
                   </View>
                   <View style={{ alignItems: "flex-end", gap: 4 }}>
                     {cl.pending_approvals > 0 && (
@@ -95,10 +110,10 @@ export default function Clients() {
   );
 }
 
-function Widget({ icon, label, value, tint }: any) {
+function Widget({ dotColor, label, value, tint }: any) {
   return (
     <View style={styles.widget}>
-      <Text style={styles.wIcon}>{icon}</Text>
+      <View style={[styles.wDot, { backgroundColor: dotColor || theme.color.textDim }]} />
       <View>
         <Text style={[styles.wVal, tint && { color: tint }]}>{value}</Text>
         <Text style={styles.wLabel}>{label}</Text>
@@ -115,8 +130,11 @@ const styles = StyleSheet.create({
   widgets: { flexDirection: "row", padding: theme.space.md, gap: theme.space.sm },
   widget: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   wIcon: { fontSize: 16 },
-  wVal: { color: theme.color.text, fontSize: 20, fontWeight: "900" },
-  wLabel: { color: theme.color.textDim, fontSize: 9, letterSpacing: 1, fontWeight: "700" },
+  wDot: { width: 10, height: 10, borderRadius: 5 },
+  wVal: { color: theme.color.text, fontSize: 20, fontWeight: "900", fontFamily: theme.font.display },
+  wLabel: { color: theme.color.textDim, fontSize: 9, letterSpacing: 1, fontWeight: "700", fontFamily: theme.font.textSemi },
+  roleLine: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.5, marginTop: 1, fontFamily: theme.font.text },
+  locLine: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1, fontWeight: "800", marginTop: 2, fontFamily: theme.font.textSemi },
   filtersRow: { paddingHorizontal: theme.space.lg, paddingBottom: theme.space.sm, gap: 6 },
   chip: { flexDirection: "row", paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },

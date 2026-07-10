@@ -141,7 +141,9 @@ export function RealityModal({
                     onPress={() => submit(k)}
                     style={({ pressed }) => [styles.kindCard, pressed && styles.kindPressed]}
                   >
-                    <Text style={styles.kindEmoji}>{k.emoji}</Text>
+                    <View style={styles.kindIconWrap}>
+                      <Ionicons name={k.icon as any} size={22} color={theme.color.brand} />
+                    </View>
                     <Text style={styles.kindLabel} numberOfLines={2}>{k.label}</Text>
                     {k.hint ? <Text style={styles.kindHint} numberOfLines={1}>{k.hint}</Text> : null}
                   </Pressable>
@@ -182,7 +184,7 @@ export function RealityModal({
               </Text>
               {selectedKind && (
                 <View style={styles.pickedRow}>
-                  <Text style={styles.pickedEmoji}>{selectedKind.emoji}</Text>
+                  <Ionicons name={selectedKind.icon as any} size={18} color={theme.color.brand} />
                   <Text style={styles.pickedLabel}>{selectedKind.label}</Text>
                 </View>
               )}
@@ -359,6 +361,7 @@ const styles = StyleSheet.create({
   },
   kindPressed: { backgroundColor: theme.color.brandTint, borderColor: theme.color.brand },
   kindEmoji: { fontSize: 26, marginBottom: 6 },
+  kindIconWrap: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginBottom: 8 },
   kindLabel: { color: theme.color.text, fontSize: 11, fontWeight: "800", textAlign: "center", letterSpacing: 0.3 },
   kindHint: { color: theme.color.textDim, fontSize: 9, marginTop: 3, textAlign: "center" },
   optionalLabel: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 2, marginTop: 20, marginBottom: 6 },

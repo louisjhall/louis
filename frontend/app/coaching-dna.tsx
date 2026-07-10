@@ -81,7 +81,7 @@ export default function CoachingDnaScreen() {
                 <Text style={styles.timelineLbl}>EVENT TIMELINE</Text>
                 {dna.event_timeline.slice(0, 8).map((e: any, i: number) => (
                   <View key={i} style={styles.timelineRow}>
-                    <Text style={styles.timelineEmoji}>🎯</Text>
+                    <Ionicons name="flag" size={16} color={theme.color.brand} />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.timelineName}>{e.name || "Event"}</Text>
                       <Text style={styles.timelineMeta}>{e.date} · Priority {e.priority || "B"}</Text>

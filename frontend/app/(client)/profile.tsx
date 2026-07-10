@@ -264,7 +264,7 @@ export default function ProfileScreen() {
           ) : (
             events.slice(0, 12).map((e) => (
               <View key={e.id} style={styles.evRow}>
-                <Text style={styles.evEmoji}>🎯</Text>
+                <Ionicons name="flag" size={16} color={theme.color.brand} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.evName}>{e.event_name || e.event_type}</Text>
                   <Text style={styles.evMeta}>{e.event_date} · {String(e.priority || "B").toUpperCase()}</Text>
@@ -348,9 +348,9 @@ export default function ProfileScreen() {
                 <View key={c.id} style={styles.ciRow}>
                   <Text style={styles.ciDate}>{c.date}</Text>
                   <View style={styles.ciStats}>
-                    <Text style={styles.ciStat}>💤 {c.sleep ?? "—"}</Text>
-                    <Text style={styles.ciStat}>⚡ {c.energy ?? "—"}</Text>
-                    <Text style={styles.ciStat}>😣 {c.stress ?? "—"}</Text>
+                    <View style={styles.ciChip}><Ionicons name="moon" size={11} color={theme.color.textMuted} /><Text style={styles.ciStat}>{c.sleep ?? "—"}</Text></View>
+                    <View style={styles.ciChip}><Ionicons name="flash" size={11} color={theme.color.amber} /><Text style={styles.ciStat}>{c.energy ?? "—"}</Text></View>
+                    <View style={styles.ciChip}><Ionicons name="pulse" size={11} color={theme.color.brand} /><Text style={styles.ciStat}>{c.stress ?? "—"}</Text></View>
                   </View>
                 </View>
               ))}
@@ -485,7 +485,7 @@ export default function ProfileScreen() {
           ) : (
             upcomingEvents.map((e) => (
               <View key={e.id} style={styles.evRow}>
-                <Text style={styles.evEmoji}>🎯</Text>
+                <Ionicons name="flag" size={16} color={theme.color.brand} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.evName}>{e.event_name || e.event_type}</Text>
                   <Text style={styles.evMeta}>{e.event_date} · Priority {String(e.priority || "B").toUpperCase()}</Text>
@@ -608,7 +608,7 @@ function Section({
   return (
     <View style={styles.section}>
       <Pressable style={styles.secHeader} onPress={() => !disabled && onToggle(id)} disabled={disabled}>
-        {emoji ? <Text style={styles.secEmoji}>{emoji}</Text> : <Ionicons name={icon} size={16} color={theme.color.brand} />}
+        <Ionicons name={icon || "ellipse-outline"} size={16} color={theme.color.brand} />
         <Text style={[styles.secTitle, disabled && { opacity: 0.4 }]}>{title}</Text>
         {rightSlot ? <View>{rightSlot}</View> : null}
         {onEdit && !disabled ? (
@@ -910,7 +910,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.color.divider,
   },
   ciDate: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
-  ciStats: { flexDirection: "row", gap: 10 },
+  ciStats: { flexDirection: "row", gap: 6 },
+  ciChip: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: theme.color.surface3 },
   ciStat: { color: theme.color.text, fontSize: 11, fontWeight: "700" },
 
   statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },

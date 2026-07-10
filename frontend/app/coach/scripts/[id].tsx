@@ -170,7 +170,7 @@ export default function ClientScripts() {
       {active && (
         <View style={styles.sticky}>
           <Pressable testID="script-approve" onPress={approveAndSend} disabled={busy || active.sent_at} style={[styles.cta, (busy || active.sent_at) && { opacity: 0.6 }, active.sent_at && { backgroundColor: theme.color.green }]}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>{active.sent_at ? "SENT ✓" : "APPROVE · RECORD · SEND"}</Text>}
+            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>{active.sent_at ? "SENT" : "APPROVE · RECORD · SEND"}</Text>}
           </Pressable>
         </View>
       )}

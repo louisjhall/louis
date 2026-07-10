@@ -36,13 +36,13 @@ from server import (
 
 
 # Lazy imports to avoid circular deps between feature modules.
-def notify_coach_draft_ready(*a, **kw):
+async def notify_coach_draft_ready(*a, **kw):
     from feature_notifications import notify_coach_draft_ready as _f
-    return _f(*a, **kw)
+    return await _f(*a, **kw)
 
-def notify_coach_message(*a, **kw):
+async def notify_coach_message(*a, **kw):
     from feature_notifications import notify_coach_message as _f
-    return _f(*a, **kw)
+    return await _f(*a, **kw)
 
 
 # ------------------------------------------------------------------

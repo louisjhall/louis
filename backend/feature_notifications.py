@@ -367,11 +367,7 @@ async def _tick_roster_and_workout_reminders() -> None:
             logger.exception("_tick_roster_and_workout_reminders failed for a user")
 
 
-_ORIGINAL_TICK_2 = None  # unused post-refactor; kept for readability
-
-
-async def _tick_reminders_full() -> None:  # deprecated alias (see server.py:_tick_reminders_all)
-    await _tick_roster_and_workout_reminders()
+_ORIGINAL_TICK_2 = None  # removed post-refactor
 
 
 # ---- Hook helpers used by other endpoints (message send, video sent, etc.) ---

@@ -1,0 +1,32 @@
+{
+  "summary": "Backend-only test of Social Media Studio V1 (feature_social_studio). Wrote /app/backend/tests/test_social_studio.py with 31 tests covering role guard, generation, post CRUD, regenerate (all tone actions + regen_hook/regen_caption scoping + invalid action), status transitions (approve/schedule/mark-posted/dismiss), analytics shape, settings GET/PUT (incl. empty-body 400), daily-task idempotency, daily-regenerate archival, pillar rotation, and regression against habits/today, notifications/settings, coach/messages/drafts, coach/change-log, coach/tasks (contains daily_social_media_post), and standby/today. All 31 tests PASSED. Atlas generation returns full valid shape (title/hook/script/teleprompter_script/caption/hashtags/cta/visual_notes/platform_recommendation/post_type/best_posting_time_local/angle). Fallback path works when LLM misbehaves.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_social_studio.py",
+    "/app/test_reports/pytest/social_studio_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_social_studio.py: /social/posts POST doc assembly is duplicated in _new_post_doc(); minor DRY smell but not blocking.",
+    "PATCH /social/posts/{id} validates only body.status against STATUSES; other invalid enum fields (platform, post_type) are accepted as-is. Consider Pydantic Literal or explicit validation if strict enums are required.",
+    "GET /social/posts list projection excludes revision_history for list view — good for payload size, but note detail endpoint returns full history (correct)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_social_studio.py (new)"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Tests use historical dates (2025-01-15..18) for daily-task cases to avoid polluting today's ticker state. Test posts are prefixed TEST_ and best-effort dismissed after each class.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Social Studio backend fully passing. If retesting: BASE_URL from EXPO_PUBLIC_BACKEND_URL, coach@crewfit.com/Coach123! acts as admin (role='coach' accepted by require_admin). Daily task collection key is (task_type=daily_social_media_post, payload.for_date=YYYY-MM-DD). Atlas call ~5–8s per generate; total suite ~4 minutes.",
+  "rca_of_issue": "No bugs found."
+}

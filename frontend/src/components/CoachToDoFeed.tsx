@@ -78,6 +78,10 @@ export function CoachToDoFeed() {
       router.push(`/coach/habit-review/${(t as any).payload.habit_review_id}` as any);
       return;
     }
+    if (t.task_type === "daily_social_media_post") {
+      router.push("/social-studio" as any);
+      return;
+    }
     if (t.check_in_id) {
       router.push(`/coach/checkin/${t.check_in_id}` as any);
     }
@@ -189,6 +193,7 @@ function prettyType(t: string): string {
     message_draft_ready: "MESSAGE DRAFT",
     habit_review: "HABIT REVIEW",
     standby_key_affected: "STANDBY · KEY SESSION",
+    daily_social_media_post: "SOCIAL POST",
   }[t] || t.toUpperCase().replace(/_/g, " ");
 }
 

@@ -155,6 +155,15 @@ def require_role(role: str):
     return _dep
 
 
+def require_admin():
+    """Admin-only guard. Coach role is accepted in dev/single-coach setup."""
+    async def _dep(user: dict = Depends(current_user)) -> dict:
+        if user["role"] not in ("admin", "coach"):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "admin role required")
+        return user
+    return _dep
+
+
 # ------------------------------------------------------------------
 # Constants: day types, home equipment, hotel equipment
 # ------------------------------------------------------------------
@@ -6894,6 +6903,7 @@ import feature_coach_v1        # noqa: E402,F401  registers coach draft/controls
 import feature_habits          # noqa: E402,F401  registers habit endpoints on `api`
 import feature_notifications   # noqa: E402,F401  registers notification endpoints on `api`
 import feature_standby         # noqa: E402,F401  registers standby endpoints on `api`
+import feature_social_studio   # noqa: E402,F401  registers admin social-studio endpoints on `api`
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.
@@ -6919,6 +6929,10 @@ async def _tick_reminders_all() -> None:
         await feature_notifications._tick_roster_and_workout_reminders()
     except Exception:
         logger.exception("roster/workout tick failed")
+    try:
+        await feature_social_studio._tick_daily_social()
+    except Exception:
+        logger.exception("daily social tick failed")
 
 _tick_reminders = _tick_reminders_all
 

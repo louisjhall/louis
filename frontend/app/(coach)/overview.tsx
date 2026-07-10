@@ -72,6 +72,10 @@ export default function CoachOverview() {
             <Ionicons name="bar-chart-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>ANALYTICS</Text>
           </Pressable>
+          <Pressable testID="ov-goto-social" onPress={() => router.push("/social-studio" as any)} style={styles.headerBtn}>
+            <Ionicons name="megaphone-outline" size={16} color={theme.color.brand} />
+            <Text style={styles.headerBtnText}>SOCIAL</Text>
+          </Pressable>
           <NotificationBell testID="coach-notif-bell" />
         </View>
       </View>

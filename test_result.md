@@ -105,6 +105,18 @@
 user_problem_statement: "Build a dedicated Coach Web Dashboard (Option C) for CrewFit — desktop-native routes inside the current Expo app that render a sidebar layout on wide screens (>=1024px web) with Overview, Clients, Calendar, Approvals, Library, Messages, Analytics and Profile."
 
 backend:
+  - task: "Nutrition Centre backend (Phase 3 · AI Photo Meal Scanner)"
+    implemented: true
+    working: true
+    file: "backend/feature_nutrition_photo.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 3 shipped: AI photo meal scanner via Claude Sonnet 4.5 vision through emergentintegrations. Endpoints: POST /nutrition/photo/analyse (base64 JPEG/PNG/WEBP, ≤8MB, mode: meal|hotel_buffet), GET /nutrition/photo/{id}, GET /nutrition/photo/{id}/image (supports Bearer + ?token= for <Image> tags on web), POST /nutrition/photo/{id}/patch (edit macros/items/tip), POST /nutrition/photo/{id}/save-log (writes nutrition_logs w/ source='photo' + photo_scan_id + photo_url, optional save_as_favourite). Strict JSON prompt returns items+macros+confidence+atlas_tip+warnings; response normalised w/ safety clamps (calories ≤3000, protein ≤200g, carbs ≤300g, fats ≤200g). Photos stored on disk under /app/backend/uploads/nutrition/{user_id}/{date}/{scan_id}.{ext}. Fallback estimate returned if vision fails so client always sees a review card. Verified end-to-end w/ a real salmon-poke bowl photo → 9 items detected, 485 kcal / 42g P / 28g C / 22g F, medium confidence, coaching-tone Atlas tip."
+
   - task: "Nutrition Centre backend (Phase 2 · Barcode)"
     implemented: true
     working: true
@@ -1305,6 +1317,18 @@ backend:
         comment: "EXERCISE_STYLE constant + _build_ex_prompt compose slot-specific prompts (START POSITION / END POSITION / primary demonstration) with body area emphasis, equipment inline, and softly-shaded face instruction. Female/male toggle via body.female."
 
 frontend:
+  - task: "Client · AI Photo Meal Scan (Phase 3)"
+    implemented: true
+    working: true
+    file: "frontend/app/nutrition/photo-scan.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Placeholder replaced with the real AI photo meal scan flow. Pick phase: MEAL vs HOTEL BUFFET mode cards, MEAL TYPE chip row, TAKE PHOTO (camera) + PICK FROM LIBRARY buttons (upload only on web). Uses expo-image-picker w/ base64:true, request permission on demand, Open-Settings fallback when canAskAgain=false. Analysing phase: shows the picked image + spinner + Atlas coaching copy ('5–15 sec'). Review phase: photo hero w/ HIGH/MEDIUM/LOW confidence pill, Atlas estimate tip card, 4 macro cards with +/- steppers AND direct-edit numeric inputs, editable items list (add/remove/edit name+portion), meal-type chip re-pick, Save-as-Favourite. Warnings surfaced in amber card when present. LOG MEAL button calls PATCH /photo/{id}/patch (persist edits) → POST /photo/{id}/save-log (write nutrition_logs). SOON pill removed from home ActionBtn."
+
   - task: "Client · Barcode Scanner (Phase 2)"
     implemented: true
     working: true
@@ -1392,5 +1416,5 @@ agent_communication:
     message: "§36 shipped — CrewFit Nutrition Centre (Phase 1) + Alert.alert web bug fix. Backend: new feature_nutrition.py w/ 14 endpoints (targets, logs CRUD, hydration, favourites, today totals, week summary, Atlas tip via Claude Sonnet 4.5, coach dashboard endpoints w/ safety guardrails). Frontend: /nutrition tab now shows premium home screen w/ dual-metric rings, hydration ticker, Atlas insight (verified: Sonnet 4.5 returned a real coaching sentence), quick actions, weekly bar chart. Supporting routes: /nutrition/log (manual form), /nutrition/history (7-day grouped), /nutrition/targets (client read), /nutrition/favourites, plus 6 Phase-2/3/4 placeholder screens marked SOON. New coach screen /coach/nutrition (row-per-client + deep-dive modal + EDIT TARGETS modal + add-note). Coach overview gained NUTRITION nav button. New cross-platform ux helper (confirm() + toast() + <ToastHost/>) fixes RN-Web Alert.alert silent-failure — applied to Exercise Content Archive + Scan-todos."
 
   - agent: "main"
-    message: "§37 shipped — Nutrition Phase 2 (Barcode Scanner). Backend: new feature_nutrition_barcode.py w/ provider abstraction (Nutritionix placeholder → Open Food Facts free, no key), 30-day barcode_cache (1-day negative cache), 3 new endpoints (/nutrition/barcode/lookup, /nutrition/logs/from-barcode, /nutrition/food/search). Frontend: /nutrition/barcode is now a real CameraView-based scanner on native (EAN-13/8, UPC-A/E, Code-128/39, QR) with custom scan-frame overlay + duplicate-debounce + pre-permission screen + Open-Settings fallback. Web preview shows manual-entry field. Product review card supports serving multiplier + quick chips (0.5x/1x/1.5x/2x), meal-type chips, and save-as-favourite. Not-found flow deep-links to /nutrition/log?barcode=... with prefill. TEST: please verify (a) backend lookup+cache+from-barcode+search endpoints, (b) manual-entry flow on web preview (real barcodes: Coca-Cola 5449000000996, Nutella 3017624010701), (c) log written into nutrition_logs w/ source='barcode', (d) save-as-favourite adds a nutrition_favourites row. Do NOT re-test Phase 1 endpoints (validated in iter 37)."
+    message: "§38 shipped — Nutrition Phase 3 (AI Photo Meal Scanner). Backend: new feature_nutrition_photo.py uses Claude Sonnet 4.5 vision via emergentintegrations LlmChat.ImageContent — strict-JSON prompt, safety clamps (≤3000 kcal etc), storage on disk under /app/backend/uploads/nutrition/{user}/{date}/{id}.{ext}, token-in-query-string image serving for RN-Web. 5 new endpoints: /photo/analyse, /photo/{id}, /photo/{id}/image, /photo/{id}/patch, /photo/{id}/save-log. Verified end-to-end w/ a real salmon poke-bowl → 9 items, 485 kcal, coaching-tone tip. Frontend: /nutrition/photo-scan is a real 3-phase screen (pick → analysing → review). Editable macros (+/- steppers + direct numeric input), editable items list (add/remove/rename), MEAL vs HOTEL BUFFET modes, confidence pill, warnings banner, save-as-favourite. TEST focus: (a) all 5 endpoints incl auth on GET /image, (b) 8MB size cap, (c) unsupported mime -> 415, (d) hotel_buffet mode prompt path, (e) save-log path writes nutrition_logs w/ source='photo' and preserves photo_scan_id + photo_url, (f) frontend UPLOAD PHOTO flow on web (playwright can upload a JPEG file via the hidden input), (g) macros editing, (h) LOG MEAL end-to-end. Testing playbook already saved at /app/image_testing.md. Do NOT re-test Phase 1/2. Photo test asset: any small real JPEG (Playwright can attach a fixture)."
 

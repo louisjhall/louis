@@ -1,0 +1,29 @@
+{
+  "summary": "Nutrition Phase 3 — AI Photo Meal Scanner (Claude Sonnet 4.5 vision) is FULLY WORKING end-to-end. Backend: 16/16 pytest tests passed against /api/nutrition/photo/* (analyse meal + hotel_buffet, data-URI prefix stripping, unsupported mime → 415, >8MB payload → 413, malformed base64 → 400, missing auth → 401, GET scan + owner-check 404, image endpoint via Bearer header AND ?token= query + cross-user 404, patch with safety clamps, save-log with source=photo and favourite creation, idempotent save-log returning already_saved:true). Real vision call on a poke-bowl JPEG returned 9 items ≈485 kcal, confidence=medium, atlas_tip properly hedged and free of banned words. Frontend: PHOTO SCAN action on Nutrition home shows NO SOON pill; /nutrition/photo-scan pick page renders MEAL PHOTO card active by default, HOTEL BUFFET toggle, MEAL TYPE chip row with LUNCH selected, and UPLOAD PHOTO button (no TAKE PHOTO on web). File-chooser upload of a real JPEG triggers analysing state and produces the review card in ~6-8s with photo hero + confidence pill + Atlas estimate tip + 4 editable macro cards + 9 detected item rows with name/portion inputs + red-X remove + ADD ITEM + MEAL TYPE chips + SAVE AS FAVOURITE toggle. Direct-edit of KCAL to 600 propagated to backend (verified nutrition_logs row: calories=600, source='photo', photo_scan_id set, photo_url starts with /api/nutrition/photo/). ADD ITEM / REMOVE ITEM / FAVOURITE toggle all worked. Hotel-buffet mode header shows BUFFET SCAN and Atlas tip is a plate coaching call. No React Native red-screen, no console errors on the flow (aside from a benign 'GO_BACK not handled' triggered only because Playwright used goto() to reach the screen directly — in real client flow the router.back() works).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nutrition_photo.py",
+    "/app/test_reports/pytest/nutrition_photo_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_nutrition_photo.py is clean and well-structured (~417 lines, single-file feature). Uses async/DB properly, excludes _id and storage_path from responses, applies safety clamps in _normalise (calories 0..3000, protein 0..200 etc), strips data-URI prefix, validates mime whitelist, enforces 8 MB limit, verifies owner on GET/patch/image endpoints, supports ?token= for <Image> tag auth, and gracefully falls back if the vision call fails so the UI still gets an estimate object.",
+    "photo-scan.tsx uses expo-image-picker with launchImageLibraryAsync on web — creates a hidden <input type=file> per click that Playwright must catch via expect_file_chooser (not query on load). All required testIDs present (nutr-photo, photo-library, photo-save).",
+    "Minor: on save() the client PATCHes then save-logs — this works but adds one extra RTT. Could combine, but not a bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_nutrition_photo.py (new)"
+  ],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "seed_data_creation": "None (used seeded client@crewfit.com + coach@crewfit.com). One nutrition_logs row was created as part of the end-to-end save test (source='photo', 600 kcal, salmon poke bowl).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Photo scanner feature is production-ready. Test image at /tmp/upload_food.jpg (42 KB real poke bowl JPEG) is used for both backend pytest and Playwright upload. Vision calls average 5–8 s each; the whole 16-test pytest suite runs in ~36 s. On web, the file input from expo-image-picker is created on demand — always use page.expect_file_chooser() rather than querying input[type=file] directly.",
+  "rca_of_issue": "No issue to RCA."
+}

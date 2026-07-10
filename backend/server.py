@@ -6927,6 +6927,7 @@ import feature_brand_images    # noqa: E402,F401  registers CrewFit AI-image lib
 import feature_exercise_content  # noqa: E402,F401  unified Exercise Content Library endpoints
 import feature_nutrition        # noqa: E402,F401  Nutrition Centre — Phase 1 (targets, logs, hydration, atlas tip)
 import feature_nutrition_barcode  # noqa: E402,F401  Nutrition Centre — Phase 2 (barcode + food-DB lookup)
+import feature_nutrition_photo   # noqa: E402,F401  Nutrition Centre — Phase 3 (AI photo meal scanner)
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

@@ -1553,6 +1553,13 @@ class UserProfilePatch(BaseModel):
     training_days_per_week: Optional[int] = None
     preferred_time: Optional[str] = None
     timezone: Optional[str] = None
+    # Aviation-branding fields (§34)
+    job_title: Optional[str] = None       # Captain, First Officer, Cabin Crew, Purser, …
+    airline: Optional[str] = None
+    home_base: Optional[str] = None       # e.g. "Dubai (DXB)"
+    aircraft_type: Optional[str] = None
+    route_focus: Optional[str] = None     # long-haul | short-haul | mixed
+    preferred_visual_gender: Optional[str] = None
 
 
 @api.patch("/user/profile")
@@ -6904,6 +6911,7 @@ import feature_habits          # noqa: E402,F401  registers habit endpoints on `
 import feature_notifications   # noqa: E402,F401  registers notification endpoints on `api`
 import feature_standby         # noqa: E402,F401  registers standby endpoints on `api`
 import feature_social_studio   # noqa: E402,F401  registers admin social-studio endpoints on `api`
+import feature_profile         # noqa: E402,F401  registers profile-photo + location endpoints on `api`
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

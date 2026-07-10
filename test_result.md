@@ -775,3 +775,149 @@ agent_communication:
   - agent: "main"
     message: "§33 shipped — real Whisper-1 subtitle pipeline replaces the stub, plus ffmpeg burn-in and a fully functional SRT editor UI. Key implementation notes: audio extraction is a compact 16kHz mono 64kbps mp3 to stay under the 25MB Whisper limit; transcription is done as a background asyncio task (POST returns queued immediately, frontend polls GET /social/subtitles/{id}); OpenAISpeechToText from emergentintegrations was passed a file-like object (open(...,'rb')) — passing a path string breaks with 'Expected entry at file to be bytes...'; SRT/VTT are rebuilt from segments on save so edits stick to both formats; burn-in writes a new <name>_subtitled.mp4 alongside the source with libx264+AAC+faststart for Buffer/TikTok/LinkedIn compatibility; edits invalidate any prior burn (burned_video_path cleared) so the coach must re-burn after editing. ffmpeg (5.1.9) installed via apt. Manual round-trip verified: generate → 5-second silent test.mp4 → status=ready in ~4s → 1 segment → burn → 12.7KB burned file on disk. Please regression-test the previous asset endpoints (§32) too — they share the same file. Test credentials in /app/memory/test_credentials.md. Note that Whisper on a truly silent audio track may hallucinate short 'you' tokens — this is expected and the coach's edit workflow handles it."
 
+
+##====================================================================
+## §34 — Premium Brand Refresh · Client Home Header + Profile Photo + Location + Fonts + Logo
+##====================================================================
+
+backend:
+  - task: "POST /api/user/profile/photo — multipart profile photo upload"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_profile.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Multipart upload → /app/backend/uploads/profile_photos/<user_id>/<photo_id>.<ext>. 5MB cap. Allowed: jpeg/png/webp/heic/heif. Sets user.profile_photo_url = '/api/user/profile/photo/<user_id>' and stores file_path/mime/size/updated_at on user doc. Deletes any previous file on replace."
+  - task: "DELETE /api/user/profile/photo — remove photo"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_profile.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Unlinks file from disk + unsets profile_photo_url/path/mime/size on user."
+  - task: "GET /api/user/profile/photo/{user_id} — token-signed streaming"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_profile.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Accepts Authorization header OR ?token= query. ANY authenticated user can view another user's photo (coach ↔ client dashboards). 404 when no photo."
+  - task: "POST /api/user/location — upsert location + tz"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_profile.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Sets current_location_city/country/time_zone + location_source + location_permission_status + location_last_updated_at."
+  - task: "POST /api/user/location/permission — record permission state"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_profile.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Persists location_permission_status ∈ {granted, denied, not_requested}."
+  - task: "PATCH /api/user/profile — extended fields (job_title, airline, home_base, aircraft_type, route_focus)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "UserProfilePatch extended with the aviation-branding fields. Values are stored under user.profile.<field>."
+
+frontend:
+  - task: "ClientProfileHeader — premium aviation identity hero"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/ClientProfileHeader.tsx, frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New premium header on client home: ProfileAvatar (photo or monogrammed circle with wings) + HELLO eyebrow + first name in Creo Bold display font + role · airline + home base chip + LocationBadge (city + local time) + load pill + STANDBY pill + day-type + day-title. Screenshot verified rendering with HELLO / ALEX / CREW · Skyline Air / GREEN DAY / STANDBY / Standby Mobility."
+  - task: "ProfileAvatar + LocationBadge + CrewFitLogo variants"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/ProfileAvatar.tsx, frontend/src/components/LocationBadge.tsx, frontend/src/components/Logo.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "ProfileAvatar shows token-signed photo OR wings-in-navy-circle monogram with initials. LocationBadge shows a location pill with brand-tinted background + optional local time computed via Intl.DateTimeFormat. Logo module split into CrewFitLogo (full), CrewFitWings (wings-only), and legacy CrewFitWordmark shim."
+  - task: "ProfilePhotoRow — inline profile photo picker"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/ProfilePhotoRow.tsx, frontend/app/(client)/profile.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Take Photo / Upload / Remove buttons using expo-image-picker; multipart upload via uploadFile(). Contextual permissions with Open-Settings fallback via canAskAgain. Screenshot verified — Profile section now shows avatar, PROFILE PHOTO card, and new JOB TITLE / AIRLINE / HOME BASE / AIRCRAFT / ROUTE FOCUS rows."
+  - task: "Brand fonts (Source Sans 3 + Creo ExtraBold) + logo assets"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/hooks/use-brand-fonts.ts, frontend/assets/fonts/*, frontend/assets/images/crewfit-*"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Wired expo-font to load Source Sans 3 (Regular/SemiBold/Bold) + Creo ExtraBold/ExtraLight (user-provided licensed files). theme.font.display/text/textSemi/textBold constants added; ClientProfileHeader + Profile page consume them. Logo saved with transparent bg + a wings-only crop. Fonts confirmed rendering in web preview."
+  - task: "app.json — new permissions descriptions"
+    implemented: true
+    working: "NA"
+    file: "frontend/app.json"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added iOS: NSPhotoLibraryAddUsageDescription + NSLocationWhenInUseUsageDescription. Refined existing camera/mic/library strings. Android: ACCESS_COARSE_LOCATION + ACCESS_FINE_LOCATION."
+
+test_plan:
+  current_focus:
+    - "POST /api/user/profile/photo (upload + status transition + 5MB cap + mime whitelist)"
+    - "DELETE /api/user/profile/photo (file + fields removed)"
+    - "GET /api/user/profile/photo/{user_id} (header + query token auth)"
+    - "POST /api/user/location (upsert)"
+    - "POST /api/user/location/permission (status transitions)"
+    - "PATCH /api/user/profile (job_title / airline / home_base / aircraft_type / route_focus persist)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "§34 Phase 1 shipped (foundation for premium brand refresh). New feature_profile.py module (5 endpoints) + UserProfilePatch extended in server.py. Client home has a brand-new hero: ProfileAvatar + HELLO eyebrow + first name in Creo ExtraBold + role · airline + home-base chip + city + local time + load pill + STANDBY pill + day-title. Profile page has a new ProfilePhotoRow (Take/Upload/Remove) plus editable job_title/airline/home_base/aircraft_type/route_focus fields. CrewFit wings logo transparent-bg version saved. Source Sans 3 + Creo ExtraBold fonts loaded via expo-font (user's licensed Creo file). app.json updated with photo/library/location permissions. Please test the 6 new/extended endpoints (upload, delete, GET-photo dual-auth, location upsert, permission, profile PATCH). Test credentials in /app/memory/test_credentials.md. Phase 2 (AI imagery + storage abstraction) + Phase 3 (icon sweep) still pending."
+

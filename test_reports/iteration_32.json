@@ -1,0 +1,43 @@
+{
+  "summary": "§34 profile-photo + location backend fully tested. 18/19 assertions passed (1 skipped/flagged). Photo upload (JPEG/PNG, client + coach), 400 on unsupported mime, 413 on >5MB, previous-file unlink on replace, header-and-query auth on GET, cross-role (coach→client) view, 404 when absent, and full DELETE tear-down all work correctly. Location upsert persists all six fields (city/country/tz/source/permission_status/last_updated_at). Permission endpoint validates enum. Aviation branding fields (job_title, airline, home_base, aircraft_type, route_focus) persist under user.profile.* and round-trip via /api/auth/me. Social-studio regression endpoints (/api/social/settings, /api/social/posts) still return 200. One minor spec deviation: POST /api/user/location with empty body {} returns 200 instead of the 400 'no updates' called out in the request (dead-code branch — endpoint always seeds timestamps first).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/user/location",
+        "issue": "Spec says empty body → 400 'no updates', but endpoint returns 200 because `updates` dict is preseeded with `location_last_updated_at` and `updated_at` before the emptiness check (feature_profile.py:174-183). The `raise HTTPException(400, 'no updates')` branch is unreachable. Fix: build `updates` from optional fields FIRST, check emptiness, then add timestamps."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_profile_photo_location.py",
+    "/app/test_reports/pytest/profile_photo_location.xml"
+  ],
+  "action_items": [
+    "(Minor) Reorder POST /api/user/location body handling in feature_profile.py so that when city/country/tz/source/permission_status are all None the endpoint returns 400 'no updates' as spec'd. Currently timestamps are added first, making the 400 branch dead code."
+  ],
+  "critical_code_review_comments": [
+    "feature_profile.py:82-85 correctly early-aborts on >5MB but writes chunks up to the limit to disk before unlinking; acceptable for a 5MB cap. No streaming DoS risk observed.",
+    "feature_profile.py:144-147 auth branching: header path calls current_user() which raises 401 on missing/invalid; query-token path uses local _user_from_token(). Both enforced correctly.",
+    "GET /api/user/profile/photo/{user_id} intentionally allows any authenticated user to view any other user's photo (documented in code). Confirmed working across coach↔client.",
+    "UserProfilePatch (server.py:1543-1562) writes all aviation-branding fields under user.profile.* — persists correctly and returns via /auth/me."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_profile_photo_location.py (new)"
+  ],
+  "success_rate": {
+    "backend": "95% (18/19 assertions passing; 1 spec-deviation on empty-body 400)",
+    "frontend": "N/A (backend-only run)"
+  },
+  "seed_data_creation": "No seed data added. Uses seeded client@crewfit.com + coach@crewfit.com. Test uploads/deletes are self-cleaning via the DELETE endpoint at end of TestProfilePhoto.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_profile_photo_location.py is idempotent (deletes photo it uploaded). PIL is available in the runtime for generating in-memory JPEGs/PNGs. Storage root: /app/backend/uploads/profile_photos/<user_id>/. Photo GET accepts EITHER Authorization: Bearer <token> header OR ?token=<jwt> query param.",
+  "rca_of_issue": "POST /api/user/location empty-body: the `updates` dict is initialized on feature_profile.py:175 as `{'location_last_updated_at': now, 'updated_at': now}` — so by the time the code reaches `if not updates` on line 182 it is ALWAYS non-empty. Reproduction: `curl -X POST .../api/user/location -H 'Authorization: Bearer <token>' -d '{}'` → HTTP 200 with `location_last_updated_at` bumped. Mitigation: initialize `updates: dict = {}`, add optional fields, `if not updates: raise 400`, then set the two timestamps."
+}

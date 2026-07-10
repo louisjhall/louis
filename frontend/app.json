@@ -12,9 +12,11 @@
       "supportsTablet": true,
       "bundleIdentifier": "net.crewfit.app",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Upload roster & progress photos",
-        "NSCameraUsageDescription": "Record weekly coaching videos",
-        "NSMicrophoneUsageDescription": "Record audio for weekly coaching videos"
+        "NSPhotoLibraryUsageDescription": "Upload your profile photo and progress shots",
+        "NSPhotoLibraryAddUsageDescription": "Save recorded videos to your library",
+        "NSCameraUsageDescription": "Take a profile photo and record coaching videos",
+        "NSMicrophoneUsageDescription": "Record audio for weekly coaching videos",
+        "NSLocationWhenInUseUsageDescription": "Show your current city and time zone for smarter roster context"
       }
     },
     "android": {
@@ -28,7 +30,9 @@
         "READ_EXTERNAL_STORAGE",
         "READ_MEDIA_IMAGES",
         "CAMERA",
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
       ]
     },
     "web": {

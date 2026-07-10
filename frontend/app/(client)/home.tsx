@@ -8,7 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
-import { CrewFitWordmark } from "@/src/components/Logo";
+import { CrewFitWings } from "@/src/components/Logo";
+import { ClientProfileHeader } from "@/src/components/ClientProfileHeader";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
@@ -55,21 +56,24 @@ export default function Home() {
   const [scheduleMode, setScheduleMode] = useState<string>("normal");
   const [realityOpen, setRealityOpen] = useState(false);
   const [prompts, setPrompts] = useState<any[]>([]);
+  const [standbyToday, setStandbyToday] = useState<any>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, pr] = await Promise.all([
+      const [ws, r, ev, pr, sb] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
         api<any>("/reassessment/prompts").catch(() => ({ prompts: [] })),
+        api<any>("/standby/today").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
       setEvent(ev && ev.id ? ev : null);
       setPrompts(pr.prompts || []);
       setScheduleMode(user?.profile?.schedule_mode || "normal");
+      setStandbyToday(sb);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -116,29 +120,28 @@ export default function Home() {
       >
         <View style={styles.heroWrap}>
           <Image source={HERO} style={StyleSheet.absoluteFill} contentFit="cover" />
-          <LinearGradient colors={["rgba(0,0,0,0.25)", "rgba(0,0,0,0.85)", "#000000"]} locations={[0, 0.6, 1]} style={StyleSheet.absoluteFill} />
+          <LinearGradient colors={["rgba(0,0,0,0.35)", "rgba(0,0,0,0.85)", "#000000"]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFill} />
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
-              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <CrewFitWordmark size={16} showMark={false} />
-                </View>
+              <View style={styles.topBar}>
+                <CrewFitWings size={40} />
                 <NotificationBell testID="client-notif-bell" />
               </View>
-              <Text style={styles.hello}>HELLO {user?.name?.toUpperCase().split(" ")[0]}</Text>
-              <Text style={styles.date}>{new Date().toDateString().toUpperCase()}</Text>
-              <View style={[styles.loadBadge, { borderColor: load_color }]} testID="today-load-badge">
-                <View style={[styles.dot, { backgroundColor: load_color }]} />
-                <Text style={styles.loadText}>{(todaysWorkout?.day_load || todaysDay?.load || "green").toUpperCase()} DAY</Text>
-              </View>
-              <Text style={styles.hTitle}>{todaysWorkout ? todaysWorkout.title : "REST & RECOVER"}</Text>
-              {todaysDay && (
+
+              <ClientProfileHeader
+                user={user as any}
+                todayLoad={todaysWorkout?.day_load || todaysDay?.load || "grey"}
+                dayType={todaysDay?.day_type || todaysDay?.type || null}
+                dayTitle={todaysWorkout ? todaysWorkout.title : "REST & RECOVER"}
+                isStandby={!!standbyToday?.is_standby}
+              />
+
+              {todaysDay?.layover_city || todaysDay?.flights?.[0] ? (
                 <Text style={styles.duty}>
-                  <Ionicons name="airplane" size={12} color={theme.color.brand} />  {(todaysDay.day_type || todaysDay.type || "").toUpperCase()}
-                  {todaysDay.layover_city ? `  ${String(todaysDay.layover_city).toUpperCase()}` : ""}
-                  {todaysDay.flights?.[0] ? `  ${todaysDay.flights[0].from} → ${todaysDay.flights[0].to}` : ""}
+                  {todaysDay?.layover_city ? `${String(todaysDay.layover_city).toUpperCase()}` : ""}
+                  {todaysDay?.flights?.[0] ? `  ${todaysDay.flights[0].from} → ${todaysDay.flights[0].to}` : ""}
                 </Text>
-              )}
+              ) : null}
             </View>
           </SafeAreaView>
         </View>
@@ -340,15 +343,16 @@ function QuickBtn({ icon, label, onPress, testID }: any) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
-  heroWrap: { height: 320, backgroundColor: theme.color.surface2 },
-  heroContent: { padding: theme.space.lg, marginTop: theme.space.md },
+  heroWrap: { minHeight: 360, backgroundColor: theme.color.surface2 },
+  heroContent: { padding: theme.space.lg, marginTop: theme.space.md, gap: theme.space.md },
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
   hello: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "800" },
   date: { color: theme.color.textMuted, marginTop: 4, letterSpacing: 2, fontSize: 11 },
   loadBadge: { flexDirection: "row", alignItems: "center", marginTop: theme.space.md, paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, borderWidth: 1, alignSelf: "flex-start", backgroundColor: "rgba(0,0,0,0.35)" },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   loadText: { color: theme.color.text, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
   hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
-  duty: { color: theme.color.textMuted, marginTop: theme.space.sm, fontSize: 12, letterSpacing: 1 },
+  duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", marginTop: 4 },
   banner: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderLeftWidth: 3, marginBottom: theme.space.md },
   bannerTitle: { color: theme.color.text, fontSize: 12, letterSpacing: 1.5, fontWeight: "800" },
   bannerSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },

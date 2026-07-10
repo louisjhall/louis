@@ -1,43 +1,58 @@
 import React from "react";
-import { View, Text, StyleSheet, Image } from "react-native";
-import { theme } from "@/src/lib/theme";
+import { View, StyleSheet, Image, ImageStyle, StyleProp } from "react-native";
 
-// The full-color CrewFit logo (wings + wordmark), sized to whatever height you pass.
-// The image is designed on a black backdrop, so we render it directly.
-export function CrewFitLogo({ size = 96, style }: { size?: number; style?: any }) {
+/**
+ * CrewFit logo variants.
+ *
+ *  - `<CrewFitLogo />` — full square lockup (wings + CREWFIT wordmark on transparent bg)
+ *  - `<CrewFitWings />` — wings-only mark, ideal for compact headers
+ *  - `<CrewFitWordmark />` — wings-only mark placed inline; identical to CrewFitWings
+ *    but exported under the old name for backwards compatibility.
+ *
+ *  Source: `assets/images/crewfit-logo.png` (transparent background, black bg stripped).
+ */
+
+type Props = {
+  size?: number;
+  style?: StyleProp<ImageStyle>;
+  tint?: string;                    // optional tint colour
+};
+
+export function CrewFitLogo({ size = 96, style, tint }: Props) {
   return (
     <Image
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       source={require("../../assets/images/crewfit-logo.png")}
       resizeMode="contain"
-      style={[{ width: size, height: size }, style]}
+      style={[{ width: size, height: size }, tint ? { tintColor: tint } : null, style]}
       accessibilityLabel="CrewFit logo"
     />
   );
 }
 
-// A tighter wordmark: shows the wings mark on the left with red "CREW" + white "FIT" text.
-// Useful in headers where a full square logo would waste vertical space.
-export function CrewFitWordmark({ size = 22, showMark = true, style }: { size?: number; showMark?: boolean; style?: any }) {
+export function CrewFitWings({ size = 32, style, tint }: Props) {
+  return (
+    <Image
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      source={require("../../assets/images/crewfit-wings.png")}
+      resizeMode="contain"
+      style={[{ width: size, height: Math.round(size * 0.6) }, tint ? { tintColor: tint } : null, style]}
+      accessibilityLabel="CrewFit wings"
+    />
+  );
+}
+
+/** Kept for backwards compatibility. Renders the wings-only mark. */
+export function CrewFitWordmark({ size = 26, showMark = true, style }: { size?: number; showMark?: boolean; style?: any }) {
+  // `showMark` retained as a no-op prop — we now always use the wings.
+  void showMark;
   return (
     <View style={[styles.row, style]}>
-      {showMark ? (
-        <Image
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          source={require("../../assets/images/crewfit-logo-sm.png")}
-          resizeMode="contain"
-          style={{ width: size * 1.4, height: size * 1.4, marginRight: 6 }}
-          accessibilityLabel="CrewFit"
-        />
-      ) : null}
-      <Text style={[styles.wordCrew, { fontSize: size }]}>CREW</Text>
-      <Text style={[styles.wordFit, { fontSize: size }]}>FIT</Text>
+      <CrewFitWings size={size * 3.2} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center" },
-  wordCrew: { color: theme.color.brand, fontWeight: "900", letterSpacing: 2 },
-  wordFit: { color: theme.color.text, fontWeight: "900", letterSpacing: 2 },
 });

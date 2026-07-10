@@ -20,12 +20,20 @@ export const theme = {
     amber: "#F59E0B",
     red: "#EF4444",
     info: "#6B7280",
+    // Deep aviation navy for premium cards
+    navy: "#0A1220",
+    navySoft: "#101828",
   },
   space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
   radius: { sm: 4, md: 8, lg: 12, pill: 999 },
   font: {
-    display: "System",
-    text: "System",
+    /** Display / headline — Creo (licensed). Falls back to system if font not yet loaded. */
+    display: "Creo-ExtraBold",
+    displayLight: "Creo-ExtraLight",
+    /** Body — Source Sans 3 */
+    text: "SourceSans3-Regular",
+    textSemi: "SourceSans3-SemiBold",
+    textBold: "SourceSans3-Bold",
   },
 } as const;
 

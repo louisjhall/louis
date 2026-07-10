@@ -8,6 +8,7 @@ import * as Notifications from "expo-notifications";
 import * as Linking from "expo-linking";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
+import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
 import { AuthProvider } from "@/src/lib/auth";
 
 LogBox.ignoreAllLogs(true);
@@ -34,6 +35,7 @@ if (Platform.OS === "android") {
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
+  const [brandLoaded] = useBrandFonts();
   const router = useRouter();
 
   useEffect(() => {

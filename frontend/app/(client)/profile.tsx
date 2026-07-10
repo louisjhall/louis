@@ -12,6 +12,7 @@ import { theme } from "@/src/lib/theme";
 import { DateField } from "@/src/components/DateField";
 import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
 import { NotificationPreferencesCard } from "@/src/components/NotificationPreferencesCard";
+import { ProfilePhotoRow } from "@/src/components/ProfilePhotoRow";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -180,13 +181,24 @@ export default function ProfileScreen() {
           onEdit={() => openEdit({
             title: "Profile", scope: "user_profile", fields: [
               { key: "name", label: "Name", type: "text", value: user?.name },
+              { key: "job_title", label: "Job Title (Captain, First Officer, Cabin Crew, Purser, …)", type: "text", value: user?.profile?.job_title },
+              { key: "airline", label: "Airline", type: "text", value: user?.profile?.airline },
+              { key: "home_base", label: "Home Base (e.g. Dubai (DXB))", type: "text", value: user?.profile?.home_base },
+              { key: "aircraft_type", label: "Aircraft Type", type: "text", value: user?.profile?.aircraft_type },
+              { key: "route_focus", label: "Route Focus (long-haul | short-haul | mixed)", type: "text", value: user?.profile?.route_focus },
               { key: "height_cm", label: "Height", type: "number", value: user?.profile?.height_cm, unit: "cm" },
               { key: "weight_kg", label: "Weight", type: "number", value: user?.profile?.weight_kg, unit: "kg" },
               { key: "dob", label: "Date of Birth", type: "text", value: user?.profile?.dob },
             ],
           })}
         >
+          <ProfilePhotoRow user={user} onChanged={async () => { await refresh(); }} />
           <KV label="EMAIL" value={user?.email} />
+          <KV label="JOB TITLE" value={user?.profile?.job_title || "—"} />
+          <KV label="AIRLINE" value={user?.profile?.airline || "—"} />
+          <KV label="HOME BASE" value={user?.profile?.home_base || "—"} />
+          <KV label="AIRCRAFT" value={user?.profile?.aircraft_type || "—"} />
+          <KV label="ROUTE FOCUS" value={user?.profile?.route_focus ? user.profile.route_focus.toUpperCase() : "—"} />
           <KV label="ROLE" value={String(user?.role || "").toUpperCase()} />
           <KV label="HEIGHT" value={user?.profile?.height_cm ? `${user.profile.height_cm} cm` : "—"} />
           <KV label="WEIGHT" value={user?.profile?.weight_kg ? `${user.profile.weight_kg} kg` : "—"} />

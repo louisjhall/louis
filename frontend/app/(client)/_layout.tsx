@@ -1,29 +1,22 @@
 import { Tabs } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
-import { theme } from "@/src/lib/theme";
+import { PremiumTabBar } from "@/src/components/PremiumTabBar";
 
+/**
+ * Client tab layout — uses the bespoke <PremiumTabBar />. Each screen still
+ * declares its title so accessibility labels remain meaningful; the visual
+ * label + icon come from the custom bar.
+ */
 export default function ClientLayout() {
   return (
     <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: theme.color.brand,
-        tabBarInactiveTintColor: theme.color.textDim,
-        tabBarStyle: {
-          backgroundColor: theme.color.surface2,
-          borderTopColor: theme.color.border,
-          height: 82,
-          paddingTop: 8,
-          paddingBottom: 24,
-        },
-        tabBarLabelStyle: { fontSize: 10, letterSpacing: 1, fontWeight: "700" },
-      }}
+      tabBar={(props) => <PremiumTabBar {...props} />}
+      screenOptions={{ headerShown: false }}
     >
-      <Tabs.Screen name="home" options={{ title: "TODAY", tabBarIcon: ({ color }) => <Ionicons name="flash" size={22} color={color} /> }} />
-      <Tabs.Screen name="calendar" options={{ title: "CALENDAR", tabBarIcon: ({ color }) => <Ionicons name="calendar" size={22} color={color} /> }} />
-      <Tabs.Screen name="nutrition" options={{ title: "NUTRITION", tabBarIcon: ({ color }) => <Ionicons name="restaurant" size={22} color={color} /> }} />
-      <Tabs.Screen name="messages" options={{ title: "MESSAGES", tabBarIcon: ({ color }) => <Ionicons name="chatbubble-ellipses" size={22} color={color} /> }} />
-      <Tabs.Screen name="profile" options={{ title: "PROFILE", tabBarIcon: ({ color }) => <Ionicons name="person" size={22} color={color} /> }} />
+      <Tabs.Screen name="home"      options={{ title: "Today" }} />
+      <Tabs.Screen name="calendar"  options={{ title: "Calendar" }} />
+      <Tabs.Screen name="nutrition" options={{ title: "Nutrition" }} />
+      <Tabs.Screen name="messages"  options={{ title: "Messages" }} />
+      <Tabs.Screen name="profile"   options={{ title: "Profile" }} />
     </Tabs>
   );
 }

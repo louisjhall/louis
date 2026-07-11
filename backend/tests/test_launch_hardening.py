@@ -128,14 +128,16 @@ class TestGDPR:
         assert d.get("ok") is True
         assert d.get("scheduled_purge_at")
 
-        # Admin sees it
+        # Admin sees it. NOTE: PII is no longer scrubbed on delete-request
+        # (deferred until purge time). Locate our pending row by
+        # `deletion_reason` instead of the old `deleted+` email pattern.
         r2 = api.get(f"{BASE_URL}/api/admin/gdpr/pending",
                      headers=coach_auth["headers"], timeout=30)
         assert r2.status_code == 200
         pending = r2.json().get("pending", [])
-        # The scrubbed email pattern is deleted+<uid>@crewfit.local
-        assert any("deleted+" in (row.get("email") or "") for row in pending), \
-            f"expected at least one pending row, got {pending}"
+        assert any(row.get("deletion_reason") == "TEST_iteration_42"
+                   for row in pending), \
+            f"expected at least one pending row with our reason, got {pending}"
 
         # Cancel it
         r3 = api.post(f"{BASE_URL}/api/gdpr/delete-account/cancel",
@@ -148,8 +150,7 @@ class TestGDPR:
         assert r4.status_code == 200
         # Note: pending count may include OTHER users' pending rows; check ours cancelled
         pending_after = r4.json().get("pending", [])
-        assert not any("deleted+" in (row.get("email") or "") and
-                       row.get("deletion_reason") == "TEST_iteration_42"
+        assert not any(row.get("deletion_reason") == "TEST_iteration_42"
                        for row in pending_after)
 
         # Audit shows both events

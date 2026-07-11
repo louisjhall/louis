@@ -153,6 +153,9 @@ async def sentry_status(admin: dict = Depends(require_admin())):
 @api.post("/admin/sentry/test-error")
 async def sentry_test_error(admin: dict = Depends(require_admin())):
     """Trigger a test exception so you can confirm the DSN is receiving."""
+    # Cheap: if no DSN, tell the caller straight away.
+    if not os.environ.get("SENTRY_DSN"):
+        return {"ok": False, "note": "Sentry SDK not initialised (SENTRY_DSN env var missing)."}
     try:
         raise RuntimeError("CrewFit Sentry test — safe to ignore.")
     except Exception as e:
@@ -161,4 +164,4 @@ async def sentry_test_error(admin: dict = Depends(require_admin())):
             sentry_sdk.capture_exception(e)
             return {"ok": True, "note": "Test exception captured. Check your Sentry inbox."}
         except Exception:
-            return {"ok": False, "note": "Sentry SDK not initialised (DSN missing?)."}
+            return {"ok": False, "note": "sentry_sdk import failed."}

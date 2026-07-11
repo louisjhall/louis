@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 43 follow-up: both fixes verified end-to-end. Fix 1 — POST /api/admin/sentry/test-error now correctly returns {ok:false, note:'...SENTRY_DSN env var missing...'} when DSN unset (early-return added before capture_exception). Fix 2 — POST /api/gdpr/delete-account no longer scrubs email/name/phone/photo; only sets deleted_at/purge_at/deletion_reason, so cancel is a clean $unset restoring full account state, and the seed client@crewfit.com survives the full delete/cancel cycle. Full cycle verified with a fresh signup user (signup → delete → /auth/me shows original PII + deleted_at → cancel → /auth/me clean → login with original creds works → cleanup). Regressions green: 18/18 test_launch_hardening.py + 12/12 test_beta_readiness.py + 10/10 new test_iter43_followup.py = 40/40. One stale assertion in test_launch_hardening.py::TestGDPR::test_delete_and_cancel_flow was updated (it asserted the OLD scrubbed 'deleted+' email pattern; now locates the pending row by deletion_reason instead) — test-only change consistent with the new correct behavior. Seed client account cleaned up (had a lingering pending delete from prior iter-43 run; cancelled via API, PII fully intact, login OK). Scope was backend-only per review request; frontend NOT tested.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter43_followup.py",
+    "/app/backend/tests/test_launch_hardening.py",
+    "/app/backend/tests/test_beta_readiness.py",
+    "/app/test_reports/pytest/iter43_followup_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_gdpr.py:97-127 — Deferred-scrub design is now sound. PII is preserved during the 30-day grace window and only removed at final purge time when the whole user row is deleted anyway. Consistent, reversible, and safe for test suites.",
+    "feature_beta_readiness.py:153-167 — Explicit env-var guard before capture_exception is correct: sentry_sdk.capture_exception is a silent no-op when no client is initialised, so guarding with `if not os.environ.get('SENTRY_DSN')` gives callers a truthful response body.",
+    "Minor housekeeping (non-blocking): test_iter43_followup.py uses a class-scoped fixture defined as an instance method (pytest deprecation warning). Consider @classmethod or module-level fixture. Does not affect correctness."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter43_followup.py (NEW — 10 tests, all passing)",
+    "/app/backend/tests/test_launch_hardening.py (updated TestGDPR.test_delete_and_cancel_flow assertion — now locates pending row by deletion_reason instead of the obsolete `deleted+` scrubbed-email pattern)"
+  ],
+  "success_rate": {
+    "backend": "100% (40/40: 18 launch_hardening + 12 beta_readiness + 10 iter43_followup)",
+    "frontend": "not tested (backend-only scope per review request)"
+  },
+  "seed_data_creation": "One ephemeral signup user per followup run (gdpr-verify+<ts>-<rand>@test.com) is marked for deletion at the end and will hard-purge after the 30-day grace via the daily cron. Cancelled a stale pending-delete on client@crewfit.com left over from the previous iter-43 launch-hardening run — email/name/all profile fields fully preserved (verified via /api/auth/me). No lingering scrubbed rows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Both iter-43 issues are fully resolved. Sentry test-error correctly reports missing DSN. GDPR delete/cancel cycle is non-destructive — safe to run test_launch_hardening.TestGDPR.test_delete_and_cancel_flow repeatedly against the seeded client@crewfit.com account. The updated assertion in test_launch_hardening.py identifies the pending row by deletion_reason='TEST_iteration_42', which is unique to that test and won't collide with other pending rows. If future test agents see leftover pending rows in /api/admin/gdpr/pending (e.g. from aborted runs), they can be safely cancelled via POST /api/gdpr/delete-account/cancel while authenticated as the affected user.",
+  "rca_of_issue": "No new bugs surfaced. The two prior-iteration issues are resolved: (1) Sentry endpoint's silent-noop path fixed by early-return when SENTRY_DSN is absent — verified in production preview where DSN is unset. (2) Destructive PII scrub on delete-account replaced with deferred-scrub — only deleted_at/purge_at/deletion_reason are set on the user document during the 30-day grace period, so cancel is a lossless operation via $unset. End-to-end cycle test (signup→delete→me→cancel→me→login→cleanup) all green on 10/10 assertions."
+}

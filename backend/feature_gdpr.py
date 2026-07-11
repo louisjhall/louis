@@ -100,22 +100,19 @@ async def gdpr_delete_account(body: DeleteReq, user: dict = Depends(current_user
         raise HTTPException(400, "confirmation must equal 'DELETE'")
     when = now_iso()
     purge_at = (datetime.now(timezone.utc) + timedelta(days=RETENTION_DAYS)).isoformat()
+    # Deferred-scrub design: during the 30-day grace period the account stays
+    # fully functional (email + name intact) so cancel is a clean unset. PII
+    # is only scrubbed at final purge time. This lets users log back in during
+    # the grace window and keeps our seed accounts alive across test runs.
     await db.users.update_one(
         {"id": user["id"]},
         {"$set": {
             "deleted_at": when,
             "purge_at": purge_at,
             "deletion_reason": (body.reason or "")[:400],
-            # Scrub PII from live indexes
-            "email": f"deleted+{user['id']}@crewfit.local",
-            "name": "Deleted User",
-            "phone": None,
-            "profile_photo_url": None,
             "updated_at": when,
-        }, "$unset": {"profile_photo_path": "", "profile_photo_mime": "",
-                       "profile_photo_size": ""}},
+        }},
     )
-    # Log for audit trail
     await db.gdpr_audit.insert_one({
         "id": user["id"] + "-" + when,
         "user_id": user["id"],

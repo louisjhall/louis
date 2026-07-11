@@ -2403,8 +2403,18 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
                     "updated_at": now_iso(),
                 }
-                await db.workouts.delete_one({"id": doc["id"]})
-                await db.workouts.insert_one(doc)
+                # Delete by (user_id, date) — the actual unique index key — so we
+                # sweep collisions from prior rosters, manual entries, or seed
+                # data. Deleting by "id" alone missed cross-roster collisions
+                # and triggered E11000 on insert.
+                try:
+                    await db.workouts.delete_many({"user_id": user["id"], "date": d})
+                    await db.workouts.insert_one(doc)
+                except Exception as e:
+                    # One bad row must not kill the whole plan generation. Log
+                    # + move on; user still gets the rest of their plan.
+                    logger.warning("workout upsert failed for date=%s: %s", d, e)
+                    continue
             await _set_job(job_id, stage="coach", progress=98, message="Preparing coach review...")
             # Best-effort coach notification (silent-fail if push disabled)
             try:

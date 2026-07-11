@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 44 — Roster upload E11000 collision-key bug fix VERIFIED. Full end-to-end reproduction and fix verification passed. Primary test seeded the exact collision (user_id=62f90680-313b-4fca-bc3f-9a19ac49065d, date=2026-07-01, roster_id=TEST-iter44-collision-seeder), then triggered POST /api/roster/upload-and-generate with a plain-text roster naming 2026-07-01 through 2026-07-07. Job reached status=complete (Gemini extracted 7 days including the collision date, _generate_month produced 7 workouts). Post-run Mongo verification: db.workouts.count({user_id, date=2026-07-01}) == 1 (exactly one row, roster_id updated to the new active roster, seed collision cleanly swept). No raw MongoDB error strings (E11000, uniq_user_date, duplicate key) leaked anywhere in the job response. Global unique-index invariant still holds — zero duplicate (user_id,date) groups anywhere in db.workouts. Both client@crewfit.com and coach@crewfit.com logins still work. Regression: 18/18 test_launch_hardening.py + 12/12 test_beta_readiness.py = 30/30 green. New test module: 6/6 green. Total 36/36 pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter44_roster_e11000.py",
+    "/app/test_reports/pytest/iter44_e11000.xml",
+    "/app/test_reports/pytest/iter44_regression.xml"
+  ],
+  "action_items": [
+    "NON-BLOCKING for iter-44 scope, but recommended follow-up: the same buggy pattern (delete_one({'id': doc['id']}) + insert_one) still exists in TWO other places in server.py that also write to db.workouts: (a) the gen_workouts worker around line 3967-3968, and (b) the workouts_regenerate worker around line 4062-4063. Both are theoretically vulnerable to the identical E11000 crash if any leftover row exists on (user_id, date) under a different roster_id / manual entry / seed. Recommend porting the same delete_many({'user_id': user['id'], 'date': d}) + try/except-per-row pattern to those two spots for consistency and to close the class of bug across all workout-upsert paths."
+  ],
+  "critical_code_review_comments": [
+    "server.py:2410-2417 — Fix is correct and minimal. delete_many on the actual unique-index key (user_id, date) is the right sweep semantics, and the per-row try/except with logger.warning ensures one bad row can't kill the whole plan. Failure is contained and observable via logs.",
+    "server.py:3967-3968 (gen_workouts worker) and server.py:4062-4063 (workouts_regenerate worker) — SAME BUGGY PATTERN still present. delete_one({'id': doc['id']}) will miss cross-roster / manual / seed collisions on (user_id, date) and could reproduce the E11000 crash on those flows. Recommend the same fix.",
+    "server.py:2377 — existing map only queries by (user_id, roster_id). Correct within the fix's assumption (we want to know what THIS roster had before), but combined with the old delete_one this was the root cause. With the new delete_many, the semantics are now safe regardless of what the map contains."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter44_roster_e11000.py (NEW — 6 tests, all passing: seed collision, upload-and-generate no E11000, collision resolved to 1 row, global uniq-index invariant, client login, coach login)"
+  ],
+  "success_rate": {
+    "backend": "100% (36/36: 6 new iter44 + 18 launch_hardening + 12 beta_readiness)",
+    "frontend": "not tested (backend-only scope per review request; fix is server-side)"
+  },
+  "seed_data_creation": "One collision-seed workout row was inserted for user 62f90680-313b-4fca-bc3f-9a19ac49065d on 2026-07-01 with roster_id='TEST-iter44-collision-seeder' to reproduce the E11000 crash. After the upload-and-generate run the fix's delete_many swept it and replaced it with the freshly generated workout (roster_id=d97d84ae-5515-49ab-b0ae-7cfa8263754f, source_filename='TEST_iter44_roster.txt', title='Base Building Easy Run + Mobility'). One TEST_ prefixed roster was left in db.rosters as the client's now-active roster — this replaces the previous seed roster; if E1 wants the prior demo roster back it should re-run the demo seeder. Otherwise this is safe test data (real dates, real generated content, no PII).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-44 E11000 fix is fully verified end-to-end via the actual bug-report code path. If main agent addresses the two remaining identical patterns in gen_workouts/regenerate workers (server.py:3967 and server.py:4062), a follow-up regression can reuse /app/backend/tests/test_iter44_roster_e11000.py as a template — same seed helper plus a call to /api/workouts/regenerate should reproduce and verify. NOTE: the active roster on the seeded client is now the test roster covering 2026-07-01..2026-07-07 (source_filename=TEST_iter44_roster.txt). This is the current source of truth for that user's calendar until the demo seeder is re-run.",
+  "rca_of_issue": "ROOT CAUSE: _process_upload_and_generate's post-generation upsert loop queried existing workouts filtered by (user_id, roster_id) and then attempted delete_one({'id': doc['id']}) + insert_one(doc). Any pre-existing workout on the same (user_id, date) under a different roster_id (seed data, manual entries, prior rosters) was invisible to that filter, so delete_one was a no-op, and the subsequent insert_one collided with the compound unique index uniq_user_date and raised E11000. The exception propagated up and was surfaced as raw Mongo text to the frontend job endpoint. REPRODUCTION: (1) seed workout with roster_id X on date D for user U; (2) POST /api/roster/upload-and-generate with a roster whose days include D; (3) job would fail at 80% 'Generating plan' with error='E11000 duplicate key error collection: crewfit_v1.workouts index: uniq_user_date dup key: {user_id: U, date: D}'. FIX: delete_many({user_id: U, date: D}) sweeps on the actual unique key regardless of source; a per-row try/except contains any residual failure. MITIGATION VERIFIED: reran the exact scenario end-to-end — job now completes cleanly, row count is 1, no raw Mongo error surfaces."
+}

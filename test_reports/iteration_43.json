@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 43 pre-beta readiness backend verification: all 12 new tests PASS (storage smoke test, sentry status/test-error, beta disclaimer flow with fresh signup, non-admin 403s, regression smoke on /api/nutrition/today and /api/coach/dashboard). All 18 test_launch_hardening.py regression tests still PASS. One minor spec deviation on sentry/test-error, and one CRITICAL pre-existing GDPR-cancel bug surfaced (unrelated to iter 43 but blocks future test runs). Frontend UI check was NOT executed (backend-only scope per request; also could not reach the client login until GDPR bug side-effect was manually repaired).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/gdpr/delete-account/cancel",
+        "issue": "Cancel does not restore the scrubbed email/name. After test_launch_hardening.TestGDPR.test_delete_and_cancel_flow schedules deletion (which scrubs email to `deleted+<uid>@crewfit.local` and name to `Deleted User`) and then cancels, the email/name remain scrubbed permanently. This BROKE the client@crewfit.com seed account after regression run — 2 orphaned scrubbed rows found in db.users (62f90680... and 5d01b662...) and login with client@crewfit.com began returning 401. Reference: /app/backend/feature_gdpr.py lines 133-149 — the cancel handler only `$unset`s deleted_at/purge_at/deletion_reason but doesn't restore email/name/phone. This is a PRE-EXISTING bug (not introduced this session), but iteration 42 tests likely papered over it. FIX: on delete-account request, snapshot original email/name into e.g. `pre_delete_email` before scrubbing, and restore them in cancel; or don't scrub PII until purge time.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/admin/sentry/test-error",
+        "issue": "Spec expected `ok: false` + 'DSN missing' note when SENTRY_DSN is unset, but the endpoint returns `{ok: true, note: 'Test exception captured. Check your Sentry inbox.'}` because `import sentry_sdk` succeeds and `capture_exception` is a silent no-op when no client is initialised. Not a functional bug (safe fail-open, no 500), just a misleading response body. Consider guarding with `if sentry_sdk.Hub.current.client is None: return {'ok': False, 'note': 'DSN missing'}` for a truthful response. Reference: /app/backend/feature_beta_readiness.py lines 153-164."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_beta_readiness.py",
+    "/app/test_reports/pytest/iteration_43_beta_readiness.xml",
+    "/app/test_reports/pytest/iteration_43_launch_hardening.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix /api/gdpr/delete-account/cancel to restore original email/name (see feature_gdpr.py line 133-149). Currently the cancel is destructive — original PII is lost. Recommend snapshotting into `pre_delete_email` / `pre_delete_name` during delete-account, then restoring on cancel; alternatively defer PII scrub until the purge job runs (keeping the row usable during the 30-day grace period).",
+    "OPTIONAL: Tighten /api/admin/sentry/test-error to return `ok: false` when `sentry_sdk.Hub.current.client is None` so the response body matches the spec.",
+    "NOTE: I manually restored the client@crewfit.com row (id 62f90680-313b-4fca-bc3f-9a19ac49065d) by resetting its email/name and deleted an orphan scrubbed row (id 5d01b662-...). Password hash was untouched, so Client123! still works. This unblocks future testing but the underlying GDPR-cancel bug remains until fixed."
+  ],
+  "critical_code_review_comments": [
+    "feature_gdpr.py:110 scrubs email destructively without a backup — irreversible on cancel. Any test suite exercising delete+cancel will corrupt the seeded account.",
+    "feature_beta_readiness.py:161 — `sentry_sdk.capture_exception` never raises when SDK is not initialised, so the `try/except` guard is ineffective for detecting missing DSN."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_beta_readiness.py (NEW — 12 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 iter-43 + 18/18 launch-hardening regression)",
+    "frontend": "not tested (backend-only scope per review request)"
+  },
+  "seed_data_creation": "Manually restored client@crewfit.com in db.users (see action_items) after the launch-hardening GDPR cancel regression corrupted it. Also created ephemeral TEST_beta_<uuid>@crewfit.com signup users during fresh-user beta flow tests; they remain in db.users but are harmless.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The GDPR cancel bug (feature_gdpr.py:133) will re-corrupt the client@crewfit.com seed account whenever test_launch_hardening.TestGDPR.test_delete_and_cancel_flow runs. If a future test session fails with `login failed for client@crewfit.com: 401`, look for orphan `deleted+<uid>@crewfit.local` rows in db.users and either restore their email or wait for the fix. All beta-readiness endpoints (storage smoke, sentry status/test-error, beta status/accept) are working as intended per spec (with the one minor sentry-response-body deviation noted).",
+  "rca_of_issue": "RCA for the login-blocker surfaced during regression run: 1) test_launch_hardening.TestGDPR.test_delete_and_cancel_flow issues POST /api/gdpr/delete-account with confirmation=DELETE for the CURRENT client_auth user (client@crewfit.com). 2) feature_gdpr.py line 110 overwrites `email = deleted+<uid>@crewfit.local`, `name = Deleted User`, `phone = None` in db.users. 3) test then POST /api/gdpr/delete-account/cancel. 4) feature_gdpr.py line 138-142 only `$unset`s deleted_at/purge_at/deletion_reason and `$set`s updated_at — it does NOT restore the scrubbed PII. 5) Consequence: db.users still holds email=`deleted+<uid>@crewfit.local` for that user. 6) On next session start, conftest._login for client@crewfit.com finds no such email and returns 401. Mitigation applied: manual db.users update to reset email='client@crewfit.com' and name='Test Client' on the affected row (id 62f90680-313b-4fca-bc3f-9a19ac49065d); deleted an older orphaned scrubbed row (id 5d01b662-...). Permanent fix must be in feature_gdpr.py — snapshot & restore PII around the delete/cancel cycle."
+}

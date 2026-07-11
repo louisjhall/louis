@@ -13,6 +13,11 @@ import { AuthProvider, useAuth } from "@/src/lib/auth";
 import { ToastHost } from "@/src/lib/ux";
 import { PreviewProvider } from "@/src/lib/preview";
 import { PreviewBanner } from "@/src/components/PreviewBanner";
+import { BetaDisclaimerGate } from "@/src/components/BetaDisclaimerGate";
+import { initSentry } from "@/src/lib/sentry";
+
+// One-shot at module load; safe no-op when EXPO_PUBLIC_SENTRY_DSN is unset.
+initSentry();
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -76,6 +81,7 @@ export default function RootLayout() {
             <StatusBar barStyle="light-content" backgroundColor="#000000" />
             <PreviewBanner />
             <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+            <BetaDisclaimerGate />
             <ToastHost />
           </PreviewWiring>
         </AuthProvider>

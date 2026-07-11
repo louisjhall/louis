@@ -53,6 +53,35 @@ EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 EMERGENT_PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
 PUSH_BASE_URL = "https://integrations.emergentagent.com"
 
+# Optional Sentry crash reporting. Silent no-op if SENTRY_DSN is not set,
+# so dev + preview environments never phone home. Set SENTRY_ENABLED=0 to
+# force-disable even when a DSN is present.
+def _init_sentry() -> None:
+    dsn = os.environ.get("SENTRY_DSN")
+    if not dsn or os.environ.get("SENTRY_ENABLED", "1") == "0":
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.environ.get("SENTRY_ENV", "beta"),
+            traces_sample_rate=0.0,       # perf off for beta
+            send_default_pii=False,       # no IPs, no cookies, no request bodies
+            attach_stacktrace=True,
+            request_bodies="never",
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                StarletteIntegration(transaction_style="endpoint"),
+            ],
+        )
+    except Exception:
+        # Never let Sentry init crash the app.
+        pass
+
+_init_sentry()
+
 # Louis Hall reference photo used to generate exercise demo images with Nano Banana.
 LOUIS_REF_IMAGE_PATH = ROOT_DIR / "assets" / "louis_ref.png"
 _LOUIS_REF_B64_CACHE: Optional[str] = None
@@ -6969,6 +6998,7 @@ import feature_admin_migrations  # noqa: E402,F401  Ops: storage backfill + exer
 import feature_admin_telemetry   # noqa: E402,F401  Ops: AI usage + cost telemetry admin dashboard
 import feature_gdpr              # noqa: E402,F401  GDPR: soft-delete, data export, purge cron
 import feature_preview           # noqa: E402,F401  Coach preview-as-client + UI issue reporter
+import feature_beta_readiness    # noqa: E402,F401  Beta wiring: storage smoke test + disclaimer
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

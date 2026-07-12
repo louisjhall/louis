@@ -1,0 +1,27 @@
+{
+  "summary": "Frontend-only verification of the 'NEXT 7 DAYS' ordering fix on client Home screen. Logged in as client@crewfit.com and inspected the section on a 390x844 mobile viewport. Exactly 7 rows render, TODAY sits at the top, TOMORROW is second, and the remaining 5 rows are chronologically ascending weekdays (TUE · JUL 14 → SAT · JUL 18). No past dates appear. Pressable workout rows navigate to /workout/[id] successfully. All 7 days in the seed roster had scheduled workouts, so the visual REST DAY / FLIGHT · RECOVERY fallback rows were not present in live data — but the source code in home.tsx clearly synthesizes non-pressable rest-day entries with correct styles (wRowRest / wTitleRest) and copy when a day has no workout, using local (non-UTC) YYYY-MM-DD via localDateStr().",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: To visually confirm the REST DAY / FLIGHT · RECOVERY rendering path in QA, seed a roster where at least one of the next 7 days has no scheduled workout (or a day_type=flight) so a Coach or QA can eyeball the muted, non-pressable row. The code path exists and looks correct, but was not exercised by current seed data.",
+    "Unrelated observation (not part of this task): navigating into /workout/[id] logs a console warning: 'Unexpected text node: . A text node cannot be a child of a <View>.' — worth a follow-up on the workout detail screen (whitespace/text between JSX in a <View>)."
+  ],
+  "critical_code_review_comments": [
+    "home.tsx localDateStr() correctly builds YYYY-MM-DD from local date parts (avoids the UTC off-by-one that toISOString() would cause).",
+    "next7 useMemo starts from base = new Date() with setHours(0,0,0,0) and iterates i=0..6, so TODAY is guaranteed first and past dates cannot appear.",
+    "Rest-day fallback uses roster.days lookup to decide between 'FLIGHT · RECOVERY' and 'REST DAY', renders a non-pressable View, and applies muted styles."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "seed_data_creation": "None. Used existing seeded client (client@crewfit.com).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Client home NEXT 7 DAYS section is fixed. TODAY at top, exactly 7 days, chronological, local-timezone dates. Rest-day visual path (REST DAY / FLIGHT · RECOVERY, non-pressable) exists in code but current seed has workouts every day — seed a gap day to visually verify if needed.",
+  "rca_of_issue": "Previous behavior showed workouts.slice(0,7) which could include past dates and did not guarantee TODAY at top. Fix builds a local-date-keyed map of workouts and roster days, then iterates 7 days starting at today's local midnight, filling from workouts by matching YYYY-MM-DD or synthesizing a rest-day entry. Verified live: rows in order TODAY, TOMORROW, TUE·JUL 14, WED·JUL 15, THU·JUL 16, FRI·JUL 17, SAT·JUL 18. Pressable rows navigate to /workout/{id}."
+}

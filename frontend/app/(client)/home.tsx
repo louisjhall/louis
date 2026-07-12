@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Modal } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -44,6 +44,26 @@ function titleFor(kind: string): string {
 }
 
 const HERO = "https://images.unsplash.com/photo-1605296867304-46d5465a13f1?crop=entropy&cs=srgb&fm=jpg&q=85";
+
+function localDateStr(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): string {
+  if (dateStr === todayStr) return "TODAY";
+  if (dateStr === tomorrowStr) return "TOMORROW";
+  try {
+    const d = new Date(`${dateStr}T00:00:00`);
+    const wk = d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase();
+    const md = d.toLocaleDateString(undefined, { month: "short", day: "numeric" }).toUpperCase();
+    return `${wk} · ${md}`;
+  } catch {
+    return dateStr;
+  }
+}
 
 export default function Home() {
   const { user } = useAuth();
@@ -103,10 +123,44 @@ export default function Home() {
   };
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr(new Date());
   const todaysWorkout = workouts.find((w) => w.date === today);
   const todaysDay = roster?.days?.find((d: any) => d.date === today);
   const load_color = loadColor(todaysWorkout?.day_load || todaysDay?.load);
+
+  const next7 = useMemo(() => {
+    const byDate = new Map<string, any>();
+    (workouts || []).forEach((w: any) => { if (w?.date) byDate.set(w.date, w); });
+    const rosterByDate = new Map<string, any>();
+    (roster?.days || []).forEach((d: any) => { if (d?.date) rosterByDate.set(d.date, d); });
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    const out: any[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(base);
+      d.setDate(base.getDate() + i);
+      const key = localDateStr(d);
+      const w = byDate.get(key);
+      if (w) {
+        out.push({ ...w, __key: key, __rest: false });
+      } else {
+        const rd = rosterByDate.get(key);
+        const isFlight = rd?.day_type === "flight" || (rd?.flights?.length || 0) > 0;
+        out.push({
+          __key: key,
+          __rest: true,
+          id: `rest-${key}`,
+          date: key,
+          title: isFlight ? "FLIGHT · RECOVERY" : "REST DAY",
+          location: rd?.layover_city || null,
+          duration_min: 0,
+          day_load: rd?.load || "grey",
+          day_type: rd?.day_type || "rest",
+        });
+      }
+    }
+    return out;
+  }, [workouts, roster]);
 
   const expiry = roster?.expiry;
   const rDays = expiry?.days_remaining;
@@ -288,22 +342,40 @@ export default function Home() {
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
           {loading && !workouts.length ? (
             <ActivityIndicator color={theme.color.brand} />
-          ) : workouts.length === 0 ? (
-            <Text style={styles.emptySub}>No plan yet. Upload roster + generate.</Text>
           ) : (
-            workouts.slice(0, 7).map((w) => (
-              <Pressable key={w.id} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow} testID={`week-workout-${w.id}`}>
-                <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.wDate}>{w.date}</Text>
-                  <Text style={styles.wTitle}>{w.title}</Text>
-                  <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
-                </View>
-                {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} style={{ marginRight: 10 }} />}
-                {w.coach_locked && <Ionicons name="lock-closed" size={16} color={theme.color.amber} style={{ marginRight: 10 }} />}
-                {!w.approved && !w.completed && <Text style={styles.pendPill}>PENDING</Text>}
-              </Pressable>
-            ))
+            (() => {
+              const tomorrow = new Date();
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              const tomorrowStr = localDateStr(tomorrow);
+              return next7.map((w) => {
+                if (w.__rest) {
+                  return (
+                    <View key={w.__key} style={[styles.wRow, styles.wRowRest]} testID={`week-rest-${w.__key}`}>
+                      <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.wDate}>{dayLabel(w.__key, today, tomorrowStr)}</Text>
+                        <Text style={[styles.wTitle, styles.wTitleRest]}>{w.title}</Text>
+                        <Text style={styles.wMeta}>{w.location ? `${w.location} · ` : ""}No session scheduled</Text>
+                      </View>
+                      <Ionicons name="moon" size={16} color={theme.color.textMuted} style={{ marginRight: theme.space.md }} />
+                    </View>
+                  );
+                }
+                return (
+                  <Pressable key={w.id} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow} testID={`week-workout-${w.id}`}>
+                    <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.wDate}>{dayLabel(w.__key, today, tomorrowStr)}</Text>
+                      <Text style={styles.wTitle}>{w.title}</Text>
+                      <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
+                    </View>
+                    {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} style={{ marginRight: 10 }} />}
+                    {w.coach_locked && <Ionicons name="lock-closed" size={16} color={theme.color.amber} style={{ marginRight: 10 }} />}
+                    {!w.approved && !w.completed && <Text style={styles.pendPill}>PENDING</Text>}
+                  </Pressable>
+                );
+              });
+            })()
           )}
         </View>
       </ScrollView>
@@ -437,6 +509,8 @@ const styles = StyleSheet.create({
   qBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 10 },
   sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
   wRow: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, overflow: "hidden", borderWidth: 1, borderColor: theme.color.border },
+  wRowRest: { opacity: 0.75 },
+  wTitleRest: { color: theme.color.textMuted, fontWeight: "800", letterSpacing: 1 },
   loadBar: { width: 4, alignSelf: "stretch" },
   wDate: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 2, padding: theme.space.md, paddingBottom: 0, fontWeight: "700" },
   wTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700", paddingHorizontal: theme.space.md, marginTop: 2 },

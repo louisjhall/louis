@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 56 — Re-verified the roster-upload safety net. Both the /api/roster/jobs/active broadening AND the new POST /api/roster/jobs/{id}/acknowledge behave exactly per spec. All 6 acceptance tests in test_iter56_roster_active_and_acknowledge.py PASS. The previously red iter55 test 'test_active_endpoint_returns_needs_review_stub' now PASSES against server.py:2566. Frontend smoke check: with a stubbed needs_review job for the seeded client, Client Home renders the amber 'plan-needs-review-banner' with correct copy and the 'plan-review-open' link, and NEXT 7 DAYS still opens with 'Today' → 'Tomorrow'. No new bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter56_roster_active_and_acknowledge.py",
+    "/app/test_reports/pytest/iter56_roster_active_ack.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:2566 roster_active_job — correct: $or across [queued/processing] OR [needs_review|partial|failed within 7d AND client_acknowledged != true]. Sort by updated_at desc/created_at desc is sensible.",
+    "server.py:2595 roster_job_acknowledge — correct 404 on non-existent job; sets client_acknowledged=true + acknowledged_at. Idempotent (safe to call twice).",
+    "Minor: acknowledge endpoint currently allows acknowledging queued/processing jobs too (does not restrict to needs_review/partial/failed). Not a bug — frontend only ever calls it from the amber banner — but you may want to guard it later so a client can't accidentally hide a live processing job.",
+    "Minor: acknowledge sets client_acknowledged before checking status. Consider also blocking ack on status in queued/processing to prevent client from dismissing an in-flight job, though the endpoint would still work (queued/processing branch of /active ignores client_acknowledged)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter56_roster_active_and_acknowledge.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6 tests pass, incl. iter55 previously-red acceptance test)", "frontend": "100% (banner renders + Today at top of NEXT 7 DAYS)"},
+  "seed_data_creation": "Inserted 2 stub roster_jobs docs (id prefixed TEST_UI_BANNER_, status=needs_review) for the client during the playwright smoke test to force the amber banner to render. Both were deleted via /tmp/cleanup_stubs.py. All pytest fixtures self-clean via try/finally.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Roster-upload safety net is complete and green. Regression file: /app/backend/tests/test_iter56_roster_active_and_acknowledge.py — reuse the _insert_stub_job helper and the autouse _wipe_active_jobs fixture (it clears any lingering needs_review/partial/failed jobs by flipping client_acknowledged=true, which is essential when the client already has real failed jobs from earlier test runs). testIDs to remember on client home: plan-preparing-banner (queued/processing), plan-needs-review-banner (needs_review/partial/failed), plan-review-open. Seeded client id: 62f90680-313b-4fca-bc3f-9a19ac49065d.",
+  "rca_of_issue": "n/a — iteration 55's critical bug is now fixed at server.py:2566-2604. Verified by (a) unit-ish test test_active_returns_needs_review_within_7_days (green), (b) frontend playwright smoke test (banner renders), (c) the previously red iter55 acceptance test test_active_endpoint_returns_needs_review_stub now green."
+}

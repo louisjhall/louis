@@ -2565,13 +2565,43 @@ async def _notify_coaches_of_new_roster(client: dict, roster: dict, job_id: str)
 
 @api.get("/roster/jobs/active")
 async def roster_active_job(user: dict = Depends(current_user)):
-    """Return the user's most recent still-running job for banner display."""
+    """Return the user's most recent job that the client should be aware of.
+
+    Includes still-running jobs AND recently-failed / needs-review jobs (within
+    the last 7 days) so the home screen can show an amber "plan needs review"
+    banner and route to Retry Plan Generation. The client can dismiss stale
+    review banners by setting job.client_acknowledged=true.
+    """
+    import datetime as _dtimp
+    cutoff = (_dtimp.datetime.utcnow() - _dtimp.timedelta(days=7)).isoformat()
     j = await db.roster_jobs.find_one(
-        {"user_id": user["id"], "status": {"$in": ["queued", "processing"]}},
+        {
+            "user_id": user["id"],
+            "$or": [
+                {"status": {"$in": ["queued", "processing"]}},
+                {
+                    "status": {"$in": ["needs_review", "partial", "failed"]},
+                    "updated_at": {"$gte": cutoff},
+                    "client_acknowledged": {"$ne": True},
+                },
+            ],
+        },
         {"_id": 0},
-        sort=[("created_at", -1)],
+        sort=[("updated_at", -1), ("created_at", -1)],
     )
     return j or {}
+
+
+@api.post("/roster/jobs/{job_id}/acknowledge")
+async def roster_job_acknowledge(job_id: str, user: dict = Depends(current_user)):
+    """Client dismisses a needs-review / failed / partial banner."""
+    r = await db.roster_jobs.update_one(
+        {"id": job_id, "user_id": user["id"]},
+        {"$set": {"client_acknowledged": True, "acknowledged_at": now_iso()}},
+    )
+    if not r.matched_count:
+        raise HTTPException(404, "Job not found")
+    return {"ok": True}
 
 
 @api.get("/roster/jobs/{job_id}")

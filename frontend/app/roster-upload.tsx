@@ -22,9 +22,9 @@ const STAGES = [
 ];
 
 // If we see no progress movement for this many milliseconds, warn the user.
-const SLOW_MS = 60_000;
+const SLOW_MS = 90_000;
 // If we see no movement for this many milliseconds, offer recovery actions.
-const STUCK_MS = 120_000;
+const STUCK_MS = 210_000;
 
 async function uriToBase64(uri: string): Promise<string> {
   const res = await fetch(uri);

@@ -2432,7 +2432,7 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             # progress heartbeat so the client is never left at exactly 80% forever.
             heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
             try:
-                workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=90.0)
+                workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=180.0)
             except _asyncio.TimeoutError:
                 logger.warning("plan generation TIMEOUT in job %s (>90s)", job_id)
                 heartbeat_task.cancel()
@@ -2641,7 +2641,7 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
     async def _retry_worker():
         heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
         try:
-            workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=90.0)
+            workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=180.0)
         except _asyncio.TimeoutError:
             heartbeat_task.cancel()
             await _set_job(
@@ -4119,13 +4119,21 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
             "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available."
         )
         try:
-            raw = await call_claude(WORKOUT_SYSTEM, prompt)
+            # Per-chunk cap so one slow LLM call cannot block sibling chunks or
+            # the outer 3-minute deadline in the roster worker.
+            raw = await _asyncio.wait_for(call_claude(WORKOUT_SYSTEM, prompt), timeout=75.0)
             parsed = parse_json_from_text(raw)
             return parsed.get("workouts", []) if isinstance(parsed, dict) else parsed
+        except _asyncio.TimeoutError:
+            logger.warning("chunk gen TIMEOUT (75s) — skipping this 7-day window and continuing")
+            return []
         except Exception as e:
             logger.warning("chunk gen failed: %s", e)
             return []
 
+    # `return_exceptions=False` because _run_chunk swallows its own errors.
+    # gather returns partial lists — even if some chunks are empty, we still
+    # persist whatever the LLM produced instead of failing the entire plan.
     results = await _asyncio.gather(*[_run_chunk(c) for c in chunks])
     merged: list[dict] = []
     for r in results:

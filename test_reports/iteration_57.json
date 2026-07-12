@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 57 — Verified the roster generation timeout bumps. STATIC CHECKS pass: server.py has _run_chunk wrapping call_claude in asyncio.wait_for(..., timeout=75.0) at line 4124, AND both outer wait_for(_generate_month(user, roster), timeout=180.0) sites are present at line 2435 (initial roster worker) and line 2644 (retry worker). No stale 90s/120s wait_for wrappers around _generate_month remain. Frontend roster-upload.tsx has SLOW_MS=90_000 (line 25) and STUCK_MS=210_000 (line 27). BACKEND SMOKE pass: /api/setup-day/status returns 401 without auth (endpoint reachable, not 404/500) and 200 with client token. POST /api/roster/jobs/{id}/retry against a fresh needs_review stub job returns {job_id, status: 'processing'} with retry_count incremented and stage='generating' — worker does not immediately error. POST /retry with an unknown job returns 404. ITER56 REGRESSION pass: /api/roster/jobs/active still surfaces needs_review, partial, failed jobs within 7d with client_acknowledged != true; acknowledge flow still hides them. FRONTEND SMOKE pass: /roster-upload renders on mobile viewport (375x667) with all testIDs (ru-back, ru-pick-image, ru-pick-pdf, UPLOAD ROSTER title) and no red-screen error. All 10 new tests + all 6 iter56 regression tests are GREEN. No new bugs found. NO real roster upload was triggered (per agent_to_agent_context_note — would burn Gemini credits).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter57_roster_timeout_bumps.py",
+    "/app/test_reports/pytest/iter57_roster_timeout_bumps.xml",
+    "/app/test_reports/pytest/iter57_iter56_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:4124 _run_chunk wraps call_claude in asyncio.wait_for(..., timeout=75.0) with a clean try/except TimeoutError → returns [] and logs 'chunk gen TIMEOUT (75s)'. Correct: siblings unaffected, outer 180s wait_for still has 105s of headroom for the remaining chunks.",
+    "server.py:2435 (initial roster worker) and server.py:2644 (retry worker) both use wait_for(_generate_month(user, roster), timeout=180.0). Both branches fall through to _set_job(status='needs_review', message='Roster saved — plan needs review') on TimeoutError AND call _open_coach_task_for_stuck_generation, so Louis gets pinged. Correct.",
+    "server.py:2620-2624 roster_job_retry short-circuits if the job is already queued/processing — returns {job_id, status: <existing>} without duplicating work. Idempotent. Correct.",
+    "Partial-results persistence: server.py:4137 gathers per-chunk results with return_exceptions=False (safe because _run_chunk swallows its own exceptions). Empty chunks are merged in silently, so a slow week produces 0 workouts but the other weeks still land in db.workouts. Matches the 'partial results still persist' fix claim.",
+    "roster-upload.tsx:25-27 SLOW_MS=90_000 (>= backend outer timeout 90s of prior version, now aligns with new 180s / 2) and STUCK_MS=210_000 (>180s outer + a safety margin). Banner thresholds are now realistic vs. the outer worker timeout. Correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter57_roster_timeout_bumps.py (new — 10 tests: 4 static-constant, 3 backend smoke, 2 retry-endpoint, 1 iter56 regression)"
+  ],
+  "success_rate": {"backend": "100% (10/10 new + 6/6 iter56 regression = 16/16 pass)", "frontend": "100% (roster-upload screen renders with all testIDs, no red screen, no crash)"},
+  "seed_data_creation": "Inserted 3 TEST_ prefixed roster_jobs stubs (needs_review) + matching TEST_ prefixed rosters for retry and /active tests. All stubs are torn down via try/finally in each test using db.roster_jobs.delete_one and db.rosters.delete_one. Autouse fixture flips any lingering unacknowledged failure jobs on the seeded client to client_acknowledged=true so /active is deterministic.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Timeout bumps are locked in and covered by static regex tests (test_iter57_roster_timeout_bumps.py::TestStaticConstants). If a future iteration touches _run_chunk or the outer _generate_month wait_for calls, those 3 static tests will red immediately. Same for the two frontend constants. Retry endpoint smoke test uses stub docs — no real Gemini call happens; the worker fires but _generate_month on an empty roster.days list is fast/no-op. If you need to re-verify with a real roster, use the /roster-upload flow manually (do not automate — burns credits).",
+  "rca_of_issue": "n/a — This iteration only verifies the fix. Original RCA per problem statement: outer 90s wait_for killed _generate_month before 4 concurrent 7-day chunks could complete; one slow LLM chunk starved siblings. Fix: (a) per-chunk 75s cap so one slow chunk cannot hang the whole gather; (b) outer 90s → 180s on both roster worker + retry worker; (c) frontend SLOW/STUCK banners moved from 60s/120s to 90s/210s to match new realistic thresholds; (d) partial persistence loop already in place at server.py:2440+ and 2668+, so users still get workouts for the weeks that DID succeed."
+}

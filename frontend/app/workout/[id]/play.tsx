@@ -18,6 +18,7 @@ import { RestTimer } from "@/src/components/RestTimer";
 import { getAutoRest } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete } from "@/src/lib/sounds";
+import { toast } from "@/src/lib/ux";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const TILES = ["IMAGE", "HOW TO", "VIDEO", "SWAP", "LOG"] as const;
@@ -262,10 +263,30 @@ export default function AtlasPlayer() {
         {tile === "IMAGE" && <TileImage ex={currentEx} />}
         {tile === "HOW TO" && <TileHow ex={currentEx} />}
         {tile === "VIDEO" && <TileVideo ex={currentEx} />}
-        {tile === "SWAP" && <TileSwap ex={currentEx} location={w.location} onPick={(n: string) => {
-          // Persist as coach_notes so it's not lost
-          Alert.alert("Swapped", `Atlas has swapped to: ${n}. Continue when ready.`);
-        }} />}
+        {tile === "SWAP" && (
+          <TileSwap
+            ex={currentEx}
+            location={w.location}
+            onPick={async (n: string, reason?: string) => {
+              try {
+                const r = await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
+                  method: "POST",
+                  body: { exercise_index: idx, new_name: n, reason: reason || null },
+                });
+                // Refresh workout in place so all tiles now show the new exercise.
+                if (r?.workout) setW(r.workout);
+                setTile("IMAGE");
+                toast(`Alternative selected: ${n}`, "success");
+              } catch (e: any) {
+                Alert.alert(
+                  "Couldn't update exercise",
+                  e?.message || "Please try again.",
+                  [{ text: "OK" }],
+                );
+              }
+            }}
+          />
+        )}
         {tile === "LOG" && (
           isCardioExercise(currentEx) ? (
             <TileLogCardio
@@ -495,7 +516,7 @@ function TileVideo({ ex }: { ex: any }) {
 /* -------------------------------------------------------------------------- */
 /*  Tile 4 — Swap                                                              */
 /* -------------------------------------------------------------------------- */
-function TileSwap({ ex, location, onPick }: { ex: any; location?: string; onPick: (name: string) => void }) {
+function TileSwap({ ex, location, onPick }: { ex: any; location?: string; onPick: (name: string, reason?: string) => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -538,7 +559,7 @@ function TileSwap({ ex, location, onPick }: { ex: any; location?: string; onPick
                 )}
               </View>
             </View>
-            <Pressable onPress={() => onPick(a.name)} style={styles.altPick} testID={`swap-pick-${i}`}>
+            <Pressable onPress={() => onPick(a.name, a.why)} style={styles.altPick} testID={`swap-pick-${i}`}>
               <Text style={styles.altPickT}>USE THIS</Text>
               <Ionicons name="arrow-forward" size={13} color="#fff" />
             </Pressable>

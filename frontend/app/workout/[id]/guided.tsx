@@ -419,13 +419,29 @@ export default function GuidedFlow() {
         workoutId={String(id)}
         exercise={currentEx}
         onClose={() => setSwapOpen(false)}
-        onSwapped={(newEx) => {
+        onSwapped={async (newEx, reason) => {
+          // Persist the swap so it survives reloads and Louis can see it
+          // in the coach dashboard. Falls back to local-only update if the
+          // API is unreachable so the user isn't stranded mid-workout.
+          const newName = newEx?.name;
+          try {
+            const r = await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
+              method: "POST",
+              body: { exercise_index: exIdx, new_name: newName, reason: reason || null },
+            });
+            if (r?.workout) setWorkout(r.workout);
+          } catch (e: any) {
+            // Non-fatal — apply locally so the guided flow keeps moving.
+            setWorkout((w: any) => ({
+              ...w,
+              exercises: w.exercises.map((e: any, i: number) => (i === exIdx ? { ...e, ...newEx } : e)),
+            }));
+            Alert.alert(
+              "Couldn't sync swap",
+              "Continuing with the alternative locally. Reopen the workout to retry sync.",
+            );
+          }
           setSwapOpen(false);
-          // Update workout in place
-          setWorkout((w: any) => ({
-            ...w,
-            exercises: w.exercises.map((e: any, i: number) => (i === exIdx ? { ...e, ...newEx } : e)),
-          }));
         }}
       />
     </SafeAreaView>
@@ -706,7 +722,7 @@ function HowToSheet({
 function SwapSheet({
   visible, workoutId, exercise, onClose, onSwapped,
 }: {
-  visible: boolean; workoutId: string; exercise: any; onClose: () => void; onSwapped: (ex: any) => void;
+  visible: boolean; workoutId: string; exercise: any; onClose: () => void; onSwapped: (ex: any, reason?: string) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [alts, setAlts] = useState<any[]>([]);
@@ -744,7 +760,7 @@ function SwapSheet({
               <Pressable
                 key={i}
                 style={sheetStyles.altCard}
-                onPress={() => onSwapped({ ...exercise, name: alt.name, notes: alt.reason })}
+                onPress={() => onSwapped({ ...exercise, name: alt.name, notes: alt.reason }, alt.reason)}
               >
                 <View style={{ flex: 1 }}>
                   <Text style={sheetStyles.altName}>{alt.name}</Text>

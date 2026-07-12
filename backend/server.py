@@ -4164,6 +4164,91 @@ async def workout_update(wid: str, body: WorkoutUpdateBody, user: dict = Depends
     return await db.workouts.find_one({"id": wid}, {"_id": 0})
 
 
+class SwapExerciseBody(BaseModel):
+    exercise_index: int
+    new_name: str
+    reason: Optional[str] = None
+
+
+@api.post("/workouts/{wid}/swap-exercise")
+async def workout_swap_exercise(wid: str, body: SwapExerciseBody, user: dict = Depends(current_user)):
+    """Client-driven exercise swap.
+
+    Replaces the exercise at ``exercise_index`` with a new one selected from
+    the Atlas alternatives list. Preserves sets / reps / rest / RPE / order /
+    section — only the exercise identity changes. Writes an audit row to
+    ``workout_exercise_swaps`` so Louis sees the change in the coach
+    dashboard.
+    """
+    w = await db.workouts.find_one({"id": wid})
+    if not w:
+        raise HTTPException(404, "workout not found")
+    if user["role"] == "client" and w.get("user_id") != user["id"]:
+        raise HTTPException(403, "forbidden")
+
+    exercises = list(w.get("exercises") or [])
+    idx = body.exercise_index
+    if idx < 0 or idx >= len(exercises):
+        raise HTTPException(400, "exercise_index out of range")
+
+    new_name = (body.new_name or "").strip()
+    if not new_name:
+        raise HTTPException(400, "new_name required")
+
+    original = exercises[idx]
+    # Preserve every prescription field, replace identity + media-linked bits.
+    swapped = {
+        **original,
+        "name": new_name,
+        "exercise_id": None,      # will re-resolve by name on next read
+        "notes": body.reason or original.get("notes"),
+        "swapped_from": original.get("name"),
+        "swapped_at": now_iso(),
+        "swapped_by": user["role"],
+    }
+    exercises[idx] = swapped
+    await db.workouts.update_one(
+        {"id": wid},
+        {"$set": {"exercises": exercises, "updated_at": now_iso()}},
+    )
+
+    # Audit — coach visibility.
+    await db.workout_exercise_swaps.insert_one({
+        "id": new_id(),
+        "workout_id": wid,
+        "user_id": w.get("user_id"),
+        "coach_id": w.get("coach_id"),
+        "exercise_index": idx,
+        "original_name": original.get("name"),
+        "replacement_name": new_name,
+        "reason": body.reason or "client_selected_alternative",
+        "replaced_by": user["role"],
+        "replaced_at": now_iso(),
+        "date": w.get("date"),
+    })
+
+    fresh = await db.workouts.find_one({"id": wid}, {"_id": 0})
+    return {"ok": True, "workout": fresh, "swapped_index": idx, "new_name": new_name}
+
+
+@api.get("/coach/exercise-swaps")
+async def coach_recent_swaps(days: int = 30, user: dict = Depends(current_user)):
+    """Recent client-initiated exercise swaps. Coach + admin only."""
+    if user["role"] not in ("coach", "admin"):
+        raise HTTPException(403, "forbidden")
+    since = (datetime.now(timezone.utc) - timedelta(days=max(1, min(days, 90)))).isoformat()
+    rows = await db.workout_exercise_swaps.find(
+        {"replaced_at": {"$gte": since}}, {"_id": 0},
+    ).sort("replaced_at", -1).to_list(200)
+    # Enrich with user name for the dashboard.
+    user_ids = {r.get("user_id") for r in rows if r.get("user_id")}
+    users = {u["id"]: u.get("name") async for u in db.users.find({"id": {"$in": list(user_ids)}}, {"id": 1, "name": 1})}
+    for r in rows:
+        r["user_name"] = users.get(r.get("user_id"), "Client")
+    return {"swaps": rows, "count": len(rows)}
+
+
+
 @api.post("/workouts/{wid}/complete")
 async def workout_complete(wid: str, body: WorkoutCompleteBody, user: dict = Depends(current_user)):
     await db.workouts.update_one(

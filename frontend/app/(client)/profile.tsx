@@ -178,7 +178,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* 1. PROFILE */}
-        <Section id="profile" title="PROFILE" icon="person" emoji="👤" expanded={expanded} onToggle={toggle}
+        <Section id="profile" title="PROFILE" icon="person" expanded={expanded} onToggle={toggle}
           onEdit={() => openEdit({
             title: "Profile", scope: "user_profile", fields: [
               { key: "name", label: "Name", type: "text", value: user?.name },
@@ -208,7 +208,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 2. COACHING DNA */}
-        <Section id="coaching_dna" title="COACHING DNA" icon="pulse" emoji="🧠" expanded={expanded} onToggle={toggle}
+        <Section id="coaching_dna" title="COACHING DNA" icon="pulse" expanded={expanded} onToggle={toggle}
           rightSlot={dna?.ai_confidence_score !== undefined ? (
             <View style={styles.dnaPill}>
               <Text style={styles.dnaPillLabel}>AI CONF</Text>
@@ -236,7 +236,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 3. GOALS */}
-        <Section id="goals" title="GOALS" icon="flag" emoji="🎯" expanded={expanded} onToggle={toggle}
+        <Section id="goals" title="GOALS" icon="flag" expanded={expanded} onToggle={toggle}
           disabled={!dna}
           onEdit={dna ? () => openEdit({
             title: "Goals", scope: "coaching_dna", fields: [
@@ -258,7 +258,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 4. EVENT TIMELINE (all events, all times) */}
-        <Section id="event_timeline" title="EVENT TIMELINE" icon="calendar" emoji="📅" expanded={expanded} onToggle={toggle}
+        <Section id="event_timeline" title="EVENT TIMELINE" icon="calendar" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={events.length} />}
         >
           {events.length === 0 ? (
@@ -278,7 +278,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 5. AVIATION PROFILE */}
-        <Section id="aviation" title="AVIATION PROFILE" icon="airplane" emoji="✈️" expanded={expanded} onToggle={toggle}
+        <Section id="aviation" title="AVIATION PROFILE" icon="airplane" expanded={expanded} onToggle={toggle}
           disabled={!dna}
           onEdit={dna ? () => openEdit({
             title: "Aviation Profile", scope: "coaching_dna", fields: [
@@ -296,7 +296,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 6. LIFESTYLE */}
-        <Section id="lifestyle" title="LIFESTYLE" icon="home" emoji="🏠" expanded={expanded} onToggle={toggle}
+        <Section id="lifestyle" title="LIFESTYLE" icon="home" expanded={expanded} onToggle={toggle}
           disabled={!dna}
           onEdit={dna ? () => openEdit({
             title: "Lifestyle", scope: "coaching_dna", fields: [
@@ -308,7 +308,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 7. EQUIPMENT */}
-        <Section id="equipment" title="EQUIPMENT" icon="barbell" emoji="🏋️" expanded={expanded} onToggle={toggle}
+        <Section id="equipment" title="EQUIPMENT" icon="barbell" expanded={expanded} onToggle={toggle}
           onEdit={() => openEdit({
             title: "Equipment", scope: "user_profile", fields: [
               { key: "home_equipment", label: "Home equipment (comma-separated)", type: "multi_text", value: (user?.profile?.home_equipment || user?.profile?.equipment || []).join(", ") },
@@ -340,7 +340,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 8. RECOVERY */}
-        <Section id="recovery" title="RECOVERY" icon="leaf" emoji="🌿" expanded={expanded} onToggle={toggle}>
+        <Section id="recovery" title="RECOVERY" icon="leaf" expanded={expanded} onToggle={toggle}>
           <KV label="RECOVERY RISK" value={String(dna?.recovery_risk || "unknown").toUpperCase()} highlight={dna?.recovery_risk === "high"} />
           <KV label="STRATEGY" value={dna?.recommended_recovery_strategy} multiline />
           {checkins.length > 0 ? (
@@ -361,7 +361,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 9. NUTRITION */}
-        <Section id="nutrition" title="NUTRITION" icon="restaurant" emoji="🥗" expanded={expanded} onToggle={toggle}
+        <Section id="nutrition" title="NUTRITION" icon="restaurant" expanded={expanded} onToggle={toggle}
           disabled={!dna}
           onEdit={dna ? () => openEdit({
             title: "Nutrition", scope: "coaching_dna", fields: [
@@ -374,7 +374,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 10. ACHIEVEMENTS */}
-        <Section id="achievements" title="ACHIEVEMENTS" icon="trophy" emoji="🏆" expanded={expanded} onToggle={toggle}
+        <Section id="achievements" title="ACHIEVEMENTS" icon="trophy" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={(achievements.badges || []).filter((b: any) => b.unlocked).length} />}
         >
           <View style={styles.statsGrid}>
@@ -395,7 +395,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 11. PERSONAL RECORDS */}
-        <Section id="prs" title="PERSONAL RECORDS" icon="trending-up" emoji="📈" expanded={expanded} onToggle={toggle}
+        <Section id="prs" title="PERSONAL RECORDS" icon="trending-up" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={prs.length} />}
           onEdit={() => setPrModalOpen(true)}
           editLabel="+ ADD"
@@ -418,7 +418,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 12. ASSESSMENT HISTORY */}
-        <Section id="assess_hist" title="ASSESSMENT HISTORY" icon="time" emoji="📝" expanded={expanded} onToggle={toggle}
+        <Section id="assess_hist" title="ASSESSMENT HISTORY" icon="time" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={assessments.length} />}
         >
           {assessments.length === 0 ? (
@@ -437,7 +437,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 13. LOUIS' NOTES */}
-        <Section id="coach_notes" title="LOUIS' NOTES" icon="chatbubbles" emoji="🧑‍🏫" expanded={expanded} onToggle={toggle}
+        <Section id="coach_notes" title="LOUIS' NOTES" icon="chatbubbles" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={(coachNotes.workout_notes || []).length + (coachNotes.reality_reviews || []).length} />}
         >
           {(coachNotes.workout_notes || []).slice(0, 5).map((w: any) => (
@@ -458,7 +458,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 14. AI NOTES */}
-        <Section id="ai_notes" title="AI NOTES" icon="pulse" emoji="🤖" expanded={expanded} onToggle={toggle}
+        <Section id="ai_notes" title="AI NOTES" icon="pulse" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={(aiNotes.reality_context || []).length + (aiNotes.move_rationales || []).length} />}
         >
           {(aiNotes.reality_context || []).slice(0, 5).map((r: any) => (
@@ -479,7 +479,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 15. UPCOMING EVENTS */}
-        <Section id="upcoming" title="UPCOMING EVENTS" icon="star" emoji="⭐" expanded={expanded} onToggle={toggle}
+        <Section id="upcoming" title="UPCOMING EVENTS" icon="star" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={upcomingEvents.length} />}
         >
           {upcomingEvents.length === 0 ? (
@@ -501,7 +501,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 16. TRAINING PREFERENCES */}
-        <Section id="training_prefs" title="TRAINING PREFERENCES" icon="options" emoji="⚙️" expanded={expanded} onToggle={toggle}
+        <Section id="training_prefs" title="TRAINING PREFERENCES" icon="options" expanded={expanded} onToggle={toggle}
           disabled={!dna}
           onEdit={dna ? () => openEdit({
             title: "Training Preferences", scope: "coaching_dna", fields: [
@@ -520,7 +520,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 17. MOTIVATION */}
-        <Section id="motivation" title="MOTIVATION" icon="flame" emoji="🔥" expanded={expanded} onToggle={toggle}
+        <Section id="motivation" title="MOTIVATION" icon="flame" expanded={expanded} onToggle={toggle}
           disabled={!dna}
           onEdit={dna ? () => openEdit({
             title: "Motivation", scope: "coaching_dna", fields: [
@@ -540,7 +540,7 @@ export default function ProfileScreen() {
         </Section>
 
         {/* 18. LIFE CHANGES */}
-        <Section id="life_changes" title="LIFE CHANGES" icon="git-branch" emoji="🔀" expanded={expanded} onToggle={toggle}
+        <Section id="life_changes" title="LIFE CHANGES" icon="git-branch" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={(aiNotes.dna_history || []).length} />}
         >
           {(aiNotes.dna_history || []).length === 0 ? (
@@ -602,9 +602,9 @@ export default function ProfileScreen() {
 /*  Section Component                                                         */
 /* -------------------------------------------------------------------------- */
 function Section({
-  id, title, icon, emoji, children, expanded, onToggle, onEdit, editLabel, onOpen, rightSlot, disabled,
+  id, title, icon, children, expanded, onToggle, onEdit, editLabel, onOpen, rightSlot, disabled,
 }: {
-  id: string; title: string; icon?: any; emoji?: string;
+  id: string; title: string; icon?: any;
   children: React.ReactNode;
   expanded: Record<string, boolean>;
   onToggle: (id: string) => void;
@@ -1109,7 +1109,7 @@ function HabitsProfileSection() {
                   {h.linked_goal ? <Text style={hstyles.metaChip}>{String(h.linked_goal).toUpperCase().replace(/_/g, " ")}</Text> : null}
                   <Text style={hstyles.metaChip}>{String(h.habit_type).toUpperCase().replace(/-/g, " ")}</Text>
                   {typeof h.streak === "number" && h.streak > 0 ? (
-                    <Text style={[hstyles.metaChip, { color: theme.color.brand }]}>🔥 {h.streak}d</Text>
+                    <Text style={[hstyles.metaChip, { color: theme.color.brand }]}>{h.streak}d</Text>
                   ) : null}
                 </View>
               </View>

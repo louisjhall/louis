@@ -921,7 +921,7 @@ SECTIONS YOU CAN COVER (only when relevant):
 Who You Are · Your Aviation · Your Why · Your Goals · Your Events · Training History · Fitness Level · Lifestyle · Recovery · Nutrition Habits · Equipment · Time Available · Injuries · Motivation · Psychology · Coach Preferences · Wearables · Future Plans
 
 QUESTION TYPES you can return:
-- "single_select" with options: [{"id":"...", "label":"...", "emoji":"..."}] — one choice
+- "single_select" with options: [{"id":"...", "label":"...", "icon":"..."}] — one choice. The `icon` MUST be an Ionicons v5 name (e.g. "airplane", "barbell", "moon", "flame", "leaf", "stats-chart"). Do NOT use emoji characters.
 - "multi_select" with options — multiple choices
 - "short_text" — one-line answer
 - "long_text" — paragraph answer
@@ -950,7 +950,7 @@ RESPONSE FORMAT (STRICT JSON — nothing else):
     "text": "The actual question (concise, coach-tone)",
     "help_text": "Optional 1-sentence why we're asking",
     "type": "single_select"|"multi_select"|"short_text"|"long_text"|"number"|"date"|"range"|"event_builder"|"equipment_picker",
-    "options": [{"id":"long_haul","label":"Long haul","emoji":"🌍"}],  // when applicable
+    "options": [{"id":"long_haul","label":"Long haul","icon":"airplane"}],  // Ionicons name only — NEVER emoji characters
     "meta": {"min":0,"max":100,"step":1,"unit":"min"},                 // when applicable
     "allow_skip": true|false
   },
@@ -1058,34 +1058,34 @@ def _assessment_fallback_next(assessment: dict) -> dict:
     fb: list[dict] = [
         {"id": "role", "section": "Your Aviation", "text": "What is your role in aviation?",
          "type": "single_select", "options": [
-             {"id": "pilot", "label": "Pilot", "emoji": "✈️"},
-             {"id": "cabin_crew", "label": "Cabin Crew", "emoji": "🧳"},
-             {"id": "ground_ops", "label": "Ground Ops", "emoji": "🛄"},
-             {"id": "corporate", "label": "Corporate Aviation", "emoji": "🛩"},
-             {"id": "other", "label": "Other", "emoji": "🌐"},
+             {"id": "pilot", "label": "Pilot", "icon": "airplane"},
+             {"id": "cabin_crew", "label": "Cabin Crew", "icon": "briefcase"},
+             {"id": "ground_ops", "label": "Ground Ops", "icon": "cube"},
+             {"id": "corporate", "label": "Corporate Aviation", "icon": "business"},
+             {"id": "other", "label": "Other", "icon": "globe"},
          ], "allow_skip": False},
         {"id": "primary_goal", "section": "Your Goals",
          "text": "What are you trying to achieve? Pick everything that matters.",
          "type": "multi_select", "options": [
-             {"id": "lose_fat", "label": "Lose body fat", "emoji": "🔥"},
-             {"id": "build_muscle", "label": "Build muscle", "emoji": "💪"},
-             {"id": "general_fitness", "label": "General fitness", "emoji": "🏃"},
-             {"id": "marathon", "label": "Marathon", "emoji": "🏁"},
-             {"id": "half_marathon", "label": "Half Marathon", "emoji": "🏃‍♂️"},
-             {"id": "ironman", "label": "Ironman", "emoji": "🏊"},
-             {"id": "seventy_three", "label": "70.3", "emoji": "🚴"},
-             {"id": "hyrox", "label": "HYROX", "emoji": "🥊"},
-             {"id": "sprint_tri", "label": "Sprint Triathlon", "emoji": "🏊‍♀️"},
-             {"id": "olympic_tri", "label": "Olympic Triathlon", "emoji": "🏊"},
-             {"id": "five_k", "label": "5K", "emoji": "5️⃣"},
-             {"id": "ten_k", "label": "10K", "emoji": "🔟"},
-             {"id": "mobility", "label": "Improve mobility", "emoji": "🧘"},
-             {"id": "reduce_pain", "label": "Reduce pain", "emoji": "🩹"},
-             {"id": "return_injury", "label": "Return from injury", "emoji": "🩺"},
-             {"id": "reduce_jetlag", "label": "Reduce jet lag", "emoji": "🌍"},
-             {"id": "improve_sleep", "label": "Improve sleep", "emoji": "😴"},
-             {"id": "airline_medical", "label": "Pass airline medical", "emoji": "⚕️"},
-             {"id": "maintain", "label": "Maintain fitness", "emoji": "🔁"},
+             {"id": "lose_fat", "label": "Lose body fat", "icon": "trending-down"},
+             {"id": "build_muscle", "label": "Build muscle", "icon": "barbell"},
+             {"id": "general_fitness", "label": "General fitness", "icon": "pulse"},
+             {"id": "marathon", "label": "Marathon", "icon": "flag"},
+             {"id": "half_marathon", "label": "Half Marathon", "icon": "walk"},
+             {"id": "ironman", "label": "Ironman", "icon": "trophy"},
+             {"id": "seventy_three", "label": "70.3", "icon": "medal"},
+             {"id": "hyrox", "label": "HYROX", "icon": "flame"},
+             {"id": "sprint_tri", "label": "Sprint Triathlon", "icon": "speedometer"},
+             {"id": "olympic_tri", "label": "Olympic Triathlon", "icon": "medal-outline"},
+             {"id": "five_k", "label": "5K", "icon": "footsteps"},
+             {"id": "ten_k", "label": "10K", "icon": "footsteps-outline"},
+             {"id": "mobility", "label": "Improve mobility", "icon": "body"},
+             {"id": "reduce_pain", "label": "Reduce pain", "icon": "bandage"},
+             {"id": "return_injury", "label": "Return from injury", "icon": "medkit"},
+             {"id": "reduce_jetlag", "label": "Reduce jet lag", "icon": "moon"},
+             {"id": "improve_sleep", "label": "Improve sleep", "icon": "bed"},
+             {"id": "airline_medical", "label": "Pass airline medical", "icon": "medical"},
+             {"id": "maintain", "label": "Maintain fitness", "icon": "repeat"},
          ], "allow_skip": False},
         {"id": "why", "section": "Your Why", "text": "Why is this important to you right now?",
          "type": "long_text", "help_text": "Your answer becomes part of every future coaching decision.",
@@ -1096,9 +1096,9 @@ def _assessment_fallback_next(assessment: dict) -> dict:
          "allow_skip": True},
         {"id": "experience", "section": "Training History", "text": "How would you describe your training experience?",
          "type": "single_select", "options": [
-             {"id": "beginner", "label": "Beginner", "emoji": "🌱"},
-             {"id": "intermediate", "label": "Intermediate", "emoji": "🌿"},
-             {"id": "advanced", "label": "Advanced", "emoji": "🌳"},
+             {"id": "beginner", "label": "Beginner", "icon": "leaf"},
+             {"id": "intermediate", "label": "Intermediate", "icon": "star-half"},
+             {"id": "advanced", "label": "Advanced", "icon": "star"},
          ]},
         {"id": "time_home", "section": "Time Available", "text": "How much time can you realistically train at home?",
          "type": "range", "meta": {"min": 15, "max": 120, "step": 5, "unit": "min", "left_label": "15m", "right_label": "2h"}},
@@ -1106,21 +1106,21 @@ def _assessment_fallback_next(assessment: dict) -> dict:
          "type": "range", "meta": {"min": 0, "max": 90, "step": 5, "unit": "min", "left_label": "None", "right_label": "1h30"}},
         {"id": "training_days", "section": "Time Available", "text": "How many days a week can you train?",
          "type": "single_select", "options": [
-             {"id": "2", "label": "2 days", "emoji": "2️⃣"},
-             {"id": "3", "label": "3 days", "emoji": "3️⃣"},
-             {"id": "4", "label": "4 days", "emoji": "4️⃣"},
-             {"id": "5", "label": "5 days", "emoji": "5️⃣"},
-             {"id": "6", "label": "6 days", "emoji": "6️⃣"},
+             {"id": "2", "label": "2 days", "icon": "calendar-outline"},
+             {"id": "3", "label": "3 days", "icon": "calendar-outline"},
+             {"id": "4", "label": "4 days", "icon": "calendar-outline"},
+             {"id": "5", "label": "5 days", "icon": "calendar-outline"},
+             {"id": "6", "label": "6 days", "icon": "calendar-outline"},
          ]},
         {"id": "equipment_home", "section": "Equipment", "text": "What equipment do you have at home?",
          "type": "equipment_picker", "meta": {"location": "home"}, "allow_skip": True},
         {"id": "hotel_gyms", "section": "Your Aviation", "text": "Do you usually find gyms in your hotels?",
          "type": "single_select", "options": [
-             {"id": "always", "label": "Always", "emoji": "✅"},
-             {"id": "often", "label": "Often", "emoji": "👍"},
-             {"id": "sometimes", "label": "Sometimes", "emoji": "🤔"},
-             {"id": "rare", "label": "Rarely", "emoji": "🚫"},
-             {"id": "never", "label": "Never", "emoji": "❌"},
+             {"id": "always", "label": "Always", "icon": "checkmark-done"},
+             {"id": "often", "label": "Often", "icon": "checkmark-circle"},
+             {"id": "sometimes", "label": "Sometimes", "icon": "help-circle"},
+             {"id": "rare", "label": "Rarely", "icon": "remove-circle"},
+             {"id": "never", "label": "Never", "icon": "close-circle"},
          ]},
         {"id": "injuries", "section": "Injuries", "text": "Any current injuries or things you must avoid?",
          "type": "long_text", "allow_skip": True},
@@ -1130,66 +1130,66 @@ def _assessment_fallback_next(assessment: dict) -> dict:
          "type": "range", "meta": {"min": 1, "max": 10, "step": 1, "unit": "/10", "left_label": "Low", "right_label": "High"}},
         {"id": "family", "section": "Lifestyle", "text": "Family commitments?",
          "type": "multi_select", "options": [
-             {"id": "kids_young", "label": "Young children", "emoji": "👶"},
-             {"id": "kids_school", "label": "School-age kids", "emoji": "🎒"},
-             {"id": "partner", "label": "Partner", "emoji": "💑"},
-             {"id": "pets", "label": "Pets", "emoji": "🐕"},
-             {"id": "elders", "label": "Caring for elders", "emoji": "🧓"},
-             {"id": "none", "label": "None", "emoji": "🚶"},
+             {"id": "kids_young", "label": "Young children", "icon": "happy"},
+             {"id": "kids_school", "label": "School-age kids", "icon": "school"},
+             {"id": "partner", "label": "Partner", "icon": "heart"},
+             {"id": "pets", "label": "Pets", "icon": "paw"},
+             {"id": "elders", "label": "Caring for elders", "icon": "people-circle"},
+             {"id": "none", "label": "None", "icon": "person"},
          ], "allow_skip": True},
         {"id": "nutrition_habits", "section": "Nutrition Habits", "text": "How do you usually eat on trips?",
          "type": "multi_select", "options": [
-             {"id": "airport_food", "label": "Airport food", "emoji": "🍔"},
-             {"id": "crew_meals", "label": "Crew meals", "emoji": "🍱"},
-             {"id": "hotel_restaurants", "label": "Hotel restaurants", "emoji": "🍽️"},
-             {"id": "meal_prep", "label": "Meal prep from home", "emoji": "🥗"},
-             {"id": "supermarket", "label": "Supermarket / snacks", "emoji": "🥪"},
-             {"id": "delivery", "label": "Food delivery apps", "emoji": "📦"},
+             {"id": "airport_food", "label": "Airport food", "icon": "restaurant"},
+             {"id": "crew_meals", "label": "Crew meals", "icon": "cafe"},
+             {"id": "hotel_restaurants", "label": "Hotel restaurants", "icon": "wine"},
+             {"id": "meal_prep", "label": "Meal prep from home", "icon": "nutrition"},
+             {"id": "supermarket", "label": "Supermarket / snacks", "icon": "cart"},
+             {"id": "delivery", "label": "Food delivery apps", "icon": "bag"},
          ], "allow_skip": True},
         {"id": "diet_style", "section": "Nutrition Habits", "text": "Any dietary preferences?",
          "type": "multi_select", "options": [
-             {"id": "none", "label": "No restrictions", "emoji": "🍽️"},
-             {"id": "vegetarian", "label": "Vegetarian", "emoji": "🥕"},
-             {"id": "vegan", "label": "Vegan", "emoji": "🌱"},
-             {"id": "halal", "label": "Halal", "emoji": "🌙"},
-             {"id": "kosher", "label": "Kosher", "emoji": "✡️"},
-             {"id": "gluten_free", "label": "Gluten free", "emoji": "🌾"},
-             {"id": "dairy_free", "label": "Dairy free", "emoji": "🥛"},
+             {"id": "none", "label": "No restrictions", "icon": "restaurant-outline"},
+             {"id": "vegetarian", "label": "Vegetarian", "icon": "leaf"},
+             {"id": "vegan", "label": "Vegan", "icon": "leaf-outline"},
+             {"id": "halal", "label": "Halal", "icon": "moon-outline"},
+             {"id": "kosher", "label": "Kosher", "icon": "star-outline"},
+             {"id": "gluten_free", "label": "Gluten free", "icon": "flower"},
+             {"id": "dairy_free", "label": "Dairy free", "icon": "close-circle-outline"},
          ], "allow_skip": True},
         {"id": "motivation", "section": "Motivation", "text": "What keeps you motivated?",
          "type": "multi_select", "options": [
-             {"id": "progress", "label": "Progress", "emoji": "📈"},
-             {"id": "competition", "label": "Competition", "emoji": "🏆"},
-             {"id": "routine", "label": "Routine", "emoji": "🔁"},
-             {"id": "coach", "label": "Coach accountability", "emoji": "🧑‍🏫"},
-             {"id": "aesthetics", "label": "Looking better", "emoji": "🪞"},
-             {"id": "health", "label": "Feeling healthier", "emoji": "❤️"},
-             {"id": "events", "label": "Events", "emoji": "🎯"},
-             {"id": "data", "label": "Data", "emoji": "📊"},
+             {"id": "progress", "label": "Progress", "icon": "trending-up"},
+             {"id": "competition", "label": "Competition", "icon": "trophy"},
+             {"id": "routine", "label": "Routine", "icon": "repeat"},
+             {"id": "coach", "label": "Coach accountability", "icon": "person-circle"},
+             {"id": "aesthetics", "label": "Looking better", "icon": "eye"},
+             {"id": "health", "label": "Feeling healthier", "icon": "heart"},
+             {"id": "events", "label": "Events", "icon": "flag"},
+             {"id": "data", "label": "Data", "icon": "stats-chart"},
          ]},
         {"id": "blocker", "section": "Psychology", "text": "What usually stops you training?",
          "type": "multi_select", "options": [
-             {"id": "jetlag", "label": "Jet lag", "emoji": "🌍"},
-             {"id": "family", "label": "Family", "emoji": "👨‍👩‍👧"},
-             {"id": "pain", "label": "Pain", "emoji": "🤕"},
-             {"id": "time", "label": "Time", "emoji": "⏰"},
-             {"id": "motivation", "label": "Motivation", "emoji": "😔"},
-             {"id": "sleep", "label": "Sleep", "emoji": "😴"},
-             {"id": "travel", "label": "Travel", "emoji": "🚗"},
-             {"id": "stress", "label": "Stress", "emoji": "😣"},
-             {"id": "nothing", "label": "Nothing usually", "emoji": "💪"},
+             {"id": "jetlag", "label": "Jet lag", "icon": "airplane"},
+             {"id": "family", "label": "Family", "icon": "people"},
+             {"id": "pain", "label": "Pain", "icon": "bandage"},
+             {"id": "time", "label": "Time", "icon": "time"},
+             {"id": "motivation", "label": "Motivation", "icon": "sad"},
+             {"id": "sleep", "label": "Sleep", "icon": "moon"},
+             {"id": "travel", "label": "Travel", "icon": "car"},
+             {"id": "stress", "label": "Stress", "icon": "warning"},
+             {"id": "nothing", "label": "Nothing usually", "icon": "checkmark-done"},
          ]},
         {"id": "coaching_style_pref", "section": "Coach Preferences",
          "text": "What kind of coach do you respond to?",
          "type": "single_select", "options": [
-             {"id": "strict", "label": "Strict", "emoji": "📏"},
-             {"id": "supportive", "label": "Supportive", "emoji": "🤝"},
-             {"id": "data_driven", "label": "Data driven", "emoji": "📊"},
-             {"id": "flexible", "label": "Flexible", "emoji": "🌊"},
-             {"id": "high_accountability", "label": "High accountability", "emoji": "🎯"},
-             {"id": "hands_off", "label": "Hands off", "emoji": "🕊️"},
-             {"id": "motivational", "label": "Motivational", "emoji": "🔥"},
-             {"id": "educational", "label": "Educational", "emoji": "📚"},
+             {"id": "strict", "label": "Strict", "icon": "ribbon"},
+             {"id": "supportive", "label": "Supportive", "icon": "hand-left"},
+             {"id": "data_driven", "label": "Data driven", "icon": "stats-chart"},
+             {"id": "flexible", "label": "Flexible", "icon": "swap-horizontal"},
+             {"id": "high_accountability", "label": "High accountability", "icon": "flag"},
+             {"id": "hands_off", "label": "Hands off", "icon": "sparkles"},
+             {"id": "motivational", "label": "Motivational", "icon": "flame"},
+             {"id": "educational", "label": "Educational", "icon": "book"},
          ]},
     ]
     for q in fb:
@@ -2290,6 +2290,48 @@ async def _detect_overlap(user_id: str, new_days: list[dict]) -> dict:
     return {"overlapping_dates": sorted(set(overlaps)), "changes": changes}
 
 
+async def _generation_heartbeat(job_id: str, start_progress: int = 80, cap_progress: int = 95, interval_s: float = 6.0) -> None:
+    """Background heartbeat that gently bumps progress + updated_at so the
+    frontend never sees a frozen bar during long AI generation calls."""
+    import asyncio as _asyncio
+    progress = start_progress
+    try:
+        while progress < cap_progress:
+            await _asyncio.sleep(interval_s)
+            progress += 2
+            if progress > cap_progress:
+                progress = cap_progress
+            try:
+                await _set_job(job_id, progress=progress, message="Generating your personalised plan (still working)...")
+            except Exception:
+                return
+    except _asyncio.CancelledError:
+        return
+
+
+async def _open_coach_task_for_stuck_generation(client: dict, roster: dict, job_id: str, reason: str) -> None:
+    """When plan generation times out or fails hard, notify the coach with a
+    high-priority to-do so someone reviews the client's roster."""
+    try:
+        await _create_coach_task(
+            client,
+            "roster_plan_generation_issue",
+            f"Roster plan generation issue: {client.get('name') or client.get('email')}",
+            (
+                f"{client.get('name') or client.get('email')}'s roster was uploaded successfully but the training "
+                f"plan couldn't be generated automatically ({reason}). Roster ID {roster.get('id')} is saved and "
+                f"visible in their calendar. Please retry plan generation or build a manual plan."
+            ),
+            priority="high",
+            risk_level="high",
+            category="programme",
+            payload={"job_id": job_id, "roster_id": roster.get("id"), "reason": reason},
+        )
+    except Exception:
+        logger.exception("could not create coach task for stuck plan generation")
+
+
+
 @api.post("/roster/upload-and-generate")
 async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict = Depends(current_user)):
     """One-shot background job: parse roster → detect overlap → save → generate month.
@@ -2365,16 +2407,34 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             await db.rosters.update_many({"user_id": user["id"], "is_active": True}, {"$set": {"is_active": False}})
             await db.rosters.insert_one(roster)
             await _set_job(job_id, roster_id=roster["id"], stage="generating", progress=80, message="Generating your personalised plan...")
-            # Generate workouts inline
+            # Generate workouts inline — with a hard timeout and a background
+            # progress heartbeat so the client is never left at exactly 80% forever.
+            heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
             try:
-                workouts = await _generate_month(user, roster)
-            except Exception:
-                logger.exception("generation failed in job %s", job_id)
-                # Roster is saved so user can view calendar; mark job partial
-                await _set_job(job_id, status="partial", stage="generating", progress=85,
-                               error="Your roster was saved but the training plan couldn't be generated automatically. Tap Retry to try again.",
-                               message="Plan generation failed - roster saved")
+                workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=90.0)
+            except _asyncio.TimeoutError:
+                logger.warning("plan generation TIMEOUT in job %s (>90s)", job_id)
+                heartbeat_task.cancel()
+                await _set_job(
+                    job_id, status="needs_review", stage="generating", progress=90,
+                    error="Plan generation is taking longer than expected. Louis has been notified and your roster has been saved.",
+                    message="Roster saved — plan needs review",
+                )
+                await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="timeout")
                 return
+            except Exception as e:
+                heartbeat_task.cancel()
+                logger.exception("generation failed in job %s", job_id)
+                await _set_job(
+                    job_id, status="needs_review", stage="generating", progress=90,
+                    error="Your roster was saved but the plan couldn't be generated automatically. Louis has been notified.",
+                    message="Roster saved — plan needs review",
+                    error_detail=str(e)[:400],
+                )
+                await _open_coach_task_for_stuck_generation(user, roster, job_id, reason=f"error: {type(e).__name__}")
+                return
+            finally:
+                heartbeat_task.cancel()
             existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
             for w in workouts:
                 d = w.get("date")
@@ -2488,14 +2548,104 @@ async def roster_job_status(job_id: str, user: dict = Depends(current_user)):
 
 @api.post("/roster/jobs/{job_id}/retry")
 async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
+    """Re-run ONLY the plan generation step for a job that timed out or failed.
+    The client does not need to re-upload their roster."""
+    import asyncio as _asyncio
     j = await db.roster_jobs.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
     if not j:
         raise HTTPException(404, "Job not found")
     if j.get("status") in ("queued", "processing"):
         return {"job_id": job_id, "status": j["status"]}
-    # Reset job, but we need the original file bytes — we didn't store them.
-    # Instead, mark the job as needs-reupload and let the client re-send the file.
-    raise HTTPException(400, "Please re-upload the file to retry.")
+    roster_id = j.get("roster_id")
+    if not roster_id:
+        raise HTTPException(400, "This job did not save a roster — please re-upload the file.")
+    roster = await db.rosters.find_one({"id": roster_id, "user_id": user["id"]}, {"_id": 0})
+    if not roster:
+        raise HTTPException(404, "Original roster not found — please re-upload.")
+
+    await _set_job(
+        job_id,
+        status="processing", stage="generating", progress=80,
+        error=None, error_detail=None,
+        message="Retrying plan generation...",
+        retry_count=int(j.get("retry_count") or 0) + 1,
+        retried_at=now_iso(),
+    )
+
+    async def _retry_worker():
+        heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
+        try:
+            workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=90.0)
+        except _asyncio.TimeoutError:
+            heartbeat_task.cancel()
+            await _set_job(
+                job_id, status="needs_review", stage="generating", progress=90,
+                error="Plan generation is still taking longer than expected. Louis has been notified.",
+                message="Roster saved — plan needs review",
+            )
+            await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="timeout on retry")
+            return
+        except Exception as e:
+            heartbeat_task.cancel()
+            logger.exception("retry plan generation failed for job %s", job_id)
+            await _set_job(
+                job_id, status="needs_review", stage="generating", progress=90,
+                error="Plan couldn't be generated. Louis has been notified.",
+                error_detail=str(e)[:400],
+                message="Roster saved — plan needs review",
+            )
+            await _open_coach_task_for_stuck_generation(user, roster, job_id, reason=f"retry error: {type(e).__name__}")
+            return
+        finally:
+            heartbeat_task.cancel()
+
+        # Reuse the same upsert logic as the main worker.
+        existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
+        for w in workouts:
+            d = w.get("date")
+            if not d:
+                continue
+            prev = existing.get(d)
+            if prev and (prev.get("coach_locked") or prev.get("completed")):
+                continue
+            doc = {
+                "id": prev["id"] if prev else new_id(),
+                "user_id": user["id"], "roster_id": roster["id"], "date": d,
+                "day_load": w.get("day_load", "green"),
+                "title": w.get("title", "Session"),
+                "location": w.get("location", "Home Workout"),
+                "duration_min": w.get("duration_min", 40),
+                "focus": w.get("focus", "full"),
+                "warmup": w.get("warmup", []),
+                "exercises": w.get("exercises", []),
+                "alternatives": w.get("alternatives", {}),
+                "rationale": w.get("rationale", ""),
+                "key_session": bool(w.get("key_session", False)),
+                "event_phase": w.get("event_phase"),
+                "approved": prev.get("approved", False) if prev else False,
+                "completed": False,
+                "coach_notes": prev.get("coach_notes", "") if prev else "",
+                "coach_locked": False,
+                "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
+                "updated_at": now_iso(),
+            }
+            try:
+                await db.workouts.delete_many({"user_id": user["id"], "date": d})
+                await db.workouts.insert_one(doc)
+            except Exception as e:
+                logger.warning("retry workout upsert failed for date=%s: %s", d, e)
+                continue
+        await _set_job(job_id, stage="coach", progress=98, message="Preparing coach review...")
+        try:
+            await _notify_coaches_of_new_roster(user, roster, job_id)
+        except Exception:
+            pass
+        await _set_job(job_id, status="complete", stage="complete", progress=100,
+                       message="Your new plan is ready", completed_at=now_iso(),
+                       workouts_generated=len(workouts))
+
+    _asyncio.create_task(_retry_worker())
+    return {"job_id": job_id, "status": "processing"}
 
 
 @api.get("/coach/roster-alerts")

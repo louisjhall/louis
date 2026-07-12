@@ -1,0 +1,35 @@
+{
+  "summary": "Tested (A) roster-plan-generation timeout / retry endpoint + heartbeat helpers and (B) emoji removal from client-facing surfaces. Backend: 8/8 pytest passes. POST /api/roster/jobs/{id}/retry returns 401 without auth, 404 for missing job, 400 with helpful 're-upload' message when job has no roster_id (verified by injecting a fake job with roster_id=None into MongoDB). Helpers _generation_heartbeat and _open_coach_task_for_stuck_generation are importable from server.py. _assessment_fallback_next({}) returns wrapper {next_question, should_end, progress, section_context} where next_question.id='role' and every option has 'icon' (Ionicons name) with NO 'emoji' key; walking one step further returns primary_goal with the same guarantee. /api/setup-day/status returns 401 unauth and 200 with is_setup_day for authed client (confirms server.py loaded cleanly). Frontend (mobile 390x844): Home renders with 'Today · Sun 12 Jul' first, then Mon 13 - Sat 18 (7 rows total) — regression PASSED. Profile page shows all 16 target sections (PROFILE, COACHING DNA, GOALS, EVENT TIMELINE, AVIATION PROFILE, LIFESTYLE, EQUIPMENT, RECOVERY, NUTRITION, ACHIEVEMENTS, PERSONAL RECORDS, ASSESSMENT HISTORY, LOUIS' NOTES, AI NOTES, TRAINING PREFERENCES, MOTIVATION) — a DOM emoji regex sweep found ZERO emoji characters. Roster-upload screen compiles and renders with subtitle, ru-pick-image and ru-pick-pdf testIDs visible; no upload triggered (no Gemini call spent). Coach LIBRARY tab points to library.tsx which re-exports coach/exercise-content (V2 Unified Library) — regression PASSED. RealityModal source verified: type Kind still has 'emoji: string' as a leftover field in the TypeScript interface, but every one of the 17 REALITY_KINDS entries only supplies { key, label, icon, hint } — no emoji value is passed anywhere. DOM inspection of the modal was blocked because reality-btn-home only renders when todaysWorkout exists (seeded client has no workout today), but source-level review confirms compliance. No React Native red-screens on any screen tested. Only one dev-only overlay observed: expo LogBox 'Missing token' from a race condition in personalActivities.load() on cold-start before AsyncStorage returns the token — non-blocking, home renders correctly underneath.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "cold-start home / calendar", "issue": "personalActivities.load() races AsyncStorage token load and throws 'Missing token' → shown as an expo LogBox overlay in dev. Home renders correctly beneath it. Consider awaiting token before firing todayActivities/personalActivities in src/lib/personalActivities.ts:104 (also see src/lib/api.ts:49). Users won't see this in prod but it flags a race condition.", "affected_testIDs": []}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter53_roster_retry_emoji.py",
+    "/app/test_reports/pytest/iter53_roster_retry_emoji.xml"
+  ],
+  "action_items": [
+    "MINOR / OPTIONAL: Remove the leftover 'emoji: string' field from the Kind type in /app/frontend/src/components/RealityModal.tsx:15 — no runtime value is passed to it any more, but keeping the field in the type is misleading now that the polish pass has stripped emojis.",
+    "MINOR: In todayActivities/personalActivities on client cold-start, await AsyncStorage token before firing GET /api/personal-activities/today to avoid the 'Missing token' expo LogBox overlay (dev-only, but a real race condition).",
+    "OPTIONAL: The retry endpoint currently returns HTTP 200 with the current status when a job is already 'queued' or 'processing' — this is friendly but perhaps 409 Conflict is more semantically correct. Not blocking."
+  ],
+  "critical_code_review_comments": [
+    "server.py _worker() (line ~2400) does the workouts.delete_many + insert_one INSIDE a per-day loop with individual try/except — good defensive posture, but the whole per-day sequence is NOT wrapped by asyncio.wait_for. Only _generate_month() is bounded. If Mongo becomes slow while writing many workouts, the endpoint can still exceed the intended 90s ceiling. Not a bug today but worth monitoring.",
+    "roster_job_retry (line 2549) does not verify that j['status'] is actually 'failed' or 'needs_review' before retrying — a completed job with a roster_id could be retried too, which would silently overwrite the current calendar. Consider guarding with: `if j.get('status') not in ('failed','needs_review'): raise HTTPException(400, ...)`.",
+    "RealityModal.tsx line 15 still declares `emoji: string` in the Kind type though no entry supplies it — leftover from the polish sweep."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter53_roster_retry_emoji.py (new)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (all requested surfaces render, no emoji leaks, no red-screen)"},
+  "seed_data_creation": "Inserted a synthetic roster_job (id prefixed TEST_) into db.roster_jobs during test_retry_400_when_job_has_no_roster_id and deleted it in the same test's teardown. No other DB writes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend test at /app/backend/tests/test_iter53_roster_retry_emoji.py covers: retry endpoint auth+404+400 shape (uses MongoDB insert-and-delete of a synthetic job), server module load sanity, and the assessment fallback icon/no-emoji contract. To retest the retry timeout path end-to-end without spending Gemini credits, you can insert a fake completed roster + a failed job pointing at it, then call retry — _generate_month will still be called (real work). We deliberately did NOT do this; only shape/error paths were exercised. RealityModal DOM test could not be exercised because the reality-btn-home on the client home is conditional on todaysWorkout being present; the seeded client currently has no workout scheduled today. If you need to exercise RealityModal live, either seed a workout for the client's today date, or open the WorkoutDetail screen (RealityModal is also mounted there). The 'Missing token' expo LogBox on cold-start is dev-only and does not affect the actual UI beneath.",
+  "rca_of_issue": ""
+}

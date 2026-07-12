@@ -45,18 +45,54 @@ MODEL_ID = "gemini-3.1-flash-image-preview"
 
 # ---- Style constants (per user brief §Exercise) ----------------------------
 
-EXERCISE_STYLE = (
-    "Premium dark athletic coaching visual for CrewFit exercise library. "
-    "SOLID BLACK studio background. Realistic athletic person in dark training "
-    "clothing (t-shirt + shorts / joggers). Full-figure or correctly cropped "
-    "body positioning — do not cut off hands, feet or equipment. Movement and "
-    "body position are the focus. Equipment is clearly visible. Face is SOFTLY "
-    "SHADED / less prominent, not the visual focus (soft shadow across upper "
-    "face). High contrast against the black background. Clean coaching "
-    "visual, no distracting environment, no bodybuilding look, no shirtless, "
-    "no exaggerated musculature, no obvious AI face artefacts. Consistent "
-    "lighting, portrait 3:4 aspect ratio."
+EXERCISE_STYLE_MALE = (
+    "Premium dark athletic coaching photograph for the CrewFit exercise library. "
+    "The MALE model MUST look like the man in the attached reference photo — same "
+    "athletic build, same haircut, same skin tone, same forearm tattoos — but with "
+    "his FACE SOFTLY SHADED / slightly turned away / a soft shadow falling across "
+    "the upper face so the identity is not obvious and there are no AI face "
+    "artefacts. The body, movement and posture are the visual focus, not the face. "
+    "OUTFIT: plain black t-shirt showing a small red CrewFit chest logo, plain "
+    "black joggers or dark shorts, and **RED running trainers** (Nike-style, "
+    "bright red uppers, white sole) — the shoes must always be red for brand "
+    "consistency. "
+    "SETTING: dark studio with a black brick textured wall directly behind the "
+    "model, hard rim lighting from the left, deep shadow filling the rest of the "
+    "frame. Full-figure vertical composition, portrait 3:4 crop, model centred, "
+    "hands, feet and any equipment fully in-frame — never cropped. "
+    "BRANDING: place a small, subtle 'CREWFIT' wordmark (thin red serif-free "
+    "type) plus the CrewFit red bird icon at the very TOP CENTRE of the image, "
+    "no more than ~4% of the image height, understated, never dominating the "
+    "composition. "
+    "Realistic athletic proportions, no bodybuilding exaggeration, no shirtless, "
+    "no cheesy influencer pose, no obvious AI hands or feet artefacts."
 )
+
+EXERCISE_STYLE_FEMALE = (
+    "Premium dark athletic coaching photograph for the CrewFit exercise library. "
+    "The FEMALE model is a realistic athletic woman, mid-20s to mid-30s, brown "
+    "hair pulled back in a low ponytail, natural athletic build, minimal makeup, "
+    "friendly professional look — not over-sexualised, not a stock model. Face "
+    "SOFTLY SHADED / partially in shadow so the movement is the focus, not the "
+    "face. "
+    "OUTFIT: plain black fitted athletic top (short-sleeve or long-sleeve, "
+    "modest, not a sports bra) showing a small red CrewFit chest logo, black "
+    "athletic leggings, and **RED running trainers** (Nike-style, bright red "
+    "uppers, white sole) — the shoes must always be red for brand consistency. "
+    "SETTING: dark studio with a black brick textured wall directly behind the "
+    "model, hard rim lighting from the left, deep shadow filling the rest of the "
+    "frame. Full-figure vertical composition, portrait 3:4 crop, model centred, "
+    "hands, feet and any equipment fully in-frame — never cropped. "
+    "BRANDING: place a small, subtle 'CREWFIT' wordmark (thin red serif-free "
+    "type) plus the CrewFit red bird icon at the very TOP CENTRE of the image, "
+    "no more than ~4% of the image height, understated, never dominating the "
+    "composition. "
+    "Realistic athletic proportions, no over-sexualisation, no cheesy influencer "
+    "pose, no obvious AI hands or feet artefacts."
+)
+
+# Legacy alias — some callers still import EXERCISE_STYLE. Default to male.
+EXERCISE_STYLE = EXERCISE_STYLE_MALE
 
 STATUS_VALUES = {
     "Draft", "Needs Review", "Artwork Needed", "Coaching Points Needed",
@@ -141,15 +177,35 @@ async def _log(exercise_id: str, actor_id: str, kind: str, detail: str = "") -> 
 
 # ---- Nano Banana image generator (specialised for exercises) --------------
 
-async def _generate_ex_image(prompt: str, session_id: str) -> bytes:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+async def _generate_ex_image(prompt: str, session_id: str, *, use_louis_ref: bool = False) -> bytes:
+    """Generate an exercise image via Nano Banana.
+
+    When ``use_louis_ref`` is true (male generations), we pass Louis's
+    reference full-body photo as an inline image so Nano Banana can lock
+    identity + outfit + red shoes. For female generations we let the text
+    prompt do the work.
+    """
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
         session_id=session_id,
         system_message="You are a premium visual designer for CrewFit exercise demonstration images.",
     )
     chat.with_model("gemini", MODEL_ID).with_params(modalities=["image", "text"])
-    _t, imgs = await chat.send_message_multimodal_response(UserMessage(text=prompt))
+
+    message_kwargs: dict = {"text": prompt}
+    if use_louis_ref:
+        # Import lazily to avoid a hard dep back into server.py at module load.
+        try:
+            from server import _louis_ref_b64
+            ref_b64 = _louis_ref_b64()
+            message_kwargs["file_contents"] = [
+                ImageContent(image_base64=ref_b64),
+            ]
+        except Exception:
+            logger.exception("could not attach Louis reference; falling back to text-only")
+
+    _t, imgs = await chat.send_message_multimodal_response(UserMessage(**message_kwargs))
     if not imgs:
         raise HTTPException(502, "no image returned")
     data = imgs[0].get("data") if isinstance(imgs[0], dict) else None
@@ -162,22 +218,24 @@ def _build_ex_prompt(ex: dict, slot: str, extra: Optional[str], female: Optional
     name = ex.get("exercise_name") or "exercise"
     equipment = ", ".join(ex.get("equipment_type") or []) or "bodyweight"
     body_area = ex.get("body_area") or ""
-    subject = ("female" if female else "male") + " athlete"
+    style = EXERCISE_STYLE_FEMALE if female else EXERCISE_STYLE_MALE
     slot_map = {
         "start":   f"START POSITION of the {name} — the moment before the movement begins",
         "end":     f"END POSITION of the {name} — the completed / peak-contraction position",
+        "top":     f"TOP POSITION of the {name} — the highest / most-contracted point",
+        "bottom":  f"BOTTOM POSITION of the {name} — the deepest / most-loaded point",
         "primary": f"the main demonstration of the {name}",
     }
     slot_line = slot_map.get(slot, slot_map["primary"])
     body_focus = f" Emphasise {body_area} musculature and posture." if body_area else ""
     equip_line = f" Equipment shown: {equipment}."
     extra_line = f" {extra}" if extra else ""
-    return f"{EXERCISE_STYLE} Show {slot_line}. Subject: realistic athletic {subject}.{body_focus}{equip_line}{extra_line}"
+    return f"{style} Show {slot_line}.{body_focus}{equip_line}{extra_line}"
 
 
-async def _run_image_job(image_id: str, prompt: str) -> None:
+async def _run_image_job(image_id: str, prompt: str, *, use_louis_ref: bool = False) -> None:
     try:
-        raw = await _generate_ex_image(prompt, session_id=f"ex-{image_id}")
+        raw = await _generate_ex_image(prompt, session_id=f"ex-{image_id}", use_louis_ref=use_louis_ref)
         key = f"{_STORAGE_NS}/{image_id}.png"
         await _storage.storage.write_bytes(key, raw, content_type="image/png")
         path = IMG_ROOT / f"{image_id}.png"
@@ -374,27 +432,49 @@ async def ex_gen_image(ex_id: str, body: GenImageBody = GenImageBody(),
                        admin: dict = Depends(require_admin())):
     ex = await db.exercises_v2.find_one({"id": ex_id})
     if not ex: raise HTTPException(404, "not found")
-    slot = body.slot if body.slot in ("primary", "start", "end") else "primary"
+    slot = body.slot if body.slot in ("primary", "start", "end", "top", "bottom") else "primary"
+    # For DB storage we still bucket top/bottom into end/start respectively so
+    # existing preview/detail screens keep working. Prompt line already
+    # tailors the copy per slot label so the AI knows the difference.
+    storage_slot = {"top": "end", "bottom": "start"}.get(slot, slot)
     prompt = _build_ex_prompt(ex, slot, body.prompt_extra, body.female)
 
     image_id = new_id()
     now = now_iso()
+    gender = "female" if body.female else "male"
     await db.exercise_content_images.insert_one({
-        "id": image_id, "exercise_id": ex_id, "slot": slot,
+        "id": image_id, "exercise_id": ex_id, "slot": storage_slot,
+        "requested_slot": slot, "gender": gender,
         "prompt": prompt, "status": "generating",
         "storage_path": None, "size_bytes": None, "mime": None,
         "created_by": admin["id"], "created_at": now, "updated_at": now,
     })
-    # Point the exercise doc at this new image immediately (client sees generating→ready)
-    slot_key = {"primary": "primary_image_id", "start": "demo_start_image_id", "end": "demo_end_image_id"}[slot]
-    await db.exercises_v2.update_one({"id": ex_id},
-        {"$set": {slot_key: image_id,
-                  "approved_image_status": "Needs Review",
-                  "content_status.images": True,
-                  "updated_at": now}})
-    asyncio.create_task(_run_image_job(image_id, prompt))
-    await _log(ex_id, admin["id"], "image_generated", f"slot={slot}")
-    return {"image_id": image_id, "slot": slot, "status": "generating"}
+    # Store the *gendered* slot on the exercise doc so both variants coexist
+    # without overwriting each other. Legacy readers still see
+    # `primary_image_id` (points at the male default) when no explicit
+    # gender is chosen.
+    slot_key_base = {"primary": "primary_image_id",
+                     "start": "demo_start_image_id",
+                     "end": "demo_end_image_id"}[storage_slot]
+    female_slot_key = slot_key_base.replace("_id", "_female_id")
+    set_updates: dict = {
+        "approved_image_status": "Needs Review",
+        "content_status.images": True,
+        "updated_at": now,
+    }
+    if body.female:
+        set_updates[female_slot_key] = image_id
+        # Only fill the default slot if it's currently empty so the male
+        # version stays the default when it already exists.
+        if not ex.get(slot_key_base):
+            set_updates[slot_key_base] = image_id
+    else:
+        set_updates[slot_key_base] = image_id
+    await db.exercises_v2.update_one({"id": ex_id}, {"$set": set_updates})
+    # Male generations use the Louis reference so identity stays consistent.
+    asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=not body.female))
+    await _log(ex_id, admin["id"], "image_generated", f"slot={slot} gender={gender}")
+    return {"image_id": image_id, "slot": slot, "gender": gender, "status": "generating"}
 
 
 @api.get("/exercise-content/images/{img_id}/stream")
@@ -687,3 +767,111 @@ async def ex_image_prompt_preview(
         "estimated_cost_usd": 0.039,   # single Nano Banana image
         "warning": "This will consume ~1 image credit on your Emergent LLM key.",
     }
+
+
+# ---- Written content generation (coaching points, mistakes, alternatives) --
+
+@api.post("/exercise-content/{ex_id}/generate-content")
+async def ex_generate_content(
+    ex_id: str, body: dict,
+    admin: dict = Depends(require_admin()),
+):
+    """Generate a single written-content field for one exercise via Claude
+    (Emergent LLM). Never bulk-fires. Field-scoped so the coach picks
+    exactly what to fill."""
+    kind = (body or {}).get("kind", "")
+    if kind not in ("coaching_points", "common_mistakes", "alternatives", "instructions"):
+        raise HTTPException(400, "kind must be coaching_points|common_mistakes|alternatives|instructions")
+    ex = await db.exercises_v2.find_one({"id": ex_id})
+    if not ex:
+        raise HTTPException(404, "not found")
+
+    name = ex.get("exercise_name") or "exercise"
+    equipment = ", ".join(ex.get("equipment_type") or []) or "bodyweight"
+    body_area = ex.get("body_area") or ""
+    difficulty = ex.get("difficulty_level") or "intermediate"
+
+    task = {
+        "coaching_points":  "Return 4–6 short concise coaching points (imperative, one line each). Focus on technique cues an aviation-crew client can execute in a hotel gym.",
+        "common_mistakes":  "Return 3–5 common mistakes clients make with this exercise. Each item is one short sentence.",
+        "alternatives":     "Return 3–5 alternative exercises that train the same pattern, ordered by similarity. Only the exercise names, no explanation.",
+        "instructions":     "Return 3–5 sentences of client-facing plain-English instructions for how to perform the exercise, written warmly (as if Louis is coaching the client through it).",
+    }[kind]
+
+    system = (
+        "You are Louis Hall, CrewFit's founder and aviation performance coach. "
+        "Write like a real coach: direct, practical, safety-aware. Never make "
+        "medical claims. Never diagnose. Always assume the client has limited "
+        "equipment and is on the road."
+    )
+    prompt = (
+        f"Exercise: {name}\nEquipment: {equipment}\nBody area: {body_area}\n"
+        f"Difficulty: {difficulty}\n\n{task}\n\n"
+        "OUTPUT: strict JSON matching one of these shapes based on the task above. "
+        "For lists: {\"items\": [\"string\", ...]}. "
+        "For instructions: {\"text\": \"one paragraph\"}. "
+        "No prose outside the JSON."
+    )
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"ex-content-{ex_id}-{kind}",
+            system_message=system,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929").with_params(max_tokens=500)
+        reply = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        logger.exception("content gen failed for %s/%s", ex_id, kind)
+        raise HTTPException(502, f"Content generation failed: {e}")
+
+    import json, re
+    text = str(reply or "").strip()
+    m = re.search(r"\{[\s\S]*\}", text)
+    try:
+        parsed = json.loads(m.group(0)) if m else {}
+    except Exception:
+        parsed = {}
+
+    updates: dict = {"updated_at": now_iso()}
+    result_payload: dict = {"kind": kind}
+
+    if kind == "instructions":
+        val = str(parsed.get("text") or text).strip()
+        updates["client_facing_instructions"] = val
+        result_payload["text"] = val
+    else:
+        items = parsed.get("items") or []
+        if not isinstance(items, list):
+            items = []
+        # Fallback: try to split lines if JSON failed.
+        if not items and text:
+            items = [ln.lstrip("-• 0123456789.").strip() for ln in text.splitlines() if ln.strip()][:6]
+        items = [str(i).strip() for i in items if str(i).strip()][:6]
+        field_map = {
+            "coaching_points": "coaching_points",
+            "common_mistakes": "common_mistakes",
+            "alternatives":    "alternatives",
+        }
+        updates[field_map[kind]] = items
+        if kind == "coaching_points":
+            updates["content_status.coaching_points"] = bool(items)
+        result_payload["items"] = items
+
+    await db.exercises_v2.update_one({"id": ex_id}, {"$set": updates})
+    await _log(ex_id, admin["id"], "content_generated", f"kind={kind}")
+    # Record AI usage for telemetry.
+    try:
+        await db.ai_usage.insert_one({
+            "user_id": admin["id"],
+            "feature": f"exercise_content_{kind}",
+            "exercise_id": ex_id,
+            "tokens_estimate": 500,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
+
+    fresh = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0})
+    return {"exercise": fresh, **result_payload}
+

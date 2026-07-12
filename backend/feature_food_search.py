@@ -291,7 +291,7 @@ def register(api: APIRouter, *, db, current_user, emergent_llm_key: Optional[str
                     "Values must be integers (calories) or 1-decimal floats (macros). "
                     "Assume a typical adult portion unless the description specifies otherwise."
                 ),
-            ).with_model("anthropic", "claude-sonnet-4-5-20250929").with_max_tokens(400)
+            ).with_model("anthropic", "claude-sonnet-4-5-20250929").with_params(max_tokens=400)
             reply = await chat.send_message(UserMessage(text=f"Estimate for: {description}"))
             text = (reply or "").strip()
             # Extract JSON from any wrapping.

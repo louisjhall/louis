@@ -7,7 +7,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, ScrollView,
+  ActivityIndicator, Alert, FlatList, Modal, Platform, Pressable, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { Image } from "expo-image";
@@ -80,6 +80,18 @@ export default function ExerciseContentScreen() {
   const [logRows, setLogRows] = useState<any[]>([]);
   const [logLoading, setLogLoading] = useState(false);
 
+  // Image generation — prompt-preview modal (cross-platform; Alert.alert
+  // collapses on web preview to a single "OK" which was the root cause of
+  // the REGEN buttons appearing broken).
+  const [genGender, setGenGender] = useState<"male" | "female">("male");
+  const [promptModal, setPromptModal] = useState<null | {
+    slot: "primary" | "start" | "end" | "top" | "bottom";
+    gender: "male" | "female";
+    prompt: string;
+    cost: number;
+    extra: string;
+  }>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -121,68 +133,71 @@ export default function ExerciseContentScreen() {
     finally { setBusy(null); }
   };
 
-  const genImage = async (slot: "primary" | "start" | "end") => {
+  const genImage = async (slot: "primary" | "start" | "end" | "top" | "bottom") => {
     if (!detail) return;
-    // Credit-control: fetch the prompt first so Louis can review / edit /
-    // cancel before Nano Banana is fired.
+    // Fetch the prompt preview so Louis sees the branded prompt + estimated
+    // cost BEFORE anything is generated.
     setBusy(`prompt-${slot}`);
-    let preview: any = null;
     try {
-      preview = await api<any>(
-        `/exercise-content/${detail.id}/image-prompt?slot=${slot}`,
-      );
+      const female = genGender === "female";
+      const q = new URLSearchParams({ slot, female: female ? "true" : "false" }).toString();
+      const preview = await api<any>(`/exercise-content/${detail.id}/image-prompt?${q}`);
+      setPromptModal({
+        slot,
+        gender: genGender,
+        prompt: preview?.prompt || "",
+        cost: Number(preview?.estimated_cost_usd ?? 0.039),
+        extra: "",
+      });
     } catch (e: any) {
       Alert.alert("Couldn’t build prompt", e?.message || "");
-      setBusy(null);
-      return;
     } finally {
       setBusy(null);
     }
+  };
 
-    const fire = async (finalExtra?: string) => {
-      setBusy(`gen-${slot}`);
-      try {
-        const r = await api<{ image_id: string }>(
-          `/exercise-content/${detail.id}/generate-image`,
-          { method: "POST", body: finalExtra ? { slot, prompt_extra: finalExtra } : { slot } },
-        );
-        await refreshDetail(detail.id);
-        pollImage(r.image_id, detail.id);
-      } catch (e: any) {
-        Alert.alert("Failed", e?.message || "");
-      } finally {
-        setBusy(null);
-      }
-    };
-
-    Alert.alert(
-      `Generate ${slot} image`,
-      `${preview?.prompt || ""}\n\n${preview?.warning || ""}\nEstimated cost: $${(preview?.estimated_cost_usd ?? 0.04).toFixed(3)}`,
-      [
-        { text: "Cancel", style: "cancel" },
+  const firePromptModal = async () => {
+    if (!detail || !promptModal) return;
+    const { slot, gender, extra } = promptModal;
+    setBusy(`gen-${slot}`);
+    setPromptModal(null);
+    try {
+      const r = await api<{ image_id: string }>(
+        `/exercise-content/${detail.id}/generate-image`,
         {
-          text: "Edit prompt",
-          onPress: () => {
-            // Fallback edit UX via a second Alert.prompt on iOS; on Android
-            // we just re-fire with the original prompt (Louis can use the
-            // detail screen text fields to refine coaching cues).
-            if ((Alert as any).prompt) {
-              (Alert as any).prompt(
-                "Add extra instructions",
-                "e.g. 'emphasise hip hinge, dark studio background'",
-                [
-                  { text: "Cancel", style: "cancel" },
-                  { text: "Generate", onPress: (extra: string) => fire(extra) },
-                ],
-              );
-            } else {
-              fire();
-            }
+          method: "POST",
+          body: {
+            slot,
+            female: gender === "female",
+            ...(extra.trim() ? { prompt_extra: extra.trim() } : {}),
           },
         },
-        { text: "Generate", style: "destructive", onPress: () => fire() },
-      ],
-    );
+      );
+      await refreshDetail(detail.id);
+      pollImage(r.image_id, detail.id);
+    } catch (e: any) {
+      Alert.alert("Generation failed", e?.message || "Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const genContent = async (kind: "coaching_points" | "common_mistakes" | "alternatives" | "instructions") => {
+    if (!detail) return;
+    setBusy(`content-${kind}`);
+    try {
+      const r = await api<{ exercise: Exercise }>(
+        `/exercise-content/${detail.id}/generate-content`,
+        { method: "POST", body: { kind } },
+      );
+      setDetail(r.exercise);
+      setItems((prev) => prev.map((x) => (x.id === r.exercise.id ? { ...x, ...r.exercise } : x)));
+      toast(`${kind.replace("_", " ")} generated`, "success");
+    } catch (e: any) {
+      Alert.alert("Content generation failed", e?.message || "Please try again.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const pollImage = async (imageId: string, exerciseId: string) => {
@@ -357,41 +372,79 @@ export default function ExerciseContentScreen() {
 
               {/* Images */}
               <Text style={styles.sect}>DEMO IMAGES</Text>
+              <View style={styles.genderRow}>
+                <Pressable
+                  onPress={() => setGenGender("male")}
+                  style={[styles.gChip, genGender === "male" && styles.gChipActive]}
+                  testID="gen-gender-male"
+                >
+                  <Ionicons name="man" size={12} color={genGender === "male" ? "#fff" : theme.color.textMuted} />
+                  <Text style={[styles.gChipT, genGender === "male" && { color: "#fff" }]}>MALE · LOUIS</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setGenGender("female")}
+                  style={[styles.gChip, genGender === "female" && styles.gChipActive]}
+                  testID="gen-gender-female"
+                >
+                  <Ionicons name="woman" size={12} color={genGender === "female" ? "#fff" : theme.color.textMuted} />
+                  <Text style={[styles.gChipT, genGender === "female" && { color: "#fff" }]}>FEMALE</Text>
+                </Pressable>
+                <Text style={styles.genderHint}>
+                  {genGender === "male" ? "Louis reference locked · red shoes · CrewFit logo" : "Athletic female · red shoes · CrewFit logo"}
+                </Text>
+              </View>
               <View style={styles.imgGrid}>
-                <ImgSlot title="START" url={imgUrl(detail.demo_start_image_id)} onGen={() => genImage("start")} busy={busy === "gen-start"} />
-                <ImgSlot title="END" url={imgUrl(detail.demo_end_image_id)} onGen={() => genImage("end")} busy={busy === "gen-end"} />
-                <ImgSlot title="PRIMARY" url={imgUrl(detail.primary_image_id)} onGen={() => genImage("primary")} busy={busy === "gen-primary"} />
+                <ImgSlot title="START" url={imgUrl(detail.demo_start_image_id)} onGen={() => genImage("start")} busy={busy === "gen-start" || busy === "prompt-start"} />
+                <ImgSlot title="END" url={imgUrl(detail.demo_end_image_id)} onGen={() => genImage("end")} busy={busy === "gen-end" || busy === "prompt-end"} />
+                <ImgSlot title="PRIMARY" url={imgUrl(detail.primary_image_id)} onGen={() => genImage("primary")} busy={busy === "gen-primary" || busy === "prompt-primary"} />
               </View>
 
               {/* Coaching points */}
-              <SectionHeader label={`COACHING POINTS · ${detail.coaching_points?.length || 0}`}
-                onEdit={() => setShowEditPoints(true)} />
+              <SectionHeader
+                label={`COACHING POINTS · ${detail.coaching_points?.length || 0}`}
+                onEdit={() => setShowEditPoints(true)}
+                onAtlas={() => genContent("coaching_points")}
+                atlasBusy={busy === "content-coaching_points"}
+              />
               {(detail.coaching_points || []).length ? (detail.coaching_points || []).map((p, i) => (
                 <View key={i} style={styles.cpRow}>
                   <Ionicons name="checkmark-circle" size={13} color={theme.color.brand} />
                   <Text style={styles.cpT}>{p}</Text>
                 </View>
-              )) : <Text style={styles.empty}>No coaching points yet. Tap edit to add.</Text>}
+              )) : <Text style={styles.empty}>No coaching points yet. Tap edit or Atlas ✨ to generate.</Text>}
 
               {/* Common Mistakes */}
-              <SectionHeader label={`COMMON MISTAKES · ${detail.common_mistakes?.length || 0}`}
-                onEdit={() => setShowEditMistakes(true)} />
+              <SectionHeader
+                label={`COMMON MISTAKES · ${detail.common_mistakes?.length || 0}`}
+                onEdit={() => setShowEditMistakes(true)}
+                onAtlas={() => genContent("common_mistakes")}
+                atlasBusy={busy === "content-common_mistakes"}
+              />
               {(detail.common_mistakes || []).length ? (detail.common_mistakes || []).map((m, i) => (
                 <View key={i} style={styles.cpRow}>
                   <Ionicons name="warning" size={13} color={theme.color.amber} />
                   <Text style={styles.cpT}>{m}</Text>
                 </View>
-              )) : <Text style={styles.empty}>None recorded.</Text>}
+              )) : <Text style={styles.empty}>None recorded. Tap Atlas ✨ to generate.</Text>}
 
               {/* Client-Facing Instructions */}
-              <SectionHeader label="CLIENT INSTRUCTIONS" onEdit={() => setShowEditInstr(true)} />
+              <SectionHeader
+                label="CLIENT INSTRUCTIONS"
+                onEdit={() => setShowEditInstr(true)}
+                onAtlas={() => genContent("instructions")}
+                atlasBusy={busy === "content-instructions"}
+              />
               <Text style={detail.client_facing_instructions ? styles.instrT : styles.empty}>
-                {detail.client_facing_instructions || "No instructions yet. Tap edit."}
+                {detail.client_facing_instructions || "No instructions yet. Tap edit or Atlas ✨."}
               </Text>
 
               {/* Alternatives */}
-              <SectionHeader label={`ALTERNATIVES · ${detail.alternatives?.length || 0}`}
-                onEdit={() => setShowEditAlts(true)} />
+              <SectionHeader
+                label={`ALTERNATIVES · ${detail.alternatives?.length || 0}`}
+                onEdit={() => setShowEditAlts(true)}
+                onAtlas={() => genContent("alternatives")}
+                atlasBusy={busy === "content-alternatives"}
+              />
               {(detail.alternatives || []).length ? (detail.alternatives || []).map((a, i) => (
                 <View key={i} style={styles.cpRow}>
                   <Ionicons name="swap-horizontal" size={13} color={theme.color.textMuted} />
@@ -500,14 +553,79 @@ export default function ExerciseContentScreen() {
         onCreate={createExercise}
         onClose={() => setShowCreate(false)}
       />
+
+      {/* Prompt-preview modal — replaces the broken Alert.alert flow so it
+          works on iOS, Android AND the web preview. */}
+      <Modal
+        visible={!!promptModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPromptModal(null)}
+      >
+        <Pressable style={styles.pmBackdrop} onPress={() => setPromptModal(null)} />
+        <View style={styles.pmSheet}>
+          <View style={styles.pmGrabber} />
+          <Text style={styles.pmTitle}>
+            Generate {promptModal?.slot?.toUpperCase()} image ·{" "}
+            {promptModal?.gender === "female" ? "Female" : "Male · Louis"}
+          </Text>
+          <Text style={styles.pmCost}>
+            Estimated cost: ${promptModal?.cost.toFixed(3)} · 1 image credit
+          </Text>
+          <ScrollView style={styles.pmPromptBox} contentContainerStyle={{ padding: 12 }}>
+            <Text style={styles.pmPromptT}>{promptModal?.prompt}</Text>
+          </ScrollView>
+          <Text style={styles.pmLabel}>ADD EXTRA INSTRUCTIONS (OPTIONAL)</Text>
+          <TextInput
+            testID="prompt-extra-input"
+            style={styles.pmInput}
+            multiline
+            value={promptModal?.extra || ""}
+            onChangeText={(v) =>
+              setPromptModal((prev) => (prev ? { ...prev, extra: v } : prev))
+            }
+            placeholder="e.g. emphasise hip hinge, keep hands wide, single arm"
+            placeholderTextColor={theme.color.textDim}
+          />
+          <View style={styles.pmBtnRow}>
+            <Pressable
+              onPress={() => setPromptModal(null)}
+              style={[styles.pmBtn, styles.pmBtnGhost]}
+              testID="prompt-cancel"
+            >
+              <Text style={styles.pmBtnGhostT}>CANCEL</Text>
+            </Pressable>
+            <Pressable
+              onPress={firePromptModal}
+              style={[styles.pmBtn, styles.pmBtnPrimary]}
+              testID="prompt-generate"
+            >
+              <Ionicons name="sparkles" size={14} color="#fff" />
+              <Text style={styles.pmBtnPrimaryT}>GENERATE</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-function SectionHeader({ label, onEdit }: { label: string; onEdit?: () => void }) {
+function SectionHeader({
+  label, onEdit, onAtlas, atlasBusy,
+}: { label: string; onEdit?: () => void; onAtlas?: () => void; atlasBusy?: boolean }) {
   return (
     <View style={styles.sectHeadRow}>
-      <Text style={[styles.sect, { marginTop: 0, marginBottom: 0 }]}>{label}</Text>
+      <Text style={[styles.sect, { marginTop: 0, marginBottom: 0, flex: 1 }]}>{label}</Text>
+      {onAtlas ? (
+        <Pressable onPress={onAtlas} hitSlop={10} disabled={atlasBusy} style={[styles.sectEditBtn, atlasBusy && { opacity: 0.5 }]}>
+          {atlasBusy ? <ActivityIndicator color={theme.color.brand} size="small" /> : (
+            <>
+              <Ionicons name="sparkles" size={12} color={theme.color.brand} />
+              <Text style={styles.sectEditT}>ATLAS</Text>
+            </>
+          )}
+        </Pressable>
+      ) : null}
       {onEdit ? (
         <Pressable onPress={onEdit} hitSlop={10} style={styles.sectEditBtn}>
           <Ionicons name="create-outline" size={13} color={theme.color.brand} />
@@ -631,4 +749,46 @@ const styles = StyleSheet.create({
   appBtnPri: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   appBtnMuted: { backgroundColor: theme.color.surface3 },
   appBtnT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  // Gender toggle
+  genderRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
+  gChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+  },
+  gChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  gChipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  genderHint: { flex: 1, color: theme.color.textDim, fontSize: 10, marginLeft: 4 },
+  // Prompt preview modal
+  pmBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)" },
+  pmSheet: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    backgroundColor: theme.color.surface,
+    borderTopLeftRadius: 22, borderTopRightRadius: 22,
+    paddingHorizontal: 18, paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 32 : 20,
+    maxHeight: "88%",
+  },
+  pmGrabber: { width: 40, height: 4, borderRadius: 2, backgroundColor: theme.color.border, alignSelf: "center", marginBottom: 10 },
+  pmTitle: { color: theme.color.text, fontSize: 15, fontWeight: "900", letterSpacing: 0.4 },
+  pmCost: { color: theme.color.textMuted, fontSize: 11, marginTop: 4, fontWeight: "700" },
+  pmPromptBox: {
+    marginTop: 12, maxHeight: 210,
+    backgroundColor: theme.color.surface2, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  pmPromptT: { color: theme.color.text, fontSize: 12, lineHeight: 18 },
+  pmLabel: { color: theme.color.textDim, fontSize: 10, fontWeight: "900", letterSpacing: 1.4, marginTop: 14 },
+  pmInput: {
+    marginTop: 6, minHeight: 60, maxHeight: 120,
+    backgroundColor: theme.color.surface2, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.color.border,
+    padding: 10, color: theme.color.text, fontSize: 13, textAlignVertical: "top",
+  },
+  pmBtnRow: { flexDirection: "row", gap: 10, marginTop: 16 },
+  pmBtn: { flex: 1, paddingVertical: 12, borderRadius: 999, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
+  pmBtnGhost: { borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
+  pmBtnGhostT: { color: theme.color.text, fontWeight: "900", fontSize: 12, letterSpacing: 1.2 },
+  pmBtnPrimary: { backgroundColor: theme.color.brand },
+  pmBtnPrimaryT: { color: "#fff", fontWeight: "900", fontSize: 12, letterSpacing: 1.2 },
 });

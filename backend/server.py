@@ -2497,6 +2497,21 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     # + move on; user still gets the rest of their plan.
                     logger.warning("workout upsert failed for date=%s: %s", d, e)
                     continue
+            # Safety net: if no workouts were actually persisted, do NOT silently
+            # publish a "complete" job. Notify the coach with a high-priority
+            # task and mark the job as needing review so the client sees a
+            # helpful status instead of an empty 7-day view.
+            persisted_count = await db.workouts.count_documents({"user_id": user["id"], "roster_id": roster["id"]})
+            if persisted_count == 0:
+                logger.warning("plan generation produced 0 workouts for user=%s roster=%s", user["id"], roster["id"])
+                await _set_job(
+                    job_id, status="needs_review", stage="generating", progress=95,
+                    error="Your roster uploaded successfully, but your training plan needs review. Louis has been notified.",
+                    message="Roster saved — plan needs review",
+                    workouts_generated=0,
+                )
+                await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="0 workouts generated")
+                return
             await _set_job(job_id, stage="coach", progress=98, message="Preparing coach review...")
             # Best-effort coach notification (silent-fail if push disabled)
             try:
@@ -2656,6 +2671,17 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
             except Exception as e:
                 logger.warning("retry workout upsert failed for date=%s: %s", d, e)
                 continue
+        persisted_count = await db.workouts.count_documents({"user_id": user["id"], "roster_id": roster["id"]})
+        if persisted_count == 0:
+            logger.warning("retry plan generation produced 0 workouts for user=%s roster=%s", user["id"], roster["id"])
+            await _set_job(
+                job_id, status="needs_review", stage="generating", progress=95,
+                error="Your training plan still needs review. Louis has been notified.",
+                message="Roster saved — plan needs review",
+                workouts_generated=0,
+            )
+            await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="0 workouts on retry")
+            return
         await _set_job(job_id, stage="coach", progress=98, message="Preparing coach review...")
         try:
             await _notify_coaches_of_new_roster(user, roster, job_id)

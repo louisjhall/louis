@@ -1,0 +1,37 @@
+{
+  "summary": "Setup-day gate relaxation + roster-upload safety-net review. Backend gate unit-checks all PASS (duty_hours=12 → tomorrow, night_flight → +2, cap at +2 verified). Retry-with-zero-workouts flow WORKS end-to-end — job flips to status='needs_review' AND a high-priority coach task (task_type='roster_plan_generation_issue') is opened via _open_coach_task_for_stuck_generation. Frontend Home loads without crash; when no active job no banner appears; brand-red 'plan-preparing-banner' renders correctly when a queued/processing job is stubbed. Regressions PASS: Coach LIBRARY tab opens V2 Unified Exercise Library, /event shows category chips + medical safety copy, NEXT 7 DAYS still starts with 'Today', no standalone 'AI' on client Home. HOWEVER — 1 CRITICAL BACKEND BUG blocks the safety-net UI: GET /api/roster/jobs/active only returns jobs with status IN [queued, processing] (server.py:2570). needs_review / partial / failed jobs are excluded, so the amber 'plan-needs-review-banner' cannot ever render even though the frontend branch exists. Verified live: with a stub {status:'needs_review'} roster_jobs doc for the seeded client, the endpoint returned {} and the amber banner did NOT render.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/roster/jobs/active", "issue": "Query filters status to ['queued','processing'] only, so jobs with status needs_review/partial/failed never surface. As a direct consequence the frontend amber banner (plan-needs-review-banner) in home.tsx cannot render — the whole safety-net UX is silent. Fix: broaden the query to also return recent needs_review / partial / failed jobs (recommend last 48h and not yet client-acknowledged) so the amber banner triggers. server.py:2569-2574.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Home → amber needs_review banner", "issue": "home.tsx correctly renders the amber banner when rosterJob.status in {needs_review, partial, failed}, but the upstream endpoint /api/roster/jobs/active never returns those statuses (see backend critical bug), so this branch is dead code today.", "affected_testIDs": ["plan-needs-review-banner", "plan-review-open"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_setup_gate_and_banners.py",
+    "/app/test_reports/pytest/iter55_setup_gate_and_banners.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Widen GET /api/roster/jobs/active (server.py:2569) to also return the user's most recent needs_review / partial / failed job (e.g. within last 48h, or where a new client_acknowledged flag is false). Without this, the amber 'plan-needs-review-banner' — the entire client-facing part of this iteration's safety net — will never render.",
+    "MINOR: Consider passing the 'stage' field through to home.tsx so the preparing-banner can show progress % when >0."
+  ],
+  "critical_code_review_comments": [
+    "server.py roster_active_job returns only queued/processing — reason for this restriction is defensible (only 'live' work), but the frontend now depends on the same endpoint to render both banners. Either (a) broaden the endpoint or (b) add a second endpoint (e.g. /roster/jobs/last-review) and call both from home.tsx.",
+    "feature_setup_day._gate_for now caps at +2 days ✓ and _is_heavy_first_day correctly ignores plain 'flight' duty_hours 12 ✓. Threshold >=14h is inclusive as documented.",
+    "In server.py retry _retry_worker (line ~2669), `db.workouts.delete_many({'user_id', 'date'})` deletes across all rosters, not just this roster — this is intentional to avoid dupes but worth a comment; not a bug."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "86% (6/7 tests pass; the failing one is the needs_review surfacing bug)", "frontend": "100% for code under test (banner code paths, home render, regressions all correct)"},
+  "seed_data_creation": "Inserted then deleted stub roster_jobs docs (id prefixed TEST_BANNER_ and TEST_JOB_) for the seeded client (client@crewfit.com, id=62f90680-313b-4fca-bc3f-9a19ac49065d) to verify banner rendering + retry safety net. All cleaned up.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Regression test file lives at /app/backend/tests/test_iter55_setup_gate_and_banners.py — the currently-FAILING test 'test_active_endpoint_returns_needs_review_stub' is the acceptance test for the backend fix. testIDs on home.tsx: plan-preparing-banner (brand-red, queued/processing), plan-needs-review-banner (amber, needs_review/partial/failed), plan-review-open (OPEN ROSTER UPLOAD → link). Seeded client id: 62f90680-313b-4fca-bc3f-9a19ac49065d. Coach task collection uses field task_type (not 'kind').",
+  "rca_of_issue": "ROOT CAUSE (needs_review banner never renders): The mongo filter in server.py:2570 restricts to {status: {$in: ['queued','processing']}} whereas the frontend contract requires the same endpoint to surface needs_review/partial/failed jobs. Reproduction: (1) insert a roster_jobs doc for a user with status='needs_review'; (2) call GET /api/roster/jobs/active as that user → returns {}; (3) reload client Home → no banner. Fix: extend the $in list to include ['queued','processing','needs_review','partial','failed'] (optionally add an updated_at cutoff or a client_acknowledged flag so old failures don't linger forever). No other code change needed — the frontend already handles all three amber statuses correctly."
+}

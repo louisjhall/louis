@@ -101,17 +101,19 @@ export default function Home() {
   const [addActivityOpen, setAddActivityOpen] = useState(false);
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [setupDay, setSetupDay] = useState<{ is_setup_day: boolean; first_workout_date?: string | null; reason?: string | null } | null>(null);
+  const [rosterJob, setRosterJob] = useState<{ id: string; status?: string; stage?: string; progress?: number; message?: string; error?: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, pr, sb, sd] = await Promise.all([
+      const [ws, r, ev, pr, sb, sd, rj] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
         api<any>("/reassessment/prompts").catch(() => ({ prompts: [] })),
         api<any>("/standby/today").catch(() => null),
         api<any>("/setup-day/status").catch(() => null),
+        api<any>("/roster/jobs/active").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -120,6 +122,7 @@ export default function Home() {
       setScheduleMode(user?.profile?.schedule_mode || "normal");
       setStandbyToday(sb);
       setSetupDay(sd);
+      setRosterJob(rj && rj.id ? rj : null);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -403,6 +406,23 @@ export default function Home() {
           <PushPermissionPrompt />
 
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
+          {rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing") ? (
+            <View style={styles.planBanner} testID="plan-preparing-banner">
+              <Ionicons name="hourglass" size={14} color={theme.color.brand} />
+              <Text style={styles.planBannerT}>CrewFit is preparing your training plan around your roster.</Text>
+            </View>
+          ) : null}
+          {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial" || rosterJob.status === "failed") ? (
+            <View style={styles.planBannerAmber} testID="plan-needs-review-banner">
+              <Ionicons name="alert-circle" size={14} color={theme.color.amber} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.planBannerT}>{rosterJob.error || "Your roster uploaded successfully, but your training plan needs review. Louis has been notified."}</Text>
+                <Pressable onPress={() => router.push({ pathname: "/roster-upload" })} testID="plan-review-open">
+                  <Text style={styles.planBannerLink}>OPEN ROSTER UPLOAD →</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
           {loading && !workouts.length ? (
             <ActivityIndicator color={theme.color.brand} />
           ) : (
@@ -589,6 +609,18 @@ const styles = StyleSheet.create({
   promptDismissText: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.5 },
   startText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
   emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
+  planBanner: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    padding: 12, borderRadius: 10, marginBottom: theme.space.sm,
+    backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  planBannerAmber: {
+    flexDirection: "row", alignItems: "flex-start", gap: 8,
+    padding: 12, borderRadius: 10, marginBottom: theme.space.sm,
+    backgroundColor: "rgba(245,158,11,0.10)", borderWidth: 1, borderColor: theme.color.amber,
+  },
+  planBannerT: { color: theme.color.text, fontSize: 12, lineHeight: 17, flex: 1 },
+  planBannerLink: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 6 },
   setupCard: {
     padding: theme.space.lg, borderRadius: theme.radius.md,
     borderWidth: 1, borderColor: theme.color.brand,

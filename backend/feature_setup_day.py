@@ -64,14 +64,22 @@ def _daytype_for(roster: dict, date_iso: str) -> str:
 
 
 def _is_heavy_first_day(daytype: str, day: dict | None) -> bool:
+    """
+    Only skip TOMORROW as the first-workout day for truly punishing duties.
+    We deliberately DO NOT skip normal short/long-haul flying — those days
+    should still receive a light or recovery-style workout, not be dropped.
+    """
     if not daytype and not day:
         return False
-    if any(k in daytype for k in _HEAVY_DAY_TAGS):
+    # Only these strong tags cause us to defer the first workout by a day.
+    strong_tags = ("night_flight", "night-flight", "night duty", "overnight",
+                   "red_eye", "red-eye")
+    if any(k in daytype for k in strong_tags):
         return True
-    # Fallback: long duty (>= 10h) counts as heavy
+    # Extreme duty (>= 14h) — genuinely too demanding for a first workout.
     try:
         dh = float((day or {}).get("duty_hours") or 0)
-        if dh >= 10:
+        if dh >= 14:
             return True
     except Exception:
         pass
@@ -93,19 +101,20 @@ def _gate_for(user: dict, roster: dict, today_local: str) -> tuple[str, Optional
         today = _dt.date.today()
     candidate = today + _dt.timedelta(days=1)
     reason: Optional[str] = None
-    # Look at up to 7 days ahead. If tomorrow is heavy, advance.
-    for _ in range(7):
+    # Cap the gate at +2 calendar days maximum. If the first two candidate days
+    # are both truly heavy we still allow the third — never leave the whole
+    # week empty because of aggressive setup-day rules.
+    for _ in range(2):
         iso = candidate.isoformat()
         dtype = _daytype_for(roster, iso)
         day_row = _find_day(roster, iso)
         if not _is_heavy_first_day(dtype, day_row):
             return iso, reason
-        # Skip this day, record reason for the first skip only.
         if reason is None:
             pretty = (dtype or "long duty").replace("_", " ").replace("-", " ").strip()
             reason = f"tomorrow is marked as {pretty}"
         candidate = candidate + _dt.timedelta(days=1)
-    return candidate.isoformat(), reason or "no suitable start day found nearby"
+    return candidate.isoformat(), reason
 
 
 async def _is_new_client_first_programme(user_id: str, roster_id: str) -> bool:

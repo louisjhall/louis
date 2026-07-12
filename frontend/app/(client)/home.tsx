@@ -18,6 +18,8 @@ import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
+import { TodayPersonalActivities } from "@/src/components/PersonalActivityCard";
+import { AddActivityModal } from "@/src/components/AddActivityModal";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -50,6 +52,16 @@ function localDateStr(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function todayPlusOne(todayIso: string): string {
+  try {
+    const d = new Date(`${todayIso}T00:00:00`);
+    d.setDate(d.getDate() + 1);
+    return localDateStr(d);
+  } catch {
+    return todayIso;
+  }
 }
 
 function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): { primary: string; secondary?: string } {
@@ -86,16 +98,20 @@ export default function Home() {
   const [realityOpen, setRealityOpen] = useState(false);
   const [prompts, setPrompts] = useState<any[]>([]);
   const [standbyToday, setStandbyToday] = useState<any>(null);
+  const [addActivityOpen, setAddActivityOpen] = useState(false);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const [setupDay, setSetupDay] = useState<{ is_setup_day: boolean; first_workout_date?: string | null; reason?: string | null } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, pr, sb] = await Promise.all([
+      const [ws, r, ev, pr, sb, sd] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
         api<any>("/reassessment/prompts").catch(() => ({ prompts: [] })),
         api<any>("/standby/today").catch(() => null),
+        api<any>("/setup-day/status").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -103,6 +119,7 @@ export default function Home() {
       setPrompts(pr.prompts || []);
       setScheduleMode(user?.profile?.schedule_mode || "normal");
       setStandbyToday(sb);
+      setSetupDay(sd);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -324,6 +341,33 @@ export default function Home() {
                 <Ionicons name="arrow-forward" size={20} color="#fff" />
               </Pressable>
             </>
+          ) : setupDay?.is_setup_day ? (
+            <View style={styles.setupCard} testID="setup-day-card">
+              <View style={styles.setupIconWrap}>
+                <Ionicons name="rocket" size={22} color={theme.color.brand} />
+              </View>
+              <Text style={styles.setupTitle}>YOUR CREWFIT SETUP DAY</Text>
+              <Text style={styles.setupBody}>
+                Today is about setting up your profile, uploading your roster and getting familiar with CrewFit. Your first workout starts {setupDay?.first_workout_date && setupDay.first_workout_date !== todayPlusOne(today) ? `on ${setupDay.first_workout_date}` : "tomorrow"}.
+              </Text>
+              {setupDay?.reason ? (
+                <Text style={styles.setupReason}>Note: {setupDay.reason}.</Text>
+              ) : null}
+              <View style={styles.setupActionsRow}>
+                <Pressable testID="setup-upload-roster" onPress={() => router.push("/roster-upload")} style={styles.setupBtnPrimary}>
+                  <Ionicons name="cloud-upload" size={14} color="#fff" />
+                  <Text style={styles.setupBtnPrimaryT}>UPLOAD ROSTER</Text>
+                </Pressable>
+                <Pressable testID="setup-message-louis" onPress={() => router.push("/(client)/messages")} style={styles.setupBtnSecondary}>
+                  <Ionicons name="chatbubble-ellipses" size={14} color={theme.color.brand} />
+                  <Text style={styles.setupBtnSecondaryT}>MESSAGE LOUIS</Text>
+                </Pressable>
+              </View>
+              <Pressable testID="setup-review-plan" onPress={() => router.push("/(client)/calendar")} style={styles.setupBtnGhost}>
+                <Ionicons name="calendar" size={13} color={theme.color.brand} />
+                <Text style={styles.setupBtnGhostT}>REVIEW YOUR PLAN</Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyTitle}>No workout scheduled for today</Text>
@@ -342,6 +386,17 @@ export default function Home() {
 
           <HabitTodayCard />
 
+          <TodayPersonalActivities key={activityRefreshKey} />
+
+          <Pressable
+            testID="home-add-activity"
+            onPress={() => setAddActivityOpen(true)}
+            style={styles.addActivityBtn}
+          >
+            <Ionicons name="add-circle" size={16} color={theme.color.brand} />
+            <Text style={styles.addActivityT}>ADD SPORT OR HOBBY</Text>
+          </Pressable>
+
           <StandbyStatusCard />
 
           <WeeklyCheckinCard />
@@ -356,6 +411,21 @@ export default function Home() {
               tomorrow.setDate(tomorrow.getDate() + 1);
               const tomorrowStr = localDateStr(tomorrow);
               return next7.map((w) => {
+                const isTodayRow = w.__key === today;
+                if (isTodayRow && setupDay?.is_setup_day) {
+                  return (
+                    <View key={w.__key} style={[styles.wRow, styles.wRowSetup]} testID="week-setup-today">
+                      <View style={[styles.loadBar, { backgroundColor: theme.color.brand }]} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.wDate}>Today</Text>
+                        <Text style={styles.wDateSub}>{dayLabel(w.__key, today, tomorrowStr).secondary || w.__key}</Text>
+                        <Text style={[styles.wTitle, { color: theme.color.brand }]}>SETUP DAY</Text>
+                        <Text style={styles.wMeta}>Your first workout starts tomorrow</Text>
+                      </View>
+                      <Ionicons name="rocket" size={16} color={theme.color.brand} style={{ marginRight: theme.space.md }} />
+                    </View>
+                  );
+                }
                 if (w.__rest) {
                   const dl = dayLabel(w.__key, today, tomorrowStr);
                   return (
@@ -433,6 +503,12 @@ export default function Home() {
         onApplied={() => { setRealityOpen(false); load(); }}
       />
       <TimeZoneConfirmModal user={user} />
+      <AddActivityModal
+        visible={addActivityOpen}
+        onClose={() => setAddActivityOpen(false)}
+        onCreated={() => { setActivityRefreshKey((k) => k + 1); load(); }}
+        initialDate={today}
+      />
     </View>
   );
 }
@@ -513,15 +589,55 @@ const styles = StyleSheet.create({
   promptDismissText: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.5 },
   startText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
   emptyBox: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
+  setupCard: {
+    padding: theme.space.lg, borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: theme.color.brandTint,
+    gap: 8, marginBottom: theme.space.md,
+  },
+  setupIconWrap: {
+    width: 44, height: 44, borderRadius: 22, alignSelf: "flex-start",
+    backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  setupTitle: { color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 2, marginTop: 4 },
+  setupBody: { color: theme.color.text, fontSize: 14, lineHeight: 20 },
+  setupReason: { color: theme.color.textMuted, fontSize: 12, fontStyle: "italic" },
+  setupActionsRow: { flexDirection: "row", gap: 8, marginTop: 6 },
+  setupBtnPrimary: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.brand,
+  },
+  setupBtnPrimaryT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  setupBtnSecondary: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 12, borderRadius: 10,
+    backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  setupBtnSecondaryT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  setupBtnGhost: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 10, borderRadius: 10, marginTop: 4,
+    backgroundColor: "transparent", borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.brand,
+  },
+  setupBtnGhostT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
   emptyTitle: { color: theme.color.text, fontWeight: "700", fontSize: 15 },
   emptySub: { color: theme.color.textMuted, marginTop: 6, fontSize: 13 },
   uploadBtn: { backgroundColor: theme.color.brand, paddingVertical: 14, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md, alignSelf: "flex-start", marginTop: theme.space.md },
   quickRow: { flexDirection: "row", gap: theme.space.sm, marginTop: theme.space.md },
+  addActivityBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 12, marginTop: theme.space.md,
+    borderRadius: theme.radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.brand,
+    backgroundColor: theme.color.brandTint,
+  },
+  addActivityT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   qBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12 },
   qBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 10 },
   sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
   wRow: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, overflow: "hidden", borderWidth: 1, borderColor: theme.color.border },
   wRowRest: { opacity: 0.75 },
+  wRowSetup: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   wTitleRest: { color: theme.color.textMuted, fontWeight: "800", letterSpacing: 1 },
   loadBar: { width: 4, alignSelf: "stretch" },
   wDate: { color: theme.color.brand, fontSize: 12, letterSpacing: 0.5, padding: theme.space.md, paddingBottom: 0, fontWeight: "800" },

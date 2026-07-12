@@ -6,6 +6,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { DayEditModal } from "@/src/components/DayEditModal";
+import { AddActivityModal } from "@/src/components/AddActivityModal";
+import { listActivities, type PersonalActivity } from "@/src/lib/personalActivities";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -23,18 +25,22 @@ export default function CalendarScreen() {
   const [monthsAhead, setMonthsAhead] = useState(4);
   const [selectedIsoMonth, setSelectedIsoMonth] = useState<string | null>(null);
   const [editDate, setEditDate] = useState<string | null>(null);
+  const [addActivityDate, setAddActivityDate] = useState<string | null>(null);
+  const [activities, setActivities] = useState<PersonalActivity[]>([]);
   const scrollRef = useRef<ScrollView>(null);
   const monthOffsetsRef = useRef<Record<string, number>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [tl, aj] = await Promise.all([
+      const [tl, aj, acts] = await Promise.all([
         api<any>(`/calendar/timeline?months_back=${monthsBack}&months_ahead=${monthsAhead}`),
         api<any>(`/roster/jobs/active`).catch(() => ({})),
+        listActivities().catch(() => [] as PersonalActivity[]),
       ]);
       setData(tl);
       setActiveJob(aj && aj.id ? aj : null);
+      setActivities(acts);
       if (!selectedIsoMonth) {
         const currentMonth = (tl.today || "").slice(0, 7);
         const m = (tl.months || []).find((mm: any) => mm.iso.slice(0, 7) === currentMonth) || tl.months?.[0];
@@ -173,16 +179,18 @@ export default function CalendarScreen() {
               ))}
               {m.days.map((d: any) => {
                 const isToday = d.date === today;
+                const hasActivity = activities.some((a) => a.date_local === d.date);
                 return (
                   <Pressable
                     key={d.date}
                     testID={`cal-day-${d.date}`}
                     onPress={() => d.workout_id ? router.push(`/workout/${d.workout_id}`) : setEditDate(d.date)}
-                    onLongPress={() => setEditDate(d.date)}
+                    onLongPress={() => setAddActivityDate(d.date)}
                     style={[styles.dayCell, isToday && styles.todayCell]}
                   >
                     <Text style={[styles.dayNum, isToday && { color: theme.color.brand, fontWeight: "800" }]}>{d.day}</Text>
                     {d.load ? <View style={[styles.loadDot, { backgroundColor: loadColor(d.load) }]} /> : null}
+                    {hasActivity ? <View style={styles.activityDot} /> : null}
                     {d.completed ? <Ionicons name="checkmark" size={9} color={theme.color.green} /> : null}
                     {d.key_session ? <Ionicons name="star" size={9} color={theme.color.brand} /> : null}
                   </Pressable>
@@ -211,6 +219,9 @@ export default function CalendarScreen() {
         ) : null}
       </ScrollView>
 
+      <Pressable testID="cal-fab-activity" onPress={() => setAddActivityDate(today || new Date().toISOString().slice(0,10))} style={styles.fabActivity}>
+        <Ionicons name="tennisball" size={18} color="#fff" />
+      </Pressable>
       <Pressable testID="cal-fab-add" onPress={() => setEditDate(today || new Date().toISOString().slice(0,10))} style={styles.fab}>
         <Ionicons name="add" size={22} color="#fff" />
       </Pressable>
@@ -220,6 +231,12 @@ export default function CalendarScreen() {
         date={editDate}
         onClose={() => setEditDate(null)}
         onSaved={load}
+      />
+      <AddActivityModal
+        visible={!!addActivityDate}
+        initialDate={addActivityDate || undefined}
+        onClose={() => setAddActivityDate(null)}
+        onCreated={() => { setAddActivityDate(null); load(); }}
       />
     </SafeAreaView>
   );
@@ -259,6 +276,7 @@ const styles = StyleSheet.create({
   todayCell: { backgroundColor: theme.color.brandTint, borderRadius: 6 },
   dayNum: { color: theme.color.text, fontSize: 12 },
   loadDot: { width: 6, height: 6, borderRadius: 3 },
+  activityDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: theme.color.brand, borderWidth: 1, borderColor: theme.color.surface },
 
   historyBlock: { marginTop: 10, padding: 14, backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border },
   sectionTitle: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginBottom: 10 },
@@ -270,6 +288,13 @@ const styles = StyleSheet.create({
     position: "absolute", right: 20, bottom: 24,
     width: 52, height: 52, borderRadius: 26,
     backgroundColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+    shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 6, elevation: 6,
+  },
+  fabActivity: {
+    position: "absolute", right: 20, bottom: 88,
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand,
     alignItems: "center", justifyContent: "center",
     shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 6, elevation: 6,
   },

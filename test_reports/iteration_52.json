@@ -1,0 +1,30 @@
+{
+  "summary": "Tested (A) Personal Activity Planner V1 and (B) Setup-Day Gate — backend + frontend. Backend: 11/11 pytest passes (0 skipped). All target endpoints working: presets returns 17 items (auth required, includes tennis/padel/football/running/cycling/swimming/diving/hiking/skiing/golf/martial_arts/climbing/yoga/pilates/custom), POST create returns full atlas_suggestion {headline, body, recommended_action, actions[], conflict_level}, weekly recurrence creates exactly 13 occurrences (base + 12 weeks), DELETE ?scope=series removes all 13, apply-suggestion ask_coach creates coach task without touching workouts, reduce_workout downgrades same-day workout to focus=mobility, duration_min=25, day_load=green, move_workout relocates workout to a free date, GET /coach/clients/{id}/personal-activities returns activities+range_load_score+range_conflicts. Setup-day: /api/setup-day/status returns correct shape and is_setup_day=false for seeded client (as expected); coach start-today/clear-override both return ok=true and toggle setup_day_override. Frontend (mobile 390x844): Home shows 'ADD SPORT OR HOBBY' testID=home-add-activity; tapping opens AddActivityModal with all preset chips, form fields (date, start_time, location, notes), duration/intensity/planning/recurrence chips and save button. Calendar has two FABs — cal-fab-add (red 52x52) and cal-fab-activity (46x46, stacked above); tapping the tennis-ball FAB opens the modal pre-populated with today's date (2026-07-12). Home Next-7 rows render normally; setup-day-card is NOT present for the seeded client (correct); start-today-workout tile shows (no regression). No red-screen errors. Only benign expo web warnings observed (shadow*, textShadow*, pointerEvents deprecations — web-only).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Calendar", "issues": ["cal-fab-activity is 46x46 — passes 44pt minimum but is smaller than the primary FAB (52x52). Consider matching size for visual balance."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_personal_activities.py",
+    "/app/test_reports/pytest/personal_activities_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_personal_activities._log_overlaps: 'rotation' preset area maps to workout focus containing 'core'/'oblique' — could inflate false positives when a client just does a core workout; consider tightening.",
+    "coach override endpoint only sets/unsets setup_day_override on the user doc but does not proactively re-run workout generation; if the client already had workouts dropped by the setup-day gate they will not appear until the next generate/regenerate. Consider triggering regeneration on override toggle."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_personal_activities.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all target testIDs verified)"},
+  "seed_data_creation": "Created personal_activities via API during tests; teardown deleted the ones tracked. Also cleaned via MongoDB after: restored the today workout that had been moved, cleared reduced markers, deleted stray activities, reset override.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_personal_activities.py covers all endpoints for Personal Activity Planner + Setup-Day. Uses conftest at /app/backend/tests/conftest.py (module-level login helpers). If seeded client's today workout is missing/coach-locked, TestApplySuggestion.test_reduce_workout_downgrades_same_day and test_move_workout_moves_to_next_free_day will skip gracefully. To reset state after runs, run the Motor cleanup block used during this iteration (unset moved_for_activity_id, restore today's workout, clear setup_day_override).",
+  "rca_of_issue": ""
+}

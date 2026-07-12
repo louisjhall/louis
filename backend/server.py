@@ -3936,6 +3936,14 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
     async def _worker():
         try:
             workouts = await _generate_month(user, r)
+            # Setup-day gate: for BRAND-NEW clients, drop any workouts scheduled
+            # on/before the gate so their first workout starts tomorrow (or the
+            # next suitable roster day). Existing clients pass through unchanged.
+            try:
+                from feature_setup_day import filter_new_client_workouts
+                workouts, _gate_meta = await filter_new_client_workouts(user, r, workouts)
+            except Exception:
+                logger.exception("setup-day gate skipped due to error")
             existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": body.roster_id}, {"_id": 0}).to_list(500)}
             for w in workouts:
                 d = w.get("date")
@@ -4047,6 +4055,12 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
     async def _worker():
         try:
             workouts = await _generate_month(user, sub)
+            # Setup-day gate for brand-new clients.
+            try:
+                from feature_setup_day import filter_new_client_workouts
+                workouts, _gate_meta = await filter_new_client_workouts(user, r, workouts)
+            except Exception:
+                logger.exception("setup-day gate skipped (regenerate)")
             for w in workouts:
                 d = w.get("date")
                 if not d:
@@ -7259,6 +7273,8 @@ import feature_admin_telemetry   # noqa: E402,F401  Ops: AI usage + cost telemet
 import feature_gdpr              # noqa: E402,F401  GDPR: soft-delete, data export, purge cron
 import feature_preview           # noqa: E402,F401  Coach preview-as-client + UI issue reporter
 import feature_beta_readiness    # noqa: E402,F401  Beta wiring: storage smoke test + disclaimer
+import feature_personal_activities  # noqa: E402,F401  Personal Activity Planner (client sports/hobbies)
+import feature_setup_day             # noqa: E402,F401  Setup-day gate — first workout starts tomorrow
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

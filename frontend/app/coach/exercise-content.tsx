@@ -40,6 +40,14 @@ type Exercise = {
   primary_image_id?: string | null;
   demo_start_image_id?: string | null;
   demo_end_image_id?: string | null;
+  // Movement-aware image slots — supports bottom / top / apex / etc.
+  demo_slots?: Record<string, string | null>;
+  demo_slots_female?: Record<string, string | null>;
+  required_slots?: string[];
+  movement_pattern?: string;
+  category?: string;
+  body_area?: string;
+  tags?: string[];
   used_in_tomorrow_workouts_count?: number;
   used_in_active_programmes_count?: number;
   alternatives?: string[];
@@ -85,7 +93,7 @@ export default function ExerciseContentScreen() {
   // the REGEN buttons appearing broken).
   const [genGender, setGenGender] = useState<"male" | "female">("male");
   const [promptModal, setPromptModal] = useState<null | {
-    slot: "primary" | "start" | "end" | "top" | "bottom";
+    slot: "primary" | "start" | "end" | "mid" | "top" | "bottom" | "apex" | "stretch" | "loaded" | "finish";
     gender: "male" | "female";
     prompt: string;
     cost: number;
@@ -133,7 +141,7 @@ export default function ExerciseContentScreen() {
     finally { setBusy(null); }
   };
 
-  const genImage = async (slot: "primary" | "start" | "end" | "top" | "bottom") => {
+  const genImage = async (slot: "primary" | "start" | "end" | "mid" | "top" | "bottom" | "apex" | "stretch" | "loaded" | "finish") => {
     if (!detail) return;
     // Fetch the prompt preview so Louis sees the branded prompt + estimated
     // cost BEFORE anything is generated.
@@ -390,13 +398,42 @@ export default function ExerciseContentScreen() {
                   <Text style={[styles.gChipT, genGender === "female" && { color: "#fff" }]}>FEMALE</Text>
                 </Pressable>
                 <Text style={styles.genderHint}>
-                  {genGender === "male" ? "Louis reference locked · red shoes · CrewFit logo" : "Athletic female · red shoes · CrewFit logo"}
+                  {genGender === "male" ? "Louis reference locked · red shoes" : "Athletic female · red shoes"}
                 </Text>
               </View>
+
+              {/* Movement-aware slot picker — coach selects which positions
+                  this exercise actually needs. Defaults are derived from
+                  the movement pattern (e.g. push-up → primary/start/bottom). */}
+              <SlotPicker
+                required={resolveRequiredSlots(detail)}
+                onToggle={async (slot) => {
+                  const cur = resolveRequiredSlots(detail);
+                  const next = cur.includes(slot) ? cur.filter((s) => s !== slot) : [...cur, slot];
+                  // Always keep "primary" as it drives preview cards.
+                  const ensured = next.includes("primary") ? next : ["primary", ...next];
+                  try {
+                    await api(`/exercise-content/${detail.id}/required-slots`, {
+                      method: "PATCH",
+                      body: { slots: ensured },
+                    });
+                    setDetail({ ...detail, required_slots: ensured });
+                  } catch (e: any) {
+                    Alert.alert("Couldn’t save slots", e?.message || "");
+                  }
+                }}
+              />
+
               <View style={styles.imgGrid}>
-                <ImgSlot title="START" url={imgUrl(detail.demo_start_image_id)} onGen={() => genImage("start")} busy={busy === "gen-start" || busy === "prompt-start"} />
-                <ImgSlot title="END" url={imgUrl(detail.demo_end_image_id)} onGen={() => genImage("end")} busy={busy === "gen-end" || busy === "prompt-end"} />
-                <ImgSlot title="PRIMARY" url={imgUrl(detail.primary_image_id)} onGen={() => genImage("primary")} busy={busy === "gen-primary" || busy === "prompt-primary"} />
+                {resolveRequiredSlots(detail).map((slot) => (
+                  <ImgSlot
+                    key={slot}
+                    title={slot.toUpperCase()}
+                    url={imgUrl(imageIdForSlot(detail, slot, genGender))}
+                    onGen={() => genImage(slot as any)}
+                    busy={busy === `gen-${slot}` || busy === `prompt-${slot}`}
+                  />
+                ))}
               </View>
 
               {/* Coaching points */}
@@ -636,6 +673,86 @@ function SectionHeader({
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// Movement-aware helpers — mirror the backend's `_default_slots_for_movement`
+// so the UI can pre-populate the slot picker even before the coach hits save.
+// ---------------------------------------------------------------------------
+const ALL_SLOTS: string[] = [
+  "primary", "start", "mid", "end", "top", "bottom",
+  "apex", "stretch", "loaded", "finish",
+];
+
+function defaultSlotsForMovement(ex: Exercise): string[] {
+  const tokens = [
+    ex.exercise_name || "",
+    ex.movement_pattern || "",
+    ex.category || "",
+    ex.body_area || "",
+    (ex.tags || []).join(" "),
+  ].join(" ").toLowerCase();
+  const has = (...ks: string[]) => ks.some((k) => tokens.includes(k));
+  if (has("push-up", "push up", "pushup", "press-up", "press up", "pressup", "bench press", "chest press", "dip"))
+    return ["primary", "start", "bottom"];
+  if (has("overhead press", "shoulder press", "military press", "push press"))
+    return ["primary", "start", "top"];
+  if (has("row", "pulldown", "pull-up", "pull up", "pullup", "chin-up", "chinup", "face pull", "reverse fly", "high pull"))
+    return ["primary", "start", "top"];
+  if (has("squat", "lunge", "split squat", "deadlift", "rdl", "hip hinge", "hinge", "step-up", "step up", "good morning"))
+    return ["primary", "start", "bottom"];
+  if (has("bridge", "hip thrust", "thrust")) return ["primary", "start", "top"];
+  if (has("calf raise", "calf")) return ["primary", "start", "top"];
+  if (has("rotation", "twist", "windmill", "world's greatest")) return ["primary", "start", "finish"];
+  if (has("plank", "hollow hold", "l-sit", "wall sit")) return ["primary", "loaded"];
+  if (has("stretch", "mobility", "release", "opener", "myrtl")) return ["primary", "stretch"];
+  return ["primary", "start", "end"];
+}
+
+function resolveRequiredSlots(ex: Exercise): string[] {
+  if (ex.required_slots && ex.required_slots.length > 0) return ex.required_slots;
+  return defaultSlotsForMovement(ex);
+}
+
+function imageIdForSlot(ex: Exercise, slot: string, gender: "male" | "female"): string | null | undefined {
+  // Legacy fields for start/end/primary stay in sync — prefer them so
+  // existing readers keep working. Fall back to the demo_slots map.
+  const legacy: Record<string, string | null | undefined> = {
+    primary: ex.primary_image_id,
+    start:   ex.demo_start_image_id,
+    end:     ex.demo_end_image_id,
+  };
+  const map = gender === "female" ? (ex.demo_slots_female || {}) : (ex.demo_slots || {});
+  return map[slot] || legacy[slot] || null;
+}
+
+function SlotPicker({
+  required, onToggle,
+}: { required: string[]; onToggle: (slot: string) => void }) {
+  return (
+    <View style={styles.slotPickerWrap}>
+      <Text style={styles.slotPickerLabel}>REQUIRED POSITIONS</Text>
+      <View style={styles.slotChipsRow}>
+        {ALL_SLOTS.map((s) => {
+          const on = required.includes(s);
+          const isPrimary = s === "primary";
+          return (
+            <Pressable
+              key={s}
+              onPress={() => (isPrimary ? null : onToggle(s))}
+              style={[styles.slotChip, on && styles.slotChipActive, isPrimary && styles.slotChipLocked]}
+              testID={`slot-chip-${s}`}
+            >
+              {on && <Ionicons name="checkmark" size={10} color="#fff" />}
+              <Text style={[styles.slotChipT, on && { color: "#fff" }]}>{s.toUpperCase()}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+
 function ImgSlot({ title, url, onGen, busy }: any) {
   return (
     <View style={styles.imgSlot}>
@@ -749,6 +866,18 @@ const styles = StyleSheet.create({
   appBtnPri: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   appBtnMuted: { backgroundColor: theme.color.surface3 },
   appBtnT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  // Slot picker
+  slotPickerWrap: { marginBottom: 10 },
+  slotPickerLabel: { color: theme.color.textDim, fontSize: 10, fontWeight: "900", letterSpacing: 1.4, marginBottom: 6 },
+  slotChipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  slotChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+  },
+  slotChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  slotChipLocked: { opacity: 0.9 },
+  slotChipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   // Gender toggle
   genderRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" },
   gChip: {

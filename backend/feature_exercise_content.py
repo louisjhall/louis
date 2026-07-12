@@ -220,11 +220,16 @@ def _build_ex_prompt(ex: dict, slot: str, extra: Optional[str], female: Optional
     body_area = ex.get("body_area") or ""
     style = EXERCISE_STYLE_FEMALE if female else EXERCISE_STYLE_MALE
     slot_map = {
-        "start":   f"START POSITION of the {name} — the moment before the movement begins",
-        "end":     f"END POSITION of the {name} — the completed / peak-contraction position",
-        "top":     f"TOP POSITION of the {name} — the highest / most-contracted point",
-        "bottom":  f"BOTTOM POSITION of the {name} — the deepest / most-loaded point",
-        "primary": f"the main demonstration of the {name}",
+        "start":    f"START POSITION of the {name} — the moment before the movement begins",
+        "end":      f"END POSITION of the {name} — the completed position",
+        "mid":      f"MID-REP POSITION of the {name} — half-way through the movement",
+        "top":      f"TOP POSITION of the {name} — the highest / most-contracted / lockout point",
+        "bottom":   f"BOTTOM POSITION of the {name} — the deepest / most-loaded / lowest point of the movement (e.g. for a push-up, chest close to floor; for a squat, hips below knees)",
+        "apex":     f"APEX / peak-contraction position of the {name} — the hardest point of the movement",
+        "stretch":  f"STRETCHED position of the {name} — muscles under maximum stretch / lengthened tension",
+        "loaded":   f"LOADED HOLD position of the {name} — the isometric hold that defines this movement",
+        "finish":   f"FINISH position of the {name} — after the movement has been completed",
+        "primary":  f"the main demonstration of the {name}",
     }
     slot_line = slot_map.get(slot, slot_map["primary"])
     body_focus = f" Emphasise {body_area} musculature and posture." if body_area else ""
@@ -269,6 +274,54 @@ async def _reconcile_ex_stale() -> None:
     except Exception: logger.exception("exercise image reconcile failed")
 
 
+
+def _default_slots_for_movement(ex: dict) -> list[str]:
+    """Pick sensible default required image slots based on the exercise's
+    movement pattern / name. Every default includes PRIMARY so the preview
+    card always renders."""
+    tokens = " ".join([
+        ex.get("exercise_name") or "",
+        ex.get("movement_pattern") or "",
+        ex.get("category") or "",
+        ex.get("body_area") or "",
+        " ".join(ex.get("tags") or []),
+    ]).lower()
+
+    def has(*ks: str) -> bool:
+        return any(k in tokens for k in ks)
+
+    if has("push-up", "push up", "pushup", "press-up", "press up", "pressup",
+           "bench press", "chest press", "dip"):
+        return ["primary", "start", "bottom"]
+    if has("overhead press", "shoulder press", "military press", "push press"):
+        return ["primary", "start", "top"]
+    if has("row", "pulldown", "pull-up", "pull up", "pullup", "chin-up",
+           "chinup", "face pull", "reverse fly", "high pull"):
+        return ["primary", "start", "top"]
+    if has("squat", "lunge", "split squat", "deadlift", "rdl", "hip hinge",
+           "hinge", "step-up", "step up", "good morning"):
+        return ["primary", "start", "bottom"]
+    if has("bridge", "hip thrust", "thrust"):
+        return ["primary", "start", "top"]
+    if has("calf raise", "calf"):
+        return ["primary", "start", "top"]
+    if has("rotation", "twist", "windmill", "world's greatest"):
+        return ["primary", "start", "finish"]
+    if has("plank", "hollow hold", "l-sit", "wall sit"):
+        return ["primary", "loaded"]
+    if has("stretch", "mobility", "release", "opener", "myrtl"):
+        return ["primary", "stretch"]
+    return ["primary", "start", "end"]
+
+
+def resolved_required_slots(ex: dict) -> list[str]:
+    """Coach-configured slots take priority; falls back to movement default."""
+    conf = ex.get("required_slots") or []
+    if isinstance(conf, list) and conf:
+        return conf
+    return _default_slots_for_movement(ex)
+
+
 # ---- CRUD -----------------------------------------------------------------
 
 def _default_status_flags() -> dict:
@@ -284,6 +337,13 @@ def _default_status_flags() -> dict:
         "primary_image_id": None,
         "demo_start_image_id": None,
         "demo_end_image_id": None,
+        # New — movement-aware slot storage. Legacy fields above stay in
+        # sync as mirrors so existing readers keep working.
+        "demo_slots": {},              # {"bottom": img_id, "top": img_id, ...}
+        "demo_slots_female": {},
+        # Required slots for THIS movement — coach can edit. If left empty
+        # the backend derives sensible defaults from movement/name tokens.
+        "required_slots": [],
     }
 
 
@@ -432,49 +492,81 @@ async def ex_gen_image(ex_id: str, body: GenImageBody = GenImageBody(),
                        admin: dict = Depends(require_admin())):
     ex = await db.exercises_v2.find_one({"id": ex_id})
     if not ex: raise HTTPException(404, "not found")
-    slot = body.slot if body.slot in ("primary", "start", "end", "top", "bottom") else "primary"
-    # For DB storage we still bucket top/bottom into end/start respectively so
-    # existing preview/detail screens keep working. Prompt line already
-    # tailors the copy per slot label so the AI knows the difference.
-    storage_slot = {"top": "end", "bottom": "start"}.get(slot, slot)
+    # New: accept any of the extended slot types. Legacy start/end/primary
+    # still write to their dedicated top-level fields; everything else
+    # (mid, top, bottom, apex, stretch, loaded, finish) lives in the
+    # `demo_slots` map on the exercise doc.
+    valid_slots = {"primary", "start", "end", "mid", "top", "bottom",
+                   "apex", "stretch", "loaded", "finish"}
+    slot = body.slot if body.slot in valid_slots else "primary"
     prompt = _build_ex_prompt(ex, slot, body.prompt_extra, body.female)
 
     image_id = new_id()
     now = now_iso()
     gender = "female" if body.female else "male"
     await db.exercise_content_images.insert_one({
-        "id": image_id, "exercise_id": ex_id, "slot": storage_slot,
+        "id": image_id, "exercise_id": ex_id, "slot": slot,
         "requested_slot": slot, "gender": gender,
         "prompt": prompt, "status": "generating",
         "storage_path": None, "size_bytes": None, "mime": None,
         "created_by": admin["id"], "created_at": now, "updated_at": now,
     })
-    # Store the *gendered* slot on the exercise doc so both variants coexist
-    # without overwriting each other. Legacy readers still see
-    # `primary_image_id` (points at the male default) when no explicit
-    # gender is chosen.
-    slot_key_base = {"primary": "primary_image_id",
-                     "start": "demo_start_image_id",
-                     "end": "demo_end_image_id"}[storage_slot]
-    female_slot_key = slot_key_base.replace("_id", "_female_id")
+
+    # Storage layout:
+    #  * Legacy fields kept in sync for primary/start/end so existing
+    #    ExerciseThumbnail and workout-preview readers work unchanged.
+    #  * All other slots (bottom, top, apex, finish, ...) go into the
+    #    dynamic `demo_slots` map (male or female variant).
+    legacy_key_by_slot = {
+        "primary": "primary_image_id",
+        "start":   "demo_start_image_id",
+        "end":     "demo_end_image_id",
+    }
     set_updates: dict = {
         "approved_image_status": "Needs Review",
         "content_status.images": True,
         "updated_at": now,
     }
-    if body.female:
-        set_updates[female_slot_key] = image_id
-        # Only fill the default slot if it's currently empty so the male
-        # version stays the default when it already exists.
-        if not ex.get(slot_key_base):
-            set_updates[slot_key_base] = image_id
-    else:
-        set_updates[slot_key_base] = image_id
+    slot_map_field = "demo_slots_female" if body.female else "demo_slots"
+    set_updates[f"{slot_map_field}.{slot}"] = image_id
+    if slot in legacy_key_by_slot:
+        legacy_key = legacy_key_by_slot[slot]
+        female_key = legacy_key.replace("_id", "_female_id")
+        if body.female:
+            set_updates[female_key] = image_id
+            if not ex.get(legacy_key):
+                set_updates[legacy_key] = image_id
+        else:
+            set_updates[legacy_key] = image_id
     await db.exercises_v2.update_one({"id": ex_id}, {"$set": set_updates})
-    # Male generations use the Louis reference so identity stays consistent.
     asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=not body.female))
     await _log(ex_id, admin["id"], "image_generated", f"slot={slot} gender={gender}")
     return {"image_id": image_id, "slot": slot, "gender": gender, "status": "generating"}
+
+
+@api.patch("/exercise-content/{ex_id}/required-slots")
+async def ex_set_required_slots(
+    ex_id: str, body: dict,
+    admin: dict = Depends(require_admin()),
+):
+    """Coach picks which image positions this exercise needs.
+    Accepts ``{"slots": ["primary", "start", "bottom"]}``. Empty list
+    resets to the movement-pattern default."""
+    ex = await db.exercises_v2.find_one({"id": ex_id})
+    if not ex:
+        raise HTTPException(404, "not found")
+    valid = {"primary", "start", "end", "mid", "top", "bottom",
+             "apex", "stretch", "loaded", "finish"}
+    raw = (body or {}).get("slots", [])
+    if not isinstance(raw, list):
+        raise HTTPException(400, "slots must be a list")
+    cleaned = [s for s in raw if s in valid]
+    await db.exercises_v2.update_one(
+        {"id": ex_id},
+        {"$set": {"required_slots": cleaned, "updated_at": now_iso()}},
+    )
+    await _log(ex_id, admin["id"], "required_slots_updated", f"slots={cleaned}")
+    return {"required_slots": cleaned, "resolved": cleaned or _default_slots_for_movement(ex)}
 
 
 @api.get("/exercise-content/images/{img_id}/stream")
@@ -636,8 +728,25 @@ async def run_exercise_media_scan(admin_user: dict | None = None) -> int:
 
         missing: list[str] = []
         cs = ex.get("content_status") or {}
-        if not (ex.get("primary_image_id") or ex.get("demo_start_image_id")):
-            missing.append("artwork")
+        # Movement-aware: check EACH required slot instead of just artwork.
+        required = resolved_required_slots(ex)
+        legacy_lookup = {
+            "primary": "primary_image_id",
+            "start":   "demo_start_image_id",
+            "end":     "demo_end_image_id",
+        }
+        demo_slots = ex.get("demo_slots") or {}
+        missing_slots: list[str] = []
+        for slot in required:
+            has = False
+            if slot in legacy_lookup and ex.get(legacy_lookup[slot]):
+                has = True
+            elif demo_slots.get(slot):
+                has = True
+            if not has:
+                missing_slots.append(slot)
+        if missing_slots:
+            missing.append(f"images ({', '.join(missing_slots)})")
         if not cs.get("coaching_points"):
             missing.append("coaching_points")
         if not cs.get("video"):
@@ -752,13 +861,11 @@ async def ex_image_prompt_preview(
     ex = await db.exercises_v2.find_one({"id": ex_id})
     if not ex:
         raise HTTPException(404, "not found")
-    if slot not in ("primary", "start", "end", "top", "bottom"):
+    valid = {"primary", "start", "end", "mid", "top", "bottom",
+             "apex", "stretch", "loaded", "finish"}
+    if slot not in valid:
         slot = "primary"
-    # `_build_ex_prompt` only knows primary/start/end today — map top→end,
-    # bottom→start for the preview so the coach sees something sensible;
-    # actual generation still stores the canonical slot key.
-    build_slot = {"top": "end", "bottom": "start"}.get(slot, slot)
-    prompt = _build_ex_prompt(ex, build_slot, prompt_extra, female)
+    prompt = _build_ex_prompt(ex, slot, prompt_extra, female)
     return {
         "exercise_id": ex_id,
         "exercise_name": ex.get("exercise_name"),

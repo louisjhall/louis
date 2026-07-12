@@ -1,0 +1,23 @@
+{
+  "summary": "Verified new international-friendly date format on client Home /(client)/home.tsx NEXT 7 DAYS. Row 1 shows 'Today' with secondary 'Sun 12 Jul'; Row 2 shows 'Tomorrow' with secondary 'Mon 13 Jul'; Rows 3-7 show only 'EEE d MMM' (Tue 14 Jul, Wed 15 Jul, Thu 16 Jul, Fri 17 Jul, Sat 18 Jul). No ISO (YYYY-MM-DD) or slash (DD/MM/YYYY) dates appear inside the NEXT 7 DAYS section. Sorting is forward-going with TODAY on top. Calendar screen /(client)/calendar.tsx renders normally with 0 console errors after the change.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/tmp/05_home.png", "/tmp/06_next7_top.png", "/tmp/09_calendar.png"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "dayLabel uses `new Date(dateStr + 'T00:00:00')` (no Z) so it is parsed in the client's local timezone -- correct for the 'respect client local date' requirement.",
+    "Year branch (`d.getFullYear() !== now.getFullYear()`) could not be exercised at runtime since all next-7 dates fall in 2026; code inspection confirms the branch is wired correctly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: client@crewfit.com / Client123!. Home NEXT 7 DAYS uses testIDs 'week-workout-<id>' and 'week-rest-<key>'. Each row renders styles.wDate (primary) + styles.wDateSub (secondary weekday D MMM). Calendar route: /calendar.",
+  "rca_of_issue": "n/a (feature verification)"
+}

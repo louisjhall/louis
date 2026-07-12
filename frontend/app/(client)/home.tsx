@@ -52,17 +52,25 @@ function localDateStr(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): string {
-  if (dateStr === todayStr) return "TODAY";
-  if (dateStr === tomorrowStr) return "TOMORROW";
+function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): { primary: string; secondary?: string } {
+  // Format like "Wed 1 Jul" (or "Wed 1 Jul 2027" if not current year).
+  // Uses en-GB to guarantee day-before-month ordering regardless of the device locale,
+  // so pilots/cabin crew on US phones don't see ambiguous 01/07/2026.
+  let short = dateStr;
   try {
     const d = new Date(`${dateStr}T00:00:00`);
-    const wk = d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase();
-    const md = d.toLocaleDateString(undefined, { month: "short", day: "numeric" }).toUpperCase();
-    return `${wk} · ${md}`;
+    const weekday = d.toLocaleDateString("en-GB", { weekday: "short" }); // Wed
+    const day = d.getDate();
+    const month = d.toLocaleDateString("en-GB", { month: "short" }); // Jul
+    const now = new Date();
+    const includeYear = d.getFullYear() !== now.getFullYear();
+    short = includeYear ? `${weekday} ${day} ${month} ${d.getFullYear()}` : `${weekday} ${day} ${month}`;
   } catch {
-    return dateStr;
+    /* keep raw dateStr */
   }
+  if (dateStr === todayStr) return { primary: "Today", secondary: short };
+  if (dateStr === tomorrowStr) return { primary: "Tomorrow", secondary: short };
+  return { primary: short };
 }
 
 export default function Home() {
@@ -349,11 +357,13 @@ export default function Home() {
               const tomorrowStr = localDateStr(tomorrow);
               return next7.map((w) => {
                 if (w.__rest) {
+                  const dl = dayLabel(w.__key, today, tomorrowStr);
                   return (
                     <View key={w.__key} style={[styles.wRow, styles.wRowRest]} testID={`week-rest-${w.__key}`}>
                       <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.wDate}>{dayLabel(w.__key, today, tomorrowStr)}</Text>
+                        <Text style={styles.wDate}>{dl.primary}</Text>
+                        {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                         <Text style={[styles.wTitle, styles.wTitleRest]}>{w.title}</Text>
                         <Text style={styles.wMeta}>{w.location ? `${w.location} · ` : ""}No session scheduled</Text>
                       </View>
@@ -361,11 +371,13 @@ export default function Home() {
                     </View>
                   );
                 }
+                const dl = dayLabel(w.__key, today, tomorrowStr);
                 return (
                   <Pressable key={w.id} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow} testID={`week-workout-${w.id}`}>
                     <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.wDate}>{dayLabel(w.__key, today, tomorrowStr)}</Text>
+                      <Text style={styles.wDate}>{dl.primary}</Text>
+                      {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                       <Text style={styles.wTitle}>{w.title}</Text>
                       <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
                     </View>
@@ -512,7 +524,8 @@ const styles = StyleSheet.create({
   wRowRest: { opacity: 0.75 },
   wTitleRest: { color: theme.color.textMuted, fontWeight: "800", letterSpacing: 1 },
   loadBar: { width: 4, alignSelf: "stretch" },
-  wDate: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 2, padding: theme.space.md, paddingBottom: 0, fontWeight: "700" },
+  wDate: { color: theme.color.brand, fontSize: 12, letterSpacing: 0.5, padding: theme.space.md, paddingBottom: 0, fontWeight: "800" },
+  wDateSub: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 0.5, paddingHorizontal: theme.space.md, paddingTop: 2, fontWeight: "600" },
   wTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700", paddingHorizontal: theme.space.md, marginTop: 2 },
   wMeta: { color: theme.color.textDim, fontSize: 12, padding: theme.space.md, paddingTop: 2 },
   pendPill: { color: theme.color.amber, fontSize: 9, letterSpacing: 1.5, marginRight: theme.space.md, fontWeight: "800", backgroundColor: "rgba(245,158,11,0.15)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm },

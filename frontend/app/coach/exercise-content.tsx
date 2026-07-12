@@ -123,15 +123,66 @@ export default function ExerciseContentScreen() {
 
   const genImage = async (slot: "primary" | "start" | "end") => {
     if (!detail) return;
-    setBusy(`gen-${slot}`);
+    // Credit-control: fetch the prompt first so Louis can review / edit /
+    // cancel before Nano Banana is fired.
+    setBusy(`prompt-${slot}`);
+    let preview: any = null;
     try {
-      const r = await api<{ image_id: string }>(`/exercise-content/${detail.id}/generate-image`, { method: "POST", body: { slot } });
-      // Optimistic detail refresh so the "generating…" state shows immediately.
-      await refreshDetail(detail.id);
-      // Poll the image doc until ready/failed (max ~45s)
-      pollImage(r.image_id, detail.id);
-    } catch (e: any) { Alert.alert("Failed", e?.message || ""); }
-    finally { setBusy(null); }
+      preview = await api<any>(
+        `/exercise-content/${detail.id}/image-prompt?slot=${slot}`,
+      );
+    } catch (e: any) {
+      Alert.alert("Couldn’t build prompt", e?.message || "");
+      setBusy(null);
+      return;
+    } finally {
+      setBusy(null);
+    }
+
+    const fire = async (finalExtra?: string) => {
+      setBusy(`gen-${slot}`);
+      try {
+        const r = await api<{ image_id: string }>(
+          `/exercise-content/${detail.id}/generate-image`,
+          { method: "POST", body: finalExtra ? { slot, prompt_extra: finalExtra } : { slot } },
+        );
+        await refreshDetail(detail.id);
+        pollImage(r.image_id, detail.id);
+      } catch (e: any) {
+        Alert.alert("Failed", e?.message || "");
+      } finally {
+        setBusy(null);
+      }
+    };
+
+    Alert.alert(
+      `Generate ${slot} image`,
+      `${preview?.prompt || ""}\n\n${preview?.warning || ""}\nEstimated cost: $${(preview?.estimated_cost_usd ?? 0.04).toFixed(3)}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Edit prompt",
+          onPress: () => {
+            // Fallback edit UX via a second Alert.prompt on iOS; on Android
+            // we just re-fire with the original prompt (Louis can use the
+            // detail screen text fields to refine coaching cues).
+            if ((Alert as any).prompt) {
+              (Alert as any).prompt(
+                "Add extra instructions",
+                "e.g. 'emphasise hip hinge, dark studio background'",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  { text: "Generate", onPress: (extra: string) => fire(extra) },
+                ],
+              );
+            } else {
+              fire();
+            }
+          },
+        },
+        { text: "Generate", style: "destructive", onPress: () => fire() },
+      ],
+    );
   };
 
   const pollImage = async (imageId: string, exerciseId: string) => {

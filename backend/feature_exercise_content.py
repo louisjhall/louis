@@ -446,34 +446,115 @@ def _tomorrow_iso_date() -> str:
     return (_dt.date.today() + _dt.timedelta(days=1)).isoformat()
 
 
+def _today_iso_date() -> str:
+    return _dt.date.today().isoformat()
+
+
+def _week_iso_date() -> str:
+    return (_dt.date.today() + _dt.timedelta(days=7)).isoformat()
+
+
 async def _bump_usage_counts() -> None:
-    """Recompute used_in_tomorrow_workouts_count for every exercise from workouts."""
+    """Recompute per-exercise scheduling counts by matching workouts against
+    both ``exercise_id`` (v2 workouts) AND ``exercise_name`` (legacy / manual
+    workouts). Also records ``first_scheduled_date`` so the JIT scan can
+    prioritise HIGH / MEDIUM / LOW tasks.
+
+    Called before scan-todos and also fired in the background by the
+    server after every workout write."""
+    today = _today_iso_date()
+    week = _week_iso_date()
+    # Reset the two counts + first_scheduled_date on every exercise so
+    # unscheduled ones drop back to zero cleanly.
+    await db.exercises_v2.update_many({}, {"$set": {
+        "used_in_tomorrow_workouts_count": 0,
+        "used_in_upcoming_workouts_count": 0,
+        "first_scheduled_date": None,
+    }})
+
+    # Build a name index once so we can resolve legacy workouts by name.
+    name_to_id: dict[str, str] = {}
+    async for x in db.exercises_v2.find({}, {"_id": 0, "id": 1, "exercise_name": 1}):
+        n = (x.get("exercise_name") or "").strip().lower()
+        if n:
+            name_to_id[n] = x["id"]
+
+    tomorrow_counts: dict[str, int] = {}
+    upcoming_counts: dict[str, int] = {}
+    first_seen: dict[str, str] = {}
     tomorrow = _tomorrow_iso_date()
-    # Reset counts
-    await db.exercises_v2.update_many({}, {"$set": {"used_in_tomorrow_workouts_count": 0}})
-    # Aggregate — assume workouts have shape {date: 'YYYY-MM-DD', exercises: [{exercise_id, ...}]}
-    counts: dict[str, int] = {}
-    async for w in db.workouts.find({"date": tomorrow}, {"_id": 0, "exercises": 1}):
-        for e in (w.get("exercises") or []):
+
+    async for w in db.workouts.find(
+        {"date": {"$gte": today, "$lte": week}},
+        {"_id": 0, "date": 1, "exercises": 1, "warm_up": 1, "cool_down": 1},
+    ):
+        wdate = w.get("date") or ""
+        blocks = list(w.get("exercises") or []) + list(w.get("warm_up") or []) + list(w.get("cool_down") or [])
+        for e in blocks:
             xid = e.get("exercise_id") or e.get("id")
-            if xid:
-                counts[xid] = counts.get(xid, 0) + 1
-    for xid, c in counts.items():
-        await db.exercises_v2.update_one({"id": xid},
-            {"$set": {"used_in_tomorrow_workouts_count": c}})
+            if not xid:
+                nm = (e.get("name") or "").strip().lower()
+                xid = name_to_id.get(nm)
+            if not xid:
+                continue
+            upcoming_counts[xid] = upcoming_counts.get(xid, 0) + 1
+            if wdate == tomorrow:
+                tomorrow_counts[xid] = tomorrow_counts.get(xid, 0) + 1
+            prev = first_seen.get(xid)
+            if not prev or (wdate and wdate < prev):
+                first_seen[xid] = wdate
+
+    for xid, c in upcoming_counts.items():
+        await db.exercises_v2.update_one({"id": xid}, {"$set": {
+            "used_in_tomorrow_workouts_count": tomorrow_counts.get(xid, 0),
+            "used_in_upcoming_workouts_count": c,
+            "first_scheduled_date": first_seen.get(xid),
+        }})
+
+
+def _priority_for_date(first_date: str | None) -> str:
+    """HIGH = today/tomorrow, MEDIUM = 2-7 days, LOW = anything else."""
+    if not first_date:
+        return "low"
+    try:
+        d = _dt.date.fromisoformat(first_date)
+    except Exception:
+        return "low"
+    delta = (d - _dt.date.today()).days
+    if delta <= 1:
+        return "high"
+    if delta <= 7:
+        return "normal"  # coach feed treats normal as medium
+    return "low"
 
 
 @api.post("/exercise-content/scan-todos")
 async def ex_scan_todos(admin: dict = Depends(require_admin())):
-    """Create Coach To-Do tasks for exercises scheduled tomorrow that are
-    missing important content. Idempotent per day — checks existing tasks."""
+    """Create Coach To-Do tasks for exercises scheduled within the next 7
+    days that are missing important content. Idempotent per exercise —
+    dedupes against existing open tasks. Auto-triggered by the server on
+    workout writes; also safe to invoke on demand."""
+    created = await run_exercise_media_scan(admin_user=admin)
+    return {"created": created}
+
+
+async def run_exercise_media_scan(admin_user: dict | None = None) -> int:
+    """Programmatic entry point used both by the HTTP endpoint above and by
+    the background worker that fires after every workout write. Returns the
+    number of new coach tasks created."""
+    if admin_user is None:
+        admin_user = await db.users.find_one(
+            {"role": "coach", "is_primary_coach": True}, {"_id": 0, "password_hash": 0},
+        ) or await db.users.find_one({"role": "coach"}, {"_id": 0, "password_hash": 0})
+        if not admin_user:
+            return 0
     await _bump_usage_counts()
     created = 0
-    async for ex in db.exercises_v2.find({"used_in_tomorrow_workouts_count": {"$gt": 0}}):
-        # Skip if already fully live and approved
+    async for ex in db.exercises_v2.find({"used_in_upcoming_workouts_count": {"$gt": 0}}):
         if ex.get("status") == "Live" and ex.get("approval_status") == "approved":
             continue
-        missing = []
+
+        missing: list[str] = []
         cs = ex.get("content_status") or {}
         if not (ex.get("primary_image_id") or ex.get("demo_start_image_id")):
             missing.append("artwork")
@@ -488,43 +569,121 @@ async def ex_scan_todos(admin: dict = Depends(require_admin())):
             continue
 
         kind = f"exercise_needs_{missing[0]}" if len(missing) == 1 else "exercise_needs_full_approval"
-        due = _tomorrow_iso_date()
-        # Dedupe: don't create if an open task of same type exists for this exercise.
-        # server._create_coach_task writes status='todo'; keep the other lifecycle
-        # values here defensive against future refactors.
+        first_date = ex.get("first_scheduled_date")
+        priority = _priority_for_date(first_date)
         existing = await db.coach_tasks.find_one({
             "task_type": kind,
             "payload.exercise_id": ex["id"],
             "status": {"$in": ["todo", "open", "snoozed", "pending"]},
         })
         if existing:
+            if existing.get("priority") != priority and priority == "high":
+                await db.coach_tasks.update_one({"id": existing["id"]}, {"$set": {
+                    "priority": priority,
+                    "payload.first_scheduled_date": first_date,
+                }})
             continue
-        clients = ex.get("used_in_tomorrow_workouts_count", 0)
+
+        clients = ex.get("used_in_upcoming_workouts_count", 0)
+        window = "today or tomorrow" if priority == "high" else "the next 7 days"
         summary = (
             f"This exercise appears in {clients} client workout"
-            f"{'s' if clients != 1 else ''} tomorrow. Missing: "
+            f"{'s' if clients != 1 else ''} in {window}. Missing: "
             f"{', '.join(missing)}."
         )
         await _create_coach_task(
-            user=admin,
+            user=admin_user,
             task_type=kind,
             title=f"Approve exercise content for {ex.get('exercise_name')}",
             description=summary,
-            priority="high" if clients >= 3 else "normal",
+            priority=priority,
             category="exercise_content",
             payload={
                 "exercise_id": ex["id"],
+                "exercise_name": ex.get("exercise_name"),
                 "missing": missing,
                 "clients_affected": clients,
-                "due_date": due,
+                "first_scheduled_date": first_date,
                 "actions": [
                     {"key": "review", "label": "Review Exercise"},
                     {"key": "approve_all", "label": "Approve All"},
                     {"key": "regen_images", "label": "Regenerate Images"},
+                    {"key": "find_video", "label": "Find Video"},
                     {"key": "snooze", "label": "Snooze"},
                     {"key": "dismiss", "label": "Dismiss"},
                 ],
             },
         )
         created += 1
-    return {"created": created}
+    return created
+
+
+# ---- Coach Dashboard summary tile ----------------------------------------
+
+@api.get("/coach/exercise-media-summary")
+async def ex_media_summary(admin: dict = Depends(require_admin())):
+    """Small summary used by the coach dashboard tile. Cheap Mongo counts,
+    not the full library — safe to call on every dashboard mount."""
+    await _bump_usage_counts()
+    needed_this_week = await db.exercises_v2.count_documents({
+        "used_in_upcoming_workouts_count": {"$gt": 0},
+        "$or": [
+            {"primary_image_id": {"$in": [None, ""]}, "demo_start_image_id": {"$in": [None, ""]}},
+            {"content_status.video": {"$ne": True}},
+            {"content_status.coaching_points": {"$ne": True}},
+            {"approval_status": {"$ne": "approved"}},
+        ],
+    })
+    needed_tomorrow = await db.exercises_v2.count_documents({
+        "used_in_tomorrow_workouts_count": {"$gt": 0},
+        "$or": [
+            {"primary_image_id": {"$in": [None, ""]}, "demo_start_image_id": {"$in": [None, ""]}},
+            {"content_status.video": {"$ne": True}},
+            {"approval_status": {"$ne": "approved"}},
+        ],
+    })
+    missing_videos = await db.exercises_v2.count_documents({
+        "used_in_upcoming_workouts_count": {"$gt": 0},
+        "content_status.video": {"$ne": True},
+    })
+    ready_for_review = await db.exercises_v2.count_documents({
+        "approved_image_status": "Needs Review",
+    })
+    return {
+        "needed_this_week": needed_this_week,
+        "needed_tomorrow": needed_tomorrow,
+        "missing_videos": missing_videos,
+        "ready_for_review": ready_for_review,
+    }
+
+
+# ---- Prompt preview (credit control: no gen without seeing prompt first) --
+
+@api.get("/exercise-content/{ex_id}/image-prompt")
+async def ex_image_prompt_preview(
+    ex_id: str,
+    slot: str = "primary",
+    prompt_extra: str | None = None,
+    female: bool | None = None,
+    admin: dict = Depends(require_admin()),
+):
+    """Return the exact prompt that would be sent for image generation so
+    the coach can review / edit / cancel BEFORE burning AI credits."""
+    ex = await db.exercises_v2.find_one({"id": ex_id})
+    if not ex:
+        raise HTTPException(404, "not found")
+    if slot not in ("primary", "start", "end", "top", "bottom"):
+        slot = "primary"
+    # `_build_ex_prompt` only knows primary/start/end today — map top→end,
+    # bottom→start for the preview so the coach sees something sensible;
+    # actual generation still stores the canonical slot key.
+    build_slot = {"top": "end", "bottom": "start"}.get(slot, slot)
+    prompt = _build_ex_prompt(ex, build_slot, prompt_extra, female)
+    return {
+        "exercise_id": ex_id,
+        "exercise_name": ex.get("exercise_name"),
+        "slot": slot,
+        "prompt": prompt,
+        "estimated_cost_usd": 0.039,   # single Nano Banana image
+        "warning": "This will consume ~1 image credit on your Emergent LLM key.",
+    }

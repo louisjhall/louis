@@ -3981,6 +3981,14 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                 "coach_locked": {"$ne": True}, "completed": {"$ne": True},
             })
             await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
+            # JIT exercise-media scan: alert Louis if any newly generated
+            # workouts reference exercises with missing artwork / video /
+            # coaching points / approval within the next 7 days.
+            try:
+                from feature_exercise_content import run_exercise_media_scan
+                asyncio.create_task(run_exercise_media_scan())
+            except Exception:
+                logger.exception("exercise media scan failed to enqueue after gen_month")
         except Exception as e:
             logger.exception("gen_job %s failed", job_id)
             await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e), "finished_at": now_iso()}})
@@ -4075,6 +4083,12 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                     logger.warning("workout regenerate upsert failed for date=%s: %s", d, e)
                     continue
             await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
+            # JIT exercise-media scan after regenerate too.
+            try:
+                from feature_exercise_content import run_exercise_media_scan
+                asyncio.create_task(run_exercise_media_scan())
+            except Exception:
+                logger.exception("exercise media scan failed to enqueue after regenerate")
         except Exception as e:
             logger.exception("regenerate job %s failed", job_id)
             await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "failed", "error": str(e)[:400], "finished_at": now_iso()}})

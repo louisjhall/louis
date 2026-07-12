@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
 import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
+import { ExerciseMediaSummary } from "@/src/components/ExerciseMediaSummary";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PreviewLauncher } from "@/src/components/PreviewLauncher";
 
@@ -119,6 +120,8 @@ export default function CoachOverview() {
               </View>
             </View>
           )}
+
+          <ExerciseMediaSummary />
 
           <CoachToDoFeed />
 

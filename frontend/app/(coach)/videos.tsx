@@ -67,7 +67,7 @@ const SLOTS = [
   { key: "custom_upload", label: "CREWFIT UPLOAD", icon: "cloud-upload" as const, uploadable: true },
   { key: "alternative", label: "ALTERNATIVE", icon: "swap-horizontal" as const },
   { key: "youtube_backup", label: "YOUTUBE BACKUP", icon: "bookmark" as const },
-  { key: "ai_image", label: "AI IMAGE", icon: "image" as const, disabled: true },
+  { key: "ai_image", label: "GENERATED IMAGE", icon: "image" as const, disabled: true },
 ];
 
 const VARIANTS = ["home", "hotel", "gym"] as const;

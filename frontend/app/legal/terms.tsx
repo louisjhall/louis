@@ -36,13 +36,13 @@ export default function Terms() {
         </Section>
 
         <Section title="4. Acceptable use">
-          <LI>Do not misuse the AI features (excessive automated calls, scraping, resale of AI output).</LI>
+          <LI>Do not misuse the automation features (excessive automated calls, scraping, or resale of generated output).</LI>
           <LI>Do not upload content that is illegal, defamatory, or violates others’ rights.</LI>
           <LI>Do not attempt to reverse-engineer, hack or disrupt the service.</LI>
         </Section>
 
-        <Section title="5. AI content">
-          <P>AI-generated insights, meal estimates and travel guidance can be wrong. Always use your judgement. CrewFit is not liable for decisions you make based on AI output.</P>
+        <Section title="5. Automated content">
+          <P>Automated insights, meal estimates and travel guidance can be wrong. Always use your judgement. CrewFit is not liable for decisions you make based on automated output.</P>
         </Section>
 
         <Section title="6. Subscriptions and payment">
@@ -50,7 +50,7 @@ export default function Terms() {
         </Section>
 
         <Section title="7. Content ownership">
-          <P>You own the content you upload. You grant CrewFit a limited licence to process it in order to provide the service (including via AI processors).</P>
+          <P>You own the content you upload. You grant CrewFit a limited licence to process it in order to provide the service (including via automated processors).</P>
         </Section>
 
         <Section title="8. Suspension and termination">

@@ -492,7 +492,7 @@ function DNAReveal({ dna, onContinue }: { dna: any; onContinue: () => void }) {
 
         <View style={styles.dnaConfCard}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.dnaConfLabel}>AI CONFIDENCE</Text>
+            <Text style={styles.dnaConfLabel}>PROFILE CONFIDENCE</Text>
             <Text style={styles.dnaConfSub}>Will rise as CrewFit learns more.</Text>
           </View>
           <Text style={styles.dnaConfNum}>{dna.ai_confidence_score ?? "—"}</Text>

@@ -62,7 +62,7 @@ export default function CoachingDnaScreen() {
           <>
             <View style={styles.confCard}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.confLabel}>AI CONFIDENCE</Text>
+                <Text style={styles.confLabel}>PROFILE CONFIDENCE</Text>
                 <Text style={styles.confSub}>Version {dna.version || 1} · rises as CrewFit learns more.</Text>
               </View>
               <Text style={styles.confNum}>{dna.ai_confidence_score ?? "—"}</Text>

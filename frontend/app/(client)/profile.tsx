@@ -211,7 +211,7 @@ export default function ProfileScreen() {
         <Section id="coaching_dna" title="COACHING DNA" icon="pulse" expanded={expanded} onToggle={toggle}
           rightSlot={dna?.ai_confidence_score !== undefined ? (
             <View style={styles.dnaPill}>
-              <Text style={styles.dnaPillLabel}>AI CONF</Text>
+              <Text style={styles.dnaPillLabel}>CONF</Text>
               <Text style={styles.dnaPillNum}>{dna.ai_confidence_score}</Text>
             </View>
           ) : null}
@@ -457,8 +457,8 @@ export default function ProfileScreen() {
           )}
         </Section>
 
-        {/* 14. AI NOTES */}
-        <Section id="ai_notes" title="AI NOTES" icon="pulse" expanded={expanded} onToggle={toggle}
+        {/* 14. CREWFIT NOTES */}
+        <Section id="ai_notes" title="CREWFIT NOTES" icon="pulse" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={(aiNotes.reality_context || []).length + (aiNotes.move_rationales || []).length} />}
         >
           {(aiNotes.reality_context || []).slice(0, 5).map((r: any) => (
@@ -474,7 +474,7 @@ export default function ProfileScreen() {
             </View>
           ))}
           {(aiNotes.reality_context || []).length === 0 && (aiNotes.move_rationales || []).length === 0 && (
-            <EmptyRow text="No AI notes yet. Use Today's Reality to generate context." />
+            <EmptyRow text="No notes yet. Use Today's Reality to add context." />
           )}
         </Section>
 

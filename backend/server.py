@@ -595,6 +595,7 @@ class EventBody(BaseModel):
     event_type: str
     event_name: str
     event_date: str                          # YYYY-MM-DD
+    category: Optional[str] = None           # race | medical | aviation_work | sport_hobby | personal (inferred if omitted)
     current_ability: Optional[str] = None
     previous_time: Optional[str] = None
     target_time: Optional[str] = None
@@ -641,13 +642,22 @@ def _event_phase(event_date_iso: str) -> dict:
 async def event_upsert(body: EventBody, user: dict = Depends(current_user)):
     # coach may set on behalf of a client; client only for themselves
     owner_id = body.user_id if (user["role"] == "coach" and body.user_id) else user["id"]
+    payload = body.model_dump(exclude={"user_id"})
+    # Infer category if omitted so cards use correct wording.
+    try:
+        from feature_event_categories import _categorise_by_name
+        if not payload.get("category"):
+            cat, _meta = _categorise_by_name(payload.get("event_name", ""), payload.get("event_type", ""))
+            payload["category"] = cat
+    except Exception:
+        payload.setdefault("category", "race")
     doc = {
         "id": new_id(),
         "user_id": owner_id,
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "is_active": True,
-        **body.model_dump(exclude={"user_id"}),
+        **payload,
     }
     # deactivate previous events for this user (never delete — history)
     await db.events.update_many({"user_id": owner_id, "is_active": True}, {"$set": {"is_active": False}})
@@ -661,14 +671,25 @@ async def event_current(user: dict = Depends(current_user)):
     if not ev:
         return {}
     ev["phase_info"] = _event_phase(ev.get("event_date", ""))
+    try:
+        from feature_event_categories import enrich_event
+        ev = enrich_event(ev)
+    except Exception:
+        pass
     return ev
 
 
 @api.get("/events/history")
 async def event_history(user: dict = Depends(current_user)):
     rows = await db.events.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
-    for e in rows:
-        e["phase_info"] = _event_phase(e.get("event_date", ""))
+    try:
+        from feature_event_categories import enrich_event
+        for e in rows:
+            e["phase_info"] = _event_phase(e.get("event_date", ""))
+            enrich_event(e)
+    except Exception:
+        for e in rows:
+            e["phase_info"] = _event_phase(e.get("event_date", ""))
     return rows
 
 
@@ -7425,6 +7446,7 @@ import feature_preview           # noqa: E402,F401  Coach preview-as-client + UI
 import feature_beta_readiness    # noqa: E402,F401  Beta wiring: storage smoke test + disclaimer
 import feature_personal_activities  # noqa: E402,F401  Personal Activity Planner (client sports/hobbies)
 import feature_setup_day             # noqa: E402,F401  Setup-day gate — first workout starts tomorrow
+import feature_event_categories      # noqa: E402,F401  Category-aware Event Training
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

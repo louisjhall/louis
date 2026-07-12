@@ -10,7 +10,7 @@ const ROWS: Row[] = [
   { data: "Name & email", collected: true, shared: false, purpose: "Account and support." },
   { data: "Encrypted password", collected: true, shared: false, purpose: "Login. Hashed with bcrypt — we never see the plaintext." },
   { data: "Fitness data (workouts, PRs, habits, check-ins)", collected: true, shared: false, purpose: "Provide the service and personalised guidance." },
-  { data: "Nutrition logs & meal photos", collected: true, shared: false, purpose: "Meal logging and AI meal analysis. Photos are sent to Anthropic’s vision API for that single request only." },
+  { data: "Nutrition logs & meal photos", collected: true, shared: false, purpose: "Meal logging and automated meal photo analysis. Photos are sent to Anthropic’s vision API for that single request only." },
   { data: "Roster / duty schedule", collected: true, shared: false, purpose: "Travel-aware guidance, workout timing." },
   { data: "Location (city / country)", collected: true, shared: false, purpose: "Only if you grant permission. Used for travel guidance and timezone." },
   { data: "Weekly check-ins & messages", collected: true, shared: true, purpose: "Shared with your assigned coach on coached plans." },
@@ -49,8 +49,8 @@ export default function DataSafety() {
         <Text style={styles.h2}>Deletion</Text>
         <Text style={styles.p}>You can request permanent deletion of your account at any time from Legal &gt; Delete My Account. Data is purged after a 30-day grace period.</Text>
 
-        <Text style={styles.h2}>AI processing</Text>
-        <Text style={styles.p}>AI features send the content of your request (e.g. a photo, a prompt) to third-party AI providers via our processor Emergent. Providers do not store or train on your data.</Text>
+        <Text style={styles.h2}>Automated processing</Text>
+        <Text style={styles.p}>Automated features send the content of your request (e.g. a photo, a prompt) to third-party inference providers via our processor Emergent. Providers do not store or train on your data.</Text>
       </ScrollView>
     </SafeAreaView>
   );

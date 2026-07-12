@@ -266,7 +266,7 @@ export default function WorkoutDetail() {
             <TextInput testID="coach-notes" style={[styles.exNameInput, { minHeight: 80 }]} value={w.coach_notes || ""} onChangeText={(v) => setW({ ...w, coach_notes: v })} placeholder="Add note for client…" placeholderTextColor={theme.color.textDim} multiline />
             <Pressable testID="lock-toggle" onPress={toggleLock} style={styles.lockBtn}>
               <Ionicons name={w.coach_locked ? "lock-closed" : "lock-open"} size={14} color={theme.color.brand} />
-              <Text style={styles.lockText}>{w.coach_locked ? "COACH-LOCKED — click to unlock" : "LOCK (protect from AI regenerate)"}</Text>
+              <Text style={styles.lockText}>{w.coach_locked ? "COACH-LOCKED — click to unlock" : "LOCK (protect from auto-regenerate)"}</Text>
             </Pressable>
           </View>
         )}

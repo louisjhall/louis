@@ -270,13 +270,13 @@ export default function Home() {
               >
                 <View style={styles.eventCardInner}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.eTop}>{String(event.event_type || "").toUpperCase()} · {String(event.phase_info?.phase || "").toUpperCase().replace("_", " ")}</Text>
+                    <Text style={styles.eTop}>{(event.category_label || String(event.event_type || "")).toUpperCase()}{event.category === "race" && event.phase_info?.phase ? ` · ${String(event.phase_info.phase).toUpperCase().replace("_", " ")}` : ""}</Text>
                     <Text style={styles.eName}>{event.event_name}</Text>
                     <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={styles.eBig}>{event.phase_info?.days_to_race ?? "—"}</Text>
-                    <Text style={styles.eBigLbl}>DAYS TO RACE</Text>
+                    <Text style={styles.eBig}>{(event.days_value ?? event.phase_info?.days_to_race) ?? "—"}</Text>
+                    <Text style={styles.eBigLbl}>{(event.days_label || "days to event").toUpperCase()}</Text>
                   </View>
                 </View>
               </AIHeroImage>
@@ -371,7 +371,7 @@ export default function Home() {
           ) : (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyTitle}>No workout scheduled for today</Text>
-              <Text style={styles.emptySub}>Upload your roster to get an AI-generated plan.</Text>
+              <Text style={styles.emptySub}>Upload your roster so CrewFit can build your personalised training plan.</Text>
               <Pressable testID="upload-roster-cta" onPress={() => router.push("/roster-upload")} style={styles.uploadBtn}>
                 <Text style={styles.startText}>UPLOAD ROSTER</Text>
               </Pressable>

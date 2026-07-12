@@ -1,5 +1,5 @@
 /**
- * Nutrition · AI Photo Meal Scan (Phase 3).
+ * Nutrition · Photo Meal Scan (Phase 3).
  *
  * Flow:
  *   1. Pick a photo (camera OR gallery, iOS/Android; upload input on web).

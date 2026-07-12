@@ -36,7 +36,7 @@ export default function PrivacyPolicy() {
 
         <Section title="How we use it">
           <LI>To provide the CrewFit service: personalised workouts, nutrition guidance, travel-aware suggestions, coach dashboards.</LI>
-          <LI>To generate AI insights: photos, text notes and roster data may be sent to trusted AI providers (Anthropic Claude, Google Gemini, OpenAI Whisper) via our processor Emergent. AI providers do not train on your data.</LI>
+          <LI>To generate automated insights: photos, text notes and roster data may be sent to trusted inference providers (Anthropic Claude, Google Gemini, OpenAI Whisper) via our processor Emergent. Inference providers do not train on your data.</LI>
           <LI>To send you notifications you have opted into (reminders, check-in prompts).</LI>
           <LI>To improve the service and troubleshoot problems.</LI>
           <LI>To comply with legal obligations.</LI>
@@ -50,8 +50,8 @@ export default function PrivacyPolicy() {
 
         <Section title="Who we share it with">
           <LI>Your coach (only if you are on a coached plan).</LI>
-          <LI>Cloud infrastructure providers: MongoDB Atlas, Cloudflare (CDN + object storage), Emergent (application host and AI gateway).</LI>
-          <LI>AI processors: Anthropic, Google, OpenAI — for the specific inference you request. No profile data is sold or used for advertising.</LI>
+          <LI>Cloud infrastructure providers: MongoDB Atlas, Cloudflare (CDN + object storage), Emergent (application host and automation gateway).</LI>
+          <LI>Inference processors: Anthropic, Google, OpenAI — for the specific inference you request. No profile data is sold or used for advertising.</LI>
           <LI>Legal authorities where legally required.</LI>
         </Section>
 

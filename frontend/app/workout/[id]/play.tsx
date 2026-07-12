@@ -19,6 +19,7 @@ import { getAutoRest } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete } from "@/src/lib/sounds";
 import { toast } from "@/src/lib/ux";
+import { WorkoutMediaCarousel } from "@/src/components/WorkoutMediaCarousel";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const TILES = ["IMAGE", "HOW TO", "VIDEO", "SWAP", "LOG"] as const;
@@ -335,40 +336,12 @@ export default function AtlasPlayer() {
 /*  Tile 1 — Image                                                             */
 /* -------------------------------------------------------------------------- */
 function TileImage({ ex }: { ex: any }) {
-  const [imgUrl, setImgUrl] = useState<string | null>(null);
-  const [tried, setTried] = useState(false);
-  useEffect(() => {
-    if (!ex?.name) return;
-    setImgUrl(null); setTried(false);
-    // Prefer coach-custom image, else fall back to video thumbnail
-    api<any>(`/exercises/content?name=${encodeURIComponent(ex.name)}`)
-      .then(async (r) => {
-        const custom = r?.exercise?.custom_image_b64 || r?.exercise?.coach_image_url;
-        if (custom) { setImgUrl(custom); setTried(true); return; }
-        const v = await api<any>(`/exercises/video?name=${encodeURIComponent(ex.name)}`).catch(() => null);
-        setTried(true);
-        setImgUrl(v?.thumbnail || v?.image || null);
-      })
-      .catch(() => setTried(true));
-  }, [ex?.name]);
-
+  // Resolves media directly from the V2 Exercise Library — approved
+  // primary/start/bottom/top/end etc. slots become a swipeable carousel.
+  // Placeholder only shows when the exercise has NO approved media.
   return (
     <View style={styles.imgCard}>
-      {imgUrl ? (
-        <Image source={{ uri: imgUrl }} style={styles.imgHero} resizeMode="cover" />
-      ) : (
-        <View style={styles.imgFallback}>
-          {tried ? (
-            <>
-              <Ionicons name="body" size={70} color={theme.color.brand} />
-              <Text style={styles.imgFbT}>DEMO IMAGE</Text>
-              <Text style={styles.imgFbS}>Follow the written coaching cues below.</Text>
-            </>
-          ) : (
-            <ActivityIndicator color={theme.color.brand} />
-          )}
-        </View>
-      )}
+      <WorkoutMediaCarousel exerciseName={ex?.name || ""} height={260} />
       <View style={styles.imgOverlay}>
         <Text style={styles.imgOverlayT}>{ex?.name}</Text>
         <Text style={styles.imgOverlayS}>

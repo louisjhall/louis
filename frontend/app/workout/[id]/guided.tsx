@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
+import { WorkoutMediaCarousel } from "@/src/components/WorkoutMediaCarousel";
 import { RestTimer } from "@/src/components/RestTimer";
 import { getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue, getAutoRest } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
@@ -476,14 +477,7 @@ function WarmupPanel({
       <Text style={styles.exMeta}>Move {index} of {total}</Text>
 
       <View style={styles.mediaBox}>
-        {img ? (
-          <Image source={{ uri: img }} style={styles.mediaImg} resizeMode="cover" />
-        ) : (
-          <View style={styles.mediaFallback}>
-            <Ionicons name="flame" size={60} color={theme.color.brand} />
-            <Text style={styles.mediaFbT}>WARM-UP IMAGE COMING</Text>
-          </View>
-        )}
+        <WorkoutMediaCarousel exerciseName={item?.name || ""} height={180} />
       </View>
 
       <View style={styles.timerBox}>
@@ -534,14 +528,7 @@ function WorkPanel({
       <Text style={styles.exMeta}>Set {setIdx} of {targetSets} · {targetReps} reps</Text>
 
       <View style={styles.mediaBox}>
-        {media ? (
-          <Image source={{ uri: media }} style={styles.mediaImg} resizeMode="cover" />
-        ) : (
-          <View style={styles.mediaFallback}>
-            <Ionicons name="body" size={70} color={theme.color.brand} />
-            <Text style={styles.mediaFbT}>ATLAS IMAGE COMING</Text>
-          </View>
-        )}
+        <WorkoutMediaCarousel exerciseName={ex?.name || ""} height={200} />
       </View>
 
       <View style={styles.cueBox}>

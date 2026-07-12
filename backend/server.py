@@ -2434,26 +2434,25 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             try:
                 workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=180.0)
             except _asyncio.TimeoutError:
-                logger.warning("plan generation TIMEOUT in job %s (>90s)", job_id)
-                heartbeat_task.cancel()
-                await _set_job(
-                    job_id, status="needs_review", stage="generating", progress=90,
-                    error="Plan generation is taking longer than expected. Louis has been notified and your roster has been saved.",
-                    message="Roster saved — plan needs review",
-                )
-                await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="timeout")
-                return
+                logger.warning("plan generation TIMEOUT in job %s (>180s) — falling back to template", job_id)
+                workouts = []
             except Exception as e:
-                heartbeat_task.cancel()
-                logger.exception("generation failed in job %s", job_id)
-                await _set_job(
-                    job_id, status="needs_review", stage="generating", progress=90,
-                    error="Your roster was saved but the plan couldn't be generated automatically. Louis has been notified.",
-                    message="Roster saved — plan needs review",
-                    error_detail=str(e)[:400],
-                )
-                await _open_coach_task_for_stuck_generation(user, roster, job_id, reason=f"error: {type(e).__name__}")
-                return
+                logger.exception("plan generation raised in job %s: %s — falling back to template", job_id, e)
+                workouts = []
+
+            # Deterministic fallback: if the LLM produced nothing usable (budget
+            # exceeded / timeout / provider error), give the client a real
+            # starter plan built from templates and flag Louis to upgrade it.
+            used_template = False
+            try:
+                from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
+                if is_empty_or_llm_failure(workouts):
+                    workouts = build_template_plan(user, roster)
+                    used_template = bool(workouts)
+                    if used_template:
+                        logger.warning("plan generation used TEMPLATE fallback for job %s (LLM unavailable)", job_id)
+            except Exception:
+                logger.exception("template fallback failed unexpectedly")
             finally:
                 heartbeat_task.cancel()
             existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
@@ -2478,6 +2477,8 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     "rationale": w.get("rationale", ""),
                     "key_session": bool(w.get("key_session", False)),
                     "event_phase": w.get("event_phase"),
+                    "source": "template" if used_template else "coaching_system",
+                    "needs_coach_review": bool(used_template),
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
                     "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -2518,6 +2519,16 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 await _notify_coaches_of_new_roster(user, roster, job_id)
             except Exception:
                 pass
+            # If we used the template fallback, open a HIGH priority coach task
+            # so Louis knows to upgrade the plan when LLM budget is restored.
+            if used_template:
+                try:
+                    await _open_coach_task_for_stuck_generation(
+                        user, roster, job_id,
+                        reason="template fallback used (LLM unavailable — budget/timeout/error)",
+                    )
+                except Exception:
+                    logger.exception("could not create fallback coach task")
             # Living Profile trigger — new roster invites a quick review
             try:
                 await _emit_reassessment_prompt(
@@ -2527,9 +2538,17 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 )
             except Exception:
                 pass
-            await _set_job(job_id, status="complete", stage="complete", progress=100,
-                           message="Your new plan is ready", completed_at=now_iso(),
-                           workouts_generated=len(workouts))
+            complete_message = (
+                "Starter plan ready — Louis will refine your sessions soon."
+                if used_template else "Your new plan is ready"
+            )
+            await _set_job(
+                job_id,
+                status="complete", stage="complete", progress=100,
+                message=complete_message, completed_at=now_iso(),
+                workouts_generated=len(workouts),
+                used_template=used_template,
+            )
         except Exception as e:
             logger.exception("roster upload job %s failed", job_id)
             await _set_job(job_id, status="failed", error=str(e)[:400], message="Roster processing failed")
@@ -2643,27 +2662,25 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
         try:
             workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=180.0)
         except _asyncio.TimeoutError:
-            heartbeat_task.cancel()
-            await _set_job(
-                job_id, status="needs_review", stage="generating", progress=90,
-                error="Plan generation is still taking longer than expected. Louis has been notified.",
-                message="Roster saved — plan needs review",
-            )
-            await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="timeout on retry")
-            return
+            logger.warning("retry TIMEOUT for job %s — falling back to template", job_id)
+            workouts = []
         except Exception as e:
-            heartbeat_task.cancel()
-            logger.exception("retry plan generation failed for job %s", job_id)
-            await _set_job(
-                job_id, status="needs_review", stage="generating", progress=90,
-                error="Plan couldn't be generated. Louis has been notified.",
-                error_detail=str(e)[:400],
-                message="Roster saved — plan needs review",
-            )
-            await _open_coach_task_for_stuck_generation(user, roster, job_id, reason=f"retry error: {type(e).__name__}")
-            return
+            logger.exception("retry plan generation raised for job %s: %s — falling back to template", job_id, e)
+            workouts = []
         finally:
             heartbeat_task.cancel()
+
+        # Deterministic fallback if the LLM is unavailable.
+        used_template = False
+        try:
+            from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
+            if is_empty_or_llm_failure(workouts):
+                workouts = build_template_plan(user, roster)
+                used_template = bool(workouts)
+                if used_template:
+                    logger.warning("retry job %s used TEMPLATE fallback (LLM unavailable)", job_id)
+        except Exception:
+            logger.exception("retry template fallback failed unexpectedly")
 
         # Reuse the same upsert logic as the main worker.
         existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
@@ -2717,9 +2734,24 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
             await _notify_coaches_of_new_roster(user, roster, job_id)
         except Exception:
             pass
-        await _set_job(job_id, status="complete", stage="complete", progress=100,
-                       message="Your new plan is ready", completed_at=now_iso(),
-                       workouts_generated=len(workouts))
+        if used_template:
+            try:
+                await _open_coach_task_for_stuck_generation(
+                    user, roster, job_id,
+                    reason="template fallback used on retry (LLM still unavailable)",
+                )
+            except Exception:
+                pass
+        complete_message = (
+            "Starter plan ready — Louis will refine your sessions soon."
+            if used_template else "Your new plan is ready"
+        )
+        await _set_job(
+            job_id, status="complete", stage="complete", progress=100,
+            message=complete_message, completed_at=now_iso(),
+            workouts_generated=len(workouts),
+            used_template=used_template,
+        )
 
     _asyncio.create_task(_retry_worker())
     return {"job_id": job_id, "status": "processing"}

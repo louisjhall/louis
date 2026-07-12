@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 58 — Verified the deterministic template fallback for roster workout generation when the LLM (Claude via Emergent Universal Key) is unavailable (budget exceeded / timeout / provider error). 27/28 tests pass. Unit + shape tests for feature_workout_fallback all green: build_template_plan / is_empty_or_llm_failure export correctly; is_empty_or_llm_failure([]) → True and is_empty_or_llm_failure([{exercises:[{name:'x'}]}]) → False; a 14-day stub roster mixing home/layover/night_flight/long_haul_flight/overnight_flight/standby/reserve/simulator/rest/off/annual_leave produces exactly the expected titles ('Full Body Strength', 'Hotel / Bodyweight Session', 'Flight Recovery Mobility', 'Standby Activation', 'Light Activation'), each with 5 exercises and a non-empty rationale; explicit rest/off/annual_leave days are omitted; hotel_gyms='rare' switches home-day title to 'Full Body Bodyweight' and 'always' to 'Full Body Hotel Gym'. Static wiring of server.py confirmed: fallback import appears in BOTH the initial roster worker AND the retry worker; 'used_template = False' appears in both blocks; the exact completion message 'Starter plan ready — Louis will refine your sessions soon.' is present; used_template=used_template is passed into _set_job. End-to-end persistence test (pymongo, no LLM call) confirms workouts written by the main worker's persist block carry source='template' and needs_coach_review=true when used_template is True, and rest days are correctly skipped. Iter56 regression is green: /api/roster/jobs/active still surfaces needs_review jobs; /roster/jobs/{id}/acknowledge hides them and returns 404 on unknown id. ONE REAL BUG FOUND — the _retry_worker persist block (server.py ~lines 2694-2714) does NOT stamp source='template' or needs_coach_review=true on the workouts it writes; only the main worker (line 2480-2481) does. Job-level used_template flag + completion message are correct in the retry worker, but the DB rows written by a retry that hits fallback are indistinguishable from LLM-generated ones — Louis has no per-workout signal to upgrade them. NO real roster upload triggered (per agent_to_agent_context_note; LLM budget is exceeded).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/roster/jobs/{job_id}/retry (_retry_worker)",
+        "issue": "server.py _retry_worker persist block (lines 2694-2714) is missing the `source: 'template' if used_template else 'coaching_system'` and `needs_coach_review: bool(used_template)` fields on the doc it writes. When the LLM is still unavailable on retry and the template fallback fires, the persisted workouts DO NOT include source='template' or needs_coach_review=true — breaking the requirement 'When roster upload fallback fires, resulting workouts DB rows must include source=template and needs_coach_review=true'. The main worker at line 2480-2481 sets these correctly; the retry path forgot them. Fix: add the two keys to the retry worker's `doc` dict, mirroring server.py:2480-2481.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter58_workout_fallback.py",
+    "/app/test_reports/pytest/iter58_workout_fallback.xml"
+  ],
+  "action_items": [
+    "server.py _retry_worker (~line 2694-2714): add \"source\": \"template\" if used_template else \"coaching_system\" and \"needs_coach_review\": bool(used_template) to the doc dict — mirror lines 2480-2481 of the main worker. Without this, template workouts written on retry will look identical to LLM-generated ones and coach filters/dashboards that key off source or needs_coach_review will miss them."
+  ],
+  "critical_code_review_comments": [
+    "feature_workout_fallback.py is well-scoped and deterministic — no I/O, no LLM calls, pure functions. Templates are safe (5 exercises each), rationale strings are plain English, RPE/rest values are reasonable. Good.",
+    "server.py:2435-2456 main worker fallback flow is correct: wait_for → TimeoutError/Exception → workouts=[] → is_empty_or_llm_failure(workouts) → build_template_plan → used_template=True; heartbeat cancelled in finally.",
+    "server.py:2480-2481 stamps `source: template|coaching_system` + `needs_coach_review: bool(used_template)` — this is the ONE place the two flags are set in the whole codebase. The retry worker (2694-2714) omits both, which is the HIGH bug above.",
+    "server.py:2524-2531 opens a coach task when used_template=true so Louis is notified — good. Same logic mirrored in retry worker at 2737-2744 — good.",
+    "server.py:2541-2544 and 2745-2748: completion_message correctly conditional on used_template — 'Starter plan ready — Louis will refine your sessions soon.' matches the spec exactly.",
+    "server.py:2550 and 2753: used_template=used_template is set on the job in BOTH workers — clients can inspect the flag via /api/roster/jobs/{id}. Good.",
+    "Minor: retry worker's persist doc also drops seconds fields the main worker sets — but only `source` and `needs_coach_review` are functional gaps; the rest are duplicated correctly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter58_workout_fallback.py (new — 28 tests: 1 import + 5 is_empty_or_llm_failure + 12 build_template_plan shape/goal + 6 server.py wiring static + 3 /jobs/active + acknowledge regression + 1 end-to-end persist)"
+  ],
+  "success_rate": {
+    "backend": "96.4% (27/28 tests pass; 1 failing test is a REAL bug in the retry_worker not stamping source/needs_coach_review — see backend_issues.critical)",
+    "frontend": "not tested (backend-only iteration per review_request.testing_type)"
+  },
+  "seed_data_creation": "All test data uses TEST_iter58_* prefixes: 2 roster_jobs stubs (needs_review, deleted in finally), 1 roster + 3 workouts stub (deleted in finally). No production data touched. No real roster upload / no real LLM call.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Once the retry_worker bug is fixed (add source + needs_coach_review to the retry worker's doc dict at server.py:2694-2714), re-run pytest /app/backend/tests/test_iter58_workout_fallback.py — all 28 tests should be green, particularly TestServerFallbackWiring::test_retry_worker_persists_source_and_needs_coach_review. That static test grep-counts the flag occurrences and expects >=2 (main + retry). No LLM calls happen in this suite; safe to run any time. If you need to exercise the retry flow end-to-end with pymongo, follow the pattern of TestMainWorkerFallbackEndToEnd — the same persist logic must produce identical source='template' / needs_coach_review=true rows.",
+  "rca_of_issue": "RCA for the failing test: the main worker's persist block at server.py:2466-2488 correctly writes source and needs_coach_review, but when the retry worker was added (server.py:2685-2714) the doc dict was copy-pasted WITHOUT those two lines. Both blocks share the same shape otherwise. Reproduction: (1) trigger a roster upload that produces 0 workouts (LLM budget exceeded), (2) client sees needs_review job, (3) client POSTs /api/roster/jobs/{id}/retry, (4) LLM still fails, (5) template fallback runs and persists workouts, (6) DB shows workouts with NO source and NO needs_coach_review fields. Mitigation is a two-line addition to the retry worker's doc dict."
+}

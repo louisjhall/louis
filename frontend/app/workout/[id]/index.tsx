@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
-import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
+import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 import { RealityModal } from "@/src/components/RealityModal";
 import { ModePickerModal } from "@/src/components/ModePickerModal";
@@ -58,11 +58,9 @@ export default function WorkoutDetail() {
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // Preload video demos in the background for all exercises
-  useEffect(() => {
-    const names = (w?.exercises || []).map((e: any) => e?.name).filter(Boolean);
-    if (names.length) preloadExerciseVideos(names);
-  }, [w?.exercises]);
+  // Note: we intentionally do NOT preload videos here anymore. The preview
+  // shows image-only cards; videos are loaded lazily when the user opens
+  // the exercise detail modal, guided mode, or manual play mode.
 
   const updateEx = (idx: number, key: string, val: any) => {
     setW((prev: any) => ({ ...prev, exercises: prev.exercises.map((e: any, i: number) => (i === idx ? { ...e, [key]: val } : e)) }));
@@ -226,12 +224,18 @@ export default function WorkoutDetail() {
                 </View>
               </>
             ) : (
-              <>
-                <Text style={styles.exName}>{ex.name}</Text>
-                <Text style={styles.exMeta}>{ex.sets} × {ex.reps} · rest {ex.rest_sec}s{ex.rpe ? ` · RPE ${ex.rpe}` : ""}</Text>
-                {ex.notes ? <Text style={styles.exNotes}>{ex.notes}</Text> : null}
-                <ExerciseVideoPlayer exerciseName={ex.name} testIDPrefix={`ex-video-${idx}`} />
-              </>
+              // Preview cards: image only (no auto-mounted video). Client taps
+              // the thumbnail (or starts the workout) to reach the video.
+              <View style={styles.exPreviewRow}>
+                <ExerciseThumbnail name={ex.name} testIDPrefix={`ex-thumb-${idx}`} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.exName} numberOfLines={2}>{ex.name}</Text>
+                  <Text style={styles.exMeta}>
+                    {ex.sets} × {ex.reps} · rest {ex.rest_sec}s{ex.rpe ? ` · RPE ${ex.rpe}` : ""}
+                  </Text>
+                  {ex.notes ? <Text style={styles.exNotes} numberOfLines={2}>{ex.notes}</Text> : null}
+                </View>
+              </View>
             )}
           </View>
         ))}
@@ -368,6 +372,7 @@ const styles = StyleSheet.create({
   warmupName: { color: theme.color.text, fontSize: 13, fontWeight: "600" },
   warmupTime: { color: theme.color.brand, fontSize: 12, fontWeight: "700" },
   exCard: { padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.sm },
+  exPreviewRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   exName: { color: theme.color.text, fontSize: 15, fontWeight: "800" },
   exMeta: { color: theme.color.brand, marginTop: 4, letterSpacing: 1, fontWeight: "600", fontSize: 13 },
   exNotes: { color: theme.color.textMuted, marginTop: 4, fontSize: 12 },

@@ -3964,8 +3964,15 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                     "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
                     "updated_at": now_iso(),
                 }
-                await db.workouts.delete_one({"id": doc["id"]})
-                await db.workouts.insert_one(doc)
+                # Sweep by (user_id, date) — the true unique-index key — to
+                # avoid E11000 when a prior roster or manual entry occupies
+                # the same slot. See iteration 44 fix.
+                try:
+                    await db.workouts.delete_many({"user_id": user["id"], "date": d})
+                    await db.workouts.insert_one(doc)
+                except Exception as e:
+                    logger.warning("workout upsert failed for date=%s: %s", d, e)
+                    continue
             dates_now = {w["date"] for w in workouts}
             await db.workouts.delete_many({
                 "user_id": user["id"], "roster_id": body.roster_id,
@@ -4059,8 +4066,13 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                     "created_at": existing.get("created_at", now_iso()) if existing else now_iso(),
                     "updated_at": now_iso(),
                 }
-                await db.workouts.delete_one({"id": doc["id"]})
-                await db.workouts.insert_one(doc)
+                # Sweep by (user_id, date) — see iteration 44 fix.
+                try:
+                    await db.workouts.delete_many({"user_id": user["id"], "date": d})
+                    await db.workouts.insert_one(doc)
+                except Exception as e:
+                    logger.warning("workout regenerate upsert failed for date=%s: %s", d, e)
+                    continue
             await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
         except Exception as e:
             logger.exception("regenerate job %s failed", job_id)

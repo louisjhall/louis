@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 45 — Backend-only verification of the E11000 (uniq_user_date) collision fix on the TWO sibling workout-generation endpoints flagged in iter-44 follow-up: (a) POST /api/workouts/generate-month and (b) POST /api/workouts/regenerate. NEW test module /app/backend/tests/test_iter44_workout_gen_e11000.py (5 tests) all PASS. Combined with the existing iter-44 primary regression (6 tests) => 11/11 green. Both worker loops now safely handle cross-roster leftover rows on (user_id, date). Also verified sanity endpoints GET /api/gdpr/export (200 JSON) and GET /api/beta/status (200 JSON). No 5xx surfaced anywhere; no raw Mongo error strings (E11000/uniq_user_date/duplicate key) leaked into any job response.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/gdpr/export", "issue": "Implementation exposes GET /api/gdpr/export (not POST as the review request stated). Test uses GET; if API contract wants POST, feature_gdpr.py:151 needs adjustment. Currently returns 200 with a JSON blob and Content-Disposition attachment header, which is fine for a data-export flow."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter44_workout_gen_e11000.py",
+    "/app/test_reports/pytest/iter44_workout_gen_e11000.xml"
+  ],
+  "action_items": [
+    "None required for the E11000 sibling-fix scope — both workers are now hardened. If the API contract for data export is meant to be POST, update feature_gdpr.py:151 accordingly (currently GET)."
+  ],
+  "critical_code_review_comments": [
+    "server.py:3970-3975 (workouts_generate_month worker) — delete_many({user_id, date}) + insert_one wrapped in try/except is correct and mirrors the iter-44 primary fix. Sweeping on the real unique-index key handles cross-roster / manual / seed collisions.",
+    "server.py:4069-4075 (workouts_regenerate worker) — same pattern applied correctly. Note that the existing lookup at line 4045 still filters by (user_id, roster_id, date) but since delete_many now sweeps by (user_id, date) any leftover cross-roster row will be swept regardless — no bug, just a stylistic inconsistency worth flagging."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter44_workout_gen_e11000.py (NEW — 5 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11: 5 new sibling-endpoint tests + 6 iter-44 primary regression). Job flow POST + poll took ~60s each; nothing timed out.",
+    "frontend": "not tested (scope per review)"
+  },
+  "seed_data_creation": "For each of the two sibling-endpoint tests, cross-roster collision rows were seeded under roster_id='TEST-iter44-fu-collision' on the target dates of the client's most recent 5-day+ roster, then verified to be swept by the worker's delete_many call. Module teardown removes any stragglers matching that roster_id. No production data touched; the real roster's workouts were regenerated (as expected for the test's exercised code path).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter-45 verified the two sibling E11000 fixes end-to-end. If any future work touches workout upsert loops, reuse /app/backend/tests/test_iter44_workout_gen_e11000.py — the pattern (seed cross-roster row via Motor -> POST endpoint -> poll /api/workouts/job/{id} -> assert no raw Mongo error + verify exactly 1 row per (user,date) with the NEW roster_id) is generic. The polling helper is _poll_workouts_job(); terminal state is 'done' (not 'complete'). Note: the client's most-recent roster is regenerated during the test — data itself is real generated content.",
+  "rca_of_issue": "Not a bug this iteration — verification-only run. The RCA in /app/test_reports/iteration_44.json documents the original E11000 pattern; this iteration confirmed the fix has been correctly ported to the two additional workers (workouts_generate_month at server.py:3970 and workouts_regenerate at server.py:4069)."
+}

@@ -8,6 +8,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
 import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
 import { ExerciseMediaSummary } from "@/src/components/ExerciseMediaSummary";
+import { useAuth } from "@/src/lib/auth";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PreviewLauncher } from "@/src/components/PreviewLauncher";
 
@@ -15,6 +16,7 @@ type Client = any;
 
 export default function CoachOverview() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const isDesktop = useIsDesktop();
   const isWide = useIsWide();
   const [loading, setLoading] = useState(true);
@@ -23,6 +25,11 @@ export default function CoachOverview() {
   const [analytics, setAnalytics] = useState<any | null>(null);
 
   const load = useCallback(async () => {
+    // Don't fire authenticated calls until the auth bootstrap has finished
+    // and we actually have a coach user. Prevents "Missing token" LogBox
+    // crashes when the page mounts before AsyncStorage has resolved or the
+    // user is opening the coach URL without a session.
+    if (authLoading || !user) return;
     setLoading(true);
     try {
       const [dash, pend, an] = await Promise.all([
@@ -33,10 +40,20 @@ export default function CoachOverview() {
       setData(dash);
       setPending(pend);
       setAnalytics(an);
+    } catch (e: any) {
+      // 401 (Missing token / expired session) → send to login instead of
+      // dumping the raw error onto the screen.
+      const msg = String(e?.message || "");
+      if (/missing token|not authenticated|invalid token/i.test(msg)) {
+        router.replace("/(auth)/login" as any);
+        return;
+      }
+      // eslint 'no-console' is disabled globally for warn/error paths.
+      console.warn("coach overview load failed:", msg);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authLoading, user, router]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const counts = data.counts || {};

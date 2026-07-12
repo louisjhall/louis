@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { useAuth } from "@/src/lib/auth";
 
 type Summary = {
   needed_this_week: number;
@@ -23,20 +24,23 @@ type Summary = {
 
 export function ExerciseMediaSummary() {
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [data, setData] = useState<Summary | null>(null);
 
   useEffect(() => {
+    // Wait for auth to hydrate — the api() call is 401 without a token.
+    if (authLoading || !user) return;
     let cancel = false;
     (async () => {
       try {
         const r = await api<Summary>("/coach/exercise-media-summary");
         if (!cancel) setData(r);
       } catch {
-        // silent — if the coach isn't an admin this endpoint 403s
+        // silent — non-admins get 403; unauth gets 401. Card just stays hidden.
       }
     })();
     return () => { cancel = true; };
-  }, []);
+  }, [authLoading, user]);
 
   if (!data) return null;
   const total = data.needed_this_week + data.missing_videos + data.ready_for_review;

@@ -1,0 +1,30 @@
+{
+  "summary": "Verified V2 Unified Exercise Library is now the DEFAULT for coaches. Mobile: tapping LIBRARY bottom tab routes to /library and renders V2 (header 'EXERCISE CONTENT', search bar 'Search exercises, tags, equipment…', all 10 filter chips ALL/WARM-UP/MOBILITY/STRENGTH/CARDIO/REHAB/COOLDOWN/TOMORROW/MISSING/APPROVED, V2 testIDs new-exercise + scan-todos, exercise rows rendered incl. Bulgarian Split Squat / Walking Lunges / Goblet Squat / World's Greatest Stretch / Push-Up / Zone 2 Walk / Dumbbell Row / Hip Hinge / Plank / Band Pull-Apart / Dead Bug / Overhead Press / 90/90 Hip Rotation / Kettlebell Swing …). NO 'OPEN V2' button anywhere on the default screen. NO 'migrated to Unified Exercise Content' banner. NO LEGACY V1 banner. Desktop: left sidebar 'Library' click routes to /library and renders the same V2 screen; sidebar contains no legacy library link. Legacy fallback /(coach)/library-legacy still renders V1 with yellow 'Legacy V1 view · read-only fallback' banner and its own OPEN V2 button; it is hidden from the mobile tab bar (tab labels observed: CLIENTS, APPROVALS, LIBRARY, CONTENT, MESSAGES, PROFILE — no LEGACY). Regression tabs (APPROVALS/CLIENTS/MESSAGES/PROFILE) all navigate. Opening 'Bulgarian Split Squat' from V2 shows detail sheet with demo images (male/female), required positions, coaching points, alternatives, and approval controls. Zero page errors during the flow.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/m_library_v2.png",
+    "/tmp/d_library_v2.png",
+    "/tmp/m_detail.png",
+    "/tmp/legacy_screen.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "library.tsx is a one-liner re-export from '@/app/coach/exercise-content' — clean, single source of truth.",
+    "(coach)/_layout.tsx correctly registers <Tabs.Screen name='library-legacy' options={ href: null } /> so the legacy route is a valid Expo Router destination but is hidden from the bottom tab bar.",
+    "library-legacy.tsx retains a working 'OPEN V2' escape hatch (testID lib-legacy-goto-v2) and a yellow LEGACY banner, matching the spec.",
+    "No breaking changes to exercise-content.tsx surface (testIDs new-exercise, scan-todos, gen-*, slot-chip-*, prompt-* all still present)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a", "frontend": "100%"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login: louis@crewfit.net / Louis123!. Coach LIBRARY tab (mobile) and Library sidebar link (desktop) both open /library which is the V2 Unified Exercise Library (source: /app/frontend/app/coach/exercise-content.tsx). Legacy V1 lives at /(coach)/library-legacy and is intentionally not in the tab bar. If the beta welcome modal blocks a test, click 'ACCEPT & CONTINUE' before interacting with tabs.",
+  "rca_of_issue": "n/a (feature verification — no bugs found)"
+}

@@ -38,6 +38,7 @@ export default function CoachLayout() {
       <Tabs.Screen name="videos" options={{ href: null }} />
       <Tabs.Screen name="checkins" options={{ href: null }} />
       <Tabs.Screen name="changelog" options={{ href: null }} />
+      <Tabs.Screen name="library-legacy" options={{ href: null }} />
     </Tabs>
   );
 }

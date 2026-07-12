@@ -5,6 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { useAuth } from "@/src/lib/auth";
 import { CrewFitLogo } from "@/src/components/Logo";
+import { LouisAvatar } from "@/src/components/LouisAvatar";
+import { LOUIS, isLouis } from "@/src/lib/coachProfile";
 
 const NAV: { path: string; label: string; icon: any; testId: string }[] = [
   { path: "/(coach)/overview", label: "Overview", icon: "home-outline", testId: "desktop-nav-overview" },
@@ -42,14 +44,29 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           </View>
         </View>
 
-        <View style={styles.userBlock}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{(user?.name || "C").charAt(0).toUpperCase()}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.userName} numberOfLines={1}>{user?.name || "Coach"}</Text>
-            <Text style={styles.userEmail} numberOfLines={1}>{user?.email || ""}</Text>
-          </View>
+        <View style={styles.userBlock} testID="desktop-coach-identity">
+          {isLouis(user) ? (
+            <>
+              <LouisAvatar size={44} showRing />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.userName} numberOfLines={1}>{LOUIS.fullName}</Text>
+                <Text style={styles.userTitle} numberOfLines={1}>Head Coach</Text>
+                <Text style={styles.userEmail} numberOfLines={1}>{user?.email || LOUIS.email}</Text>
+              </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {(user?.name || "C").split(" ").map((p) => p.charAt(0)).slice(0, 2).join("").toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.userName} numberOfLines={1}>{user?.name || "Coach"}</Text>
+                <Text style={styles.userEmail} numberOfLines={1}>{user?.email || ""}</Text>
+              </View>
+            </>
+          )}
         </View>
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 8 }} showsVerticalScrollIndicator={false}>
@@ -121,8 +138,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
   },
   avatarText: { color: theme.color.brand, fontWeight: "900", fontSize: 15 },
-  userName: { color: theme.color.text, fontWeight: "800", fontSize: 13 },
-  userEmail: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
+  userName: { color: theme.color.text, fontWeight: "800", fontSize: 14 },
+  userTitle: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginTop: 2 },
+  userEmail: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   navItem: {
     flexDirection: "row",
     alignItems: "center",

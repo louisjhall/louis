@@ -5308,12 +5308,47 @@ async def msg_partners(user: dict = Depends(current_user)):
         cid = user.get("coach_id")
         c = await db.users.find_one({"id": cid}, {"_id": 0, "password_hash": 0}) if cid else None
         if not c:
+            # Prefer the primary coach (Louis) as fallback, never a legacy row.
+            c = await db.users.find_one({"role": "coach", "is_primary_coach": True}, {"_id": 0, "password_hash": 0})
+        if not c:
             c = await db.users.find_one({"role": "coach"}, {"_id": 0, "password_hash": 0})
         return [c] if c else []
     rows = await db.users.find({"role": "client", "coach_id": user["id"]}, {"_id": 0, "password_hash": 0}).to_list(200)
     if not rows:
         rows = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(200)
     return rows
+
+
+@api.get("/coach/profile/main")
+async def coach_profile_main():
+    """Public, unauthenticated Louis identity for the messages UI and any
+    other client-facing surface that needs the coach card. Returns a stable
+    shape even if the DB row is missing (so a fresh install can still render
+    the app before seed()."""
+    doc = await db.users.find_one({"role": "coach", "is_primary_coach": True}, {"_id": 0, "password_hash": 0})
+    if not doc:
+        # Hard-coded fallback matches frontend/src/lib/coachProfile.ts.
+        return {
+            "id": None,
+            "email": "louis@crewfit.net",
+            "name": "Louis Hall",
+            "display_name": "Louis",
+            "initials": "LH",
+            "title": "Founder & Aviation Performance Coach",
+            "tagline": "CrewFit Coach",
+            "avatar_url": "https://customer-assets.emergentagent.com/job_flight-fit-plans/artifacts/q32k4b7w_Screenshot%202026-07-12%20153226.png",
+        }
+    prof = doc.get("profile", {}) or {}
+    return {
+        "id": doc.get("id"),
+        "email": doc.get("email"),
+        "name": doc.get("name") or "Louis Hall",
+        "display_name": doc.get("display_name") or "Louis",
+        "initials": "LH",
+        "title": prof.get("title") or "Founder & Aviation Performance Coach",
+        "tagline": prof.get("tagline") or "CrewFit Coach",
+        "avatar_url": doc.get("avatar_url"),
+    }
 
 
 # ------------------------------------------------------------------
@@ -6205,18 +6240,72 @@ DEFAULT_EXERCISES = [
 
 
 async def seed():
-    coach_email = "coach@crewfit.com"
+    # -----------------------------------------------------------
+    # Main coach: Louis Hall — client-facing identity for CrewFit.
+    # Kept email-based so future multi-coach support can just add
+    # rows without touching this seed. The legacy `coach@crewfit.com`
+    # account is still created (test tooling depends on it) but is
+    # marked non-primary and its clients are migrated to Louis.
+    # -----------------------------------------------------------
+    louis_email = "louis@crewfit.net"
+    legacy_coach_email = "coach@crewfit.com"
     client_email = "client@crewfit.com"
-    coach = await db.users.find_one({"email": coach_email})
-    if not coach:
-        coach_id = new_id()
+
+    louis = await db.users.find_one({"email": louis_email})
+    if not louis:
+        louis_id = new_id()
         await db.users.insert_one({
-            "id": coach_id, "email": coach_email, "name": "Coach Kai", "role": "coach",
-            "password_hash": hash_pw("Coach123!"), "created_at": now_iso(),
-            "onboarded": True, "coach_id": None, "profile": {"bio": "Head Coach, Aviation Fitness"},
+            "id": louis_id,
+            "email": louis_email,
+            "name": "Louis Hall",
+            "display_name": "Louis",
+            "role": "coach",
+            "is_admin": True,
+            "is_primary_coach": True,
+            "password_hash": hash_pw("Louis123!"),
+            "created_at": now_iso(),
+            "onboarded": True,
+            "coach_id": None,
+            "avatar_url": "https://customer-assets.emergentagent.com/job_flight-fit-plans/artifacts/q32k4b7w_Screenshot%202026-07-12%20153226.png",
+            "profile": {
+                "bio": "Founder & Aviation Performance Coach",
+                "title": "Founder & Aviation Performance Coach",
+                "tagline": "CrewFit Coach",
+            },
+            "age_confirmed": True,
+            "age_confirmed_at": now_iso(),
         })
     else:
-        coach_id = coach["id"]
+        louis_id = louis["id"]
+        # Backfill new identity fields on existing Louis row without clobbering
+        # a real password if the user rotated it.
+        await db.users.update_one({"id": louis_id}, {"$set": {
+            "name": "Louis Hall",
+            "display_name": "Louis",
+            "role": "coach",
+            "is_admin": True,
+            "is_primary_coach": True,
+            "avatar_url": "https://customer-assets.emergentagent.com/job_flight-fit-plans/artifacts/q32k4b7w_Screenshot%202026-07-12%20153226.png",
+            "profile.bio": "Founder & Aviation Performance Coach",
+            "profile.title": "Founder & Aviation Performance Coach",
+            "profile.tagline": "CrewFit Coach",
+        }})
+
+    # Legacy coach (kept for backward-compat with pytest suites).
+    legacy = await db.users.find_one({"email": legacy_coach_email})
+    if not legacy:
+        legacy_id = new_id()
+        await db.users.insert_one({
+            "id": legacy_id, "email": legacy_coach_email, "name": "Coach Kai", "role": "coach",
+            "password_hash": hash_pw("Coach123!"), "created_at": now_iso(),
+            "onboarded": True, "coach_id": None,
+            "is_primary_coach": False,
+            "profile": {"bio": "Legacy coach account. Reassign clients to Louis in production."},
+        })
+    else:
+        # Ensure it stays non-primary so it never wins the fallback query.
+        await db.users.update_one({"id": legacy["id"]}, {"$set": {"is_primary_coach": False}})
+    coach_id = louis_id  # For all new clients, default coach is Louis.
 
     if not await db.users.find_one({"email": client_email}):
         await db.users.insert_one({
@@ -6236,7 +6325,9 @@ async def seed():
             },
         })
 
-    await db.users.update_many({"role": "client", "coach_id": None}, {"$set": {"coach_id": coach_id}})
+    # Migrate every existing client to Louis so no one gets orphaned on the
+    # legacy Kai coach after this deploy.
+    await db.users.update_many({"role": "client"}, {"$set": {"coach_id": coach_id}})
 
     if await db.exercises.count_documents({}) < len(DEFAULT_EXERCISES):
         for (name, cat, eq, mp, mg, home_ok, hotel_ok, bw, lvl, joint, fat, pre, post) in DEFAULT_EXERCISES:

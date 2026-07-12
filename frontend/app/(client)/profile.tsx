@@ -436,8 +436,8 @@ export default function ProfileScreen() {
           )}
         </Section>
 
-        {/* 13. COACH NOTES */}
-        <Section id="coach_notes" title="COACH NOTES" icon="chatbubbles" emoji="🧑‍🏫" expanded={expanded} onToggle={toggle}
+        {/* 13. LOUIS' NOTES */}
+        <Section id="coach_notes" title="LOUIS' NOTES" icon="chatbubbles" emoji="🧑‍🏫" expanded={expanded} onToggle={toggle}
           rightSlot={<CountPill n={(coachNotes.workout_notes || []).length + (coachNotes.reality_reviews || []).length} />}
         >
           {(coachNotes.workout_notes || []).slice(0, 5).map((w: any) => (
@@ -453,7 +453,7 @@ export default function ProfileScreen() {
             </View>
           ))}
           {(coachNotes.workout_notes || []).length === 0 && (coachNotes.reality_reviews || []).length === 0 && (
-            <EmptyRow text="No coach notes yet." />
+            <EmptyRow text="No notes from Louis yet." />
           )}
         </Section>
 

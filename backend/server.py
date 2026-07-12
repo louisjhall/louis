@@ -5280,8 +5280,8 @@ async def progress_list(user: dict = Depends(current_user)):
 async def msg_send(body: MessageBody, user: dict = Depends(current_user)):
     # Guard-rails on the attachment shape so a bad client can't over-attach.
     att_ids = list(body.attachment_ids or [])
-    if len(att_ids) > 6:  # 5 images + 1 video/voice max, we allow 6 for the corner case
-        raise HTTPException(413, {"error": "too_many_attachments", "detail": "Maximum 6 attachments per message."})
+    if len(att_ids) > 7:  # 5 images + 1 video + 1 voice = 7 legit maximum
+        raise HTTPException(413, {"error": "too_many_attachments", "detail": "Maximum 5 images + 1 video + 1 voice note per message."})
     # Validate every attachment exists, belongs to the sender, isn't already bound.
     valid_ids: list[str] = []
     kinds: dict[str, int] = {"image": 0, "video": 0, "voice": 0}

@@ -7219,6 +7219,18 @@ try:
 except Exception:
     logger.exception("feature_message_attachments failed to register")
 
+# --- Food Search (Nutrition Centre) --------------------------------------
+try:
+    from feature_food_search import register as _register_food_search
+    _register_food_search(
+        api,
+        db=db,
+        current_user=current_user,
+        emergent_llm_key=os.environ.get("EMERGENT_LLM_KEY"),
+    )
+except Exception:
+    logger.exception("feature_food_search failed to register")
+
 app.include_router(api)
 
 

@@ -53,7 +53,8 @@
       "@react-native-community/datetimepicker",
       "expo-audio",
       "sentry-expo",
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true

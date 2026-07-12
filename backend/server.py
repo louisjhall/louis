@@ -376,6 +376,7 @@ class ProgressBody(BaseModel):
 class MessageBody(BaseModel):
     to_user_id: str
     text: str
+    attachment_ids: Optional[list[str]] = None
 
 # --- Coach message drafts ------------------------------------------------
 class MessageDraftGenerateBody(BaseModel):
@@ -5277,12 +5278,54 @@ async def progress_list(user: dict = Depends(current_user)):
 
 @api.post("/messages")
 async def msg_send(body: MessageBody, user: dict = Depends(current_user)):
+    # Guard-rails on the attachment shape so a bad client can't over-attach.
+    att_ids = list(body.attachment_ids or [])
+    if len(att_ids) > 6:  # 5 images + 1 video/voice max, we allow 6 for the corner case
+        raise HTTPException(413, {"error": "too_many_attachments", "detail": "Maximum 6 attachments per message."})
+    # Validate every attachment exists, belongs to the sender, isn't already bound.
+    valid_ids: list[str] = []
+    kinds: dict[str, int] = {"image": 0, "video": 0, "voice": 0}
+    if att_ids:
+        rows = await db.message_attachments.find({"id": {"$in": att_ids}}).to_list(len(att_ids))
+        by_id = {r["id"]: r for r in rows}
+        for aid in att_ids:
+            r = by_id.get(aid)
+            if not r or r.get("uploaded_by") != user["id"] or r.get("message_id"):
+                raise HTTPException(400, {"error": "bad_attachment", "detail": "Attachment missing, already sent, or not yours.", "id": aid})
+            kinds[r["type"]] = kinds.get(r["type"], 0) + 1
+            valid_ids.append(aid)
+        if kinds.get("image", 0) > 5:
+            raise HTTPException(413, {"error": "too_many_images", "detail": "Max 5 images per message."})
+        if kinds.get("video", 0) > 1:
+            raise HTTPException(413, {"error": "too_many_videos", "detail": "Max 1 video per message."})
+        if kinds.get("voice", 0) > 1:
+            raise HTTPException(413, {"error": "too_many_voice_notes", "detail": "Max 1 voice note per message."})
+
     doc = {"id": new_id(), "from_user_id": user["id"], "to_user_id": body.to_user_id,
-           "text": body.text, "created_at": now_iso(), "read": False}
+           "text": body.text or "", "created_at": now_iso(), "read": False,
+           "attachment_ids": valid_ids}
     await db.messages.insert_one(doc)
     clean_doc(doc)
+
+    # Bind attachments to this message now that it exists.
+    if valid_ids:
+        await db.message_attachments.update_many(
+            {"id": {"$in": valid_ids}, "uploaded_by": user["id"]},
+            {"$set": {"message_id": doc["id"]}},
+        )
+        # Hydrate for the response so the client can render bubbles instantly.
+        from feature_message_attachments import hydrate_message_attachments
+        await hydrate_message_attachments(db, doc)
+
     try:
-        await send_push([body.to_user_id], {"title": user.get("name", "CrewFit"), "message": body.text[:120], "action_url": "/(client)/messages"})
+        preview = body.text[:120] if body.text else (
+            "📎 Attachment" if valid_ids else ""
+        )
+        await send_push([body.to_user_id], {
+            "title": user.get("name", "CrewFit"),
+            "message": preview or "New message",
+            "action_url": "/(client)/messages",
+        })
     except Exception as e:
         logger.warning("push send fail: %s", e)
     # If this is a client-to-coach message, kick off an Atlas draft in the background
@@ -5297,10 +5340,15 @@ async def msg_send(body: MessageBody, user: dict = Depends(current_user)):
 
 @api.get("/messages/{other_id}")
 async def msg_thread(other_id: str, user: dict = Depends(current_user)):
-    return await db.messages.find(
+    rows = await db.messages.find(
         {"$or": [{"from_user_id": user["id"], "to_user_id": other_id},
                  {"from_user_id": other_id, "to_user_id": user["id"]}]}, {"_id": 0}
     ).sort("created_at", 1).to_list(500)
+    if rows:
+        from feature_message_attachments import hydrate_message_attachments
+        for r in rows:
+            await hydrate_message_attachments(db, r)
+    return rows
 
 @api.get("/messages")
 async def msg_partners(user: dict = Depends(current_user)):
@@ -7153,6 +7201,23 @@ async def _tick_reminders_all() -> None:
         logger.exception("preview purge tick failed")
 
 _tick_reminders = _tick_reminders_all
+
+# --- Message attachments (media on chat messages) -----------------------
+try:
+    from feature_message_attachments import register as _register_msg_attachments
+    from storage import storage as _storage_for_msg
+    _register_msg_attachments(
+        api,
+        db=db,
+        current_user=current_user,
+        storage=_storage_for_msg,
+        new_id=new_id,
+        now_iso=now_iso,
+        clean_doc=clean_doc,
+        send_push=send_push,
+    )
+except Exception:
+    logger.exception("feature_message_attachments failed to register")
 
 app.include_router(api)
 

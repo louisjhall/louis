@@ -6037,6 +6037,10 @@ async def coach_dashboard(filter: Optional[str] = None, include_archived: bool =
         "pending_approval": [s for s in summaries if s.get("pending_approvals", 0) > 0],
         "red_days": [s for s in summaries if s.get("red_days", 0) > 0],
         "missed": [s for s in summaries if s.get("missed_workouts", 0) > 0],
+        # Slice 3: programme validation flagged the plan for coach review.
+        "needs_review": [s for s in summaries
+                         if (s.get("programme_pill") or {}).get("validation_status") == "needs_review"
+                         and not (s.get("programme_pill") or {}).get("coach_approved")],
         "all": summaries,
     }
     if filter and filter in buckets:
@@ -7803,6 +7807,7 @@ import feature_roster_confirmation   # noqa: E402,F401  Phase 2: parse → confi
 import feature_traffic_light         # noqa: E402,F401  Phase 3: Green/Amber/Red workout variants
 import feature_v2_resolver           # noqa: E402,F401  Phase 5: V2 Library resolver + demand-driven exercise requests
 import feature_admin_lifecycle       # noqa: E402,F401  Coach dashboard slice 1: archive / delete / audit log
+import feature_coach_deep_edit       # noqa: E402,F401  Coach dashboard slice 3.5: workout/roster deep-edit endpoints
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

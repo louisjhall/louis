@@ -1,0 +1,45 @@
+{
+  "summary": "Iter 68 — Coach Dashboard Slice 3 (partial) — tabbed client detail + needs_review filter. Backend: 7/7 tests pass in /app/backend/tests/test_iter68_slice3_needs_review.py after fixing a CRITICAL 500-error bug in server.py:6041 where `s.get('programme_pill', {}).get(...)` returned None when programme_pill key existed with value=None (default {} only kicks in when key is missing). Applied fix: `(s.get('programme_pill') or {}).get(...)`. Regression: iter66 + iter67 → 46/46 pass. Verified /api/coach/dashboard?filter=needs_review returns exactly the clients where programme_pill.validation_status=='needs_review' AND !coach_approved (curl confirmed: 1 client with flipped programme, 0 otherwise). counts.needs_review key present in all responses. include_archived=true still works. Frontend (Expo web preview @ 390×844, Louis@crewfit.net admin): all 9 tabs render (cd-tab-overview/calendar/roster/programme/workouts/checkins/messages/profile/admin) — verified via Playwright. Non-admin coach (coach@crewfit.com): cd-tab-admin correctly HIDDEN, other 8 tabs visible. Overview tab shows synthesized OVERVIEW card + PROGRAMME card + ADMIN card + Coach Controls inline. Filter chip filter-needs_review is present with count badge; clients page shows 'LHR · LONG HAUL · in London' route_focus line for Test Client (client@crewfit.com). Fixed a CRITICAL FRONTEND BUG: filter-chip clicks on /(coach)/clients did not re-fetch the API — useFocusEffect only re-runs on screen focus, not on callback identity change. Added `useEffect(() => { load(); }, [filter, showArchived]);` so all filter chips now trigger a network fetch and narrow the list. Verified after fix: clicking needs_review shows only 1 card (Test Client), all → 31 cards, expired → 30 cards. Note: Playwright's page.click(force=True) does NOT reliably fire React Native Web Pressable's onPress; native DOM element.click() works (used page.evaluate for verification).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/coach/dashboard", "issue": "500 error on EVERY request: `s.get('programme_pill', {}).get('validation_status')` raised AttributeError because programme_pill key was present with value=None. FIXED in server.py:6041-6043 with `(s.get('programme_pill') or {})`.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "/(coach)/clients.tsx", "issue": "Filter chip clicks (all/needs_review/expired/etc.) did not re-fetch the dashboard — useFocusEffect only re-runs on screen focus, not on callback dep change. FIXED by adding `useEffect(() => { load(); }, [filter, showArchived])`.", "testID": "filter-needs_review", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter68_slice3_needs_review.py",
+    "/app/test_reports/pytest/iter68_slice3.xml",
+    "/app/test_reports/pytest/iter68_regression.xml"
+  ],
+  "action_items": [
+    "Both bugs (backend 500 on /coach/dashboard, frontend filter chips not re-fetching) have been FIXED by this test agent and verified end-to-end. Please review /app/backend/server.py:6041-6043 and /app/frontend/app/(coach)/clients.tsx:1,48-51.",
+    "The frontend filter chip fix should be considered a small refactor — an alternative is to switch entirely from useFocusEffect to a plain useEffect w/ deps + a useFocusEffect that ONLY reloads on focus (no deps). Current approach adds both to preserve on-focus refresh AND on-filter-change refresh (may cause 2 requests on initial mount — verified 2×?filter=all requests but harmless).",
+    "Deprecated warnings observed in console: `shadow*` and `textShadow*` style props (RN Web), `pointerEvents` prop deprecated, `Image.style.tintColor` deprecated. Not blocking but worth cleaning up in a future pass.",
+    "Deep-dive roster/workout editing (Slice 3.5) NOT tested per E1's instructions."
+  ],
+  "critical_code_review_comments": [
+    "server.py:6041 — the safe idiom for optional nested dicts is `(d.get('k') or {}).get(...)`, since `d.get('k', {})` returns None when the key EXISTS with value=None. This was a legitimate production-impacting bug that would 500 for ANY coach dashboard call.",
+    "clients.tsx — the mixed `useFocusEffect(useCallback(fn, [load]))` pattern is fragile. When load's identity changes while focused, React Navigation's useFocusEffect does not always re-run reliably. Consider using pure `useEffect(load, [filter, showArchived])` + a separate one-off `useFocusEffect` for pull-to-refresh behavior on tab return.",
+    "[id].tsx — the tab bar and conditional card rendering is correctly implemented. `showAdmin = t !== 'admin' || isAdmin` in the tab render loop is the correct gate. `isAdmin = !!(currentUser?.is_admin || currentUser?.role === 'admin')` correctly matches Louis (is_admin=true) and denies coach@crewfit.com (is_admin=null).",
+    "/coach/dashboard endpoint returns full `total` = len(summaries) regardless of filter; this is intentional and used by the FE header 'N active'. The filtered list is in `clients`. Counts object contains all bucket sizes."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (bugfix line 6041-6043)",
+    "/app/frontend/app/(coach)/clients.tsx (bugfix lines 1, 48-51 — added useEffect for filter changes)",
+    "/app/backend/tests/test_iter68_slice3_needs_review.py (new — 7 tests)"
+  ],
+  "success_rate": {"backend": "100% (7/7 slice-3 + 46/46 iter66+67 regression)", "frontend": "100% — all 9 tabs render for admin, admin tab hidden for non-admin, needs_review filter narrows list to exactly matching clients, all other filters (all/expired) verified"},
+  "seed_data_creation": "Tests temporarily flip client@crewfit.com's latest programme row (validation_status→needs_review, coach_approved→false) and restore at teardown via a Motor fixture. Verified via mongosh that state is restored to validation_status=passed/coach_approved=true after each session.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Reuse /app/backend/tests/test_iter68_slice3_needs_review.py for regression. Two production bugs were fixed by the test agent: (1) server.py 500 on /coach/dashboard (nested None-safe access), (2) /(coach)/clients filter chips not re-fetching (added useEffect deps [filter, showArchived]). Both fixes verified live. Louis user id: 4ceee276-bf51-4f9c-bfdd-f1ef8e266f8b; client@crewfit.com id: 62f90680-313b-4fca-bc3f-9a19ac49065d. Note: Playwright's page.click on RN Web Pressable does not reliably fire onPress — use `await page.evaluate(\"() => document.querySelector('[data-testid=X]').click()\")` for RN chips/buttons.",
+  "rca_of_issue": "Backend RCA: In Python, `dict.get(key, default)` only returns `default` when the key is MISSING. If the key is present with value=None, get() returns None. server.py:5982 explicitly sets `programme_pill = None` when a client has no programme row, so the summary dict has key 'programme_pill' with value None. The Slice 3 buckets code did `s.get('programme_pill', {}).get(...)` — this evaluates to `None.get(...)` → AttributeError → 500. Reproduction: any coach GET on /api/coach/dashboard while at least one client lacks a programme (which was almost all clients). Fix: `(s.get('programme_pill') or {}).get(...)`. Frontend RCA: React Navigation's useFocusEffect only fires the effect on screen focus; while its callback dep can change, in practice on RN Web the effect does NOT re-run reliably when only the callback identity changes but the screen is already focused. So `setFilter('needs_review')` never triggered a fetch. Fix: complement with a plain `useEffect(() => { load(); }, [filter, showArchived])`."
+}

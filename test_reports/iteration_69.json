@@ -1,0 +1,39 @@
+{
+  "summary": "Slice 3.5 Coach Deep-Edit backend tests — all 6 new endpoints in /app/backend/feature_coach_deep_edit.py verified end-to-end against the preview URL. 24/24 tests passed (100%). Covered auth gates (401 no token, 403 client token), happy paths (approve/idempotent, lock/idempotent, unlock, move+return, regenerate single, roster day edit, hotel attach), edge cases (regen refused on coach_locked → 400, move of completed workout → 400, invalid day_type → 400, invalid load → 400), audit-log rows (workout.approve, workout.lock, workout.unlock, workout.move, workout.regenerate_single, roster.day_edit, roster.hotel_attach), and regression smoke on GET /api/coach/clients, /api/coach/clients/{id}, /api/coach/dashboard.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/coach/clients/{id}", "issue": "The response's `roster` key was null even though the client had 34 rosters in Mongo (one with 31 days). The deep-edit endpoints work fine when a roster id is known, but coach UI relying on this nested field will not see any roster. Root cause is likely that no roster is marked is_active=true for client@crewfit.com in seed data — worth confirming whether the coach view should surface the most-recent-days roster as a fallback."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter68_coach_deep_edit.py",
+    "/app/test_reports/pytest/iter68_coach_deep_edit.xml"
+  ],
+  "action_items": [
+    "Investigate why client@crewfit.com has no roster with is_active=true — the coach client-detail response returns roster:null even though 34 rosters exist. The Slice 3.5 endpoints still work (they only require {id, user_id}), but the coach FE that uses `bundle.roster` to source dates will show empty state.",
+    "Consider having the coach client-detail endpoint fall back to the most-recent roster with days when no is_active row exists, for coach-visibility parity."
+  ],
+  "critical_code_review_comments": [
+    "feature_coach_deep_edit.py cleanly reuses server helpers (_generate_month, _merge_variants, _upsert_hotel) and writes both audit_logs and change_log per mutation — audit trail is solid.",
+    "coach_workout_regenerate_single hard-deletes any workout on that (user_id, date) via delete_many before inserting the new doc. This is safe here because completed/locked workouts are refused earlier, but the delete would also remove same-date rows from *other* rosters if they exist. In practice the client has one active roster so it is fine, but worth a comment or a stricter filter on roster_id.",
+    "coach_workout_move uses a temp date marker `__swap_<8-hex>` during swap — good pattern to avoid unique-index conflicts, but no unique index on (user_id, date) exists today, so the marker is defensive only. Left as-is; note in code review.",
+    "roster_day_edit correctly validates DAY_TYPES (17 standard types) and VALID_LOADS ({green, amber, red, blue, purple, grey}); 400s returned as spec'd.",
+    "All endpoints protected by require_coach_or_admin — verified 401/403 across all 6."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter68_coach_deep_edit.py (new)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "n/a"},
+  "seed_data_creation": "Test creates a transient completed-workout doc (id + _iter68_seed marker) to exercise the move-on-completed 400 path, then deletes it in a finally block. It also attaches a `TEST Hotel Iter68 <hex>` hotel to the client's first roster day — this remains in the hotels collection (upsert semantics) and on the day; harmless.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_iter68_coach_deep_edit.py is idempotent and self-cleaning for the move edge case; the hotel-attach test leaves a TEST_ hotel row and mutates one roster day (day 0) — safe to rerun. Requires MONGO_URL and DB_NAME env or defaults to mongodb://localhost:27017 / crewfit_v1. Ran against EXPO_PUBLIC_BACKEND_URL=https://flight-fit-plans.preview.emergentagent.com.",
+  "rca_of_issue": "n/a — no defects in the six new endpoints. Two initial test-setup issues (env-var quoting for MONGO_URL, and the `roster:null` in coach client-detail forcing skips) were fixed inside the test file: mongo values are now strip-quoted, and active_roster fixture falls back to a direct mongo query when the bundle roster is null."
+}

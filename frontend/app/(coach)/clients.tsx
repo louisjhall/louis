@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -10,6 +10,7 @@ import { PreviewClientButton } from "@/src/components/PreviewLauncher";
 
 const FILTERS = [
   { key: "all", label: "ALL" },
+  { key: "needs_review", label: "NEEDS REVIEW" },
   { key: "expiring_soon", label: "EXPIRING" },
   { key: "expired", label: "EXPIRED" },
   { key: "no_roster", label: "NO ROSTER" },
@@ -44,6 +45,10 @@ export default function Clients() {
     }
   }, [filter, showArchived]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  // Slice 3 fix: useFocusEffect only re-runs on screen focus, not when deps
+  // change while focused. Trigger a reload whenever filter / showArchived
+  // change so the chip clicks actually narrow the list.
+  useEffect(() => { load(); }, [filter, showArchived]);
 
   const c = data.counts || {};
 
@@ -103,11 +108,15 @@ export default function Clients() {
                     {cl.profile?.home_base || cl.current_location_city ? (
                       <Text style={styles.locLine} numberOfLines={1}>
                         {cl.profile?.home_base ? String(cl.profile.home_base).toUpperCase() : ""}
+                        {cl.profile?.route_focus ? `  ·  ${String(cl.profile.route_focus).replace("_", " ").toUpperCase()}` : ""}
                         {cl.current_location_city ? `  ·  in ${cl.current_location_city}` : ""}
                       </Text>
                     ) : (
                       <Text style={styles.email} numberOfLines={1}>{cl.email}</Text>
                     )}
+                    {cl.assigned_coach_name && cl.assigned_coach_name !== "Louis Hall" ? (
+                      <Text style={styles.locLine} numberOfLines={1}>Coach · {cl.assigned_coach_name}</Text>
+                    ) : null}
                   </View>
                   <View style={{ alignItems: "flex-end", gap: 4 }}>
                     {cl.pending_approvals > 0 && (

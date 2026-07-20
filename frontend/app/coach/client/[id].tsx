@@ -5,8 +5,24 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
+import { usePreview } from "@/src/lib/preview";
 import { theme, loadColor } from "@/src/lib/theme";
 import { StatusBadge, deriveStatus } from "@/src/components/StatusBadge";
+
+const DAY_TYPES = [
+  "Home Day", "Home Training Day", "Turnaround Duty", "Layover Arrival Day",
+  "Layover Full Day", "Layover Departure Day", "Long-Haul Duty", "Short-Haul Duty",
+  "Night Flight", "Early Report", "Late Finish", "Rest Day", "Recovery Day",
+  "Standby", "Simulator/Training Day", "Annual Leave", "Unknown/Needs Confirmation",
+];
+const LOAD_OPTIONS: { key: string; label: string; color: string }[] = [
+  { key: "green",  label: "GREEN",  color: "#4caf50" },
+  { key: "amber",  label: "AMBER",  color: "#e5a337" },
+  { key: "red",    label: "RED",    color: "#c85450" },
+  { key: "blue",   label: "BLUE",   color: "#4a90e2" },
+  { key: "purple", label: "PURPLE", color: "#8a5cf5" },
+  { key: "grey",   label: "GREY",   color: "#666" },
+];
 
 type Controls = {
   programme_flexibility: string;
@@ -236,6 +252,9 @@ export default function ClientDetail() {
   // Slice 2: assign/reassign coach
   const [coachPickerOpen, setCoachPickerOpen] = useState(false);
   const [availableCoaches, setAvailableCoaches] = useState<any[]>([]);
+  // Slice 3: tabbed layout state.
+  type Tab = "overview" | "calendar" | "roster" | "programme" | "workouts" | "checkins" | "messages" | "profile" | "admin";
+  const [tab, setTab] = useState<Tab>("overview");
 
   const openCoachPicker = async () => {
     try {
@@ -263,6 +282,142 @@ export default function ClientDetail() {
       setAdminBusy(null);
     }
   };
+
+  // ---- Slice 3.5: deep-edit state ----
+  const preview = usePreview();
+  const [wActionOpen, setWActionOpen] = useState<any | null>(null); // workout for action sheet
+  const [wMoveOpen, setWMoveOpen] = useState<any | null>(null);
+  const [wMoveDate, setWMoveDate] = useState("");
+  const [wRegenOpen, setWRegenOpen] = useState<any | null>(null);
+  const [wRegenNote, setWRegenNote] = useState("");
+  const [wBusy, setWBusy] = useState(false);
+  const [rDayEditOpen, setRDayEditOpen] = useState<any | null>(null); // day being edited
+  const [rDayDraft, setRDayDraft] = useState<{ day_type?: string; load?: string; notes?: string; layover_city?: string }>({});
+  const [rDayBusy, setRDayBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const startPreview = async () => {
+    setPreviewBusy(true);
+    try {
+      await preview.enterReal(String(id));
+      Alert.alert(
+        "Preview mode active",
+        "You're now seeing the app as this client. Writes are blocked. Tap 'Exit preview' in the banner to return.",
+        [{ text: "OK", onPress: () => router.replace("/(tabs)/home" as any) }],
+      );
+    } catch (e: any) {
+      Alert.alert("Preview failed", e?.message || "Try again.");
+    } finally { setPreviewBusy(false); }
+  };
+
+  const doWorkoutApprove = async (w: any) => {
+    setWBusy(true);
+    try {
+      await api(`/coach/workouts/${w.id}/approve`, { method: "POST", body: {} });
+      setWActionOpen(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Approve failed", e?.message || "Try again.");
+    } finally { setWBusy(false); }
+  };
+
+  const doWorkoutLockToggle = async (w: any) => {
+    setWBusy(true);
+    try {
+      await api(`/coach/workouts/${w.id}/lock`, {
+        method: "POST",
+        body: { locked: !w.coach_locked },
+      });
+      setWActionOpen(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Lock failed", e?.message || "Try again.");
+    } finally { setWBusy(false); }
+  };
+
+  const doWorkoutMove = async () => {
+    if (!wMoveOpen) return;
+    const d = wMoveDate.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      Alert.alert("Invalid date", "Use format YYYY-MM-DD");
+      return;
+    }
+    setWBusy(true);
+    try {
+      const r = await api<any>(`/coach/workouts/${wMoveOpen.id}/move`, {
+        method: "POST",
+        body: { to_date: d, swap_with_existing: true },
+      });
+      setWMoveOpen(null); setWActionOpen(null); setWMoveDate("");
+      Alert.alert("Workout moved", r?.swapped ? `Swapped with the workout on ${d}` : `Moved to ${d}`);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Move failed", e?.message || "Try again.");
+    } finally { setWBusy(false); }
+  };
+
+  const doWorkoutRegenSingle = async () => {
+    if (!wRegenOpen) return;
+    setWBusy(true);
+    try {
+      await api(`/coach/workouts/${wRegenOpen.id}/regenerate`, {
+        method: "POST",
+        body: { note: wRegenNote || null },
+      });
+      setWRegenOpen(null); setWActionOpen(null); setWRegenNote("");
+      Alert.alert("Regenerated", "The workout has been rebuilt using the latest programme context.");
+      await load();
+    } catch (e: any) {
+      Alert.alert("Regenerate failed", e?.message || "Try again.");
+    } finally { setWBusy(false); }
+  };
+
+  const openRosterDayEdit = (day: any) => {
+    setRDayDraft({
+      day_type: day.day_type || "Home Day",
+      load: day.load || "grey",
+      notes: day.notes || "",
+      layover_city: day.layover_city || "",
+    });
+    setRDayEditOpen(day);
+  };
+
+  const doSaveRosterDay = async () => {
+    if (!rDayEditOpen || !data?.roster?.id) return;
+    setRDayBusy(true);
+    try {
+      await api(`/coach/clients/${id}/roster/${data.roster.id}/day`, {
+        method: "PATCH",
+        body: {
+          date: rDayEditOpen.date,
+          day_type: rDayDraft.day_type,
+          load: rDayDraft.load,
+          notes: rDayDraft.notes,
+          layover_city: rDayDraft.layover_city,
+        },
+      });
+      setRDayEditOpen(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Save failed", e?.message || "Try again.");
+    } finally { setRDayBusy(false); }
+  };
+
+  const doClearHotel = async () => {
+    if (!rDayEditOpen || !data?.roster?.id) return;
+    setRDayBusy(true);
+    try {
+      await api(`/coach/clients/${id}/roster/${data.roster.id}/day`, {
+        method: "PATCH",
+        body: { date: rDayEditOpen.date, clear_hotel: true },
+      });
+      setRDayEditOpen(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Clear failed", e?.message || "Try again.");
+    } finally { setRDayBusy(false); }
+  };
+
 
   if (loading || !data) {
     return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface }}><ActivityIndicator color={theme.color.brand} /></View>;
@@ -304,7 +459,43 @@ export default function ClientDetail() {
           </Pressable>
         </View>
 
+        {/* Slice 3: Tab bar. Sections below render according to the selected tab. */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 8, paddingRight: 12, gap: 6 }}>
+          {(["overview","calendar","roster","programme","workouts","checkins","messages","profile","admin"] as Tab[]).map((t) => {
+            const active = tab === t;
+            const showAdmin = t !== "admin" || isAdmin;
+            if (!showAdmin) return null;
+            return (
+              <Pressable
+                key={t}
+                testID={`cd-tab-${t}`}
+                onPress={() => setTab(t)}
+                style={[styles.cdTab, active && styles.cdTabActive]}
+              >
+                <Text style={[styles.cdTabText, active && { color: "#fff" }]}>{t.toUpperCase()}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {/* Overview tab — high-level cards render below */}
+        {tab === "overview" && (
+          <View style={styles.card}>
+            <Text style={styles.sect}>OVERVIEW</Text>
+            <Text style={{ color: theme.color.textMuted, fontSize: 12, marginTop: 6, lineHeight: 18 }}>
+              {data?.name} · {data?.email}
+              {data?.assigned_coach_name ? `\nAssigned to ${data.assigned_coach_name}` : ""}
+              {data?.profile?.airline ? `\n${data.profile.airline} · ${data.profile?.job_title || data.profile?.position || ""}` : ""}
+              {data?.profile?.home_base ? ` · Base ${data.profile.home_base}` : ""}
+              {data?.profile?.route_focus ? ` · ${data.profile.route_focus}` : ""}
+              {"\n"}
+              {programme?.goal_label ? `Goal: ${programme.goal_label} · ${programme?.phase?.label || ""} · Week ${programme?.week_index || "—"}` : "No programme yet."}
+            </Text>
+          </View>
+        )}
+
         {/* Phase 4: Programme summary + Regenerate + Approve */}
+        {(tab === "overview" || tab === "programme") && (
         <View testID="programme-card" style={[styles.card, styles.progCard, programme?.validation_status === "needs_review" && !programme?.coach_approved && styles.progCardReview]}>
           <View style={styles.progHeader}>
             <Text style={styles.sect}>PROGRAMME</Text>
@@ -432,9 +623,10 @@ export default function ClientDetail() {
             </View>
           )}
         </View>
+        )}
 
         {/* Slice 1: Admin — status pill, archive/pause/restore/delete, audit log. */}
-        {isAdmin ? (
+        {(tab === "admin" || tab === "overview") && isAdmin ? (
           <View testID="admin-card" style={[styles.card, styles.adminCard]}>
             <View style={styles.progHeader}>
               <Text style={styles.sect}>ADMIN</Text>
@@ -528,10 +720,23 @@ export default function ClientDetail() {
               <Ionicons name="people" size={13} color={theme.color.text} />
               <Text style={styles.adminBtnAltText}>MANAGE COACHES</Text>
             </Pressable>
+
+            {/* Slice 3.5 — Preview as Client */}
+            <Pressable
+              testID="admin-preview-client"
+              onPress={startPreview}
+              disabled={previewBusy}
+              style={[styles.adminBtnAlt, { marginTop: 8, alignSelf: "flex-start" }, previewBusy && { opacity: 0.55 }]}
+            >
+              <Ionicons name="eye" size={13} color={theme.color.brand} />
+              <Text style={[styles.adminBtnAltText, { color: theme.color.brand }]}>
+                {previewBusy ? "OPENING…" : "PREVIEW AS THIS CLIENT"}
+              </Text>
+            </Pressable>
           </View>
         ) : null}
 
-        {controls ? (
+        {(tab === "admin" || tab === "overview") && controls ? (
           <View style={styles.card}>
             <Text style={styles.sect}>COACH CONTROLS {savingCtrl ? " · SAVING…" : ""}</Text>
             {(Object.keys(CONTROL_OPTIONS) as (keyof Controls)[]).map((field) => (
@@ -557,6 +762,7 @@ export default function ClientDetail() {
           </View>
         ) : null}
 
+        {(tab === "profile" || tab === "overview") && (
         <View style={styles.card}>
           <Text style={styles.sect}>PROFILE</Text>
           <Row label="Airline" value={p.airline || "—"} />
@@ -566,40 +772,81 @@ export default function ClientDetail() {
           <Row label="Weight" value={p.weight_kg ? `${p.weight_kg}kg` : "—"} />
           <Row label="Calorie target" value={String(p.calorie_target || "—")} />
         </View>
-
-        {roster ? (
-          <View style={styles.card}>
-            <Text style={styles.sect}>ROSTER · {roster.week_start}</Text>
-            {roster.days?.map((d: any, i: number) => (
-              <View key={i} style={styles.dayRow}>
-                <View style={[styles.bar, { backgroundColor: loadColor(d.load) }]} />
-                <Text style={styles.dText}>{d.date} · {d.type?.toUpperCase()}</Text>
-                {d.flights?.[0] && <Text style={styles.fText}>  {d.flights[0].from}→{d.flights[0].to}</Text>}
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View style={styles.card}><Text style={{ color: theme.color.textMuted }}>No roster uploaded.</Text></View>
         )}
 
+        {(tab === "roster" || tab === "calendar" || tab === "overview") && roster ? (
+          <View style={styles.card}>
+            <Text style={styles.sect}>ROSTER · {roster.week_start}</Text>
+            {roster.days?.map((d: any, i: number) => {
+              const rowInner = (
+                <View style={styles.dayRow}>
+                  <View style={[styles.bar, { backgroundColor: loadColor(d.load) }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.dText}>
+                      {d.date} · {d.type?.toUpperCase() || d.day_type?.toUpperCase()}
+                    </Text>
+                    {d.flights?.[0] ? (
+                      <Text style={styles.fText}>  {d.flights[0].from}→{d.flights[0].to}</Text>
+                    ) : null}
+                    {d.hotel_name ? (
+                      <Text style={styles.hText}>  🏨 {d.hotel_name}</Text>
+                    ) : null}
+                  </View>
+                  {tab === "roster" ? <Ionicons name="create-outline" size={16} color={theme.color.textMuted} /> : null}
+                </View>
+              );
+              return tab === "roster" ? (
+                <Pressable
+                  key={i}
+                  testID={`cd-roster-day-${d.date}`}
+                  onPress={() => openRosterDayEdit(d)}
+                >
+                  {rowInner}
+                </Pressable>
+              ) : (
+                <View key={i}>{rowInner}</View>
+              );
+            })}
+          </View>
+        ) : (tab === "roster" || tab === "calendar" || tab === "overview") ? (
+          <View style={styles.card}><Text style={{ color: theme.color.textMuted }}>No roster uploaded.</Text></View>
+        ) : null}
+
+        {(tab === "workouts" || tab === "calendar" || tab === "overview") && (
         <View style={styles.card}>
           <Text style={styles.sect}>WEEK PLAN · {workouts.length} WORKOUTS</Text>
           {workouts.length === 0 ? <Text style={{ color: theme.color.textMuted, marginTop: 6 }}>No workouts yet.</Text> :
             workouts.map((w: any) => (
-              <Pressable key={w.id} testID={`cd-workout-${w.id}`} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow}>
+              <View key={w.id} style={styles.wRow}>
                 <View style={[styles.bar, { backgroundColor: loadColor(w.day_load) }]} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.wTitle}>{w.title}</Text>
+                <Pressable
+                  testID={`cd-workout-${w.id}`}
+                  onPress={() => router.push(`/workout/${w.id}`)}
+                  style={{ flex: 1 }}
+                >
+                  <Text style={styles.wTitle}>
+                    {w.title}
+                    {w.coach_locked ? " · 🔒" : ""}
+                  </Text>
                   <Text style={styles.wMeta}>{w.date} · {w.exercises?.length || 0} ex</Text>
-                </View>
-                {w.approved && <Ionicons name="checkmark-circle" size={20} color={theme.color.green} />}
-                {!w.approved && <StatusBadge status={deriveStatus(w)} />}
-              </Pressable>
+                </Pressable>
+                {w.approved ? <Ionicons name="checkmark-circle" size={18} color={theme.color.green} /> : <StatusBadge status={deriveStatus(w)} />}
+                {(tab === "workouts") && (
+                  <Pressable
+                    testID={`cd-workout-manage-${w.id}`}
+                    onPress={() => setWActionOpen(w)}
+                    style={styles.wManageBtn}
+                  >
+                    <Ionicons name="ellipsis-horizontal" size={16} color={theme.color.text} />
+                  </Pressable>
+                )}
+              </View>
             ))
           }
         </View>
+        )}
 
-        {overrides.length > 0 && (
+        {(tab === "roster" || tab === "overview") && overrides.length > 0 && (
           <View style={styles.card}>
             <Text style={styles.sect}>CLIENT DAY EDITS · {overrides.length}</Text>
             {overrides.slice(0, 12).map((o: any, idx: number) => {
@@ -632,7 +879,7 @@ export default function ClientDetail() {
           </View>
         )}
 
-        {checkins.length > 0 && (
+        {(tab === "checkins" || tab === "overview") && checkins.length > 0 && (
           <View style={styles.card}>
             <Text style={styles.sect}>LATEST CHECK-IN</Text>
             <Row label="Energy" value={String(checkins[0].energy)} />
@@ -644,7 +891,7 @@ export default function ClientDetail() {
           </View>
         )}
 
-        {habitsData ? (
+        {(tab === "checkins" || tab === "overview") && habitsData ? (
           <View style={styles.card}>
             <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
               <Text style={styles.sect}>HABITS · {(habitsData.active || []).length} ACTIVE</Text>
@@ -863,6 +1110,238 @@ export default function ClientDetail() {
           </View>
         </View>
       </Modal>
+
+      {/* Slice 3.5 — Workout action sheet */}
+      <Modal visible={!!wActionOpen} transparent animationType="fade" onRequestClose={() => setWActionOpen(null)}>
+        <Pressable style={styles.modalScrim} onPress={() => setWActionOpen(null)}>
+          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation?.()}>
+            <Text style={styles.modalTitle}>Manage workout</Text>
+            <Text style={styles.modalBody}>
+              {wActionOpen?.title || "Session"} · {wActionOpen?.date}
+              {wActionOpen?.coach_locked ? " · 🔒 LOCKED" : ""}
+              {wActionOpen?.approved ? " · ✓ APPROVED" : ""}
+            </Text>
+            <View style={{ gap: 8, marginTop: 14 }}>
+              {!wActionOpen?.approved ? (
+                <Pressable
+                  testID="w-approve"
+                  disabled={wBusy}
+                  onPress={() => doWorkoutApprove(wActionOpen)}
+                  style={[styles.dEditBtn, { borderColor: theme.color.green }]}
+                >
+                  <Ionicons name="checkmark-circle" size={14} color={theme.color.green} />
+                  <Text style={[styles.dEditBtnT, { color: theme.color.green }]}>APPROVE</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                testID="w-lock"
+                disabled={wBusy}
+                onPress={() => doWorkoutLockToggle(wActionOpen)}
+                style={styles.dEditBtn}
+              >
+                <Ionicons name={wActionOpen?.coach_locked ? "lock-open" : "lock-closed"} size={14} color={theme.color.text} />
+                <Text style={styles.dEditBtnT}>{wActionOpen?.coach_locked ? "UNLOCK" : "LOCK"}</Text>
+              </Pressable>
+              <Pressable
+                testID="w-move"
+                disabled={wBusy}
+                onPress={() => { setWMoveDate(""); setWMoveOpen(wActionOpen); }}
+                style={styles.dEditBtn}
+              >
+                <Ionicons name="calendar" size={14} color={theme.color.text} />
+                <Text style={styles.dEditBtnT}>MOVE / SWAP DATE</Text>
+              </Pressable>
+              <Pressable
+                testID="w-regen"
+                disabled={wBusy || wActionOpen?.coach_locked}
+                onPress={() => { setWRegenNote(""); setWRegenOpen(wActionOpen); }}
+                style={[styles.dEditBtn, wActionOpen?.coach_locked && { opacity: 0.4 }]}
+              >
+                <Ionicons name="refresh" size={14} color={theme.color.brand} />
+                <Text style={[styles.dEditBtnT, { color: theme.color.brand }]}>REGENERATE</Text>
+              </Pressable>
+              <Pressable
+                testID="w-open"
+                onPress={() => { setWActionOpen(null); router.push(`/workout/${wActionOpen.id}`); }}
+                style={styles.dEditBtn}
+              >
+                <Ionicons name="open-outline" size={14} color={theme.color.text} />
+                <Text style={styles.dEditBtnT}>OPEN WORKOUT</Text>
+              </Pressable>
+            </View>
+            <Pressable testID="w-cancel" onPress={() => setWActionOpen(null)} style={[styles.modalBtnGhost, { marginTop: 12 }]}>
+              <Text style={styles.modalBtnGhostText}>CLOSE</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Slice 3.5 — Move workout modal */}
+      <Modal visible={!!wMoveOpen} transparent animationType="fade" onRequestClose={() => setWMoveOpen(null)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Move workout</Text>
+            <Text style={styles.modalBody}>
+              Currently on {wMoveOpen?.date}. Enter the new date (YYYY-MM-DD). If a workout already exists on the target day it will be swapped.
+            </Text>
+            <TextInput
+              testID="w-move-input"
+              style={styles.modalInput}
+              value={wMoveDate}
+              onChangeText={setWMoveDate}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={theme.color.textDim}
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+            <View style={styles.modalRow}>
+              <Pressable testID="w-move-cancel" style={styles.modalBtnGhost} onPress={() => setWMoveOpen(null)}>
+                <Text style={styles.modalBtnGhostText}>CANCEL</Text>
+              </Pressable>
+              <Pressable
+                testID="w-move-confirm"
+                onPress={doWorkoutMove}
+                disabled={wBusy}
+                style={[styles.modalBtn, wBusy && { opacity: 0.55 }]}
+              >
+                {wBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>MOVE</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Slice 3.5 — Regenerate single workout modal */}
+      <Modal visible={!!wRegenOpen} transparent animationType="fade" onRequestClose={() => setWRegenOpen(null)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Regenerate this workout</Text>
+            <Text style={styles.modalBody}>
+              We&apos;ll rebuild just {wRegenOpen?.date} using the latest programme context. Client-set adaptations on this day are respected. Coach-locked sessions are refused.
+            </Text>
+            <Text style={[styles.progLabel, { marginTop: 12 }]}>NOTE (OPTIONAL)</Text>
+            <TextInput
+              testID="w-regen-note"
+              style={styles.modalInput}
+              value={wRegenNote}
+              onChangeText={setWRegenNote}
+              placeholder="e.g. tired from red-eye, dial back"
+              placeholderTextColor={theme.color.textDim}
+              multiline
+            />
+            <View style={styles.modalRow}>
+              <Pressable testID="w-regen-cancel" style={styles.modalBtnGhost} onPress={() => setWRegenOpen(null)}>
+                <Text style={styles.modalBtnGhostText}>CANCEL</Text>
+              </Pressable>
+              <Pressable
+                testID="w-regen-confirm"
+                onPress={doWorkoutRegenSingle}
+                disabled={wBusy}
+                style={[styles.modalBtn, wBusy && { opacity: 0.55 }]}
+              >
+                {wBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>REGENERATE</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Slice 3.5 — Roster day edit modal */}
+      <Modal visible={!!rDayEditOpen} transparent animationType="slide" onRequestClose={() => setRDayEditOpen(null)}>
+        <View style={styles.modalScrim}>
+          <View style={[styles.modalCard, { maxHeight: 620 }]}>
+            <Text style={styles.modalTitle}>Edit roster day</Text>
+            <Text style={styles.modalBody}>{rDayEditOpen?.date}</Text>
+
+            <ScrollView style={{ maxHeight: 440, marginTop: 8 }}>
+              <Text style={[styles.progLabel, { marginTop: 10 }]}>DUTY TYPE</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 6 }}>
+                {DAY_TYPES.map((dt) => {
+                  const active = rDayDraft.day_type === dt;
+                  return (
+                    <Pressable
+                      key={dt}
+                      testID={`r-daytype-${dt}`}
+                      onPress={() => setRDayDraft((d) => ({ ...d, day_type: dt }))}
+                      style={[styles.ctrlChip, active && styles.ctrlChipActive]}
+                    >
+                      <Text style={[styles.ctrlChipT, active && { color: "#fff" }]}>{dt}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={[styles.progLabel, { marginTop: 10 }]}>LOAD</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                {LOAD_OPTIONS.map((l) => {
+                  const active = rDayDraft.load === l.key;
+                  return (
+                    <Pressable
+                      key={l.key}
+                      testID={`r-load-${l.key}`}
+                      onPress={() => setRDayDraft((d) => ({ ...d, load: l.key }))}
+                      style={[styles.ctrlChip, active && { backgroundColor: l.color, borderColor: l.color }]}
+                    >
+                      <Text style={[styles.ctrlChipT, active && { color: "#fff" }]}>{l.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={[styles.progLabel, { marginTop: 12 }]}>LAYOVER CITY</Text>
+              <TextInput
+                testID="r-layover-city"
+                style={styles.modalInput}
+                value={rDayDraft.layover_city || ""}
+                onChangeText={(v) => setRDayDraft((d) => ({ ...d, layover_city: v }))}
+                placeholder="e.g. New York"
+                placeholderTextColor={theme.color.textDim}
+              />
+
+              <Text style={[styles.progLabel, { marginTop: 12 }]}>COACH NOTES</Text>
+              <TextInput
+                testID="r-notes"
+                style={[styles.modalInput, { minHeight: 70 }]}
+                value={rDayDraft.notes || ""}
+                onChangeText={(v) => setRDayDraft((d) => ({ ...d, notes: v }))}
+                placeholder="Extra context for the client and the programme"
+                placeholderTextColor={theme.color.textDim}
+                multiline
+              />
+
+              {rDayEditOpen?.hotel_name ? (
+                <>
+                  <Text style={[styles.progLabel, { marginTop: 12 }]}>HOTEL</Text>
+                  <Text style={{ color: theme.color.text, fontSize: 13, marginTop: 4 }}>{rDayEditOpen.hotel_name}</Text>
+                  <Pressable
+                    testID="r-clear-hotel"
+                    onPress={doClearHotel}
+                    disabled={rDayBusy}
+                    style={[styles.dEditBtn, { marginTop: 6, alignSelf: "flex-start", borderColor: "#c85450" }]}
+                  >
+                    <Ionicons name="close" size={13} color="#c85450" />
+                    <Text style={[styles.dEditBtnT, { color: "#c85450" }]}>CLEAR HOTEL</Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </ScrollView>
+
+            <View style={styles.modalRow}>
+              <Pressable testID="r-day-cancel" style={styles.modalBtnGhost} onPress={() => setRDayEditOpen(null)}>
+                <Text style={styles.modalBtnGhostText}>CANCEL</Text>
+              </Pressable>
+              <Pressable
+                testID="r-day-save"
+                onPress={doSaveRosterDay}
+                disabled={rDayBusy}
+                style={[styles.modalBtn, rDayBusy && { opacity: 0.55 }]}
+              >
+                {rDayBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>SAVE</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -992,4 +1471,13 @@ const styles = StyleSheet.create({
   auditAction: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
   auditMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   auditWhen: { color: theme.color.textDim, fontSize: 10, marginTop: 2 },
+  // Slice 3: tab bar
+  cdTab: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  cdTabActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  cdTabText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  // Slice 3.5: deep-edit affordances
+  wManageBtn: { padding: 8, marginLeft: 4, borderRadius: theme.radius.sm, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border },
+  dEditBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 14, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
+  dEditBtnT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
+  hText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "600", marginTop: 2 },
 });

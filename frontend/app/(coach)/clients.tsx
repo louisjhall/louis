@@ -209,7 +209,7 @@ export default function Clients() {
                   setPreviewBusy("start");
                   try {
                     await enterSandbox();
-                    router.replace("/welcome" as any);
+                    router.replace("/" as any);
                   } catch (e: any) {
                     Alert.alert("Preview failed", e?.message || "Try again.");
                   } finally { setPreviewBusy(null); }
@@ -231,7 +231,7 @@ export default function Clients() {
                   try {
                     await resetSandbox();
                     await enterSandbox();
-                    router.replace("/welcome" as any);
+                    router.replace("/" as any);
                   } catch (e: any) {
                     Alert.alert("Reset failed", e?.message || "Try again.");
                   } finally { setPreviewBusy(null); }

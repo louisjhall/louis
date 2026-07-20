@@ -47,7 +47,7 @@ export function PreviewBanner() {
     try {
       await resetSandbox();
       // resetSandbox already re-enters the sandbox with a fresh token.
-      router.replace("/welcome" as any);
+      router.replace("/" as any);
     } catch {}
     setBusy(false);
   };

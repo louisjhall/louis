@@ -34,7 +34,7 @@ export function PreviewLauncher() {
     setBusy("new");
     try {
       await enterSandbox();
-      router.replace("/welcome" as any);
+      router.replace("/" as any);
     } catch (e: any) {
       Alert.alert("Preview failed", e?.message || "Try again.");
     } finally { setBusy(null); }
@@ -45,7 +45,7 @@ export function PreviewLauncher() {
     try {
       await resetSandbox();
       await enterSandbox();
-      router.replace("/welcome" as any);
+      router.replace("/" as any);
     } catch (e: any) {
       Alert.alert("Reset failed", e?.message || "Try again.");
     } finally { setBusy(null); }

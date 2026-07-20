@@ -9,6 +9,7 @@ import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 import { PreviewClientButton } from "@/src/components/PreviewLauncher";
 import { useAuth } from "@/src/lib/auth";
 import { usePreview } from "@/src/lib/preview";
+import { confirm as uxConfirm, toast as uxToast } from "@/src/lib/ux";
 
 const FILTERS = [
   { key: "all", label: "ALL" },
@@ -33,6 +34,54 @@ export default function Clients() {
   const [previewBusy, setPreviewBusy] = useState<null | "start" | "reset">(null);
 
   const isAdmin = !!(user?.is_admin || user?.role === "admin" || (user?.email || "").toLowerCase().endsWith("@crewfit.net"));
+
+  const quickArchive = async (client: any, e?: any) => {
+    e?.stopPropagation?.();
+    const ok = await uxConfirm({
+      title: `Archive ${client.name}?`,
+      message: "Removes from active list. Data preserved. Can be restored later.",
+      confirmLabel: "Archive",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    try {
+      await api(`/admin/clients/${client.id}/archive`, { method: "POST", body: { mode: "archive_only" } });
+      uxToast(`${client.name} archived`, "success");
+      await load();
+    } catch (err: any) {
+      uxToast(`Archive failed: ${err?.message || "try again"}`, "error");
+    }
+  };
+
+  const quickRestore = async (client: any, e?: any) => {
+    e?.stopPropagation?.();
+    try {
+      await api(`/admin/clients/${client.id}/restore`, { method: "POST", body: {} });
+      uxToast(`${client.name} restored`, "success");
+      await load();
+    } catch (err: any) {
+      uxToast(`Restore failed: ${err?.message || "try again"}`, "error");
+    }
+  };
+
+  const quickDelete = async (client: any, e?: any) => {
+    e?.stopPropagation?.();
+    const ok = await uxConfirm({
+      title: `Delete ${client.name}?`,
+      message: "Disables login and removes from active dashboard. Data kept temporarily unless permanently deleted.",
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await api(`/admin/clients/${client.id}/soft-delete`, { method: "POST", body: {} });
+      uxToast(`${client.name} deleted`, "success");
+      await load();
+    } catch (err: any) {
+      uxToast(`Delete failed: ${err?.message || "try again"}`, "error");
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -269,8 +318,39 @@ export default function Clients() {
                 )}
                 <View style={styles.actionRow}>
                   <Text style={styles.metaSmall}>{cl.missed_workouts > 0 ? `${cl.missed_workouts} missed` : ""}</Text>
-                  <View style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+                  <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
                     <PreviewClientButton clientId={cl.id} clientName={cl.name} />
+                    {isAdmin ? (
+                      <>
+                        {showArchived || cl.status === "archived" || cl.status === "paused" || cl.status === "deletion_pending" ? (
+                          <Pressable
+                            testID={`quick-restore-${cl.id}`}
+                            onPress={(e) => quickRestore(cl, e)}
+                            style={styles.rowIconBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="refresh" size={15} color={theme.color.brand} />
+                          </Pressable>
+                        ) : (
+                          <Pressable
+                            testID={`quick-archive-${cl.id}`}
+                            onPress={(e) => quickArchive(cl, e)}
+                            style={styles.rowIconBtn}
+                            hitSlop={8}
+                          >
+                            <Ionicons name="archive" size={15} color={theme.color.textMuted} />
+                          </Pressable>
+                        )}
+                        <Pressable
+                          testID={`quick-delete-${cl.id}`}
+                          onPress={(e) => quickDelete(cl, e)}
+                          style={styles.rowIconBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="trash" size={15} color="#c85450" />
+                        </Pressable>
+                      </>
+                    ) : null}
                     <Text style={styles.action}>REVIEW →</Text>
                   </View>
                 </View>
@@ -350,4 +430,5 @@ const styles = StyleSheet.create({
   previewBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
   previewBtnAlt: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand },
   previewBtnAltT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
+  rowIconBtn: { padding: 6, borderRadius: 6, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border },
 });

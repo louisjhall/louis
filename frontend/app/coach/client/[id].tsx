@@ -8,6 +8,7 @@ import { useAuth } from "@/src/lib/auth";
 import { usePreview } from "@/src/lib/preview";
 import { theme, loadColor } from "@/src/lib/theme";
 import { StatusBadge, deriveStatus } from "@/src/components/StatusBadge";
+import { confirm as uxConfirm, toast as uxToast } from "@/src/lib/ux";
 
 const DAY_TYPES = [
   "Home Day", "Home Training Day", "Turnaround Duty", "Layover Arrival Day",
@@ -182,42 +183,52 @@ export default function ClientDetail() {
     setAdminBusy(label);
     try {
       await api(`/admin/clients/${id}${path}`, { method: "POST", body: body || {} });
+      uxToast(`${label} — done`, "success");
       await load();
     } catch (e: any) {
-      Alert.alert(`${label} failed`, e?.message || "Try again.");
+      uxToast(`${label} failed: ${e?.message || "try again"}`, "error");
     } finally {
       setAdminBusy(null);
     }
   };
 
-  const askArchive = () => {
-    Alert.alert(
-      "Archive this client?",
-      "This will move them out of the active client list. Their data will be kept and can be restored later.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Archive Only",         onPress: () => runAdmin("Archive",  "/archive", { mode: "archive_only" }) },
-        { text: "Archive & Pause",      style: "destructive",
-          onPress: () => runAdmin("Archive & Pause", "/archive", { mode: "archive_pause" }) },
-      ],
-    );
+  const askArchive = async () => {
+    const mode = await new Promise<"cancel" | "archive_only" | "archive_pause">((resolve) => {
+      // Two-step for the two options — web can't show 3-button Alerts either.
+      uxConfirm({
+        title: "Archive this client?",
+        message: "This will move them out of the active client list. Their data will be kept and can be restored later.\n\nOK = Archive Only.  Cancel to skip.",
+        confirmLabel: "Archive Only",
+        cancelLabel: "Cancel",
+      }).then(async (ok) => {
+        if (!ok) return resolve("cancel");
+        // Offer the harder option after they confirm archive
+        const alsoPause = await uxConfirm({
+          title: "Also disable client login?",
+          message: "OK = Archive + Pause login (client can't sign in).\nCancel = Just archive (login still works).",
+          confirmLabel: "Archive & Pause",
+          cancelLabel: "Just Archive",
+          destructive: true,
+        });
+        resolve(alsoPause ? "archive_pause" : "archive_only");
+      });
+    });
+    if (mode === "cancel") return;
+    await runAdmin(mode === "archive_pause" ? "Archive & Pause" : "Archive", "/archive", { mode });
   };
 
   const askRestore = () => runAdmin("Restore", "/restore");
 
-  const askSoftDelete = () => {
-    Alert.alert(
-      "Delete this client?",
-      "This will disable their access and remove them from your active dashboard. Their data will be kept temporarily unless you choose permanent deletion.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete Client",
-          style: "destructive",
-          onPress: () => runAdmin("Soft Delete", "/soft-delete"),
-        },
-      ],
-    );
+  const askSoftDelete = async () => {
+    const ok = await uxConfirm({
+      title: "Delete this client?",
+      message: "This will disable their access and remove them from your active dashboard. Their data will be kept temporarily unless you choose permanent deletion.",
+      confirmLabel: "Delete Client",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!ok) return;
+    await runAdmin("Soft Delete", "/soft-delete");
   };
 
   const openPermDelete = () => {

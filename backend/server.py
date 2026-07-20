@@ -2432,23 +2432,64 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             await _set_job(job_id, status="processing", stage="uploading", progress=5, message="Uploading your roster...")
             path = await write_temp(body.file_base64, body.mime_type)
             await _set_job(job_id, stage="reading", progress=15, message="Reading your duty pattern...")
+
+            # Gemini is intermittently flaky under load — a first attempt can
+            # return empty text, a truncated JSON, or a transient 5xx. Retry
+            # up to 3 times with exponential backoff before declaring failure.
+            # Each attempt is capped at 60s so a single stalled call can't
+            # eat the whole 5-minute worker budget.
             raw = ""
-            try:
-                raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, body.mime_type)
-            except Exception as e:
-                logger.warning("Gemini roster call failed: %s", e)
-            await _set_job(job_id, stage="extracting", progress=30, message="Extracting duties...")
             parsed: Any = {}
-            try:
-                parsed = parse_json_from_text(raw) if raw else {}
-            except Exception as e:
-                logger.warning("roster parse failed: %s", e)
-            days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+            days: list[dict] = []
+            last_err: Optional[str] = None
+            for attempt in range(3):
+                if attempt > 0:
+                    await _asyncio.sleep(2 ** attempt)  # 2s, 4s backoff
+                    await _set_job(
+                        job_id, stage="reading", progress=15,
+                        message=f"Re-reading (attempt {attempt + 1} of 3)...",
+                        retry_count=attempt,
+                    )
+                try:
+                    raw = await _asyncio.wait_for(
+                        call_gemini_file(
+                            ROSTER_SYSTEM,
+                            "Extract the complete roster shown. Return only JSON.",
+                            path, body.mime_type,
+                        ),
+                        timeout=60.0,
+                    )
+                except Exception as e:
+                    last_err = f"Gemini call: {e}"
+                    logger.warning("Gemini roster attempt %d failed: %s", attempt + 1, e)
+                    continue
+                try:
+                    parsed = parse_json_from_text(raw) if raw else {}
+                except Exception as e:
+                    last_err = f"JSON parse: {e}"
+                    logger.warning("Gemini roster attempt %d: JSON parse failed: %s", attempt + 1, e)
+                    continue
+                days = parsed.get("days", []) if isinstance(parsed, dict) else (parsed or [])
+                if days:
+                    if attempt > 0:
+                        logger.info("roster parse succeeded on attempt %d", attempt + 1)
+                    break
+                last_err = "parsed 0 days"
+
+            await _set_job(job_id, stage="extracting", progress=30, message="Extracting duties...")
             if not days:
-                # Friendly failure — return actionable message rather than 504/stack trace
-                await _set_job(job_id, status="failed", stage="extracting", progress=30,
-                               error="We couldn't read this roster clearly. Please upload a clearer file or enter the details manually.",
-                               message="Roster could not be read")
+                # All 3 attempts exhausted — surface an actionable message rather
+                # than an unhelpful "Roster could not be read".
+                logger.warning("roster extract exhausted 3 retries; last_err=%s", last_err)
+                await _set_job(
+                    job_id, status="failed", stage="extracting", progress=30,
+                    error=(
+                        "We tried three times but couldn't extract duties from this file. "
+                        "This is usually a transient AI blip — please try uploading again in a minute. "
+                        "If it keeps failing, upload a clearer image of the roster or type the details manually."
+                    ),
+                    message="Roster could not be read (after 3 attempts)",
+                )
                 return
             await _set_job(job_id, stage="detecting", progress=50, message="Detecting layovers and turnarounds...")
             days.sort(key=lambda d: d.get("date") or "")

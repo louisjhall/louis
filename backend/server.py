@@ -835,6 +835,22 @@ async def call_gemini_file(system: str, prompt: str, file_path: str, mime: str) 
     return r if isinstance(r, str) else str(r)
 
 
+async def call_claude_file(system: str, prompt: str, file_path: str, mime: str) -> str:
+    """Claude Sonnet 4.5 with vision — used as a diversified fallback when
+    Gemini repeatedly fails to parse a roster. Different provider means
+    different failure modes, which is exactly what bulletproof reliability
+    needs (a Gemini rate-limit blip is uncorrelated with Anthropic capacity).
+    """
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=new_id(),
+        system_message=system,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    fc = FileContentWithMimeType(file_path=file_path, mime_type=mime)
+    r = await chat.send_message(UserMessage(text=prompt, file_contents=[fc]))
+    return r if isinstance(r, str) else str(r)
+
+
 # ------------------------------------------------------------------
 # Day-type & load scoring
 # ------------------------------------------------------------------
@@ -2152,9 +2168,35 @@ For each date output ONE object with these fields (populate what you can, leave 
   notes (short free text of any airline codes/duty codes you saw)
   confidence 0..1 — how sure you are about this day; put low confidence and day_type "Unknown/Needs Confirmation" if unsure.
 
+AIRLINE-SPECIFIC HINTS (recognise these format variations):
+ - **Emirates (EK)** — "DXB" base, [CA]/[FO]/[SFO]/[CP] position codes, flights like "EK508 DXB-BOM-DXB", "Day Off" / "Rest Day" text, "Pickup Time HH:MM" for report time, hotel + local contact on layover days, "DXB LT" timezone.
+ - **British Airways (BA/EZG/CityFlyer)** — "LHR/LGW/LCY" base, "BA" flight prefix, "DO"/"OFF"/"REST"/"AL" codes, "SU"/"ES"/"LS" for standby types, "SIM" for sim, "RST" for rest.
+ - **easyJet (U2/EZY)** — "LGW/STN/LTN/etc" base, "U2" flight prefix, "OFF"/"DO"/"HB"/"AB" codes, "STBY-AM/PM" split standby.
+ - **Ryanair (FR)** — "DUB/STN/etc" base, "FR" flight prefix, "D/O" for day off, "STBY", "REST".
+ - **Qatar (QR)** — "DOH" base, "QR" flight prefix, position codes CSD/CS/BS/CA/FA, "OFF"/"AL"/"REST"/"SIM".
+ - **Etihad (EY)** — "AUH" base, "EY" flight prefix, "R"/"O"/"AL"/"SIM"/"OFC"/"STBY".
+ - **Lufthansa (LH/CLH)** — "FRA/MUC" base, "LH" flight prefix, German codes: "F" (frei/off), "URL" (leave), "SBY", "PIC/FO/PU/FB".
+ - **Air France (AF)** — "CDG/ORY" base, "AF" flight prefix, French codes: "REP" (rest), "CS" (standby), "VAC" (leave).
+ - **KLM (KL)** — "AMS" base, "KL" flight prefix, "DO"/"RST"/"SBY"/"SIM".
+ - **Delta/United/American (DL/UA/AA)** — 3-letter US bases (ATL/ORD/DFW etc), "F5"/"F4" reserve codes, "R"/"RES"/"VAC"/"OP" for open time.
+ - **Turkish (TK)** — "IST" base, "TK" flight prefix, "OFF"/"REP"/"SIM"/"STBY".
+ - **Singapore (SQ)** — "SIN" base, "SQ" flight prefix, "OFF"/"AL"/"MED"/"SIM".
+
+GENERIC PATTERN RECOGNITION (apply across ALL airlines):
+ - Any all-day cell containing only "OFF", "DO", "D/O", "REST", "R", "RST", "F", "FREE" → day_type = "Rest Day" or "Home Day". If followed/preceded by duty, prefer "Rest Day".
+ - Any cell containing "AL", "VAC", "URL", "LEAVE", "ANNUAL", "ANN LV" → day_type = "Annual Leave".
+ - Any cell containing "SIM", "SIMULATOR", "REC", "RECURRENT", "TRG", "TRAINING", "CBT" → day_type = "Simulator/Training Day".
+ - Any cell containing "MED", "SICK", "OFC" (off-sick), "S/L" → set day_type to "Rest Day" and add a note.
+ - Time-zone abbreviations: "LT" = local, "Z"/"UTC"/"GMT" = zulu, "BASE LT" = base local. Always emit report_time in the local timezone of the crew base.
+ - Multi-leg trips: consecutive duty rows starting away-from-base → treat as Layover Arrival → Layover Full → Layover Departure sequence.
+ - "SIM" alone on a day without a flight → day_type = "Simulator/Training Day".
+ - Rows with "*" or "+" markers usually indicate next-day arrival — do NOT create a fake extra day; keep the entry on the departure date and note the arrival is next-day in `notes`.
+ - Rows spanning multiple midnight boundaries (long-haul + layover) → the departure date is the "Layover Arrival Day", the return leg date is a "Layover Departure Day"; days in between are "Layover Full Day".
+
 STANDBY DETECTION — when the row's code contains any of these tokens, day_type MUST be "Standby":
   STBY, SBY, RES, RSV, RESERVE, STDBY, HSBY, ASBY, SC (short-call), LC (long-call), on-call, "on call",
-  "airport standby", "home standby", "available", "reserve duty", "night standby", "early standby".
+  "airport standby", "home standby", "available", "reserve duty", "night standby", "early standby",
+  "STBY-AM", "STBY-PM", "F5", "F4", "OP" (open time reserve).
 For any Standby day ALSO output these extra fields:
   standby_type — one of: "home_standby" | "airport_standby" | "reserve" | "short_call" | "long_call" |
                           "night_standby" | "early_standby" | "unknown_standby"
@@ -2177,6 +2219,8 @@ Classify carefully:
  - overnight in another city = Layover Arrival Day (arrival day) followed by Layover Full Day(s) and Layover Departure Day (last)
  - duty starting before 05:00 = Early Report; ending after 23:00 = Late Finish; block covering 02:00-05:00 = Night Flight
  - do NOT invent dates or airports; if unclear, day_type="Unknown/Needs Confirmation" and confidence=0.3
+ - do NOT skip days — if a date is present in the roster range but you cannot classify it, still emit it with day_type="Unknown/Needs Confirmation" so the client can edit.
+ - RETURN AS MANY DAYS AS THE ROSTER SHOWS. Partial output is better than a giant error — extract every row you can confidently read.
 
 Return STRICT JSON only:
 {{"days":[{{...}}]}}"""
@@ -2435,13 +2479,38 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
 
             # Gemini is intermittently flaky under load — a first attempt can
             # return empty text, a truncated JSON, or a transient 5xx. Retry
-            # up to 3 times with exponential backoff before declaring failure.
-            # Each attempt is capped at 60s so a single stalled call can't
-            # eat the whole 5-minute worker budget.
+            # up to 3 times with exponential backoff before falling back to
+            # Claude Sonnet 4.5 Vision. Different providers = uncorrelated
+            # failure modes, which is exactly what bulletproof reliability
+            # needs at production scale across many airlines.
             raw = ""
             parsed: Any = {}
             days: list[dict] = []
             last_err: Optional[str] = None
+            parser_used = "gemini"
+
+            async def _attempt(model_fn, model_label: str, timeout_s: float) -> tuple[str, Any, list[dict], Optional[str]]:
+                try:
+                    raw_ = await _asyncio.wait_for(
+                        model_fn(
+                            ROSTER_SYSTEM,
+                            "Extract the complete roster shown. Return only JSON.",
+                            path, body.mime_type,
+                        ),
+                        timeout=timeout_s,
+                    )
+                except Exception as ex:
+                    return "", {}, [], f"{model_label} call: {ex}"
+                try:
+                    parsed_ = parse_json_from_text(raw_) if raw_ else {}
+                except Exception as ex:
+                    return raw_, {}, [], f"{model_label} JSON parse: {ex}"
+                d_ = parsed_.get("days", []) if isinstance(parsed_, dict) else (parsed_ or [])
+                if not d_:
+                    return raw_, parsed_, [], f"{model_label}: parsed 0 days"
+                return raw_, parsed_, d_, None
+
+            # 1) Gemini x3 with backoff
             for attempt in range(3):
                 if attempt > 0:
                     await _asyncio.sleep(2 ** attempt)  # 2s, 4s backoff
@@ -2450,47 +2519,63 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                         message=f"Re-reading (attempt {attempt + 1} of 3)...",
                         retry_count=attempt,
                     )
-                try:
-                    raw = await _asyncio.wait_for(
-                        call_gemini_file(
-                            ROSTER_SYSTEM,
-                            "Extract the complete roster shown. Return only JSON.",
-                            path, body.mime_type,
-                        ),
-                        timeout=60.0,
-                    )
-                except Exception as e:
-                    last_err = f"Gemini call: {e}"
-                    logger.warning("Gemini roster attempt %d failed: %s", attempt + 1, e)
-                    continue
-                try:
-                    parsed = parse_json_from_text(raw) if raw else {}
-                except Exception as e:
-                    last_err = f"JSON parse: {e}"
-                    logger.warning("Gemini roster attempt %d: JSON parse failed: %s", attempt + 1, e)
-                    continue
-                days = parsed.get("days", []) if isinstance(parsed, dict) else (parsed or [])
+                raw, parsed, days, last_err = await _attempt(call_gemini_file, "Gemini", 60.0)
                 if days:
                     if attempt > 0:
-                        logger.info("roster parse succeeded on attempt %d", attempt + 1)
+                        logger.info("roster parse succeeded on Gemini attempt %d", attempt + 1)
                     break
-                last_err = "parsed 0 days"
+
+            # 2) Claude Vision fallback — different provider, different failure
+            # modes. Only reached when all 3 Gemini attempts failed.
+            if not days:
+                logger.warning("Gemini exhausted (last_err=%s) — falling back to Claude Vision", last_err)
+                await _set_job(
+                    job_id, stage="reading", progress=20,
+                    message="Trying a second reader for accuracy...",
+                    retry_count=3,
+                )
+                raw2, parsed2, days2, err2 = await _attempt(call_claude_file, "Claude", 90.0)
+                if days2:
+                    logger.info("roster parse succeeded via Claude Vision fallback")
+                    raw, parsed, days = raw2, parsed2, days2
+                    parser_used = "claude_vision"
+                else:
+                    last_err = f"{last_err} | claude: {err2}"
 
             await _set_job(job_id, stage="extracting", progress=30, message="Extracting duties...")
             if not days:
-                # All 3 attempts exhausted — surface an actionable message rather
-                # than an unhelpful "Roster could not be read".
-                logger.warning("roster extract exhausted 3 retries; last_err=%s", last_err)
+                # Both providers exhausted — surface an actionable message and
+                # log the file for coach review so we never dead-end a client.
+                logger.warning("roster extract exhausted ALL parsers; last_err=%s", last_err)
+                # Best-effort: stash the raw response snapshot so Louis can
+                # eyeball what the LLMs saw when they failed.
+                try:
+                    await db.roster_parse_failures.insert_one({
+                        "id": new_id(),
+                        "user_id": user["id"],
+                        "job_id": job_id,
+                        "filename": body.filename,
+                        "mime": body.mime_type,
+                        "last_err": last_err,
+                        "raw_snippet": (raw or "")[:2000],
+                        "created_at": now_iso(),
+                    })
+                except Exception:
+                    logger.exception("failed to log roster parse failure — non-fatal")
                 await _set_job(
                     job_id, status="failed", stage="extracting", progress=30,
                     error=(
-                        "We tried three times but couldn't extract duties from this file. "
-                        "This is usually a transient AI blip — please try uploading again in a minute. "
-                        "If it keeps failing, upload a clearer image of the roster or type the details manually."
+                        "We tried Gemini three times and Claude once but couldn't extract duties. "
+                        "This is very rare and usually means the file is scanned at very low resolution. "
+                        "Please re-upload a clearer image, or paste your duty pattern into the manual entry below — "
+                        "Louis has been notified and will review the file."
                     ),
-                    message="Roster could not be read (after 3 attempts)",
+                    message="Roster could not be read (after 4 attempts)",
                 )
                 return
+
+            # Record which model succeeded so we can track real-world accuracy.
+            await _set_job(job_id, parser_used=parser_used)
             await _set_job(job_id, stage="detecting", progress=50, message="Detecting layovers and turnarounds...")
             days.sort(key=lambda d: d.get("date") or "")
             for d in days:

@@ -4288,7 +4288,14 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
 
     async def _worker():
         try:
-            workouts = await _generate_month(user, r)
+            # Programme context — reused for prompt injection, validation, persistence.
+            programme_ctx = None
+            try:
+                from feature_programme_quality import programme_context_for_llm
+                programme_ctx = await programme_context_for_llm(user, r)
+            except Exception:
+                logger.exception("generate-month: programme_context_for_llm failed")
+            workouts = await _generate_month(user, r, programme_ctx=programme_ctx)
             # Setup-day gate: for BRAND-NEW clients, drop any workouts scheduled
             # on/before the gate so their first workout starts tomorrow (or the
             # next suitable roster day). Existing clients pass through unchanged.
@@ -4344,6 +4351,22 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                 "date": {"$nin": list(dates_now)},
                 "coach_locked": {"$ne": True}, "completed": {"$ne": True},
             })
+            # Programme quality gate — validate + persist (parity with roster worker).
+            try:
+                if programme_ctx is not None:
+                    from feature_programme_quality import validate_programme, persist_programme_record
+                    persisted_workouts = await db.workouts.find(
+                        {"user_id": user["id"], "roster_id": body.roster_id}, {"_id": 0}
+                    ).sort("date", 1).to_list(500)
+                    validation = validate_programme(user, r, persisted_workouts, programme_ctx)
+                    await persist_programme_record(user, r, persisted_workouts, programme_ctx, validation)
+                    if not validation.get("ok"):
+                        await db.workouts.update_many(
+                            {"user_id": user["id"], "roster_id": body.roster_id, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                            {"$set": {"needs_coach_review": True, "updated_at": now_iso()}},
+                        )
+            except Exception:
+                logger.exception("generate-month: programme quality gate failed — non-fatal")
             await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
             # JIT exercise-media scan: alert Louis if any newly generated
             # workouts reference exercises with missing artwork / video /

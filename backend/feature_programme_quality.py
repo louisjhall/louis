@@ -224,8 +224,10 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
         week_index = prior_week + 1
     phase = _phase_for_week(week_index - 1)  # 0-indexed for phase lookup
 
-    # Weekly target — bounded by experience
-    experience = str(profile.get("experience") or "").lower()
+    # Weekly target — bounded by experience.
+    # `experience_level` is what the onboarding form writes;
+    # `experience` is the legacy shorter key. Accept both.
+    experience = str(profile.get("experience_level") or profile.get("experience") or "").lower()
     target = goal_meta["target_sessions_per_week"]
     if experience == "beginner":
         target = min(target, 3)

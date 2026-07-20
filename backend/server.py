@@ -914,10 +914,14 @@ async def me(user: dict = Depends(current_user)):
 
 @api.post("/auth/onboarding")
 async def onboarding(body: HomeEquipmentBody, user: dict = Depends(current_user)):
-    await db.users.update_one(
-        {"id": user["id"]},
-        {"$set": {"profile": body.model_dump(), "onboarded": True}},
-    )
+    # Merge instead of overwriting the profile object so re-running onboarding
+    # never wipes fields that live outside HomeEquipmentBody (assessment DNA
+    # snippets, coach-set notes, later features like aircraft_type additions).
+    payload = body.model_dump(exclude_none=True)
+    updates = {f"profile.{k}": v for k, v in payload.items()}
+    updates["onboarded"] = True
+    updates["profile.updated_at"] = now_iso()
+    await db.users.update_one({"id": user["id"]}, {"$set": updates})
     return await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
 
 

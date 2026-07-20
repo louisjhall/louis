@@ -899,7 +899,17 @@ async def signup(body: SignupBody):
         "created_at": now, "onboarded": False, "coach_id": None, "profile": {},
         "age_confirmed": True,
         "age_confirmed_at": now,
+        "status": "active",
     }
+    # Auto-assign new clients to Louis (default admin) so messaging routes work.
+    if body.role == "client":
+        try:
+            louis = await db.users.find_one({"email": "louis@crewfit.net"}, {"_id": 0, "id": 1, "name": 1})
+            if louis and louis.get("id"):
+                u["assigned_coach_id"] = louis["id"]
+                u["assigned_coach_name"] = louis.get("name") or "Louis Hall"
+        except Exception:
+            pass
     await db.users.insert_one(u)
     token = make_token(u["id"], u["role"])
     clean_doc(u)
@@ -7040,10 +7050,25 @@ async def _startup():
     try:
         await db.users.update_many(
             {"email": "louis@crewfit.net"},
-            {"$set": {"is_admin": True, "role": "coach", "status": "active"}},
+            {"$set": {"is_admin": True, "role": "coach", "coach_tier": "admin", "status": "active"}},
         )
     except Exception:
         logger.exception("Louis admin migration failed (non-fatal)")
+    # Slice 2 — backfill: any existing coach without a tier is treated as
+    # 'full'. Any client without an assigned_coach_id gets Louis.
+    try:
+        await db.users.update_many(
+            {"role": "coach", "coach_tier": {"$exists": False}},
+            {"$set": {"coach_tier": "full"}},
+        )
+        louis = await db.users.find_one({"email": "louis@crewfit.net"}, {"_id": 0, "id": 1})
+        if louis and louis.get("id"):
+            await db.users.update_many(
+                {"role": "client", "$or": [{"assigned_coach_id": {"$exists": False}}, {"assigned_coach_id": None}]},
+                {"$set": {"assigned_coach_id": louis["id"], "assigned_coach_name": "Louis Hall"}},
+            )
+    except Exception:
+        logger.exception("Slice 2 coach/assignment migration failed (non-fatal)")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 

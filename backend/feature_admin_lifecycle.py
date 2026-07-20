@@ -328,3 +328,242 @@ async def global_audit_log(
         q["action"] = action
     rows = await db.audit_logs.find(q, {"_id": 0}).sort("timestamp", -1).to_list(limit)
     return {"entries": rows, "count": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# Slice 2: Coach management + client assignment + role hierarchy
+# ---------------------------------------------------------------------------
+
+COACH_TIERS = ("admin", "full", "assistant")
+
+
+def _coach_public(u: dict) -> dict:
+    """Public/coach-list projection — strips password hash and sensitive DNA."""
+    return {
+        "id": u.get("id"),
+        "email": u.get("email"),
+        "name": u.get("name"),
+        "role": u.get("role"),
+        "is_admin": bool(u.get("is_admin")),
+        "coach_tier": u.get("coach_tier") or ("admin" if u.get("is_admin") else "full"),
+        "status": u.get("status") or "active",
+        "created_at": u.get("created_at"),
+        "last_login": u.get("last_login"),
+        "phone": u.get("phone"),
+    }
+
+
+async def _default_coach_id() -> Optional[str]:
+    """Louis is the default fallback if no explicit assignment is set."""
+    louis = await db.users.find_one({"email": "louis@crewfit.net"}, {"_id": 0, "id": 1})
+    return (louis or {}).get("id")
+
+
+class CoachInviteBody(BaseModel):
+    email: str
+    name: str
+    tier: str = "full"          # "full" | "assistant"
+    phone: Optional[str] = None
+
+
+class CoachPatchBody(BaseModel):
+    tier: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    is_admin: Optional[bool] = None
+
+
+class CoachStatusBody(BaseModel):
+    active: bool = True         # False = deactivate (status='paused')
+
+
+class AssignCoachBody(BaseModel):
+    coach_id: str
+    reason: Optional[str] = None
+
+
+@api.get("/admin/coaches")
+async def list_coaches(admin: dict = Depends(require_admin)):
+    """List all coach accounts with workload counts."""
+    coaches = await db.users.find({"role": "coach"}, {"_id": 0}).to_list(200)
+    out: list[dict] = []
+    for c in coaches:
+        pub = _coach_public(c)
+        pub["assigned_clients"] = await db.users.count_documents({
+            "role": "client",
+            "assigned_coach_id": c["id"],
+            "status": {"$nin": ["deleted", "deletion_pending"]},
+        })
+        out.append(pub)
+    # Sort admins first, then by name.
+    out.sort(key=lambda r: (not r["is_admin"], (r["name"] or "").lower()))
+    return {"coaches": out, "count": len(out)}
+
+
+@api.post("/admin/coaches/invite")
+async def invite_coach(body: CoachInviteBody, admin: dict = Depends(require_admin)):
+    """Create a coach account with a random one-time password. In production
+    this returns a magic-link; for the MVP the temp password is returned so
+    Louis can share it manually.
+
+    Constraints:
+      - tier must be 'full' or 'assistant'
+      - email must be unique
+    """
+    if body.tier not in ("full", "assistant"):
+        raise HTTPException(400, "tier must be 'full' or 'assistant'")
+    email = body.email.lower().strip()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Invalid email")
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(400, "A user with this email already exists")
+
+    from server import hash_pw  # local import to avoid circular deps
+    import secrets
+    temp_password = secrets.token_urlsafe(10)
+    now = now_iso()
+    coach_id = new_id()
+    await db.users.insert_one({
+        "id": coach_id,
+        "email": email,
+        "name": body.name.strip() or email.split("@")[0],
+        "phone": body.phone,
+        "password_hash": hash_pw(temp_password),
+        "role": "coach",
+        "coach_tier": body.tier,
+        "is_admin": False,
+        "status": "active",
+        "must_change_password": True,
+        "created_at": now,
+        "updated_at": now,
+        "invited_by": admin["id"],
+    })
+    await log_audit(actor=admin, action="coach.invite", target_user_id=coach_id,
+                    after={"email": email, "tier": body.tier, "name": body.name})
+    return {"coach_id": coach_id, "email": email, "temp_password": temp_password, "tier": body.tier}
+
+
+@api.patch("/admin/coaches/{coach_id}")
+async def patch_coach(coach_id: str, body: CoachPatchBody, admin: dict = Depends(require_admin)):
+    c = await db.users.find_one({"id": coach_id, "role": "coach"}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Coach not found")
+    if bool(c.get("is_admin")) and body.is_admin is False:
+        # Guard: never demote the last admin.
+        admin_count = await db.users.count_documents({"role": "coach", "is_admin": True})
+        if admin_count <= 1:
+            raise HTTPException(400, "Cannot demote the last admin. Promote another coach first.")
+    before = _coach_public(c)
+    updates: dict[str, Any] = {}
+    if body.tier is not None:
+        if body.tier not in COACH_TIERS:
+            raise HTTPException(400, f"tier must be one of {COACH_TIERS}")
+        updates["coach_tier"] = body.tier
+        if body.tier == "admin":
+            updates["is_admin"] = True
+    if body.name is not None: updates["name"] = body.name.strip()
+    if body.phone is not None: updates["phone"] = body.phone
+    if body.is_admin is not None: updates["is_admin"] = bool(body.is_admin)
+    updates["updated_at"] = now_iso()
+    await db.users.update_one({"id": coach_id}, {"$set": updates})
+    c2 = await db.users.find_one({"id": coach_id}, {"_id": 0})
+    await log_audit(actor=admin, action="coach.patch", target_user_id=coach_id,
+                    before=before, after=_coach_public(c2))
+    return _coach_public(c2)
+
+
+@api.post("/admin/coaches/{coach_id}/activate")
+async def activate_coach(coach_id: str, admin: dict = Depends(require_admin)):
+    c = await db.users.find_one({"id": coach_id, "role": "coach"}, {"_id": 0})
+    if not c: raise HTTPException(404, "Coach not found")
+    await db.users.update_one({"id": coach_id}, {"$set": {"status": "active", "updated_at": now_iso()}})
+    await log_audit(actor=admin, action="coach.activate", target_user_id=coach_id)
+    return {"ok": True}
+
+
+@api.post("/admin/coaches/{coach_id}/deactivate")
+async def deactivate_coach(coach_id: str, admin: dict = Depends(require_admin)):
+    c = await db.users.find_one({"id": coach_id, "role": "coach"}, {"_id": 0})
+    if not c: raise HTTPException(404, "Coach not found")
+    if bool(c.get("is_admin")):
+        raise HTTPException(400, "Cannot deactivate an admin account. Demote first.")
+    await db.users.update_one({"id": coach_id}, {"$set": {"status": "paused", "updated_at": now_iso()}})
+    await log_audit(actor=admin, action="coach.deactivate", target_user_id=coach_id)
+    return {"ok": True}
+
+
+@api.post("/admin/clients/{client_id}/assign-coach")
+async def assign_client_coach(client_id: str, body: AssignCoachBody, admin: dict = Depends(require_admin)):
+    """Assign or reassign a client to a coach. Records the change in the
+    audit log and updates the client's user doc."""
+    coach = await db.users.find_one({"id": body.coach_id, "role": "coach"}, {"_id": 0})
+    if not coach:
+        raise HTTPException(404, "Coach not found")
+    if coach.get("status") not in (None, "active"):
+        raise HTTPException(400, "Coach is not active")
+    client = await db.users.find_one({"id": client_id, "role": "client"}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    before = {"assigned_coach_id": client.get("assigned_coach_id")}
+    await db.users.update_one(
+        {"id": client_id},
+        {"$set": {
+            "assigned_coach_id": coach["id"],
+            "assigned_coach_name": coach.get("name"),
+            "assigned_at": now_iso(),
+            "assigned_by": admin["id"],
+            "updated_at": now_iso(),
+        }},
+    )
+    await log_audit(
+        actor=admin,
+        action="client.assign_coach",
+        target_user_id=client_id,
+        before=before,
+        after={"assigned_coach_id": coach["id"], "assigned_coach_name": coach.get("name")},
+        reason=body.reason,
+    )
+    return {"ok": True, "assigned_coach_id": coach["id"], "assigned_coach_name": coach.get("name")}
+
+
+@api.get("/admin/coaches/{coach_id}/workload")
+async def coach_workload(coach_id: str, admin: dict = Depends(require_admin)):
+    c = await db.users.find_one({"id": coach_id, "role": "coach"}, {"_id": 0})
+    if not c: raise HTTPException(404, "Coach not found")
+    assigned = await db.users.count_documents({
+        "role": "client", "assigned_coach_id": coach_id,
+        "status": {"$nin": ["deleted", "deletion_pending", "archived", "paused"]},
+    })
+    archived = await db.users.count_documents({
+        "role": "client", "assigned_coach_id": coach_id,
+        "status": {"$in": ["archived", "paused"]},
+    })
+    return {
+        "coach": _coach_public(c),
+        "assigned_active": assigned,
+        "assigned_archived": archived,
+    }
+
+
+# Client-facing helper: which coach do I message?
+@api.get("/me/coach")
+async def my_coach(user: dict = Depends(current_user)):
+    """Small helper the client uses to render 'Message <first name>' correctly.
+    Falls back to Louis if the client has no explicit assignment."""
+    if user.get("role") != "client":
+        return {"coach": None}
+    coach_id = user.get("assigned_coach_id") or await _default_coach_id()
+    if not coach_id:
+        return {"coach": None}
+    coach = await db.users.find_one({"id": coach_id, "role": "coach"}, {"_id": 0, "password_hash": 0})
+    if not coach:
+        return {"coach": None}
+    return {"coach": {
+        "id": coach["id"],
+        "name": coach.get("name"),
+        "first_name": (coach.get("name") or "").split(" ")[0] or None,
+        "email": coach.get("email"),
+        "coach_tier": coach.get("coach_tier"),
+        "is_admin": bool(coach.get("is_admin")),
+    }}

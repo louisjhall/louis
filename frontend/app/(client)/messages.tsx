@@ -46,6 +46,20 @@ export default function Messages() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  // Slice 2: adapt UI copy to the client's assigned coach (defaults to Louis).
+  const [coachName, setCoachName] = useState<string>(LOUIS.displayName);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api<any>(`/me/coach`);
+        if (cancelled) return;
+        const n = r?.coach?.first_name || r?.coach?.name;
+        if (n) setCoachName(n);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const listRef = useRef<FlatList<any>>(null);
@@ -182,9 +196,9 @@ export default function Messages() {
 
   const composerPlaceholder = useMemo(
     () => (isClient
-      ? `Message ${LOUIS.displayName} or attach a voice note, image or video…`
+      ? `Message ${coachName} or attach a voice note, image or video…`
       : "Reply to your client…"),
-    [isClient],
+    [isClient, coachName],
   );
 
   const renderClientHeader = () => (
@@ -192,7 +206,7 @@ export default function Messages() {
       <LouisAvatar size={52} showRing />
       <View style={{ flex: 1 }}>
         <View style={styles.headerTitleRow}>
-          <Text style={styles.clientHeaderTitle}>Message {LOUIS.displayName}</Text>
+          <Text style={styles.clientHeaderTitle}>Message {coachName}</Text>
           <View style={styles.onlineDot} />
         </View>
         <Text style={styles.clientHeaderSubtitle}>Your CrewFit coach · replies personally</Text>
@@ -210,7 +224,7 @@ export default function Messages() {
         <View style={styles.replyingAsRow}>
           <LouisAvatar size={22} />
           <Text style={styles.replyingAsText}>
-            Replying as <Text style={styles.replyingAsName}>{LOUIS.displayName}</Text>
+            Replying as <Text style={styles.replyingAsName}>{coachName}</Text>
           </Text>
         </View>
       </View>
@@ -220,18 +234,18 @@ export default function Messages() {
   const renderClientEmpty = () => (
     <View style={styles.emptyWrap} testID="messages-empty-client">
       <LouisAvatar size={84} showRing />
-      <Text style={styles.emptyTitle}>Message Louis Directly</Text>
+      <Text style={styles.emptyTitle}>Message {coachName} Directly</Text>
       <Text style={styles.emptyCopy}>
         Ask Louis about your workouts, roster, nutrition or recovery. You can also
         send voice notes, videos or images if something is easier to show than explain.
       </Text>
       <Pressable
         testID="messages-empty-cta"
-        onPress={() => setText(`Hi ${LOUIS.displayName}, `)}
+        onPress={() => setText(`Hi ${coachName}, `)}
         style={styles.emptyBtn}
       >
         <Ionicons name="paper-plane" size={14} color="#fff" />
-        <Text style={styles.emptyBtnText}>SEND {LOUIS.displayName.toUpperCase()} A MESSAGE</Text>
+        <Text style={styles.emptyBtnText}>SEND {coachName.toUpperCase()} A MESSAGE</Text>
       </Pressable>
     </View>
   );
@@ -328,7 +342,7 @@ export default function Messages() {
                   <View style={{ flexShrink: 1, alignItems: mine ? "flex-end" : "flex-start" }}>
                     {showLouisMeta && (
                       <View style={styles.louisLabelRow}>
-                        <Text style={styles.louisLabel}>{LOUIS.displayName}</Text>
+                        <Text style={styles.louisLabel}>{coachName}</Text>
                         <Text style={styles.louisRole}> · {LOUIS.title}</Text>
                       </View>
                     )}
@@ -347,7 +361,7 @@ export default function Messages() {
             ListEmptyComponent={
               isClient ? (
                 <View style={styles.threadPrompt}>
-                  <Text style={styles.threadPromptTitle}>Say hi to {LOUIS.displayName}</Text>
+                  <Text style={styles.threadPromptTitle}>Say hi to {coachName}</Text>
                   <Text style={styles.threadPromptCopy}>
                     Tell him a bit about your goals, current roster, or anything you’d like
                     his eyes on this week.

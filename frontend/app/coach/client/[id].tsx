@@ -233,6 +233,37 @@ export default function ClientDetail() {
 
   const isAdmin = !!(currentUser?.is_admin || currentUser?.role === "admin");
 
+  // Slice 2: assign/reassign coach
+  const [coachPickerOpen, setCoachPickerOpen] = useState(false);
+  const [availableCoaches, setAvailableCoaches] = useState<any[]>([]);
+
+  const openCoachPicker = async () => {
+    try {
+      const r = await api<any>(`/admin/coaches`);
+      setAvailableCoaches((r.coaches || []).filter((c: any) => c.status === "active"));
+      setCoachPickerOpen(true);
+    } catch (e: any) {
+      Alert.alert("Load failed", e?.message || "Could not load coaches.");
+    }
+  };
+
+  const assignCoach = async (coach_id: string, coach_name: string) => {
+    setAdminBusy("Assign Coach");
+    try {
+      await api(`/admin/clients/${id}/assign-coach`, {
+        method: "POST",
+        body: { coach_id },
+      });
+      setCoachPickerOpen(false);
+      await load();
+      Alert.alert("Coach assigned", `${data?.name || "This client"} is now assigned to ${coach_name}.`);
+    } catch (e: any) {
+      Alert.alert("Assignment failed", e?.message || "Try again.");
+    } finally {
+      setAdminBusy(null);
+    }
+  };
+
   if (loading || !data) {
     return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface }}><ActivityIndicator color={theme.color.brand} /></View>;
   }
@@ -419,6 +450,18 @@ export default function ClientDetail() {
               </View>
             </View>
 
+            {/* Assigned coach */}
+            <View style={styles.progRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.progLabel}>ASSIGNED COACH</Text>
+                <Text style={styles.progValue}>{data?.assigned_coach_name || "Louis Hall"}</Text>
+              </View>
+              <Pressable testID="admin-change-coach" onPress={openCoachPicker} style={styles.adminBtnAlt}>
+                <Ionicons name="swap-horizontal" size={13} color={theme.color.text} />
+                <Text style={styles.adminBtnAltText}>CHANGE</Text>
+              </Pressable>
+            </View>
+
             <View style={styles.adminActions}>
               {(!data?.status || data?.status === "active") ? (
                 <>
@@ -476,6 +519,15 @@ export default function ClientDetail() {
                 ))}
               </View>
             ) : null}
+
+            <Pressable
+              testID="admin-manage-coaches"
+              onPress={() => router.push("/coach/admin/coaches" as any)}
+              style={[styles.adminBtnAlt, { marginTop: 12, alignSelf: "flex-start" }]}
+            >
+              <Ionicons name="people" size={13} color={theme.color.text} />
+              <Text style={styles.adminBtnAltText}>MANAGE COACHES</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -741,6 +793,39 @@ export default function ClientDetail() {
           </View>
         </View>
       </Modal>
+      <Modal visible={coachPickerOpen} transparent animationType="slide" onRequestClose={() => setCoachPickerOpen(false)}>
+        <View style={styles.modalScrim}>
+          <View style={[styles.modalCard, { maxHeight: 500 }]}>
+            <Text style={styles.modalTitle}>Assign to Coach</Text>
+            <Text style={styles.modalBody}>Choose the coach who will look after {data?.name || "this client"}.</Text>
+            <ScrollView style={{ marginTop: 12, maxHeight: 340 }}>
+              {availableCoaches.map((c) => (
+                <Pressable
+                  key={c.id}
+                  testID={`assign-coach-${c.id}`}
+                  onPress={() => assignCoach(c.id, c.name)}
+                  disabled={adminBusy === "Assign Coach"}
+                  style={styles.auditRow}
+                >
+                  <Text style={styles.auditAction}>{(c.name || "Coach").toUpperCase()}</Text>
+                  <Text style={styles.auditMeta}>
+                    {(c.coach_tier || "full").toUpperCase()} · {c.assigned_clients || 0} clients
+                  </Text>
+                </Pressable>
+              ))}
+              {availableCoaches.length === 0 ? (
+                <Text style={{ color: theme.color.textDim, padding: 12, textAlign: "center" }}>
+                  No other active coaches. Invite one from Manage Coaches.
+                </Text>
+              ) : null}
+            </ScrollView>
+            <Pressable testID="assign-coach-cancel" onPress={() => setCoachPickerOpen(false)} style={[styles.modalBtnGhost, { marginTop: 12 }]}>
+              <Text style={styles.modalBtnGhostText}>CANCEL</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
       <Modal visible={permDeleteOpen} transparent animationType="fade" onRequestClose={() => setPermDeleteOpen(false)}>
         <View style={styles.modalScrim}>
           <View style={styles.modalCard}>

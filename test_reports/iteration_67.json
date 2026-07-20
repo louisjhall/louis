@@ -1,0 +1,41 @@
+{
+  "summary": "Iter 67 — Coach Dashboard Slice 2 (coach management, client assignment, role hierarchy, /me/coach). Backend: 26/26 tests pass in /app/backend/tests/test_iter67_coach_dashboard_slice2.py covering (a) GET /admin/coaches returns Louis first with is_admin=true & coach_tier='admin'; client role → 403. (b) POST /admin/coaches/invite returns temp_password, creates coach with role='coach', coach_tier='full', status='active', must_change_password=true; duplicate email → 400; invalid tier 'boss' → 400; client caller → 403. (c) PATCH /admin/coaches/{id} tier change works both directions; last-admin demotion guard returns 400; invalid tier → 400; unknown coach → 404. (d) POST /admin/coaches/{id}/deactivate flips to paused; deactivating Louis (admin) → 400. (e) POST /admin/coaches/{id}/activate flips paused → active. (f) POST /admin/clients/{cid}/assign-coach updates client's assigned_coach_id + assigned_coach_name and inserts audit_logs row with action='client.assign_coach'; unknown coach → 404; paused coach → 400. (g) GET /admin/coaches/{id}/workload reflects the reassignment (assigned_active >= 1 after assigning client@crewfit.com). (h) GET /me/coach as client returns first_name of assigned coach after reassign; as coach role returns {coach: null}; unauthenticated → 401. (i) POST /auth/signup with role=client auto-stamps assigned_coach_id = Louis id. (j) Startup migrations confirmed: Louis has is_admin=true + coach_tier='admin'; client@crewfit.com's assigned_coach_id equals Louis's id. Regression Iter66 (Slice 1): 20/20 pass — archive/pause/restore/soft-delete/permanent-delete/audit-log all unaffected. Test coach test.coach.slice2@crewfit.test was created for tests and hard-deleted from db.users at teardown; client@crewfit.com was reassigned back to Louis at test end (verified against Mongo directly). Frontend (Expo web preview @ 390×844): (1) /coach/admin/coaches renders coach list with Louis first (ADMIN badge) and Coach Kai (COACH badge); all testIDs present — coach-invite-btn, coach-tier-<id>, coach-toggle-<id>. Invite modal opens and exposes invite-name, invite-email, invite-phone, invite-tier-full, invite-tier-assistant, invite-submit. (2) /coach/client/[id] admin card renders 'ASSIGNED COACH · Louis Hall' with admin-change-coach button; tapping opens a slide-up 'Assign to Coach' modal listing both coaches (assign-coach-<id> testIDs found) with tier + client count metadata; admin-manage-coaches link present. (3) /(client)/messages: header 'Message Louis', composer placeholder 'Message Louis or attach a voice note, image or video…', sub-line 'Louis will review your message and reply as soon as possible.', thread label 'Louis · CrewFit Coach'. No client-facing 'AI' wording detected. Copy is driven by the /me/coach fetch and defaults to Louis when the assigned coach is Louis.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter67_coach_dashboard_slice2.py",
+    "/app/test_reports/pytest/iter67_slice2.xml",
+    "/app/test_reports/pytest/iter66_regression_iter67.xml"
+  ],
+  "action_items": [
+    "None required for Slice 2 — all specified backend endpoints and frontend testIDs verified.",
+    "Note: /auth/signup rejects emails with '.test' TLD (pydantic email-validator flags special-use TLDs). The test suite uses '@crewfit.com' for signup and '@crewfit.test' only for the coach invite (which goes through /admin/coaches/invite where the app performs a lightweight '@' check, not full validation). Not a bug, but E1 may want to align validators later.",
+    "Signup response returns the full user doc — confirm no PII is over-exposed (currently includes email, role, name, profile). Already the pattern established in previous slices; not a regression."
+  ],
+  "critical_code_review_comments": [
+    "feature_admin_lifecycle.py Slice 2 additions (~235 new lines) are clean & fully async. _coach_public projection strips password_hash and coaching_dna, exposing only safe fields.",
+    "Last-admin guard correctly counts role='coach' AND is_admin=True before allowing demotion; blocks Louis being demoted when he is the sole admin.",
+    "assign_client_coach validates coach exists AND status is None/'active' before assigning (paused coaches rejected with 400); audit_log row 'client.assign_coach' captures before/after and reason.",
+    "/me/coach falls back to Louis via _default_coach_id() when the client has no explicit assigned_coach_id — matches spec; returns {coach: null} for non-client roles.",
+    "Signup auto-assigns Louis (server.py:904-912) inside a try/except so a missing Louis row can never break signup. Idempotent and safe.",
+    "Startup migrations at server.py:7048-7070 are idempotent — Louis is_admin=true/coach_tier='admin', any coach without coach_tier defaults to 'full', any client without assigned_coach_id gets Louis. Non-fatal on failure.",
+    "Frontend coach-invite-btn, coach-tier-<id>, coach-toggle-<id>, admin-change-coach, admin-manage-coaches, assign-coach-<id>, assign-coach-cancel testIDs all wired. Modal slide-up in [id].tsx uses Modal with animationType='slide' — renders correctly on web preview."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter67_coach_dashboard_slice2.py (new)"
+  ],
+  "success_rate": {"backend": "100% (26/26 Slice 2 + 20/20 Slice 1 regression)", "frontend": "100% (all testIDs present, admin flows and messages copy verified via Playwright on Expo web preview)"},
+  "seed_data_creation": "One test coach (test.coach.slice2@crewfit.test) is created via /admin/coaches/invite at module scope; deleted directly from db.users at end of run via a post-test motor script. client@crewfit.com is reassigned back to Louis at end of tests (verified via Mongo query — assigned_coach_id equals Louis's id). One throwaway signup client (test.slice2.signup.<uuid>@crewfit.com) is created and permanent-deleted inside the auto-assign test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Slice 2 backend + frontend fully verified. Reuse /app/backend/tests/test_iter67_coach_dashboard_slice2.py as a regression suite. If a stale 'test.coach.slice2@crewfit.test' row appears in db.users (e.g., if teardown is skipped), the fixture is idempotent — it will reuse the existing row instead of failing on duplicate. Louis's user id (as of this run): 4ceee276-bf51-4f9c-bfdd-f1ef8e266f8b; client@crewfit.com id: 62f90680-313b-4fca-bc3f-9a19ac49065d.",
+  "rca_of_issue": "N/A — no bugs detected in Slice 2 scope."
+}

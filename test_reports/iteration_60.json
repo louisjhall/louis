@@ -1,0 +1,33 @@
+{
+  "summary": "Basic Profile Setup follow-up (aviation-context fields on onboarding) — all backend + frontend checks passed. 10/10 backend tests pass in tests/test_iter60_onboarding_aviation_context.py including end-to-end programme regeneration confirming goal_key='build_muscle'. Onboarding UI renders all new testIDs (ob-job-title, ob-route-*, ob-goal-key-*), chip toggle behaves single-select, EXTRA CONTEXT label replaces old GOAL label, existing fields still render and submit works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter60_onboarding_aviation_context.py",
+    "/app/test_reports/pytest/iter60_onboarding.xml",
+    "/app/test_reports/pytest/iter60_onboarding_e2e.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "HomeEquipmentBody.model_dump() in /auth/onboarding overwrites the entire user.profile — any previously-saved profile fields not in HomeEquipmentBody schema will be dropped on each save. Not a regression from this iteration, but worth noting as future maintenance risk.",
+    "route_focus, main_goal_key and job_title are free-form Optional[str] in HomeEquipmentBody — no server-side enum validation, so an arbitrary string is accepted (e.g. `route_focus='not_a_route'`). Current design relies on frontend chip picker to constrain values, which is fine for now, but a Pydantic Literal or validator would make the API safer.",
+    "In onboarding.tsx `p.experience_level` is used for state default but `feature_programme_quality._resolve_goal_key` reads `profile.experience` — check that both keys are consistent across the codebase to avoid target-per-week miscalculation for beginners/advanced users. (Not blocking this iteration; goal_key resolution itself is correct.)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter60_onboarding_aviation_context.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Used existing client@crewfit.com. Onboarding POST re-saved profile with TEST_-prefixed airline='TEST_Skyline Air' and set main_goal_key='build_muscle', job_title='Captain', route_focus='long_haul', aircraft_type='A380'. Retry of last completed roster_job triggered a fresh programme row with goal_key='build_muscle'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iter60_onboarding_aviation_context.py verifies onboarding aviation fields + _resolve_goal_key priority. Structured main_goal_key from GOAL_MATRIX now correctly wins over free-text — verified via unit call AND end-to-end programme regeneration. Note: after this test the seeded client is left with main_goal_key='build_muscle' + airline='TEST_Skyline Air'. If a future iteration needs a lose_fat seed, re-run onboarding with different fields. Backend URL env var is EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL).",
+  "rca_of_issue": "N/A — no bugs found in this iteration."
+}

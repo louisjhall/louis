@@ -262,6 +262,11 @@ class HomeEquipmentBody(BaseModel):
     weight_kg: Optional[float] = None
     calorie_target: Optional[int] = 2200
     protein_target: Optional[int] = 150
+    # Basic Profile Setup — aviation context for the coaching system (Phase 1 support).
+    job_title: Optional[str] = None       # e.g. "Captain", "First Officer", "Senior Cabin Crew", "Purser"
+    route_focus: Optional[str] = None     # "long_haul" | "short_haul" | "mixed" | "charter" | "cargo"
+    aircraft_type: Optional[str] = None   # optional, e.g. "A380", "777"
+    main_goal_key: Optional[str] = None   # structured goal key mapping to GOAL_MATRIX
 
 class RosterExtractBody(BaseModel):
     file_base64: str

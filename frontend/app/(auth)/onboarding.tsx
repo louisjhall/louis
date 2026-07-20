@@ -22,6 +22,30 @@ const LEVEL = ["beginner", "intermediate", "advanced"];
 const POS = ["Pilot", "Cabin Crew", "Ground Ops"];
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+// Aviation context — powers roster-aware coaching so the plan adapts
+// to your actual flying pattern. Keys mirror `feature_programme_quality`.
+const ROUTE_OPTS: { key: string; label: string }[] = [
+  { key: "long_haul",  label: "Long haul" },
+  { key: "short_haul", label: "Short haul" },
+  { key: "mixed",      label: "Mixed" },
+  { key: "charter",    label: "Charter" },
+  { key: "cargo",      label: "Cargo" },
+];
+
+// Structured main-goal picker so the coaching system programmes accurately
+// instead of defaulting to "general fitness". Keys MUST match GOAL_MATRIX
+// in /app/backend/feature_programme_quality.py.
+const GOAL_OPTS: { key: string; label: string }[] = [
+  { key: "lose_fat",              label: "Lose body fat" },
+  { key: "build_muscle",          label: "Build strength / muscle" },
+  { key: "general_fitness",       label: "General fitness" },
+  { key: "health_markers",        label: "Health / medical" },
+  { key: "event",                 label: "Event training" },
+  { key: "aviation_consistency",  label: "Aviation consistency" },
+  { key: "improve_energy",        label: "Improve energy" },
+  { key: "return_to_training",    label: "Return to training" },
+];
+
 export default function Onboarding() {
   const { user, refresh } = useAuth();
   const router = useRouter();
@@ -29,6 +53,9 @@ export default function Onboarding() {
   const [airline, setAirline] = useState(p.airline || "");
   const [homeBase, setHomeBase] = useState(p.home_base || "");
   const [position, setPosition] = useState(p.position || POS[0]);
+  const [jobTitle, setJobTitle] = useState(p.job_title || "");
+  const [routeFocus, setRouteFocus] = useState<string>(p.route_focus || "mixed");
+  const [mainGoalKey, setMainGoalKey] = useState<string>(p.main_goal_key || "general_fitness");
   const [equipment, setEquipment] = useState<string[]>(p.equipment || ["dumbbells", "yoga mat"]);
   const [cardio, setCardio] = useState<string[]>(p.cardio_equipment || []);
   const [trainLoc, setTrainLoc] = useState(p.training_location || LOC_OPTS[0]);
@@ -58,6 +85,9 @@ export default function Onboarding() {
           airline: airline || null,
           home_base: homeBase || null,
           position,
+          job_title: jobTitle || null,
+          route_focus: routeFocus || null,
+          main_goal_key: mainGoalKey || null,
           equipment,
           cardio_equipment: cardio,
           training_location: trainLoc,
@@ -95,6 +125,21 @@ export default function Onboarding() {
             <Field label="AIRLINE"><TextInput testID="ob-airline" style={styles.input} value={airline} onChangeText={setAirline} placeholder="Skyline Air" placeholderTextColor={theme.color.textDim} /></Field>
             <Field label="HOME BASE (IATA)"><TextInput testID="ob-base" style={styles.input} value={homeBase} onChangeText={setHomeBase} placeholder="LHR" autoCapitalize="characters" placeholderTextColor={theme.color.textDim} /></Field>
             <Field label="POSITION"><ChipRow opts={POS} val={position} onChange={setPosition} prefix="ob-pos" /></Field>
+            <Field label="JOB TITLE (SPECIFIC)"><TextInput testID="ob-job-title" style={styles.input} value={jobTitle} onChangeText={setJobTitle} placeholder="Captain, First Officer, Purser…" placeholderTextColor={theme.color.textDim} /></Field>
+            <Field label="ROUTE FOCUS">
+              <View style={styles.chipsWrap}>
+                {ROUTE_OPTS.map((r) => (
+                  <Pressable
+                    key={r.key}
+                    testID={`ob-route-${r.key}`}
+                    onPress={() => setRouteFocus(r.key)}
+                    style={[styles.chip, routeFocus === r.key && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, routeFocus === r.key && { color: "#fff" }]}>{r.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Field>
           </Section>
 
           <Section label="HOME EQUIPMENT">
@@ -134,7 +179,21 @@ export default function Onboarding() {
               </View>
             </Field>
             <Field label="EXPERIENCE"><ChipRow opts={LEVEL} val={level} onChange={setLevel} prefix="ob-lvl" /></Field>
-            <Field label="GOAL"><TextInput testID="ob-goal" style={[styles.input, { minHeight: 60 }]} multiline value={goal} onChangeText={setGoal} placeholder="Stay strong on rotations, lose 4kg" placeholderTextColor={theme.color.textDim} /></Field>
+            <Field label="MAIN GOAL">
+              <View style={styles.chipsWrap}>
+                {GOAL_OPTS.map((g) => (
+                  <Pressable
+                    key={g.key}
+                    testID={`ob-goal-key-${g.key}`}
+                    onPress={() => setMainGoalKey(g.key)}
+                    style={[styles.chip, mainGoalKey === g.key && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, mainGoalKey === g.key && { color: "#fff" }]}>{g.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </Field>
+            <Field label="EXTRA CONTEXT (OPTIONAL)"><TextInput testID="ob-goal" style={[styles.input, { minHeight: 60 }]} multiline value={goal} onChangeText={setGoal} placeholder="Stay strong on rotations, lose 4kg" placeholderTextColor={theme.color.textDim} /></Field>
             <Field label="INJURIES / LIMITATIONS"><TextInput testID="ob-inj" style={[styles.input, { minHeight: 50 }]} multiline value={injuries} onChangeText={setInjuries} placeholder="Left knee — avoid deep loaded lunges" placeholderTextColor={theme.color.textDim} /></Field>
             <Field label="EXERCISES YOU DISLIKE"><TextInput testID="ob-dislike" style={[styles.input, { minHeight: 50 }]} multiline value={dislike} onChangeText={setDislike} placeholder="No burpees" placeholderTextColor={theme.color.textDim} /></Field>
           </Section>

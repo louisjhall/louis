@@ -137,8 +137,18 @@ def _phase_for_week(week_index: int) -> dict[str, str]:
 
 
 def _resolve_goal_key(profile: dict) -> str:
-    """Best-effort map from onboarding/assessment fields to a goal key."""
-    raw = str(profile.get("main_goal") or profile.get("primary_goal") or "").lower()
+    """Best-effort map from onboarding/assessment fields to a goal key.
+
+    Priority order:
+    1. Structured `main_goal_key` set by the Basic Profile Setup step (must
+       match a key in GOAL_MATRIX exactly).
+    2. Free-text `main_goal` / `primary_goal` — keyword-matched.
+    3. Fallback: DEFAULT_GOAL_KEY.
+    """
+    structured = str(profile.get("main_goal_key") or "").strip().lower()
+    if structured and structured in GOAL_MATRIX:
+        return structured
+    raw = str(profile.get("main_goal") or profile.get("primary_goal") or profile.get("goal") or "").lower()
     if not raw:
         return DEFAULT_GOAL_KEY
     if any(k in raw for k in ("fat", "weight loss", "lose")):
@@ -240,12 +250,18 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
         "hard_capable_day_count": len(hard_capable_days),
         "start_date": start_iso[:10],
         "profile_snapshot": {
-            "role": profile.get("role"),
+            "role": profile.get("role") or profile.get("position"),
+            "job_title": profile.get("job_title"),
+            "airline": profile.get("airline"),
+            "home_base": profile.get("home_base"),
+            "route_focus": profile.get("route_focus"),
+            "aircraft_type": profile.get("aircraft_type"),
             "experience": experience,
             "hotel_gyms": profile.get("hotel_gyms"),
             "training_days_per_week": profile.get("training_days_per_week"),
             "injury_notes": profile.get("injury_notes") or profile.get("injuries"),
-            "main_goal_raw": profile.get("main_goal") or profile.get("primary_goal"),
+            "main_goal_key": profile.get("main_goal_key"),
+            "main_goal_raw": profile.get("main_goal") or profile.get("primary_goal") or profile.get("goal"),
         },
     }
     return ctx

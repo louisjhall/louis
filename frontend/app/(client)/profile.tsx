@@ -117,6 +117,17 @@ export default function ProfileScreen() {
     );
   }
 
+  const confirmLogout = () => {
+    Alert.alert(
+      "Log out?",
+      "Are you sure you want to log out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Log Out", style: "destructive", onPress: () => logout() },
+      ],
+    );
+  };
+
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
@@ -124,7 +135,7 @@ export default function ProfileScreen() {
           <Text style={styles.title}>COACHING <Text style={styles.brandRed}>HEADQUARTERS</Text></Text>
           <Text style={styles.sub}>{user?.name || user?.email}</Text>
         </View>
-        <Pressable testID="hq-logout" onPress={logout} style={styles.iconBtn}>
+        <Pressable testID="hq-logout" onPress={confirmLogout} style={styles.iconBtn}>
           <Ionicons name="log-out" size={18} color={theme.color.text} />
         </Pressable>
       </View>
@@ -576,6 +587,13 @@ export default function ProfileScreen() {
         </Pressable>
         <Pressable testID="hq-delete-account" onPress={() => router.push("/legal/delete-account" as any)} style={[styles.legacyCta, { borderColor: theme.color.brand, marginTop: 8 }]}>
           <Text style={[styles.legacyText, { color: theme.color.brand }]}>DELETE MY ACCOUNT</Text>
+        </Pressable>
+        <Pressable
+          testID="hq-logout-primary"
+          onPress={confirmLogout}
+          style={[styles.legacyCta, { borderColor: theme.color.red || "#c85450", marginTop: 8 }]}
+        >
+          <Text style={[styles.legacyText, { color: theme.color.red || "#c85450" }]}>LOG OUT</Text>
         </Pressable>
       </ScrollView>
 

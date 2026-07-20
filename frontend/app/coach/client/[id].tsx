@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
+import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { StatusBadge, deriveStatus } from "@/src/components/StatusBadge";
 
@@ -53,6 +54,7 @@ const CONTROL_LABEL: Record<keyof Controls, string> = {
 export default function ClientDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { user: currentUser } = useAuth();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [controls, setControls] = useState<Controls | null>(null);
@@ -67,11 +69,16 @@ export default function ClientDetail() {
   const [regenNote, setRegenNote] = useState("");
   const [regenerating, setRegenerating] = useState(false);
   const [approving, setApproving] = useState(false);
+  // Slice 1: admin lifecycle actions + audit log.
+  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [permDeleteOpen, setPermDeleteOpen] = useState(false);
+  const [permDeleteText, setPermDeleteText] = useState("");
+  const [adminBusy, setAdminBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [detail, ctrl, log, habits, standby, prog, hist] = await Promise.all([
+      const [detail, ctrl, log, habits, standby, prog, hist, audit] = await Promise.all([
         api<any>(`/coach/clients/${id}`),
         api<{ controls: Controls }>(`/coach/clients/${id}/controls`).catch(() => ({ controls: null as any })),
         api<{ entries: any[] }>(`/coach/clients/${id}/change-log`).catch(() => ({ entries: [] })),
@@ -79,6 +86,7 @@ export default function ClientDetail() {
         api<any>(`/coach/clients/${id}/standby`).catch(() => null),
         api<any>(`/coach/clients/${id}/programme`).catch(() => null),
         api<any>(`/coach/clients/${id}/programme/history`).catch(() => ({ programmes: [] })),
+        api<{ entries: any[] }>(`/admin/clients/${id}/audit-log?limit=25`).catch(() => ({ entries: [] })),
       ]);
       setData(detail);
       if (ctrl?.controls) setControls(ctrl.controls);
@@ -88,6 +96,7 @@ export default function ClientDetail() {
       setProgramme(prog?.programme || null);
       setNext7(prog?.next_7_days || []);
       setHistory(hist?.programmes || []);
+      setAuditLog(audit?.entries || []);
     } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -151,6 +160,78 @@ export default function ClientDetail() {
       setApproving(false);
     }
   };
+
+  // ---- Admin lifecycle actions ----
+  const runAdmin = async (label: string, path: string, body?: any) => {
+    setAdminBusy(label);
+    try {
+      await api(`/admin/clients/${id}${path}`, { method: "POST", body: body || {} });
+      await load();
+    } catch (e: any) {
+      Alert.alert(`${label} failed`, e?.message || "Try again.");
+    } finally {
+      setAdminBusy(null);
+    }
+  };
+
+  const askArchive = () => {
+    Alert.alert(
+      "Archive this client?",
+      "This will move them out of the active client list. Their data will be kept and can be restored later.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Archive Only",         onPress: () => runAdmin("Archive",  "/archive", { mode: "archive_only" }) },
+        { text: "Archive & Pause",      style: "destructive",
+          onPress: () => runAdmin("Archive & Pause", "/archive", { mode: "archive_pause" }) },
+      ],
+    );
+  };
+
+  const askRestore = () => runAdmin("Restore", "/restore");
+
+  const askSoftDelete = () => {
+    Alert.alert(
+      "Delete this client?",
+      "This will disable their access and remove them from your active dashboard. Their data will be kept temporarily unless you choose permanent deletion.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Client",
+          style: "destructive",
+          onPress: () => runAdmin("Soft Delete", "/soft-delete"),
+        },
+      ],
+    );
+  };
+
+  const openPermDelete = () => {
+    setPermDeleteText("");
+    setPermDeleteOpen(true);
+  };
+
+  const doPermDelete = async () => {
+    if (permDeleteText.trim().toUpperCase() !== "DELETE") {
+      Alert.alert("Confirmation required", "Type DELETE in capital letters to confirm.");
+      return;
+    }
+    setAdminBusy("Permanent Delete");
+    try {
+      await api(`/admin/clients/${id}/permanent-delete`, {
+        method: "POST",
+        body: { confirmation: "DELETE" },
+      });
+      setPermDeleteOpen(false);
+      Alert.alert("Permanently deleted", "The client's identifying data has been erased.", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
+    } catch (e: any) {
+      Alert.alert("Permanent delete failed", e?.message || "Try again.");
+    } finally {
+      setAdminBusy(null);
+    }
+  };
+
+  const isAdmin = !!(currentUser?.is_admin || currentUser?.role === "admin");
 
   if (loading || !data) {
     return <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface }}><ActivityIndicator color={theme.color.brand} /></View>;
@@ -320,6 +401,83 @@ export default function ClientDetail() {
             </View>
           )}
         </View>
+
+        {/* Slice 1: Admin — status pill, archive/pause/restore/delete, audit log. */}
+        {isAdmin ? (
+          <View testID="admin-card" style={[styles.card, styles.adminCard]}>
+            <View style={styles.progHeader}>
+              <Text style={styles.sect}>ADMIN</Text>
+              <View style={[styles.progStatusPill, {
+                backgroundColor:
+                  data?.status === "archived" ? theme.color.textDim :
+                  data?.status === "paused" ? "#e5a337" :
+                  data?.status === "deletion_pending" ? "#c85450" :
+                  data?.status === "deleted" ? "#666" :
+                  theme.color.green,
+              }]}>
+                <Text style={styles.progStatusPillText}>{String(data?.status || "active").toUpperCase()}</Text>
+              </View>
+            </View>
+
+            <View style={styles.adminActions}>
+              {(!data?.status || data?.status === "active") ? (
+                <>
+                  <Pressable testID="admin-archive" onPress={askArchive} disabled={!!adminBusy} style={styles.adminBtnAlt}>
+                    <Ionicons name="archive" size={13} color={theme.color.text} />
+                    <Text style={styles.adminBtnAltText}>ARCHIVE</Text>
+                  </Pressable>
+                  <Pressable testID="admin-delete" onPress={askSoftDelete} disabled={!!adminBusy} style={styles.adminBtnDanger}>
+                    <Ionicons name="trash" size={13} color="#c85450" />
+                    <Text style={styles.adminBtnDangerText}>DELETE</Text>
+                  </Pressable>
+                </>
+              ) : (data?.status === "archived" || data?.status === "paused") ? (
+                <>
+                  <Pressable testID="admin-restore" onPress={askRestore} disabled={!!adminBusy} style={styles.adminBtnPrimary}>
+                    <Ionicons name="refresh" size={13} color="#fff" />
+                    <Text style={styles.adminBtnPrimaryText}>RESTORE</Text>
+                  </Pressable>
+                  <Pressable testID="admin-delete" onPress={askSoftDelete} disabled={!!adminBusy} style={styles.adminBtnDanger}>
+                    <Ionicons name="trash" size={13} color="#c85450" />
+                    <Text style={styles.adminBtnDangerText}>DELETE</Text>
+                  </Pressable>
+                </>
+              ) : (data?.status === "deletion_pending") ? (
+                <>
+                  <Pressable testID="admin-restore" onPress={askRestore} disabled={!!adminBusy} style={styles.adminBtnPrimary}>
+                    <Ionicons name="refresh" size={13} color="#fff" />
+                    <Text style={styles.adminBtnPrimaryText}>RESTORE</Text>
+                  </Pressable>
+                  <Pressable testID="admin-perm-delete" onPress={openPermDelete} disabled={!!adminBusy} style={[styles.adminBtnDanger, { borderColor: "#c85450", backgroundColor: "rgba(200,84,80,0.08)" }]}>
+                    <Ionicons name="warning" size={13} color="#c85450" />
+                    <Text style={styles.adminBtnDangerText}>PERMANENT DELETE</Text>
+                  </Pressable>
+                </>
+              ) : null}
+              {adminBusy ? (
+                <View style={{ marginLeft: 8, justifyContent: "center" }}>
+                  <ActivityIndicator color={theme.color.brand} />
+                </View>
+              ) : null}
+            </View>
+
+            {auditLog.length > 0 ? (
+              <View style={{ marginTop: 14 }}>
+                <Text style={styles.progLabel}>AUDIT LOG</Text>
+                {auditLog.slice(0, 6).map((row: any) => (
+                  <View key={row.id} style={styles.auditRow}>
+                    <Text style={styles.auditAction}>{String(row.action || "").toUpperCase()}</Text>
+                    <Text style={styles.auditMeta} numberOfLines={1}>
+                      {row.actor_name || row.actor_email || "system"}
+                      {row.reason ? ` · ${row.reason}` : ""}
+                    </Text>
+                    <Text style={styles.auditWhen}>{(row.timestamp || "").slice(0, 16).replace("T", " ")}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {controls ? (
           <View style={styles.card}>
@@ -583,6 +741,43 @@ export default function ClientDetail() {
           </View>
         </View>
       </Modal>
+      <Modal visible={permDeleteOpen} transparent animationType="fade" onRequestClose={() => setPermDeleteOpen(false)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Permanently delete this client and their data?</Text>
+            <Text style={styles.modalBody}>
+              This cannot be undone. Their identifying data will be scrubbed and their
+              messages redacted. Audit-log rows are preserved.
+            </Text>
+            <Text style={[styles.progLabel, { marginTop: 12 }]}>TYPE DELETE TO CONFIRM</Text>
+            <TextInput
+              testID="perm-delete-input"
+              style={styles.modalInput}
+              value={permDeleteText}
+              onChangeText={setPermDeleteText}
+              placeholder="DELETE"
+              placeholderTextColor={theme.color.textDim}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+            <View style={styles.modalRow}>
+              <Pressable testID="perm-delete-cancel" style={styles.modalBtnGhost} onPress={() => setPermDeleteOpen(false)}>
+                <Text style={styles.modalBtnGhostText}>CANCEL</Text>
+              </Pressable>
+              <Pressable
+                testID="perm-delete-confirm"
+                style={[styles.modalBtn, { backgroundColor: "#c85450" }, adminBusy === "Permanent Delete" && { opacity: 0.6 }]}
+                onPress={doPermDelete}
+                disabled={adminBusy === "Permanent Delete"}
+              >
+                {adminBusy === "Permanent Delete"
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.modalBtnText}>PERMANENTLY DELETE</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -699,4 +894,17 @@ const styles = StyleSheet.create({
   modalBtnText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 12 },
   modalBtnGhost: { flex: 1, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12, borderRadius: theme.radius.md, alignItems: "center" },
   modalBtnGhostText: { color: theme.color.text, fontWeight: "800", letterSpacing: 1.5, fontSize: 12 },
+  // Slice 1: Admin card
+  adminCard: { borderColor: "#c85450", borderWidth: 1 },
+  adminActions: { flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" },
+  adminBtnPrimary: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.brand, paddingVertical: 10, paddingHorizontal: 14, borderRadius: theme.radius.md },
+  adminBtnPrimaryText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  adminBtnAlt: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 10, paddingHorizontal: 14, borderRadius: theme.radius.md },
+  adminBtnAltText: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  adminBtnDanger: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "transparent", borderWidth: 1, borderColor: "#c85450", paddingVertical: 10, paddingHorizontal: 14, borderRadius: theme.radius.md },
+  adminBtnDangerText: { color: "#c85450", fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  auditRow: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.color.border },
+  auditAction: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
+  auditMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  auditWhen: { color: theme.color.textDim, fontSize: 10, marginTop: 2 },
 });

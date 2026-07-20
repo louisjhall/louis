@@ -1,0 +1,40 @@
+{
+  "summary": "Iter 66 — Coach Dashboard Slice 1 (client lifecycle + audit log). Backend: 20/20 tests pass in /app/backend/tests/test_iter66_admin_lifecycle.py covering archive_only vs archive_pause (login allowed vs blocked), restore transitions, restore-of-active rejected (400), soft-delete blocks login, permanent-delete anonymises email/name & status=deleted, missing/wrong 'confirmation' rejected, admin-account guard (Louis cannot be archived/soft/perm-deleted), audit-log per-client & global streams (shape + action filter), coach/clients & coach/dashboard default-exclude archived/paused/deletion_pending/deleted with include_archived=true and ?status=archived overrides, seeded client@crewfit.com still visible. Louis has is_admin=true after startup (verified via /auth/me and admin-only endpoint access). Non-admin (client role) receives 403 on lifecycle & audit endpoints. Regression: iter65 passes (23/23). Frontend static code review: all required testIDs present (hq-logout, hq-logout-primary, coach-logout, admin-card, admin-archive, admin-restore, admin-delete, admin-perm-delete, perm-delete-input/cancel/confirm, toggle-archived). Alert.alert confirmation wrappers correctly implemented for all three logout paths and archive/soft-delete/permanent-delete flows. NOTE: React Native Alert.alert does not render usably on web preview — full interactive Alert testing is limited on the Expo web preview but code paths are verified via static review.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter66_admin_lifecycle.py",
+    "/app/test_reports/pytest/iter66_admin_lifecycle.xml"
+  ],
+  "action_items": [
+    "None required for slice 1 backend — all lifecycle & audit endpoints working as specified.",
+    "Frontend Alert.alert flows: E1 should self-verify on a real device / Expo Go (Alert.alert on RN web preview is unreliable). Static review confirms wrappers are in place.",
+    "Pre-existing test file test_coach_dashboard.py::TestCoreRegression::test_roster_current fails (empty roster returned {}) — NOT caused by this slice; document only.",
+    "Pre-existing test_iter64_v2_resolver.py tests fail with 'Event loop is closed' (motor teardown issue with direct DB access in tests) — NOT caused by this slice."
+  ],
+  "critical_code_review_comments": [
+    "feature_admin_lifecycle.py cleanly separated as its own module (~330 lines). Uses require_admin dependency correctly. Fully async. Audit-log insertion is fail-safe (never blocks primary op).",
+    "Permanent-delete correctly anonymises: email→'deleted+<id[:8]>@crewfit.deleted', name→'[deleted client <id[:8]>]', profile scrubbed, coaching_dna=None, avatar=None, onboarded=false, status='deleted', new bcrypt-shaped password_hash. Messages sent/received by the client are redacted (body='[redacted]', attachments=[]).",
+    "Login gate at /api/auth/login correctly returns 403 for status ∈ {paused, deletion_pending, deleted}; archived users still permitted, matching spec.",
+    "Coach/clients & coach/dashboard default $nin filter on ['archived','paused','deletion_pending','deleted'] works; include_archived=true and ?status=archived overrides both function correctly.",
+    "Startup migration on 'louis@crewfit.net' idempotent — sets is_admin=true, role='coach', status='active'.",
+    "Cannot-modify-admin guard executes before status transitions (returns 400 with clear message)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter66_admin_lifecycle.py (new)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "static-review only (Alert.alert not testable on web preview reliably)"},
+  "seed_data_creation": "Each lifecycle test creates a throwaway user via /api/auth/signup with email test.iter66.<uuid>@crewfit.com and cleans up via permanent-delete in try/finally. No impact on seeded client@crewfit.com (regression test confirms it remains visible).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend admin lifecycle endpoints fully verified via /app/backend/tests/test_iter66_admin_lifecycle.py — reuse for regression. Frontend flows (Alert confirmation dialogs, admin-card conditional render, permanent-delete modal 'DELETE' typing) should be validated on real device / Expo Go where Alert.alert renders natively. All testIDs specified in the request are present in the source.",
+  "rca_of_issue": "N/A — no bugs detected in slice 1 scope."
+}

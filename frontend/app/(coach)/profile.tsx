@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -9,6 +9,16 @@ export default function CoachProfile() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const doLogout = async () => { await logout(); router.replace("/(auth)/login"); };
+  const confirmLogout = () => {
+    Alert.alert(
+      "Log out?",
+      "Are you sure you want to log out?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Log Out", style: "destructive", onPress: doLogout },
+      ],
+    );
+  };
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}><Text style={styles.title}>COACH PROFILE</Text></View>
@@ -23,7 +33,7 @@ export default function CoachProfile() {
           <Text style={styles.bio}>{user?.profile?.bio || "Aviation fitness specialist. Building programs that survive layovers, time zones, and 4am wake-ups."}</Text>
         </View>
 
-        <Pressable testID="coach-logout" onPress={doLogout} style={styles.logout}>
+        <Pressable testID="coach-logout" onPress={confirmLogout} style={styles.logout}>
           <Text style={styles.logoutText}>LOG OUT</Text>
         </Pressable>
       </ScrollView>

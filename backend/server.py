@@ -912,6 +912,13 @@ async def login(body: LoginBody):
     u = await db.users.find_one({"email": body.email.lower()})
     if not u or not verify_pw(body.password, u["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
+    # Client lifecycle gate — paused / deletion_pending / deleted accounts cannot log in.
+    lifecycle_status = str(u.get("status") or "active").lower()
+    if lifecycle_status in ("paused", "deletion_pending", "deleted"):
+        raise HTTPException(
+            403,
+            "This account is currently unavailable. Please contact your coach if you believe this is a mistake."
+        )
     token = make_token(u["id"], u["role"])
     clean_doc(u)
     u.pop("password_hash", None)
@@ -5988,14 +5995,29 @@ async def _client_summary(u: dict) -> dict:
 
 
 @api.get("/coach/clients")
-async def coach_clients(_: dict = Depends(require_role("coach"))):
-    rows = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(500)
+async def coach_clients(
+    status: Optional[str] = None,
+    include_archived: bool = False,
+    _: dict = Depends(require_role("coach")),
+):
+    """List clients. By default, hides archived / paused / deletion_pending /
+    deleted accounts. Pass `?status=archived` (or `?include_archived=true`) to
+    see them."""
+    q: dict[str, Any] = {"role": "client"}
+    if status:
+        q["status"] = status
+    elif not include_archived:
+        q["status"] = {"$nin": ["archived", "paused", "deletion_pending", "deleted"]}
+    rows = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     return [await _client_summary(u) for u in rows]
 
 
 @api.get("/coach/dashboard")
-async def coach_dashboard(filter: Optional[str] = None, _: dict = Depends(require_role("coach"))):
-    rows = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(500)
+async def coach_dashboard(filter: Optional[str] = None, include_archived: bool = False, _: dict = Depends(require_role("coach"))):
+    q: dict[str, Any] = {"role": "client"}
+    if not include_archived:
+        q["status"] = {"$nin": ["archived", "paused", "deletion_pending", "deleted"]}
+    rows = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     summaries = [await _client_summary(u) for u in rows]
     buckets = {
         "expiring_soon": [s for s in summaries if s["roster_expiry"].get("coverage") in ("low", "critical")],
@@ -7013,6 +7035,15 @@ async def _startup():
         asyncio.create_task(jit_media_sweep_loop())
     except Exception:
         logger.exception("JIT media sweep failed to start")
+    # Coach dashboard Slice 1 — ensure Louis is flagged as the default admin.
+    # Idempotent: only writes when the flag is missing/false.
+    try:
+        await db.users.update_many(
+            {"email": "louis@crewfit.net"},
+            {"$set": {"is_admin": True, "role": "coach", "status": "active"}},
+        )
+    except Exception:
+        logger.exception("Louis admin migration failed (non-fatal)")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 
@@ -7746,6 +7777,7 @@ import feature_programme_quality     # noqa: E402,F401  Programme quality: goals
 import feature_roster_confirmation   # noqa: E402,F401  Phase 2: parse → confirm → build roster flow
 import feature_traffic_light         # noqa: E402,F401  Phase 3: Green/Amber/Red workout variants
 import feature_v2_resolver           # noqa: E402,F401  Phase 5: V2 Library resolver + demand-driven exercise requests
+import feature_admin_lifecycle       # noqa: E402,F401  Coach dashboard slice 1: archive / delete / audit log
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

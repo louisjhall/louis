@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
@@ -21,13 +22,27 @@ const FILTERS = [
 export default function Clients() {
   const router = useRouter();
   const [filter, setFilter] = useState("all");
+  const [showArchived, setShowArchived] = useState(false);
   const [data, setData] = useState<any>({ clients: [], counts: {}, total: 0 });
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setData(await api<any>(`/coach/dashboard?filter=${filter}`)); } finally { setLoading(false); }
-  }, [filter]);
+    try {
+      const url = showArchived
+        ? `/coach/dashboard?filter=${filter}&include_archived=true`
+        : `/coach/dashboard?filter=${filter}`;
+      const res = await api<any>(url);
+      // When showing archived, keep only non-active statuses.
+      if (showArchived && res?.clients) {
+        res.clients = res.clients.filter((c: any) => c.status && c.status !== "active");
+        res.total = res.clients.length;
+      }
+      setData(res);
+    } finally {
+      setLoading(false);
+    }
+  }, [filter, showArchived]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const c = data.counts || {};
@@ -35,8 +50,20 @@ export default function Clients() {
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
-        <Text style={styles.title}>CLIENTS</Text>
-        <Text style={styles.sub}>{data.total || 0} active</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>CLIENTS</Text>
+          <Text style={styles.sub}>{data.total || 0} {showArchived ? "archived" : "active"}</Text>
+        </View>
+        <Pressable
+          testID="toggle-archived"
+          onPress={() => setShowArchived((v) => !v)}
+          style={[styles.archivedToggle, showArchived && { backgroundColor: theme.color.brand, borderColor: theme.color.brand }]}
+        >
+          <Ionicons name="archive" size={12} color={showArchived ? "#fff" : theme.color.textMuted} />
+          <Text style={[styles.archivedToggleText, showArchived && { color: "#fff" }]}>
+            {showArchived ? "SHOWING ARCHIVED" : "ARCHIVED"}
+          </Text>
+        </Pressable>
       </View>
 
       <View style={styles.widgets}>
@@ -145,8 +172,10 @@ function Widget({ dotColor, label, value, tint }: any) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
-  header: { padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
+  header: { padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider, flexDirection: "row", alignItems: "center", gap: 12 },
   title: { color: theme.color.text, fontSize: 22, fontWeight: "900", letterSpacing: 2 },
+  archivedToggle: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
+  archivedToggleText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
   sub: { color: theme.color.textMuted, marginTop: 2 },
   widgets: { flexDirection: "row", padding: theme.space.md, gap: theme.space.sm },
   widget: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },

@@ -11,6 +11,14 @@ export interface UserT {
   onboarded: boolean;
   coach_id?: string | null;
   profile?: any;
+  is_admin?: boolean;
+  is_primary_coach?: boolean;
+  coach_tier?: string;
+  status?: string;
+  display_name?: string;
+  avatar_url?: string;
+  age_confirmed?: boolean;
+  [key: string]: any;
 }
 
 interface AuthCtx {

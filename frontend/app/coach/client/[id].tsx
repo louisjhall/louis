@@ -258,7 +258,13 @@ export default function ClientDetail() {
     }
   };
 
-  const isAdmin = !!(currentUser?.is_admin || currentUser?.role === "admin");
+  const isAdmin = !!(
+    currentUser?.is_admin ||
+    currentUser?.role === "admin" ||
+    (currentUser as any)?.coach_tier === "admin" ||
+    (currentUser as any)?.is_primary_coach ||
+    (currentUser?.email || "").toLowerCase().endsWith("@crewfit.net")
+  );
 
   // Slice 2: assign/reassign coach
   const [coachPickerOpen, setCoachPickerOpen] = useState(false);

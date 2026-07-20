@@ -33,7 +33,13 @@ export default function Clients() {
   const [loading, setLoading] = useState(true);
   const [previewBusy, setPreviewBusy] = useState<null | "start" | "reset">(null);
 
-  const isAdmin = !!(user?.is_admin || user?.role === "admin" || (user?.email || "").toLowerCase().endsWith("@crewfit.net"));
+  const isAdmin = !!(
+    user?.is_admin ||
+    user?.role === "admin" ||
+    (user as any)?.coach_tier === "admin" ||
+    (user as any)?.is_primary_coach ||
+    (user?.email || "").toLowerCase().endsWith("@crewfit.net")
+  );
 
   const quickArchive = async (client: any, e?: any) => {
     e?.stopPropagation?.();

@@ -72,7 +72,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 8 }} showsVerticalScrollIndicator={false}>
           {NAV.map((item) => {
-            if (item.adminOnly && !(user?.is_admin || isLouis(user))) return null;
+            if (item.adminOnly && !(user?.is_admin || (user as any)?.is_primary_coach || (user as any)?.coach_tier === "admin" || isLouis(user))) return null;
             const active = isActive(pathname, item.path);
             return (
               <Pressable

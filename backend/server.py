@@ -2506,8 +2506,26 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             # Generate workouts inline — with a hard timeout and a background
             # progress heartbeat so the client is never left at exactly 80% forever.
             heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
+
+            # Streaming progress: as each 7-day chunk lands, bump the job progress
+            # bar and stamp a human-readable message so the UI feels alive during
+            # the 15-30s window when Claude is running.
+            async def _on_week_ready(idx: int, total: int, weekly: list[dict]) -> None:
+                # Progress spans 80% -> 95% during workout generation; 95->100 is
+                # persistence + validation after gather completes.
+                span = 15  # 80 -> 95
+                pct = 80 + int(round(span * (idx + 1) / max(1, total)))
+                await _set_job(
+                    job_id,
+                    progress=pct,
+                    stage="generating",
+                    message=f"Building week {idx + 1} of {total}...",
+                )
             try:
-                workouts = await _asyncio.wait_for(_generate_month(user, roster, programme_ctx=programme_ctx), timeout=180.0)
+                workouts = await _asyncio.wait_for(
+                    _generate_month(user, roster, programme_ctx=programme_ctx, on_chunk=_on_week_ready),
+                    timeout=180.0,
+                )
             except _asyncio.TimeoutError:
                 logger.warning("plan generation TIMEOUT in job %s (>180s) — falling back to template", job_id)
                 workouts = []
@@ -4224,7 +4242,11 @@ Return STRICT JSON only:
 {"workouts":[{...}]}"""
 
 
-async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict] = None) -> list[dict]:
+async def _generate_month(
+    user: dict, roster: dict,
+    programme_ctx: Optional[dict] = None,
+    on_chunk: Optional[Any] = None,
+) -> list[dict]:
     """Chunk by 7-day windows so each Claude call stays well under the
     Cloudflare edge timeout (~60s). Concurrent by week.
 
@@ -4232,6 +4254,12 @@ async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict
     `feature_programme_quality.programme_context_for_llm`. Callers that want
     to reuse the same context (for validation + persistence) should compute
     it once and pass it in.
+
+    `on_chunk(chunk_index, total_chunks, chunk_workouts)` is invoked (awaited
+    if coroutine) as each week's workouts come back from the LLM, so callers
+    can stream progress to the client and persist incrementally. This is the
+    key to the "workouts stream in as they're ready" UX — the calendar fills
+    week-by-week instead of appearing all at once at the end.
     """
     import asyncio as _asyncio
 
@@ -4279,7 +4307,8 @@ async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict
             "injury_history": ev.get("injury_history"),
         }
 
-    # Attach hotel info once for the whole prompt set
+    # Attach hotel info once for the whole prompt set (parallelised — was
+    # sequential and cost 1-3s of pure DB latency for a 28-day roster).
     hotel_cache: dict[str, dict] = {}
     async def _day_for_prompt(d: dict) -> dict:
         entry = dict(d)
@@ -4298,12 +4327,26 @@ async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict
                 }
         return entry
 
-    enriched = [await _day_for_prompt(d) for d in all_days]
+    # Pre-warm hotel_cache so `_day_for_prompt` is fully async-safe when we
+    # gather. First pass: gather unique hotel ids and fetch concurrently.
+    unique_hids = list({d.get("hotel_id") for d in all_days if d.get("hotel_id")})
+    if unique_hids:
+        fetched = await _asyncio.gather(
+            *[db.hotels.find_one({"id": hid}, {"_id": 0}) for hid in unique_hids],
+            return_exceptions=True,
+        )
+        for hid, h in zip(unique_hids, fetched):
+            if isinstance(h, Exception) or not h:
+                hotel_cache[hid] = {}
+            else:
+                hotel_cache[hid] = h
+
+    enriched = await _asyncio.gather(*[_day_for_prompt(d) for d in all_days])
 
     # Chunk into weeks of 7
     chunks = [enriched[i : i + 7] for i in range(0, len(enriched), 7)]
 
-    async def _run_chunk(chunk: list[dict]) -> list[dict]:
+    async def _run_chunk(idx: int, total: int, chunk: list[dict]) -> list[dict]:
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
@@ -4319,23 +4362,34 @@ async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict
             "`amber` = a ~65%-volume version of green for tired / short-on-time days: keep the same movement pattern but drop the last accessory if there are 5+ exercises, reduce sets ~35%, and shorten `duration_min` to about 65% of green. Set `intensity_note` to guide RPE 6 / stop 2 reps shy. "
             "`red` = a context-aware recovery session (no strength work) of 10–15 minutes made of mobility + breathwork tailored to the roster day — e.g. long-haul day = calf drain + hip flexor release + box breathing; night flight = physiological sigh + 4-7-8 breath; layover = gentle mobility + nasal-breathing walk; standby = quiet flow you can do without changing clothes. Give it a clear `title`, `duration_min`, `focus='recovery'`, `exercises` (mobility/breath items with sets/reps or time durations), `rationale`, and `intensity_note='Restorative — no effort'`."
         )
+        chunk_workouts: list[dict] = []
         try:
             # Per-chunk cap so one slow LLM call cannot block sibling chunks or
             # the outer 3-minute deadline in the roster worker.
             raw = await _asyncio.wait_for(call_claude(WORKOUT_SYSTEM, prompt), timeout=75.0)
             parsed = parse_json_from_text(raw)
-            return parsed.get("workouts", []) if isinstance(parsed, dict) else parsed
+            chunk_workouts = parsed.get("workouts", []) if isinstance(parsed, dict) else (parsed or [])
         except _asyncio.TimeoutError:
-            logger.warning("chunk gen TIMEOUT (75s) — skipping this 7-day window and continuing")
-            return []
+            logger.warning("chunk gen TIMEOUT (75s) — skipping week %d/%d", idx + 1, total)
         except Exception as e:
-            logger.warning("chunk gen failed: %s", e)
-            return []
+            logger.warning("chunk gen failed for week %d/%d: %s", idx + 1, total, e)
+        # Fire the streaming callback the moment this week's workouts are ready.
+        # Errors in the callback must NOT propagate — they're a UX-nice-to-have,
+        # not part of the generation contract.
+        if on_chunk is not None and chunk_workouts:
+            try:
+                res = on_chunk(idx, total, chunk_workouts)
+                if _asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                logger.exception("on_chunk callback failed (non-fatal, week %d/%d)", idx + 1, total)
+        return chunk_workouts
 
     # `return_exceptions=False` because _run_chunk swallows its own errors.
     # gather returns partial lists — even if some chunks are empty, we still
     # persist whatever the LLM produced instead of failing the entire plan.
-    results = await _asyncio.gather(*[_run_chunk(c) for c in chunks])
+    total_chunks = len(chunks)
+    results = await _asyncio.gather(*[_run_chunk(i, total_chunks, c) for i, c in enumerate(chunks)])
     merged: list[dict] = []
     for r in results:
         merged.extend(r or [])

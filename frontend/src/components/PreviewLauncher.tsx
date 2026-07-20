@@ -15,7 +15,7 @@ import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
 export function PreviewLauncher() {
-  const { enterDemo, enterNewClient } = usePreview();
+  const { enterDemo, enterSandbox, resetSandbox } = usePreview();
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -33,10 +33,21 @@ export function PreviewLauncher() {
   const doNewClient = async () => {
     setBusy("new");
     try {
-      await enterNewClient();
+      await enterSandbox();
       router.replace("/welcome" as any);
     } catch (e: any) {
       Alert.alert("Preview failed", e?.message || "Try again.");
+    } finally { setBusy(null); }
+  };
+
+  const doResetAndStart = async () => {
+    setBusy("reset");
+    try {
+      await resetSandbox();
+      await enterSandbox();
+      router.replace("/welcome" as any);
+    } catch (e: any) {
+      Alert.alert("Reset failed", e?.message || "Try again.");
     } finally { setBusy(null); }
   };
 
@@ -46,7 +57,7 @@ export function PreviewLauncher() {
         <Ionicons name="eye" size={16} color={theme.color.brand} />
         <Text style={styles.title}>PREVIEW CLIENT APP</Text>
       </View>
-      <Text style={styles.sub}>See exactly what a client sees. Read-only — you can’t change their data.</Text>
+      <Text style={styles.sub}>See exactly what a client sees. Sandbox writes are isolated — real client data is never touched.</Text>
 
       <View style={styles.grid}>
         <Pressable style={styles.tile} onPress={doDemo} disabled={busy !== null} testID="preview-launch-demo">
@@ -63,8 +74,14 @@ export function PreviewLauncher() {
 
         <Pressable style={styles.tile} onPress={doNewClient} disabled={busy !== null} testID="preview-launch-new">
           {busy === "new" ? <ActivityIndicator color={theme.color.brand} /> : <Ionicons name="person-add" size={22} color={theme.color.brand} />}
-          <Text style={styles.tileT}>NEW CLIENT</Text>
-          <Text style={styles.tileS}>Blank onboarding flow — auto-purged in 24h.</Text>
+          <Text style={styles.tileT}>NEW CLIENT PREVIEW</Text>
+          <Text style={styles.tileS}>Persistent sandbox — resettable, isolated from real clients.</Text>
+        </Pressable>
+
+        <Pressable style={[styles.tile, styles.tileAlt]} onPress={doResetAndStart} disabled={busy !== null} testID="preview-reset-and-start">
+          {busy === "reset" ? <ActivityIndicator color={theme.color.brand} /> : <Ionicons name="refresh-circle" size={22} color={theme.color.brand} />}
+          <Text style={styles.tileT}>RESET & START FRESH</Text>
+          <Text style={styles.tileS}>Wipe sandbox data + start the journey from step 1.</Text>
         </Pressable>
       </View>
 
@@ -183,6 +200,7 @@ const styles = StyleSheet.create({
   sub: { color: theme.color.textMuted, fontSize: 12, marginBottom: 14 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tile: { flex: 1, minWidth: 140, backgroundColor: theme.color.surface, borderRadius: 10, padding: 12, borderWidth: 1, borderColor: theme.color.border },
+  tileAlt: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   tileT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1, marginTop: 6, marginBottom: 4 },
   tileS: { color: theme.color.textMuted, fontSize: 11, lineHeight: 15 },
   rowBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.brand },

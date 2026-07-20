@@ -8,7 +8,7 @@ import { CrewFitLogo } from "@/src/components/Logo";
 import { LouisAvatar } from "@/src/components/LouisAvatar";
 import { LOUIS, isLouis } from "@/src/lib/coachProfile";
 
-const NAV: { path: string; label: string; icon: any; testId: string }[] = [
+const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?: boolean }[] = [
   { path: "/(coach)/overview", label: "Overview", icon: "home-outline", testId: "desktop-nav-overview" },
   { path: "/(coach)/clients", label: "Clients", icon: "people-outline", testId: "desktop-nav-clients" },
   { path: "/(coach)/calendar", label: "Calendar", icon: "calendar-outline", testId: "desktop-nav-calendar" },
@@ -18,6 +18,7 @@ const NAV: { path: string; label: string; icon: any; testId: string }[] = [
   { path: "/(coach)/messages", label: "Messages", icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
   { path: "/(coach)/analytics", label: "Analytics", icon: "bar-chart-outline", testId: "desktop-nav-analytics" },
   { path: "/(coach)/changelog", label: "Change Log", icon: "time-outline", testId: "desktop-nav-changelog" },
+  { path: "/coach/admin/coaches", label: "Coaches (Admin)", icon: "people-circle-outline", testId: "desktop-nav-admin-coaches", adminOnly: true },
   { path: "/(coach)/profile", label: "Profile", icon: "person-outline", testId: "desktop-nav-profile" },
 ];
 
@@ -71,6 +72,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingVertical: 8 }} showsVerticalScrollIndicator={false}>
           {NAV.map((item) => {
+            if (item.adminOnly && !(user?.is_admin || isLouis(user))) return null;
             const active = isActive(pathname, item.path);
             return (
               <Pressable

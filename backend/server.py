@@ -6017,7 +6017,9 @@ async def coach_clients(
     if status:
         q["status"] = status
     elif not include_archived:
-        q["status"] = {"$nin": ["archived", "paused", "deletion_pending", "deleted"]}
+        # Exclude archived/paused/deleted AND the preview sandbox (we surface
+        # sandbox separately via `preview_sandbox` field on the response).
+        q["status"] = {"$nin": ["archived", "paused", "deletion_pending", "deleted", "preview_sandbox"]}
     rows = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     return [await _client_summary(u) for u in rows]
 
@@ -6026,9 +6028,21 @@ async def coach_clients(
 async def coach_dashboard(filter: Optional[str] = None, include_archived: bool = False, _: dict = Depends(require_role("coach"))):
     q: dict[str, Any] = {"role": "client"}
     if not include_archived:
-        q["status"] = {"$nin": ["archived", "paused", "deletion_pending", "deleted"]}
+        q["status"] = {"$nin": ["archived", "paused", "deletion_pending", "deleted", "preview_sandbox"]}
     rows = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(500)
     summaries = [await _client_summary(u) for u in rows]
+    # Persistent preview sandbox: always surface separately so Louis can find it.
+    sandbox_user = await db.users.find_one(
+        {"is_preview_sandbox": True}, {"_id": 0, "password_hash": 0},
+    )
+    sandbox_summary = None
+    if sandbox_user:
+        try:
+            sandbox_summary = await _client_summary(sandbox_user)
+            sandbox_summary["is_preview_sandbox"] = True
+            sandbox_summary["client_type"] = "preview_sandbox"
+        except Exception:
+            logger.exception("preview-sandbox summary failed")
     buckets = {
         "expiring_soon": [s for s in summaries if s["roster_expiry"].get("coverage") in ("low", "critical")],
         "expired": [s for s in summaries if s["roster_expiry"].get("expired")],
@@ -6044,8 +6058,8 @@ async def coach_dashboard(filter: Optional[str] = None, include_archived: bool =
         "all": summaries,
     }
     if filter and filter in buckets:
-        return {"clients": buckets[filter], "counts": {k: len(v) for k, v in buckets.items() if k != "all"}, "total": len(summaries)}
-    return {"clients": summaries, "counts": {k: len(v) for k, v in buckets.items() if k != "all"}, "total": len(summaries)}
+        return {"clients": buckets[filter], "counts": {k: len(v) for k, v in buckets.items() if k != "all"}, "total": len(summaries), "preview_sandbox": sandbox_summary}
+    return {"clients": summaries, "counts": {k: len(v) for k, v in buckets.items() if k != "all"}, "total": len(summaries), "preview_sandbox": sandbox_summary}
 
 
 @api.get("/coach/clients/{client_id}")
@@ -6942,20 +6956,29 @@ async def seed():
             "profile.tagline": "CrewFit Coach",
         }})
 
-    # Legacy coach (kept for backward-compat with pytest suites).
+    # Legacy coach (kept for backward-compat with pytest suites) — RENAMED and
+    # ARCHIVED so he never appears in Louis' visible UI or coach lists.
     legacy = await db.users.find_one({"email": legacy_coach_email})
     if not legacy:
         legacy_id = new_id()
         await db.users.insert_one({
-            "id": legacy_id, "email": legacy_coach_email, "name": "Coach Kai", "role": "coach",
+            "id": legacy_id, "email": legacy_coach_email, "name": "Legacy Coach (archived)", "role": "coach",
             "password_hash": hash_pw("Coach123!"), "created_at": now_iso(),
             "onboarded": True, "coach_id": None,
             "is_primary_coach": False,
+            "status": "archived",
+            "coach_tier": "assistant",
             "profile": {"bio": "Legacy coach account. Reassign clients to Louis in production."},
         })
     else:
-        # Ensure it stays non-primary so it never wins the fallback query.
-        await db.users.update_one({"id": legacy["id"]}, {"$set": {"is_primary_coach": False}})
+        # Force-rename any historical "Coach Kai" row and archive it so the UI
+        # never surfaces the legacy identity anywhere.
+        await db.users.update_one({"id": legacy["id"]}, {"$set": {
+            "name": "Legacy Coach (archived)",
+            "is_primary_coach": False,
+            "status": "archived",
+            "coach_tier": "assistant",
+        }})
     coach_id = louis_id  # For all new clients, default coach is Louis.
 
     if not await db.users.find_one({"email": client_email}):
@@ -7811,6 +7834,7 @@ import feature_traffic_light         # noqa: E402,F401  Phase 3: Green/Amber/Red
 import feature_v2_resolver           # noqa: E402,F401  Phase 5: V2 Library resolver + demand-driven exercise requests
 import feature_admin_lifecycle       # noqa: E402,F401  Coach dashboard slice 1: archive / delete / audit log
 import feature_coach_deep_edit       # noqa: E402,F401  Coach dashboard slice 3.5: workout/roster deep-edit endpoints
+import feature_preview_sandbox       # noqa: E402,F401  Persistent New Client Preview sandbox + reset
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

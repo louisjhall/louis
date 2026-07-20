@@ -107,6 +107,12 @@ export default function CoachOverview() {
             <Ionicons name="nutrition-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>NUTRITION</Text>
           </Pressable>
+          {(user?.is_admin || (user?.email || "").toLowerCase().endsWith("@crewfit.net")) ? (
+            <Pressable testID="ov-goto-coaches" onPress={() => router.push("/coach/admin/coaches" as any)} style={[styles.headerBtn, { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint }]}>
+              <Ionicons name="people-circle-outline" size={16} color={theme.color.brand} />
+              <Text style={styles.headerBtnText}>COACHES</Text>
+            </Pressable>
+          ) : null}
           <NotificationBell testID="coach-notif-bell" />
         </View>
       </View>

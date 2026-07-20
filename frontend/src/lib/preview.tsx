@@ -19,7 +19,7 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api, setToken } from "./api";
 
-export type PreviewMode = "real_client" | "demo" | "new_client";
+export type PreviewMode = "real_client" | "demo" | "new_client" | "sandbox";
 
 export type PreviewTarget = {
   id: string;
@@ -57,6 +57,8 @@ type Ctx = {
   enterReal: (targetUserId: string) => Promise<PreviewTarget>;
   enterDemo: () => Promise<PreviewTarget>;
   enterNewClient: () => Promise<PreviewTarget>;
+  enterSandbox: () => Promise<PreviewTarget>;
+  resetSandbox: () => Promise<void>;
   exit: () => Promise<void>;
 };
 
@@ -66,6 +68,8 @@ const PreviewCtx = createContext<Ctx>({
   enterReal: async () => { throw new Error("not initialised"); },
   enterDemo: async () => { throw new Error("not initialised"); },
   enterNewClient: async () => { throw new Error("not initialised"); },
+  enterSandbox: async () => { throw new Error("not initialised"); },
+  resetSandbox: async () => {},
   exit: async () => {},
 });
 
@@ -117,6 +121,46 @@ export function PreviewProvider({ children, onSwap }: { children: React.ReactNod
     [enterWith]
   );
 
+  const enterSandbox = useCallback(
+    () => enterWith("/coach/preview/persistent", {}, "sandbox"),
+    [enterWith]
+  );
+
+  const resetSandbox = useCallback(async () => {
+    // Fire-and-safely-handle. Backend guards ensure only the sandbox user
+    // is ever wiped. Coach token must still be valid, so restore first if
+    // we're currently inside a preview.
+    const backup = await AsyncStorage.getItem(COACH_TOKEN_BACKUP_KEY);
+    const wasInPreview = !!backup;
+    if (wasInPreview) {
+      // Temporarily restore coach token so the reset call is authorised.
+      await setToken(backup);
+    }
+    try {
+      await api("/coach/preview/reset", { method: "POST", body: { confirm: true } });
+    } finally {
+      // If we were inside a preview, re-enter the sandbox with a fresh token
+      // so caller ends up back in the client shell.
+      if (wasInPreview) {
+        try {
+          const r = await api<{ token: string; target: PreviewTarget; expires_hours: number }>(
+            "/coach/preview/persistent", { method: "POST", body: {} }
+          );
+          await setToken(r.token);
+          const state: PreviewState = {
+            active: true, mode: "sandbox", target: r.target,
+            expiresAt: new Date(Date.now() + r.expires_hours * 3600 * 1000).toISOString(),
+          };
+          await writeMeta(state);
+          setPreview(state);
+        } catch {
+          // fall through to normal state
+        }
+        if (onSwap) await onSwap();
+      }
+    }
+  }, [onSwap]);
+
   const exit = useCallback(async () => {
     try { await api("/coach/preview/exit", { method: "POST" }); } catch {}
     const backup = await AsyncStorage.getItem(COACH_TOKEN_BACKUP_KEY);
@@ -133,7 +177,7 @@ export function PreviewProvider({ children, onSwap }: { children: React.ReactNod
   }, [onSwap]);
 
   return (
-    <PreviewCtx.Provider value={{ preview, enterReal, enterDemo, enterNewClient, exit }}>
+    <PreviewCtx.Provider value={{ preview, enterReal, enterDemo, enterNewClient, enterSandbox, resetSandbox, exit }}>
       {children}
     </PreviewCtx.Provider>
   );

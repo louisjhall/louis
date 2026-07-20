@@ -12,21 +12,44 @@ import { UIIssueReporter } from "./UIIssueReporter";
 import { DeviceSizePicker } from "./DeviceSizePicker";
 
 export function PreviewBanner() {
-  const { preview, exit } = usePreview();
+  const { preview, exit, resetSandbox } = usePreview();
   const router = useRouter();
   const [showIssue, setShowIssue] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   if (!preview.active) return null;
 
+  const isSandbox = preview.mode === "sandbox" || preview.mode === "new_client";
   const label = preview.mode === "demo"
     ? "Demo aviation client"
+    : preview.mode === "sandbox"
+    ? "New Client Preview — resettable sandbox"
     : preview.mode === "new_client"
     ? "New-client onboarding preview"
     : `Viewing ${preview.target?.name || "client"} as client`;
 
   const handleExit = async () => {
+    if (isSandbox && typeof window !== "undefined" && Platform.OS === "web") {
+      // Ask if they want to reset before exiting.
+      const doReset = window.confirm("Reset this preview client before exiting?\n\nOK = Reset + Exit\nCancel = Keep progress + Exit");
+      if (doReset) {
+        setBusy(true);
+        try { await resetSandbox(); } catch {}
+        setBusy(false);
+      }
+    }
     await exit();
     router.replace("/(coach)/overview" as any);
+  };
+
+  const handleReset = async () => {
+    setBusy(true);
+    try {
+      await resetSandbox();
+      // resetSandbox already re-enters the sandbox with a fresh token.
+      router.replace("/welcome" as any);
+    } catch {}
+    setBusy(false);
   };
 
   return (
@@ -38,11 +61,17 @@ export function PreviewBanner() {
         </View>
         <View style={styles.right}>
           {Platform.OS === "web" ? <DeviceSizePicker /> : null}
+          {isSandbox ? (
+            <Pressable onPress={handleReset} disabled={busy} style={styles.iconBtn} testID="preview-reset">
+              <Ionicons name="refresh" size={14} color="#fff" />
+              <Text style={styles.iconBtnT}>RESET</Text>
+            </Pressable>
+          ) : null}
           <Pressable onPress={() => setShowIssue(true)} style={styles.iconBtn} testID="preview-report-issue">
             <Ionicons name="bug" size={14} color="#fff" />
             <Text style={styles.iconBtnT}>ISSUE</Text>
           </Pressable>
-          <Pressable onPress={handleExit} style={[styles.iconBtn, styles.exitBtn]} testID="preview-exit">
+          <Pressable onPress={handleExit} disabled={busy} style={[styles.iconBtn, styles.exitBtn]} testID="preview-exit">
             <Ionicons name="close" size={14} color="#fff" />
             <Text style={styles.iconBtnT}>EXIT</Text>
           </Pressable>

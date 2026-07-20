@@ -113,12 +113,12 @@ export default function Login() {
               <View style={styles.seedBox}>
                 <Text style={styles.seedTitle}>DEMO LOGINS</Text>
                 <Text style={styles.seedText}>client@crewfit.com / Client123!</Text>
-                <Text style={styles.seedText}>coach@crewfit.com / Coach123!</Text>
+                <Text style={styles.seedText}>louis@crewfit.net / Louis123!  (Admin)</Text>
               </View>
 
               {/* Development-only quick coach login.
                 * Hidden in production builds via the `__DEV__` guard.
-                * Fills credentials + submits, then routes straight to the coach dashboard. */}
+                * Logs in as Louis (primary admin/coach) directly. */}
               {__DEV__ && (
                 <Pressable
                   testID="dev-coach-login"
@@ -126,7 +126,7 @@ export default function Login() {
                     setErr(null);
                     setLoading(true);
                     try {
-                      const u = await login("coach@crewfit.com", "Coach123!");
+                      const u = await login("louis@crewfit.net", "Louis123!");
                       if (u.role === "coach") {
                         router.replace(isDesktopWeb ? "/(coach)/overview" : "/(coach)/clients");
                       } else {
@@ -140,7 +140,7 @@ export default function Login() {
                   }}
                   style={styles.devBtn}
                 >
-                  <Text style={styles.devBtnT}>◈ COACH DASHBOARD LOGIN (DEV)</Text>
+                  <Text style={styles.devBtnT}>◈ LOUIS · ADMIN DASHBOARD (DEV)</Text>
                 </Pressable>
               )}
             </View>

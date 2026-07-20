@@ -1,0 +1,36 @@
+{
+  "summary": "Backend-only verification of the persistent 'New Client Preview' sandbox + Coach Kai removal. 20/20 pytest cases pass. New endpoints (/coach/preview/persistent, /coach/preview/reset, /coach/preview/sandbox-info) work as spec'd: persistent is idempotent (same sandbox id across calls, same across reset), reset wipes sandbox data (workouts_count -> 0, onboarded -> False), and the user row + id + email remain stable. /coach/dashboard now returns a preview_sandbox summary with name='New Client Preview' and email='preview@crewfit.test', and the sandbox is filtered out of the main clients list. /admin/coaches lists Louis Hall and the legacy coach row renamed to 'Legacy Coach (archived)' with status='archived'; no coach with 'Kai' in the name exists. AuthZ works: client role gets 403 on all 3 sandbox endpoints. Regression flows (preview/new-client, preview/impersonate, preview/demo-seed, coach/clients, coach/dashboard) all return 200. Real client (client@crewfit.com) data is untouched by a sandbox reset.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter69_preview_sandbox.py",
+    "/app/backend/tests/test_iter69_sandbox_safety.py",
+    "/app/test_reports/pytest/iter69_preview_sandbox.xml",
+    "/app/test_reports/pytest/iter69_sandbox_safety.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_preview_sandbox.py:181 — safety guard correctly refuses to reset if email != 'preview@crewfit.test' or is_preview_sandbox is falsy (returns 400). Cannot be triggered via HTTP since lookup is by SANDBOX_EMAIL, but the defence-in-depth check is correct.",
+    "server.py:6976 — seed correctly force-renames the legacy Coach Kai row to 'Legacy Coach (archived)' and sets status='archived' on every startup (idempotent).",
+    "server.py:6022,6031 — 'preview_sandbox' status is now excluded from /coach/clients and /coach/dashboard client list, and surfaced via a dedicated preview_sandbox field. Clean separation confirmed by test.",
+    "feature_preview_sandbox.py RESET_COLLECTIONS is an explicit allow-list — safer than a broad wipe; consider adding 'workout_generation_jobs' if such collection exists (currently only gen_jobs/roster_jobs are listed).",
+    "feature_preview_sandbox.py:170 — using ResetBody as default (ResetBody()) as a FastAPI dependency default value is unusual; verified it still accepts a POST with {\"confirm\": true} body. Works but noted for future refactor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter69_preview_sandbox.py (new)",
+    "/app/backend/tests/test_iter69_sandbox_safety.py (new)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "None — reused the auto-seeded Louis + legacy coach + real client rows. Sandbox user is created lazily by the persistent endpoint.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All persistent sandbox endpoints (POST /api/coach/preview/persistent, POST /api/coach/preview/reset, GET /api/coach/preview/sandbox-info) verified. Legacy Coach Kai removal is in effect. Regression suite in /app/backend/tests/test_iter69_preview_sandbox.py is reusable for future iterations. If future work exposes a way for the sandbox user to change email or is_preview_sandbox flag, add a negative test hitting reset when those fields are tampered."
+}

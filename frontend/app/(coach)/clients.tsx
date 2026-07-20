@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Alert } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -7,6 +7,8 @@ import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 import { PreviewClientButton } from "@/src/components/PreviewLauncher";
+import { useAuth } from "@/src/lib/auth";
+import { usePreview } from "@/src/lib/preview";
 
 const FILTERS = [
   { key: "all", label: "ALL" },
@@ -22,10 +24,15 @@ const FILTERS = [
 
 export default function Clients() {
   const router = useRouter();
+  const { user } = useAuth();
+  const { enterSandbox, resetSandbox } = usePreview();
   const [filter, setFilter] = useState("all");
   const [showArchived, setShowArchived] = useState(false);
-  const [data, setData] = useState<any>({ clients: [], counts: {}, total: 0 });
+  const [data, setData] = useState<any>({ clients: [], counts: {}, total: 0, preview_sandbox: null });
   const [loading, setLoading] = useState(true);
+  const [previewBusy, setPreviewBusy] = useState<null | "start" | "reset">(null);
+
+  const isAdmin = !!(user?.is_admin || user?.role === "admin" || (user?.email || "").toLowerCase().endsWith("@crewfit.net"));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,10 +47,17 @@ export default function Clients() {
         res.total = res.clients.length;
       }
       setData(res);
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      if (/missing token|not authenticated|invalid token/i.test(msg)) {
+        router.replace("/(auth)/login" as any);
+        return;
+      }
+      console.warn("clients load failed:", msg);
     } finally {
       setLoading(false);
     }
-  }, [filter, showArchived]);
+  }, [filter, showArchived, router]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
   // Slice 3 fix: useFocusEffect only re-runs on screen focus, not when deps
   // change while focused. Trigger a reload whenever filter / showArchived
@@ -88,6 +102,108 @@ export default function Clients() {
       </ScrollView>
 
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 60 }} refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}>
+        {/* Admin quick-actions: Manage Coaches + New Client Preview sandbox */}
+        {isAdmin ? (
+          <View style={styles.adminBar} testID="admin-quick-actions">
+            <Pressable
+              testID="cl-manage-coaches"
+              onPress={() => router.push("/coach/admin/coaches" as any)}
+              style={styles.adminBtn}
+            >
+              <Ionicons name="people" size={14} color={theme.color.brand} />
+              <Text style={styles.adminBtnT}>MANAGE COACHES</Text>
+            </Pressable>
+            <Pressable
+              testID="cl-audit-log"
+              onPress={() => router.push("/(coach)/changelog" as any)}
+              style={styles.adminBtn}
+            >
+              <Ionicons name="document-text" size={14} color={theme.color.brand} />
+              <Text style={styles.adminBtnT}>AUDIT LOG</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {/* Persistent preview sandbox card — pinned above real clients */}
+        {isAdmin ? (
+          <View style={styles.previewCard} testID="preview-sandbox-card">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <View style={styles.previewBadge}>
+                <Ionicons name="flask" size={16} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.previewName}>New Client Preview</Text>
+                <Text style={styles.previewSub}>
+                  Sandbox client · resettable · isolated from real client metrics
+                </Text>
+                {data.preview_sandbox ? (
+                  <Text style={styles.previewMeta} numberOfLines={1}>
+                    {data.preview_sandbox.programme_pill?.goal_label ? `${data.preview_sandbox.programme_pill.goal_label} · ` : ""}
+                    {data.preview_sandbox.email || "preview@crewfit.test"}
+                  </Text>
+                ) : (
+                  <Text style={styles.previewMeta}>Tap START PREVIEW to seed and enter.</Text>
+                )}
+              </View>
+            </View>
+            <View style={styles.previewActions}>
+              <Pressable
+                testID="preview-sandbox-start"
+                disabled={previewBusy !== null}
+                onPress={async () => {
+                  setPreviewBusy("start");
+                  try {
+                    await enterSandbox();
+                    router.replace("/welcome" as any);
+                  } catch (e: any) {
+                    Alert.alert("Preview failed", e?.message || "Try again.");
+                  } finally { setPreviewBusy(null); }
+                }}
+                style={[styles.previewBtn, previewBusy === "start" && { opacity: 0.6 }]}
+              >
+                {previewBusy === "start" ? <ActivityIndicator color="#fff" /> : (
+                  <>
+                    <Ionicons name="play" size={13} color="#fff" />
+                    <Text style={styles.previewBtnT}>START PREVIEW</Text>
+                  </>
+                )}
+              </Pressable>
+              <Pressable
+                testID="preview-sandbox-reset-start"
+                disabled={previewBusy !== null}
+                onPress={async () => {
+                  setPreviewBusy("reset");
+                  try {
+                    await resetSandbox();
+                    await enterSandbox();
+                    router.replace("/welcome" as any);
+                  } catch (e: any) {
+                    Alert.alert("Reset failed", e?.message || "Try again.");
+                  } finally { setPreviewBusy(null); }
+                }}
+                style={[styles.previewBtnAlt, previewBusy === "reset" && { opacity: 0.6 }]}
+              >
+                {previewBusy === "reset" ? <ActivityIndicator color={theme.color.brand} /> : (
+                  <>
+                    <Ionicons name="refresh" size={13} color={theme.color.brand} />
+                    <Text style={styles.previewBtnAltT}>RESET & START</Text>
+                  </>
+                )}
+              </Pressable>
+              {data.preview_sandbox?.id ? (
+                <Pressable
+                  testID="preview-sandbox-open-detail"
+                  onPress={() => router.push(`/coach/client/${data.preview_sandbox.id}` as any)}
+                  style={styles.previewBtnAlt}
+                >
+                  <Ionicons name="open-outline" size={13} color={theme.color.brand} />
+                  <Text style={styles.previewBtnAltT}>DETAIL</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
         {loading && data.clients.length === 0 ? <ActivityIndicator color={theme.color.brand} /> :
           data.clients.length === 0 ? <Text style={{ color: theme.color.textMuted, textAlign: "center", marginTop: 40 }}>No clients in this bucket.</Text> :
           data.clients.map((cl: any) => {
@@ -220,4 +336,18 @@ const styles = StyleSheet.create({
   progPillText: { color: theme.color.text, fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
   progFlag: { color: theme.color.amber, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   progOk: { color: theme.color.green, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  // Admin bar + preview sandbox card
+  adminBar: { flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" },
+  adminBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand },
+  adminBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
+  previewCard: { padding: 14, backgroundColor: theme.color.brandTint || "rgba(59,130,246,0.08)", borderWidth: 1, borderColor: theme.color.brand, borderRadius: theme.radius.md, marginBottom: 14 },
+  previewBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  previewName: { color: theme.color.text, fontSize: 15, fontWeight: "900" },
+  previewSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  previewMeta: { color: theme.color.textDim, fontSize: 10, marginTop: 4, fontWeight: "700", letterSpacing: 0.5 },
+  previewActions: { flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" },
+  previewBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: theme.radius.md, backgroundColor: theme.color.brand },
+  previewBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
+  previewBtnAlt: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand },
+  previewBtnAltT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
 });

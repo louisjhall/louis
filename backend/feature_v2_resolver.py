@@ -190,7 +190,7 @@ def resolve_exercise_need(
     pool: list[dict],
     client_ctx: Optional[dict] = None,
     *,
-    min_direct_match: float = 30.0,
+    min_direct_match: float = 50.0,
     min_substitute_match: float = 10.0,
 ) -> dict:
     """Attempt to resolve a raw LLM exercise into a library entry.
@@ -511,7 +511,7 @@ def summarise_workout_v2_health(workouts: list[dict]) -> dict:
 # Endpoints — Louis review workflow (minimal P0: list + reject + merge)
 # ---------------------------------------------------------------------------
 
-@api.get("/exercise-content/requests")
+@api.get("/exercise-requests")
 async def exercise_requests_list(
     status: Optional[str] = None,
     urgency: Optional[str] = None,
@@ -519,7 +519,11 @@ async def exercise_requests_list(
 ):
     """List draft/review-needed exercise requests. Default returns everything
     still awaiting review (draft_requested OR coach_review_needed). Also
-    surfaces `request_count`, `substitute_used`, and affected client counts."""
+    surfaces `request_count`, `substitute_used`, and affected client counts.
+
+    NOTE: This lives at /exercise-requests (not /exercise-content/requests)
+    because /exercise-content/{ex_id} is a wildcard route registered earlier
+    in feature_exercise_content and would otherwise shadow this list."""
     q: dict[str, Any] = {}
     if status:
         q["status"] = status

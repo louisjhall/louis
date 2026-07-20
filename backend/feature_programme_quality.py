@@ -416,6 +416,15 @@ async def persist_programme_record(
         version_number = int((last or {}).get("version_number") or 0) + 1
         pid = new_id()
 
+    # Regeneration should require re-approval: if this is a new version being
+    # persisted (existing row is None) OR the roster's workouts have just
+    # been rebuilt (validation ran), reset coach_approved unless the
+    # validation is clean AND the existing row was already approved.
+    keep_prior_approval = False
+    if existing:
+        prior_approved = bool(existing.get("coach_approved"))
+        keep_prior_approval = prior_approved and validation.get("ok", False)
+
     doc = {
         "id": pid,
         "user_id": user["id"],
@@ -436,7 +445,7 @@ async def persist_programme_record(
         "validation_status": "ok" if validation.get("ok") else "needs_review",
         "validation_errors": validation.get("errors") or [],
         "validation_warnings": validation.get("warnings") or [],
-        "coach_approved": bool(existing.get("coach_approved")) if existing else False,
+        "coach_approved": keep_prior_approval,
         "created_at": (existing or {}).get("created_at") or now_iso(),
         "updated_at": now_iso(),
     }

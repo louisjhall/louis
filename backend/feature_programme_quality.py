@@ -198,9 +198,20 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
     # How many complete 7-day windows since programme start? Look at prior
     # programme rows for this user so we resume periodisation rather than
     # restarting at Foundation every roster.
-    last_prog = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
-    prior_week = int((last_prog or {}).get("week_index") or 0)
-    week_index = prior_week + 1
+    # If a programme record already exists for THIS roster (e.g. this is a
+    # retry), reuse its week_index so periodisation stays stable across retries.
+    roster_id = roster.get("id")
+    existing_for_roster = None
+    if roster_id:
+        existing_for_roster = await db.programmes.find_one(
+            {"user_id": user["id"], "roster_id": roster_id}, {"_id": 0}
+        )
+    if existing_for_roster and existing_for_roster.get("week_index"):
+        week_index = int(existing_for_roster["week_index"])
+    else:
+        last_prog = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+        prior_week = int((last_prog or {}).get("week_index") or 0)
+        week_index = prior_week + 1
     phase = _phase_for_week(week_index - 1)  # 0-indexed for phase lookup
 
     # Weekly target — bounded by experience
@@ -360,16 +371,35 @@ async def persist_programme_record(
     context: dict[str, Any],
     validation: dict[str, Any],
 ) -> str:
-    """Store a versioned programme row so the coach dashboard can review it."""
-    last = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
-    version_number = int((last or {}).get("version_number") or 0) + 1
+    """Store a versioned programme row so the coach dashboard can review it.
+
+    Idempotent per (user_id, roster_id): a retry on the same roster UPDATES the
+    existing row instead of creating a duplicate. This keeps the invariant
+    "one programme record per user per month/roster" clean.
+    """
     days = roster.get("days") or []
     start_iso = (days[0].get("date") if days else None)
     end_iso = (days[-1].get("date") if days else None)
+    roster_id = roster.get("id")
+
+    # If a row already exists for this (user_id, roster_id), we upsert-update it
+    # rather than allocating a fresh version_number.
+    existing = None
+    if roster_id:
+        existing = await db.programmes.find_one({"user_id": user["id"], "roster_id": roster_id}, {"_id": 0})
+
+    if existing:
+        pid = existing.get("id") or new_id()
+        version_number = int(existing.get("version_number") or 1)
+    else:
+        last = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+        version_number = int((last or {}).get("version_number") or 0) + 1
+        pid = new_id()
+
     doc = {
-        "id": new_id(),
+        "id": pid,
         "user_id": user["id"],
-        "roster_id": roster.get("id"),
+        "roster_id": roster_id,
         "version_number": version_number,
         "week_index": context.get("week_index"),
         "goal_key": context.get("goal_key"),
@@ -386,12 +416,15 @@ async def persist_programme_record(
         "validation_status": "ok" if validation.get("ok") else "needs_review",
         "validation_errors": validation.get("errors") or [],
         "validation_warnings": validation.get("warnings") or [],
-        "coach_approved": False,
-        "created_at": now_iso(),
+        "coach_approved": bool(existing.get("coach_approved")) if existing else False,
+        "created_at": (existing or {}).get("created_at") or now_iso(),
         "updated_at": now_iso(),
     }
-    await db.programmes.insert_one(doc)
-    return doc["id"]
+    if existing:
+        await db.programmes.update_one({"id": pid}, {"$set": doc})
+    else:
+        await db.programmes.insert_one(doc)
+    return pid
 
 
 # ---------------------------------------------------------------------------

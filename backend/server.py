@@ -2428,11 +2428,19 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             await db.rosters.update_many({"user_id": user["id"], "is_active": True}, {"$set": {"is_active": False}})
             await db.rosters.insert_one(roster)
             await _set_job(job_id, roster_id=roster["id"], stage="generating", progress=80, message="Generating your personalised plan...")
+            # Programme context (goal, phase, target sessions) — computed once and
+            # passed through generation → validation → persistence.
+            programme_ctx = None
+            try:
+                from feature_programme_quality import programme_context_for_llm
+                programme_ctx = await programme_context_for_llm(user, roster)
+            except Exception:
+                logger.exception("programme_context_for_llm failed — continuing without")
             # Generate workouts inline — with a hard timeout and a background
             # progress heartbeat so the client is never left at exactly 80% forever.
             heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
             try:
-                workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=180.0)
+                workouts = await _asyncio.wait_for(_generate_month(user, roster, programme_ctx=programme_ctx), timeout=180.0)
             except _asyncio.TimeoutError:
                 logger.warning("plan generation TIMEOUT in job %s (>180s) — falling back to template", job_id)
                 workouts = []
@@ -2479,6 +2487,8 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     "event_phase": w.get("event_phase"),
                     "source": "template" if used_template else "coaching_system",
                     "needs_coach_review": bool(used_template),
+                    # Phase 1 stub: traffic-light variants populated in a later phase.
+                    "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
                     "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -2503,6 +2513,35 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             # task and mark the job as needing review so the client sees a
             # helpful status instead of an empty 7-day view.
             persisted_count = await db.workouts.count_documents({"user_id": user["id"], "roster_id": roster["id"]})
+
+            # Programme quality gate: validate the freshly generated batch and
+            # persist a lightweight `programmes` record for coach visibility.
+            # Failures here MUST NOT block the client's plan — they only flag
+            # the programme as needs_review and open a coach task.
+            try:
+                if programme_ctx is not None:
+                    from feature_programme_quality import validate_programme, persist_programme_record
+                    persisted_workouts = await db.workouts.find(
+                        {"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}
+                    ).sort("date", 1).to_list(500)
+                    validation = validate_programme(user, roster, persisted_workouts, programme_ctx)
+                    await persist_programme_record(user, roster, persisted_workouts, programme_ctx, validation)
+                    if not validation.get("ok"):
+                        # Flag all non-completed, non-locked workouts as needing review.
+                        await db.workouts.update_many(
+                            {"user_id": user["id"], "roster_id": roster["id"], "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                            {"$set": {"needs_coach_review": True, "updated_at": now_iso()}},
+                        )
+                        try:
+                            await _open_coach_task_for_stuck_generation(
+                                user, roster, job_id,
+                                reason=f"programme validation failed: {', '.join(validation.get('errors') or [])[:200]}",
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                logger.exception("programme quality gate failed — non-fatal, continuing")
+
             if persisted_count == 0:
                 logger.warning("plan generation produced 0 workouts for user=%s roster=%s", user["id"], roster["id"])
                 await _set_job(
@@ -2659,8 +2698,16 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
 
     async def _retry_worker():
         heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
+        # Programme context (goal / phase / weekly target) — used for prompt
+        # injection + validation + persistence, computed once.
+        programme_ctx = None
         try:
-            workouts = await _asyncio.wait_for(_generate_month(user, roster), timeout=180.0)
+            from feature_programme_quality import programme_context_for_llm
+            programme_ctx = await programme_context_for_llm(user, roster)
+        except Exception:
+            logger.exception("retry: programme_context_for_llm failed")
+        try:
+            workouts = await _asyncio.wait_for(_generate_month(user, roster, programme_ctx=programme_ctx), timeout=180.0)
         except _asyncio.TimeoutError:
             logger.warning("retry TIMEOUT for job %s — falling back to template", job_id)
             workouts = []
@@ -2705,6 +2752,9 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
                 "rationale": w.get("rationale", ""),
                 "key_session": bool(w.get("key_session", False)),
                 "event_phase": w.get("event_phase"),
+                "source": "template" if used_template else "coaching_system",
+                "needs_coach_review": bool(used_template),
+                "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
                 "approved": prev.get("approved", False) if prev else False,
                 "completed": False,
                 "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -2719,6 +2769,24 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
                 logger.warning("retry workout upsert failed for date=%s: %s", d, e)
                 continue
         persisted_count = await db.workouts.count_documents({"user_id": user["id"], "roster_id": roster["id"]})
+
+        # Programme quality gate (retry path): validate + persist programme row.
+        try:
+            if programme_ctx is not None:
+                from feature_programme_quality import validate_programme, persist_programme_record
+                persisted_workouts = await db.workouts.find(
+                    {"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}
+                ).sort("date", 1).to_list(500)
+                validation = validate_programme(user, roster, persisted_workouts, programme_ctx)
+                await persist_programme_record(user, roster, persisted_workouts, programme_ctx, validation)
+                if not validation.get("ok"):
+                    await db.workouts.update_many(
+                        {"user_id": user["id"], "roster_id": roster["id"], "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                        {"$set": {"needs_coach_review": True, "updated_at": now_iso()}},
+                    )
+        except Exception:
+            logger.exception("retry: programme quality gate failed — non-fatal")
+
         if persisted_count == 0:
             logger.warning("retry plan generation produced 0 workouts for user=%s roster=%s", user["id"], roster["id"])
             await _set_job(
@@ -4077,15 +4145,30 @@ Return STRICT JSON only:
 {"workouts":[{...}]}"""
 
 
-async def _generate_month(user: dict, roster: dict) -> list[dict]:
+async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict] = None) -> list[dict]:
     """Chunk by 7-day windows so each Claude call stays well under the
-    Cloudflare edge timeout (~60s). Concurrent by week."""
+    Cloudflare edge timeout (~60s). Concurrent by week.
+
+    If `programme_ctx` is not supplied, we compute it here via
+    `feature_programme_quality.programme_context_for_llm`. Callers that want
+    to reuse the same context (for validation + persistence) should compute
+    it once and pass it in.
+    """
     import asyncio as _asyncio
 
     profile = user.get("profile", {}) or {}
     all_days = roster.get("days", []) or []
     if not all_days:
         return []
+
+    # Programme context — goal, phase, weekly target, roster summary. Deterministic.
+    if programme_ctx is None:
+        try:
+            from feature_programme_quality import programme_context_for_llm
+            programme_ctx = await programme_context_for_llm(user, roster)
+        except Exception:
+            logger.exception("programme_context_for_llm failed — proceeding without it")
+            programme_ctx = None
 
     # Living Profile: fetch DNA so workout gen is personalised to Coaching DNA
     dna_ctx = await _get_dna_context(user["id"])
@@ -4145,10 +4228,13 @@ async def _generate_month(user: dict, roster: dict) -> list[dict]:
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
+            f"Programme context (goal, phase, weekly target, roster summary): {json.dumps(programme_ctx)[:2000] if programme_ctx else 'None'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
             f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:7500]}\n"
             "Design exactly one workout per date in this chunk. Return JSON. "
-            "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available."
+            "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available. "
+            "Follow the Programme context strictly: match the weekly session target, keep the movement-mix hint balanced across the week, respect the current phase (Foundation/Build/Peak/Deload) — Deload weeks reduce volume by 30–40%. "
+            "For EVERY workout, populate the `rationale` field with 1–2 short sentences answering 'Why this session?' — reference the phase, the roster context (e.g. long-haul day tomorrow, standby, layover in city X), and the client's goal. No client-facing 'AI' wording."
         )
         try:
             # Per-chunk cap so one slow LLM call cannot block sibling chunks or
@@ -4233,6 +4319,9 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                     "rationale": w.get("rationale", ""),
                     "key_session": bool(w.get("key_session", False)),
                     "event_phase": w.get("event_phase"),
+                    "source": "coaching_system",
+                    "needs_coach_review": False,
+                    "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
                     "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -4349,6 +4438,9 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                     "rationale": w.get("rationale", ""),
                     "key_session": bool(w.get("key_session", False)),
                     "event_phase": w.get("event_phase"),
+                    "source": "coaching_system",
+                    "needs_coach_review": False,
+                    "variants": existing.get("variants") if existing and existing.get("variants") else {"green": None, "amber": None, "red": None},
                     "approved": False,
                     "completed": False,
                     "coach_notes": existing.get("coach_notes", "") if existing else "",
@@ -7543,6 +7635,7 @@ import feature_beta_readiness    # noqa: E402,F401  Beta wiring: storage smoke t
 import feature_personal_activities  # noqa: E402,F401  Personal Activity Planner (client sports/hobbies)
 import feature_setup_day             # noqa: E402,F401  Setup-day gate — first workout starts tomorrow
 import feature_event_categories      # noqa: E402,F401  Category-aware Event Training
+import feature_programme_quality     # noqa: E402,F401  Programme quality: goals/phase/validation/persistence
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

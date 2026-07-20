@@ -186,7 +186,7 @@ export default function WorkoutDetail() {
 
         {w.rationale && (
           <View style={styles.rationale}>
-            <Text style={styles.rLabel}>WHY THIS WORKOUT</Text>
+            <Text style={styles.rLabel}>WHY THIS SESSION?</Text>
             <Text style={styles.rText}>{w.rationale}</Text>
           </View>
         )}

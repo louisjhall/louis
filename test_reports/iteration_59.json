@@ -1,0 +1,53 @@
+{
+  "summary": "Phase 1 Programme Quality wiring verified. Backend: 11 pass / 1 skip / 0 fail on /app/backend/tests/test_iter59_programme_quality.py. /api/programme/current, /api/coach/clients/{id}/programme and /programme/history all return 200 with correct data. Retry-worker path (POST /api/roster/jobs/{job_id}/retry) fully wires programme_context_for_llm -> _generate_month -> validate_programme -> persist_programme_record; a programmes row is written with goal_key='general_fitness', phase.key='foundation', week_index=1, target_sessions_per_week=3, roster_id matching, validation_status set. Workout docs from this path carry source ('coaching_system'/'template'), needs_coach_review bool, variants={green:null,amber:null,red:null} stub, and non-empty LLM rationale. persist_programme_record is IDEMPOTENT on retry (1 row before / 1 row after, same id, only updated_at changed). Frontend /workout/[id] label now reads 'WHY THIS SESSION?' (screenshot confirmed) and no client-facing AI/LLM/bot wording found. GAP: /api/workouts/generate-month endpoint (line 4271) does not call validate_programme + persist_programme_record after its worker completes, so calling this endpoint alone does NOT populate the programmes collection (only /roster/upload-and-generate and /roster/jobs/{id}/retry do).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/workouts/generate-month",
+        "issue": "Background _worker() at server.py ~L4289 does not call validate_programme + persist_programme_record after workouts are upserted, unlike /roster/upload-and-generate (L2521-2543) and /roster/jobs/{id}/retry (L2776-2785). Task spec says either endpoint should populate the programmes collection. Recommend replicating the block: after `dates_now` cleanup, if programme_ctx is available (compute via programme_context_for_llm), fetch persisted_workouts and call validate_programme + persist_programme_record. Workout schema fields (source/needs_coach_review/variants) ARE correctly written by this endpoint — only the programme row persistence is missing."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/workout/[id]",
+        "issues": [
+          "Console error x2 on load: 'Unexpected text node: . A text node cannot be a child of a <View>.' — cosmetic React Native warning, likely a stray whitespace/space char inside a <View>. Non-blocking but should be cleaned up."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter59_programme_quality.py",
+    "/app/test_reports/pytest/iter59_programme_quality.xml"
+  ],
+  "action_items": [
+    "Wire validate_programme + persist_programme_record into /api/workouts/generate-month background worker (server.py ~L4289-4360) so this endpoint also produces a programmes row, matching the roster-upload and retry-worker paths.",
+    "Investigate and fix the 'Unexpected text node' console warning on /workout/[id] (frontend/app/workout/[id]/index.tsx) — likely a stray whitespace character between JSX elements inside a View.",
+    "Optional: add a coach dashboard integration test that verifies validation_errors/warnings are surfaced (this iteration only asserted validation_status, not the presence of the tasks/alerts feed).",
+    "Consider seeding at least one template-fallback workout in a test fixture so TestTemplateFallbackSchema stops being skipped."
+  ],
+  "critical_code_review_comments": [
+    "feature_programme_quality.persist_programme_record correctly upserts by (user_id, roster_id) — idempotency verified in test_idempotent_second_retry_no_duplicate.",
+    "programme_context_for_llm reuses week_index for a matching roster row (L204-214) so retries do not drift periodisation. Confirmed via retry test: same roster returned same phase='foundation', week_index=1.",
+    "Two endpoints (main roster worker + retry worker) both correctly compute programme_ctx once and pass it through. /workouts/generate-month is the only laggard.",
+    "server.py is ~7757 lines — exceeds the recommended 700-line ceiling; splitting workout/roster/coach concerns into modules would improve maintainability. Not blocking Phase 1."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter59_programme_quality.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 executed passed; 1 skipped because no template-fallback workouts in DB)",
+    "frontend": "100% (label rename verified, no AI/LLM/bot wording found on /workout/[id])"
+  },
+  "seed_data_creation": "No new seed data required. Test uses existing roster_job 'a7ae08c0-400a-459f-88ec-fa9e1617c33d' (status=complete, roster_id=06ac5019-2e70-411b-a255-a5592a3e0093) for client@crewfit.com and exercises the /roster/jobs/{job_id}/retry endpoint. After running, one programmes row exists for this (user, roster) pair.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 1 is functionally solid on the roster-upload / retry-worker path. The single gap is /api/workouts/generate-month not calling persist_programme_record. When testing Phase 2 (variants population, coach review UI, etc.), you can rely on the seeded programmes row for client@crewfit.com against roster 06ac5019-... Test file /app/backend/tests/test_iter59_programme_quality.py takes ~200s because it triggers two full retry-worker LLM runs; run in background if adding more scenarios.",
+  "rca_of_issue": "None required — no failing behaviour. The one gap (/workouts/generate-month missing programme persistence) is a code omission, not a defect in the new module: the persistence logic exists and works correctly, it was simply not added to that particular endpoint's background worker."
+}

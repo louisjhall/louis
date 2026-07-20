@@ -1,0 +1,42 @@
+{
+  "summary": "Phase 2 Roster Confirmation (parse → confirm → build) verified end-to-end. Backend: 10/10 tests pass in test_iter61_roster_confirmation.py — /roster/upload-parse correctly creates a parse_only job, does NOT deactivate the client's active roster, and does NOT insert into workouts; failure path returns friendly error with no pending row. Pending CRUD (GET latest, GET by id, PATCH auto-confirm on edit, /confirm-day, DELETE) all work with _needs_review recomputed. /confirm returns 400 while ANY day still needs review; once all are reviewed it activates the roster, deactivates others, kicks a confirm_build job, persists workouts (template fallback active, schema includes source/needs_coach_review/variants{green,amber,red}/rationale) and a programmes row with goal_key, phase, week_index>=1, target_sessions_per_week>=2, roster_id match. Legacy /roster/upload-and-generate still returns a job_id; retry endpoint still answers. Frontend: /roster/confirm/[id] bundles cleanly, renders summary + amber/green cards, DayEditor modal opens with duty chips + city/nights/times/notes inputs, CONFIRM AS-IS flips the amber card to green and reduces the CTA counter, CTA correctly disabled with 'N DAYS TO REVIEW' label while unreviewed>0, becomes 'CONFIRM & BUILD PLAN' once all reviewed. Grep confirmed roster-upload.tsx calls /roster/upload-parse and STAGES includes 'ready_to_confirm'. One UX quirk found (see minor).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "roster/confirm/[id].tsx updateDay()",
+        "issue": "After the user edits a low-confidence day in the DayEditor modal (e.g. picks Layover + Bangkok), the local `_needs_review` flag is not cleared — only `_confirmed_by_user` is set to true. Result: the CONFIRM & BUILD PLAN CTA still shows 'N DAY(S) TO REVIEW' and stays disabled until the user separately taps SAVE CHANGES to PATCH-refresh the days from the server. The functional flow still works (SAVE CHANGES then CTA becomes enabled), but the delay is confusing — the amber card visibly becomes 'Layover / Bangkok' yet the sticky CTA does not update. Fix: in updateDay(), also set `_needs_review: false` locally on the touched day (mirror the pattern already used in confirmDayAsIs()). Reference: /app/frontend/app/roster/confirm/[id].tsx:86-94",
+        "testID": "rc-confirm-build",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter61_roster_confirmation.py",
+    "/app/test_reports/pytest/iter61_roster_confirmation.xml"
+  ],
+  "action_items": [
+    "Frontend UX polish: in /app/frontend/app/roster/confirm/[id].tsx updateDay(), also set `_needs_review: false` on the edited day so the sticky CTA re-enables immediately after the modal closes (instead of requiring the user to tap SAVE CHANGES first). No backend change needed.",
+    "(Optional) Consider auto-saving on modal close in DayEditor to eliminate the two-step SAVE → CONFIRM & BUILD dance for edited days."
+  ],
+  "critical_code_review_comments": [
+    "roster_pending_patch (feature_roster_confirmation.py:246-259) auto-flags `_confirmed_by_user=true` whenever `new_type != prior_type` AND is non-Unknown. Good. It also preserves any prior `_confirmed_by_user=true` even if the client re-sends the same day untouched. However, if the client changes a day FROM a specific type (e.g. Flight) TO Unknown, `_confirmed_by_user` is NOT flipped back to false — the day silently stays 'reviewed'. Minor edge case; the UI is unlikely to do this, but worth a note.",
+    "roster_pending_confirm (feature_roster_confirmation.py:335-345) marks other rosters inactive BEFORE promoting the new one. If the promotion update fails for any reason, the user is left with zero active rosters. Consider promoting first, then inactivating others (or wrapping in a bulk write) for atomicity.",
+    "In the confirm_build worker, `db.workouts.delete_many({user_id, date})` (line 428) will also delete workouts belonging to OTHER rosters that happen to fall on the same date. For a client who has overlapping/adjacent rosters, this is unsafe. Recommend narrowing the delete to `{user_id, roster_id: <new_rid>, date}` before the insert."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter61_roster_confirmation.py (new — 10 tests)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "seed_data_creation": "During tests, pending rosters with source_filename='TEST_seed_roster.pdf' / 'TEST_ui_seed.pdf' were inserted directly into db.rosters and cleaned up on teardown. TestConfirmAndBuild.test_confirm_success_activates_deactivates_others_and_kicks_build briefly promoted a TEST_ roster to active — the test teardown then deletes the roster + its workouts + programmes so the client's original active roster remains untouched. Verified post-run: no lingering TEST_ rows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_iter61_roster_confirmation.py seeds pending rosters directly via pymongo (helper `_seed_pending`) to avoid burning Gemini calls; adopt the same pattern for further confirmation-flow work. The client used is client@crewfit.com — the test cleans up its own TEST_ rows but does NOT touch the client's real active roster. Note the frontend UX quirk in updateDay(): after modal edits, the local `_needs_review` flag remains true until PATCH round-trip completes; if main agent fixes this, add a Playwright assertion that the CTA becomes 'CONFIRM & BUILD PLAN' immediately after modal DONE without a SAVE CHANGES tap.",
+  "rca_of_issue": "UX quirk RCA — updateDay() (/app/frontend/app/roster/confirm/[id].tsx:86) applies `{ ...d, ...patch, _confirmed_by_user: true }` but does not clear `_needs_review`. The `unreviewed` memo (line 167) counts days by `d._needs_review`, not by `!d._confirmed_by_user`, so it doesn't update from a purely local edit. Mitigation: either (a) also set `_needs_review: false` in updateDay(), or (b) change the unreviewed memo to `d._needs_review && !d._confirmed_by_user`. Option (a) is cleaner and mirrors confirmDayAsIs()."
+}

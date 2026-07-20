@@ -15,6 +15,7 @@ const STAGES = [
   { key: "reading", label: "Reading file", copy: "Reading your duty pattern..." },
   { key: "extracting", label: "Extracting duties", copy: "Extracting duties..." },
   { key: "detecting", label: "Detecting layovers", copy: "Detecting layovers and turnarounds..." },
+  { key: "ready_to_confirm", label: "Review your roster", copy: "Ready to review — confirm your duty pattern next." },
   { key: "overlap", label: "Checking overlaps", copy: "Checking for roster overlaps..." },
   { key: "calendar", label: "Building calendar", copy: "Building your CrewFit calendar..." },
   { key: "generating", label: "Generating plan", copy: "Generating your personalised plan..." },
@@ -79,6 +80,14 @@ export default function RosterUpload() {
           if (stillFor > STUCK_MS) setSlowness("stuck");
           else if (stillFor > SLOW_MS) setSlowness("slow");
         }
+        if (j.status === "awaiting_confirmation" && j.pending_roster_id) {
+          clearInterval(pollRef.current);
+          // Small delay to let the "Roster ready to review" message land visually.
+          setTimeout(() => router.replace({
+            pathname: "/roster/confirm/[id]" as any,
+            params: { id: j.pending_roster_id },
+          } as any), 500);
+        }
         if (j.status === "complete") {
           clearInterval(pollRef.current);
           setTimeout(() => router.replace("/(client)/calendar"), 800);
@@ -95,7 +104,7 @@ export default function RosterUpload() {
   const startJob = async (fileBase64: string, mimeType: string, filename: string) => {
     setStarting(true); setError(null);
     try {
-      const res = await api<any>(`/roster/upload-and-generate`, {
+      const res = await api<any>(`/roster/upload-parse`, {
         method: "POST",
         body: { file_base64: fileBase64, mime_type: mimeType, filename },
       });

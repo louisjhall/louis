@@ -7668,6 +7668,7 @@ import feature_personal_activities  # noqa: E402,F401  Personal Activity Planner
 import feature_setup_day             # noqa: E402,F401  Setup-day gate — first workout starts tomorrow
 import feature_event_categories      # noqa: E402,F401  Category-aware Event Training
 import feature_programme_quality     # noqa: E402,F401  Programme quality: goals/phase/validation/persistence
+import feature_roster_confirmation   # noqa: E402,F401  Phase 2: parse → confirm → build roster flow
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

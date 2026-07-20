@@ -2412,21 +2412,39 @@ async def _detect_overlap(user_id: str, new_days: list[dict]) -> dict:
     return {"overlapping_dates": sorted(set(overlaps)), "changes": changes}
 
 
-async def _generation_heartbeat(job_id: str, start_progress: int = 80, cap_progress: int = 95, interval_s: float = 6.0) -> None:
-    """Background heartbeat that gently bumps progress + updated_at so the
-    frontend never sees a frozen bar during long AI generation calls."""
+async def _generation_heartbeat(job_id: str, start_progress: int = 80, cap_progress: int = 95, interval_s: float = 15.0) -> None:
+    """Text-only heartbeat while the LLM generates workouts. The progress
+    bar is driven exclusively by the per-week `_on_week_ready` callback so
+    it reflects **real** completion, not wall-clock decay. This heartbeat
+    only updates the message so the user sees the app is alive even if a
+    Claude call takes a while — it never touches `progress` (that used to
+    cause the bar to jump to 94% while weeks 3/4/5 were still cooking).
+    """
     import asyncio as _asyncio
-    progress = start_progress
+    ticks = 0
     try:
-        while progress < cap_progress:
+        while True:
             await _asyncio.sleep(interval_s)
-            progress += 2
-            if progress > cap_progress:
-                progress = cap_progress
-            try:
-                await _set_job(job_id, progress=progress, message="Generating your personalised plan (still working)...")
-            except Exception:
-                return
+            ticks += 1
+            # Only add the "(still working)" tag after ~30s of silence so
+            # short generations never see it at all.
+            if ticks >= 2:
+                try:
+                    # Read current message so we can preserve any "Building
+                    # week N of M" text set by _on_week_ready and just append
+                    # a gentle "still working" nudge.
+                    j = await db.roster_jobs.find_one({"id": job_id}, {"_id": 0, "message": 1, "progress": 1})
+                    if not j:
+                        return
+                    prog = int(j.get("progress") or 0)
+                    if prog >= cap_progress:
+                        return
+                    msg = str(j.get("message") or "Generating your personalised plan...")
+                    if "(still working)" not in msg:
+                        msg = f"{msg.rstrip('. ')} (still working)..."
+                    await _set_job(job_id, message=msg)
+                except Exception:
+                    return
     except _asyncio.CancelledError:
         return
 

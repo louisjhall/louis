@@ -6054,6 +6054,9 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
     if not c:
         raise HTTPException(404, "Client not found")
     r = await db.rosters.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
+    if not r:
+        # Fallback: latest roster of any status so the coach can still edit/view.
+        r = await db.rosters.find_one({"user_id": client_id}, {"_id": 0}, sort=[("created_at", -1)])
     if r:
         r["expiry"] = _roster_expiry(r)
     workouts = await db.workouts.find({"user_id": client_id}, {"_id": 0}).sort("date", 1).to_list(500)

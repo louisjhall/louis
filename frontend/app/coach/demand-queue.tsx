@@ -281,7 +281,12 @@ function ReviewModal({ request, busyId, onClose, onAction }: {
       try {
         const q = new URLSearchParams({ q: mergeSearch, approved_only: "true" }).toString();
         const res = await api<any>(`/exercise-content?${q}`);
-        if (!cancelled) setMergeResults(res?.items || res || []);
+        // /exercise-content returns { exercises: [...], count } — normalise defensively.
+        const arr = Array.isArray(res?.exercises) ? res.exercises
+                  : Array.isArray(res?.items)     ? res.items
+                  : Array.isArray(res)            ? res
+                  : [];
+        if (!cancelled) setMergeResults(arr);
       } catch {}
     })();
     return () => { cancelled = true; };
@@ -418,7 +423,7 @@ function ReviewModal({ request, busyId, onClose, onAction }: {
                   style={styles.input}
                 />
                 <View style={{ marginTop: 8, maxHeight: 260 }}>
-                  {mergeResults.slice(0, 15).map((r: any) => (
+                  {(Array.isArray(mergeResults) ? mergeResults : []).slice(0, 15).map((r: any) => (
                     <Pressable
                       key={r.id}
                       testID={`dq-merge-target-${r.id}`}

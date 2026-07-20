@@ -990,8 +990,7 @@ QUESTION TYPES you can return:
 - "equipment_picker" — multi-select equipment at a location; meta:{location:"home"|"hotel"|"commercial_gym"|"parents"}
 
 REQUIRED FIRST QUESTIONS (ask early, in this order):
-- **Biological sex** (id: `biological_sex`) — single_select {male, female, intersex_prefer_not}. Explain briefly it's used for training load, protein targets and recovery science. NEVER skip this — it materially changes the programme.
-- **Pronouns** (id: `pronouns`) — single_select {he_him, she_her, they_them}. Used in all narrative copy so we never misgender the client.
+- **Biological sex** (id: `biological_sex`) — single_select {male, female, intersex_prefer_not}. Explain briefly it's used for training load, protein targets and recovery science. NEVER skip this — it materially changes the programme. Use this to derive pronouns automatically (male→he/him, female→she/her, intersex_prefer_not→they/them). Do NOT ask a separate pronouns question.
 - Aviation role (Pilot / Cabin Crew / Ground Ops / Corporate Aviation / Other) — single_select
 - Primary goal category — multi_select from: [Lose body fat, Build muscle, General fitness, Improve health, Improve confidence, Ironman, 70.3, Sprint Triathlon, Olympic Triathlon, Marathon, Half Marathon, HYROX, 5K, 10K, Improve mobility, Reduce pain, Return from injury, Reduce jet lag, Improve sleep, Pass airline medical, Maintain fitness, Other]
 
@@ -1032,7 +1031,7 @@ Given a completed assessment transcript, synthesise the client's permanent **Coa
 RULES:
 - Be specific and personal. Reference their actual answers.
 - Never generic. Every field should feel like it was written FOR THIS PERSON.
-- **PRONOUNS**: use the pronoun the client explicitly selected (answer to `pronouns` question). If unknown or `they_them`, use `they/them` throughout. NEVER default to `she/her` or `he/him` based on role/stereotype. NEVER assume gender from job (cabin crew ≠ female, pilot ≠ male).
+- **PRONOUNS**: derive from the client's `biological_sex` answer — male → he/him, female → she/her, intersex_prefer_not → they/them. If no sex was recorded, use they/them. NEVER default to she/her or he/him based on job or role. NEVER assume gender from job (cabin crew ≠ female, pilot ≠ male).
 - If information is missing, say "Unknown — will learn over time".
 - Assign a realistic `ai_confidence_score` (30-95). New clients rarely hit 90+.
 - `recommended_weekly_training` should be a concrete outline (e.g. "4 days: Mon strength, Tue Z2 run, Thu mobility, Sat long run").
@@ -1041,7 +1040,6 @@ RULES:
 RESPOND WITH STRICT JSON only:
 {
   "biological_sex": "male|female|intersex_prefer_not|unknown",
-  "pronouns": "he_him|she_her|they_them",
   "primary_goal": "one-line",
   "secondary_goals": ["...", "..."],
   "why_it_matters": "2-3 sentence explanation in their voice",
@@ -1126,13 +1124,6 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "female", "label": "Female", "icon": "female"},
              {"id": "intersex_prefer_not", "label": "Intersex / Prefer not to say", "icon": "person"},
          ], "allow_skip": False},
-        {"id": "pronouns", "section": "About You",
-         "text": "Which pronouns should we use when writing about you?",
-         "type": "single_select", "options": [
-             {"id": "he_him", "label": "He / him", "icon": "person"},
-             {"id": "she_her", "label": "She / her", "icon": "person"},
-             {"id": "they_them", "label": "They / them", "icon": "person-outline"},
-         ], "allow_skip": True},
         {"id": "role", "section": "Your Aviation", "text": "What is your role in aviation?",
          "type": "single_select", "options": [
              {"id": "pilot", "label": "Pilot", "icon": "airplane"},
@@ -1316,7 +1307,6 @@ def _dna_fallback(transcript: list[dict], profile: dict) -> dict:
     primary = goals[0] if goals else (profile.get("goal") or "General fitness")
     return {
         "biological_sex": ans_map.get("biological_sex") or profile.get("biological_sex") or "unknown",
-        "pronouns": ans_map.get("pronouns") or profile.get("pronouns") or "they_them",
         "primary_goal": str(primary).replace("_", " ").title(),
         "secondary_goals": [str(g).replace("_", " ").title() for g in goals[1:5]],
         "why_it_matters": ans_map.get("why") or "Unknown — will learn over time",
@@ -1417,10 +1407,10 @@ async def assessment_answer(body: AssessmentAnswerBody, user: dict = Depends(cur
     # Persist critical demographic answers straight onto user.profile so the
     # whole app (DNA generator, programme builder, nutrition targets) can
     # read them without walking the assessment transcript.
-    if q_id in ("biological_sex", "pronouns") and isinstance(body.answer, (str, int, float)):
+    if q_id == "biological_sex" and isinstance(body.answer, (str, int, float)):
         await db.users.update_one(
             {"id": user["id"]},
-            {"$set": {f"profile.{q_id}": str(body.answer)}},
+            {"$set": {"profile.biological_sex": str(body.answer)}},
         )
 
     nxt = await _assessment_next_question(a)

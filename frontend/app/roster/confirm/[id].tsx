@@ -88,7 +88,11 @@ export default function RosterConfirm() {
       if (!p) return p;
       return {
         ...p,
-        days: p.days.map((d) => (d.date === date ? { ...d, ...patch, _confirmed_by_user: true } : d)),
+        days: p.days.map((d) =>
+          d.date === date
+            ? { ...d, ...patch, _confirmed_by_user: true, _needs_review: false }
+            : d,
+        ),
       };
     });
   };

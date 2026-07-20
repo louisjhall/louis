@@ -2477,6 +2477,12 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 if is_empty_or_llm_failure(workouts):
                     workouts = build_template_plan(user, roster)
                     used_template = bool(workouts)
+                    if workouts:
+                        try:
+                            from feature_v2_resolver import apply_resolver_to_workouts
+                            await apply_resolver_to_workouts(workouts, user=user, roster=roster)
+                        except Exception:
+                            logger.exception("v2_resolver on fallback failed (non-fatal)")
                     if used_template:
                         logger.warning("plan generation used TEMPLATE fallback for job %s (LLM unavailable)", job_id)
             except Exception:
@@ -2744,6 +2750,12 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
             if is_empty_or_llm_failure(workouts):
                 workouts = build_template_plan(user, roster)
                 used_template = bool(workouts)
+                if workouts:
+                    try:
+                        from feature_v2_resolver import apply_resolver_to_workouts
+                        await apply_resolver_to_workouts(workouts, user=user, roster=roster)
+                    except Exception:
+                        logger.exception("retry: v2_resolver on fallback failed (non-fatal)")
                 if used_template:
                     logger.warning("retry job %s used TEMPLATE fallback (LLM unavailable)", job_id)
         except Exception:
@@ -4289,6 +4301,20 @@ async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict
             continue
         seen.add(d)
         unique.append(w)
+
+    # Phase 5: Constrain every client-visible exercise to the approved V2
+    # Exercise Library. Any exercise the LLM produced that has no library
+    # match gets replaced with the closest approved substitute, and a
+    # deduplicated draft exercise request is filed for Louis to review.
+    # Unresolvable items are DROPPED (user directive: never expose unapproved
+    # exercise names to clients).
+    try:
+        from feature_v2_resolver import apply_resolver_to_workouts
+        stats = await apply_resolver_to_workouts(unique, user=user, roster=roster)
+        logger.info("v2_resolver stats: %s", stats)
+    except Exception:
+        logger.exception("v2_resolver failed — falling through with raw LLM output")
+
     return unique
 
 
@@ -6972,6 +6998,13 @@ async def _startup():
         await _reconcile_ex_stale()
     except Exception:
         logger.exception("exercise image reconciliation on startup failed")
+    # Phase 5 — one-shot backfill of visibility / safe_for_programming on
+    # approved exercises. Idempotent, cheap, non-fatal.
+    try:
+        from feature_v2_resolver import backfill_client_flags_once
+        await backfill_client_flags_once()
+    except Exception:
+        logger.exception("v2_resolver backfill on startup failed")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 
@@ -7704,6 +7737,7 @@ import feature_event_categories      # noqa: E402,F401  Category-aware Event Tra
 import feature_programme_quality     # noqa: E402,F401  Programme quality: goals/phase/validation/persistence
 import feature_roster_confirmation   # noqa: E402,F401  Phase 2: parse → confirm → build roster flow
 import feature_traffic_light         # noqa: E402,F401  Phase 3: Green/Amber/Red workout variants
+import feature_v2_resolver           # noqa: E402,F401  Phase 5: V2 Library resolver + demand-driven exercise requests
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

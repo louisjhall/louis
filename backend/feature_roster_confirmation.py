@@ -385,6 +385,12 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
             if is_empty_or_llm_failure(workouts):
                 workouts = build_template_plan(user, roster)
                 used_template = bool(workouts)
+                if workouts:
+                    try:
+                        from feature_v2_resolver import apply_resolver_to_workouts
+                        await apply_resolver_to_workouts(workouts, user=user, roster=roster)
+                    except Exception:
+                        logger.exception("confirm-build: v2_resolver on fallback failed")
                 if used_template:
                     logger.warning("confirm-build job %s used TEMPLATE fallback", job_id)
         except Exception:

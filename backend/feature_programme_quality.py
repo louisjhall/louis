@@ -298,6 +298,7 @@ def validate_programme(
     """
     errors: list[str] = []
     warnings: list[str] = []
+    v2: Optional[dict[str, Any]] = None
 
     today = _dt.date.today().isoformat()
     horizon = (_dt.date.today() + _dt.timedelta(days=7)).isoformat()
@@ -364,6 +365,23 @@ def validate_programme(
             if pct > 0.5:
                 warnings.append(f"{no_rationale}/{len(workouts)} workouts have no 'why this session' rationale")
 
+        # 6. V2 Library health (Phase 5) — exercises must resolve to approved
+        # library entries. Excess substitutes signal a coverage gap.
+        try:
+            from feature_v2_resolver import summarise_workout_v2_health
+            v2 = summarise_workout_v2_health(workouts)
+        except Exception:
+            v2 = None
+        if v2 and v2.get("total_exercises"):
+            if v2["missing_exercise_id"]:
+                errors.append(
+                    f"{v2['missing_exercise_id']} exercise(s) not linked to the V2 Library"
+                )
+            if v2["substitute_ratio"] > 0.3:
+                warnings.append(
+                    f"{int(v2['substitute_ratio'] * 100)}% of exercises are substitutes — library coverage gap"
+                )
+
     return {
         "ok": not errors,
         "errors": errors,
@@ -376,6 +394,7 @@ def validate_programme(
             "phase": (context.get("phase") or {}).get("key"),
             "goal_key": context.get("goal_key"),
             "goal_label": context.get("goal_label"),
+            "v2_library": v2,
         },
     }
 
@@ -565,6 +584,12 @@ async def coach_programme_regenerate(
             if is_empty_or_llm_failure(workouts):
                 workouts = build_template_plan(client, roster) or []
                 used_template = bool(workouts)
+                if workouts:
+                    try:
+                        from feature_v2_resolver import apply_resolver_to_workouts
+                        await apply_resolver_to_workouts(workouts, user=client, roster=roster)
+                    except Exception:
+                        logger.exception("coach_regenerate: v2_resolver on fallback failed")
         except Exception:
             logger.exception("coach_regenerate: template fallback raised")
 

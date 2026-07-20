@@ -7933,6 +7933,11 @@ async def preview_readonly_guard(request, call_next):
             except Exception:
                 payload = None
             if payload and payload.get("preview"):
+                # Sandbox preview is fully writable by design — Louis needs to
+                # walk through onboarding, roster upload, workouts, etc. as a
+                # brand-new client. Only real-client impersonation stays R/O.
+                if payload.get("preview_kind") == "sandbox":
+                    return await call_next(request)
                 path = request.url.path
                 if path not in _PREVIEW_WRITE_ALLOWLIST:
                     from fastapi.responses import JSONResponse

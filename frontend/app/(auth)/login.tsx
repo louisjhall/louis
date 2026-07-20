@@ -8,13 +8,23 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/lib/auth";
+import { usePreview } from "@/src/lib/preview";
 import { theme } from "@/src/lib/theme";
 import { CrewFitLogo } from "@/src/components/Logo";
 
 const HERO = "https://images.unsplash.com/photo-1687992176093-6417a93fa3d0?crop=entropy&cs=srgb&fm=jpg&q=85";
 
+function errMsg(e: any): string {
+  if (!e) return "Login failed";
+  if (typeof e === "string") return e;
+  if (typeof e.message === "string") return e.message;
+  if (typeof e.detail === "string") return e.detail;
+  try { return JSON.stringify(e); } catch { return "Login failed"; }
+}
+
 export default function Login() {
   const { login } = useAuth();
+  const { preview, exit: exitPreview } = usePreview();
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === "web" && width >= 1024;
@@ -25,6 +35,11 @@ export default function Login() {
 
   const submit = async () => {
     setErr(null);
+    // If a preview session is active, always exit first so we don't try to
+    // log in while the preview JWT is stashed / write-guarded.
+    if (preview.active) {
+      try { await exitPreview(); } catch {}
+    }
     setLoading(true);
     try {
       const u = await login(email.trim(), password);
@@ -32,7 +47,7 @@ export default function Login() {
       else if (!u.onboarded) router.replace("/assessment");
       else router.replace("/(client)/home");
     } catch (e: any) {
-      setErr(e.message || "Login failed");
+      setErr(errMsg(e));
     } finally {
       setLoading(false);
     }
@@ -60,6 +75,26 @@ export default function Login() {
             <View style={styles.card}>
               <Text style={styles.h1}>Sign in</Text>
               <Text style={styles.sub}>Client or coach access</Text>
+
+              {preview.active ? (
+                <View style={styles.previewNotice} testID="login-preview-notice">
+                  <Text style={styles.previewNoticeT}>PREVIEW SESSION ACTIVE</Text>
+                  <Text style={styles.previewNoticeS}>
+                    You&apos;re still impersonating {preview.target?.email || preview.target?.name || "a preview client"}. Sign in below (or use the button) to return to your coach account — we&apos;ll exit preview automatically.
+                  </Text>
+                  <Pressable
+                    testID="login-exit-preview"
+                    onPress={async () => {
+                      try { await exitPreview(); } catch {}
+                      setEmail("louis@crewfit.net");
+                      setPassword("Louis123!");
+                    }}
+                    style={styles.previewNoticeBtn}
+                  >
+                    <Text style={styles.previewNoticeBtnT}>EXIT PREVIEW & FILL LOUIS LOGIN</Text>
+                  </Pressable>
+                </View>
+              ) : null}
 
               <Text style={styles.label}>EMAIL</Text>
               <TextInput
@@ -124,6 +159,9 @@ export default function Login() {
                   testID="dev-coach-login"
                   onPress={async () => {
                     setErr(null);
+                    if (preview.active) {
+                      try { await exitPreview(); } catch {}
+                    }
                     setLoading(true);
                     try {
                       const u = await login("louis@crewfit.net", "Louis123!");
@@ -133,7 +171,7 @@ export default function Login() {
                         router.replace("/(client)/home");
                       }
                     } catch (e: any) {
-                      setErr(e.message || "Dev login failed");
+                      setErr(errMsg(e));
                     } finally {
                       setLoading(false);
                     }
@@ -212,4 +250,9 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   devBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  previewNotice: { marginTop: 12, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: "#e5a337", backgroundColor: "rgba(229,163,55,0.10)" },
+  previewNoticeT: { color: "#e5a337", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  previewNoticeS: { color: theme.color.text, fontSize: 12, marginTop: 6, lineHeight: 17 },
+  previewNoticeBtn: { marginTop: 10, paddingVertical: 10, paddingHorizontal: 12, borderRadius: theme.radius.md, backgroundColor: "#e5a337", alignItems: "center" },
+  previewNoticeBtnT: { color: "#000", fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
 });

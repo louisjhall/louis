@@ -7267,6 +7267,57 @@ async def _startup():
             )
         except Exception:
             logger.exception("startup zombie cleanup failed for %s", coll)
+
+    # Roster jobs — the asyncio worker dies with the process on restart /
+    # deploy / crash. Any job still "processing" is a zombie; the user is
+    # staring at 94% forever. Mark it failed with an actionable message.
+    try:
+        stuck = await db.roster_jobs.update_many(
+            {"status": "processing"},
+            {"$set": {
+                "status": "failed",
+                "stage": "interrupted",
+                "message": "The server restarted while your plan was generating.",
+                "error": "Your generation was interrupted by a server restart. Please tap Retry to upload again — no data was lost.",
+                "updated_at": now_iso(),
+                "interrupted_by": "startup_sweep",
+            }},
+        )
+        if stuck.modified_count:
+            logger.info("startup: swept %d zombie roster_jobs", stuck.modified_count)
+    except Exception:
+        logger.exception("startup zombie cleanup failed for roster_jobs")
+
+    # Watchdog: any roster_job whose updated_at is >5 minutes old and still
+    # "processing" is orphaned. Kick off a background task that periodically
+    # sweeps these so users don't stare at a frozen bar in production either.
+    async def _roster_watchdog() -> None:
+        import asyncio as _asyncio
+        from datetime import datetime, timedelta, timezone as _tz
+        while True:
+            try:
+                await _asyncio.sleep(60)
+                cutoff = (datetime.now(_tz.utc) - timedelta(minutes=5)).isoformat()
+                r = await db.roster_jobs.update_many(
+                    {"status": "processing", "updated_at": {"$lt": cutoff}},
+                    {"$set": {
+                        "status": "failed",
+                        "stage": "interrupted",
+                        "message": "This generation stopped responding.",
+                        "error": "The AI generation timed out. Please tap Retry — this is usually a transient blip.",
+                        "updated_at": now_iso(),
+                        "interrupted_by": "watchdog",
+                    }},
+                )
+                if r.modified_count:
+                    logger.warning("roster watchdog: cleared %d stalled jobs", r.modified_count)
+            except Exception:
+                logger.exception("roster watchdog tick failed")
+    try:
+        _asyncio_module = __import__("asyncio")
+        _asyncio_module.create_task(_roster_watchdog())
+    except Exception:
+        logger.exception("could not launch roster watchdog")
     # Reset stale brand-image generation jobs (see feature_brand_images).
     try:
         from feature_brand_images import _reconcile_stale_jobs

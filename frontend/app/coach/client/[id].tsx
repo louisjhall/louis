@@ -468,22 +468,43 @@ export default function ClientDetail() {
             <Ionicons name="sparkles" size={16} color={theme.color.brand} />
             <Text style={[styles.actionText, { color: theme.color.brand }]}>DRAFT REPLY</Text>
           </Pressable>
+          {isAdmin ? (
+            <Pressable
+              testID="cd-admin-shortcut"
+              onPress={() => setTab("admin")}
+              style={[styles.actionBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: "#c85450" }]}
+            >
+              <Ionicons name="shield" size={16} color="#c85450" />
+              <Text style={[styles.actionText, { color: "#c85450" }]}>ADMIN</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* Slice 3: Tab bar. Sections below render according to the selected tab. */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 8, paddingRight: 12, gap: 6 }}>
-          {(["overview","calendar","roster","programme","workouts","checkins","messages","profile","admin"] as Tab[]).map((t) => {
-            const active = tab === t;
-            const showAdmin = t !== "admin" || isAdmin;
-            if (!showAdmin) return null;
+          {(isAdmin
+            ? ["overview","admin","calendar","roster","programme","workouts","checkins","messages","profile"]
+            : ["overview","calendar","roster","programme","workouts","checkins","messages","profile"]
+          ).map((t) => {
+            const active = tab === (t as Tab);
+            const isAdminTab = t === "admin";
             return (
               <Pressable
                 key={t}
                 testID={`cd-tab-${t}`}
-                onPress={() => setTab(t)}
-                style={[styles.cdTab, active && styles.cdTabActive]}
+                onPress={() => setTab(t as Tab)}
+                style={[
+                  styles.cdTab,
+                  active && styles.cdTabActive,
+                  isAdminTab && !active && { borderColor: "#c85450", backgroundColor: "rgba(200,84,80,0.08)" },
+                  isAdminTab && active && { backgroundColor: "#c85450", borderColor: "#c85450" },
+                ]}
               >
-                <Text style={[styles.cdTabText, active && { color: "#fff" }]}>{t.toUpperCase()}</Text>
+                <Text style={[
+                  styles.cdTabText,
+                  active && { color: "#fff" },
+                  isAdminTab && !active && { color: "#c85450" },
+                ]}>{t.toUpperCase()}</Text>
               </Pressable>
             );
           })}

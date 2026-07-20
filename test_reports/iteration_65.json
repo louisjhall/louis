@@ -1,0 +1,55 @@
+{
+  "summary": "Phase 5 P1 — Coach Demand Queue UI + Louis Review Modal + JIT media generation verified. BACKEND: 23/23 tests pass in /app/backend/tests/test_iter65_demand_queue.py. All new endpoints work as specified: GET /api/exercise-requests/grouped returns 200 with needed_soon/awaiting_review/history/counts keys and correctly buckets drafts (a draft whose workout_ids intersect workouts in [today, +7d] lands in needed_soon; drafts with no upcoming workout land in awaiting_review; status='rejected'/'merged' drafts land in history and NOT in the pending buckets). Non-coach client → 403. POST /api/exercise-requests/{id}/approve-quick with the full edit body flips status→Approved, approval_status→approved, visibility→client_visible, safe_for_programming→True, needs_louis_review→False, applies inline edits (rename via body.name → exercise_name; category/movement_pattern/equipment_type/difficulty_level all persisted), and when trigger_media=true creates a job row in db.exercise_content_images with status='generating' and media_triggered=true. trigger_media=false leaves the image collection untouched and returns media_triggered=false. 404 on missing id. 403 as client. POST /api/exercise-requests/{id}/generate-media queues a fresh image job when none exists AND still fires when the exercise already has primary_image_id / approved_image_status='Approved' (endpoint uses force=True internally — verified). _maybe_kick_media(ex_id, force=False) correctly no-ops for (a) primary_image present, (b) approved_image_status='Approved', (c) exercise status not in APPROVED_STATUSES. jit_media_sweep_once() with no upcoming approved-no-image exercises returns {queued:0, candidates:0}; when seeded with an Approved exercise + a workout in the next 7 days referencing it, sweep returns queued>=1 AND creates an exercise_content_images row for that exercise (verified end-to-end). feature_exercise_content.ex_approve regression: scope='mark_live' and scope='all' both set visibility='client_visible' + safe_for_programming=True; scope='images'/'coaching'/'video'/'needs_update' do NOT alter these flags (parametrised, all pass). P0 regression: /api/exercise-requests list, /api/exercise-content/{id}/reject, /api/exercise-content/{id}/merge all still return 200 and mutate the doc correctly.\n\nFRONTEND (Louis coach on mobile viewport 390x844): /coach/exercise-content header shows demand-queue-btn with amber badge count=2 (awaiting_review). Tapping it routes to /coach/demand-queue. Screen renders three testID tabs (dq-tab-needed_soon / dq-tab-awaiting_review / dq-tab-history) with per-tab counts. Cards render with dq-row-<id> — 2 cards visible in awaiting_review. Tapping a card opens the ReviewModal with all 5 field testIDs (dq-name/dq-category/dq-difficulty/dq-movement/dq-equipment) and all 5 action testIDs (dq-approve / dq-approve-edit / dq-reject / dq-merge / dq-gen-media) present. Reject sub-flow: dq-reject switches to reject mode; dq-reject-reason, dq-reject-cancel, dq-reject-confirm all present.\n\nONE FRONTEND BUG FOUND — MERGE SUB-FLOW CRASHES: Tapping dq-merge triggers an unhandled TypeError \"mergeResults.slice is not a function\" in demand-queue.tsx line ~421. Root cause: the code at line 284 does `setMergeResults(res?.items || res || [])` but /api/exercise-content actually returns `{exercises: [...], count: N}` (verified via curl), so neither .items nor a raw array is present — mergeResults is set to the response object itself, which does not have .slice. Because the render then throws, the merge sub-flow's testIDs (dq-merge-search, dq-merge-cancel, dq-merge-target-<id>) never mount and the modal is effectively broken until the user reopens it. One-line fix: `setMergeResults(res?.exercises || res?.items || [])`.\n\nNo React Native red-screen. No deprecated packages detected in demand-queue.tsx (uses expo-router, react-native, @expo/vector-icons, react-native-safe-area-context — all current). Only pre-existing 'shadow*'/'textShadow*' style-deprecation warnings from RN Web.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "demand-queue.tsx ReviewModal merge sub-flow",
+        "issue": "Tapping the 'MERGE' action throws 'TypeError: mergeResults.slice is not a function' and the merge sub-flow never mounts. /api/exercise-content returns `{exercises:[...], count:N}` but the modal expects `res.items` or a raw array. Fix at line 284: change `setMergeResults(res?.items || res || [])` → `setMergeResults(res?.exercises || res?.items || [])`.",
+        "testID": "dq-merge / dq-merge-search / dq-merge-target-<id>",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Coach → Demand Queue → Merge → Search existing approved exercises → tap target",
+        "issue": "Merge target list is never populated because response parsing crashes before the search input mounts.",
+        "affected_testIDs": ["dq-merge", "dq-merge-search", "dq-merge-cancel", "dq-merge-target-<id>"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter65_demand_queue.py",
+    "/app/test_reports/pytest/iter65_demand_queue.xml"
+  ],
+  "action_items": [
+    "HIGH — /app/frontend/app/coach/demand-queue.tsx line 284: fix mergeResults parsing so the merge sub-flow doesn't crash. Change `setMergeResults(res?.items || res || [])` to `setMergeResults(res?.exercises || res?.items || [])`. Verified /api/exercise-content shape is `{exercises:[...], count:N}` via direct curl.",
+    "LOW — Consider adding a testID to the amber badge on demand-queue-btn (e.g. `dq-badge-count`) so tests can assert the outstanding-count number directly rather than the aggregate button.",
+    "LOW — feature_v2_resolver.exercise_requests_grouped includes a 'recent' list (last 15 by updated_at) that isn't consumed by the frontend and adds a noticeable payload. Either surface it in a 4th tab or drop it from the response.",
+    "LOW — approve-quick returns the full exercise doc — including request_history which can be large after many workouts. Consider stripping request_history/{content_status.image_metadata} before serialising to keep the demand-queue reload snappy."
+  ],
+  "critical_code_review_comments": [
+    "demand-queue.tsx line 284: `setMergeResults(res?.items || res || [])` — if the API returns an object (which it does: `{exercises, count}`) this falls through to setting mergeResults to the object itself, which lacks .slice. Fix as above.",
+    "demand-queue.tsx line 288: merge search useEffect depends on `[mergeSearch, mode]` — every keystroke fires a network call. Consider debouncing 250-350ms.",
+    "feature_v2_resolver._maybe_kick_media constructs the image job doc inline (line 711-717) and duplicates the shape used elsewhere in feature_exercise_content. Consider extracting a shared helper so the two entry points don't drift.",
+    "feature_v2_resolver.jit_media_sweep_once caps at 20 per pass with a hard slice on list(upcoming_ids)[:20] — the ordering is set-iteration order, so which 20 are picked is non-deterministic. Consider sorting by workout date ascending so earliest scheduled exercises are prioritised.",
+    "feature_v2_resolver.exercise_request_quick_approve sets both `approved_at` AND `reviewed_at` to now_iso() on every call — makes reviewer_at unusable as a distinct signal. Fine for MVP but flag for later cleanup."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter65_demand_queue.py (new, 23 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 in iter65 suite; iter64 regression suite unaffected)",
+    "frontend": "~85% — routing, tabs, cards, review modal fields and reject sub-flow work; merge sub-flow crashes on open due to response parsing bug"
+  },
+  "seed_data_creation": "test_iter65_demand_queue.py inserts throwaway rows in db.exercises_v2 (test_tag='iter65_demand_queue' with id prefix 'TEST_iter65_demand_queue_') and matching db.workouts docs marked _iter65_test=True. Every test cleans up in a finally block via _cleanup(mongo). db.exercise_content_images entries created by the JIT trigger are also removed on teardown. No lingering TEST_ documents.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent applies the one-line fix to demand-queue.tsx line 284, re-run just the frontend flow: log in as louis@crewfit.net / Louis123!, go to /coach/demand-queue, tap any card → tap MERGE → confirm dq-merge-search input renders AND typing a common name like 'squat' populates at least one dq-merge-target-<id> row. Backend suite (test_iter65_demand_queue.py) does not need to re-run — no backend changes are required. If desired, extend the frontend test to actually approve a draft end-to-end by tapping dq-approve and asserting the card disappears from the queue on reload.",
+  "rca_of_issue": "Merge sub-flow crash RCA: /api/exercise-content is served by feature_exercise_content and returns `{exercises: [...], count: <int>}` (verified via `curl -H 'Authorization: Bearer <louis>' /api/exercise-content?q=squat&approved_only=true` → `{'exercises':[...], 'count':N}`). The ReviewModal component at /app/frontend/app/coach/demand-queue.tsx line 284 does `setMergeResults(res?.items || res || [])`. Since `res.items` is undefined and `res` itself is truthy (it's the response object), mergeResults is set to the object `{exercises:[...],count:N}`. When the render body runs `mergeResults.slice(0, 15).map(...)` at line 421, Object.prototype has no .slice → TypeError propagates up and unmounts the modal children BEFORE dq-merge-search / dq-merge-cancel are ever rendered. Mitigation: change to `setMergeResults(res?.exercises || res?.items || [])` (single-line fix). Optionally add a defensive `Array.isArray(mergeResults) ? mergeResults.slice(...) : []` at line 421 to survive future API shape changes."
+}

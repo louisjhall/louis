@@ -467,6 +467,9 @@ async def ex_approve(ex_id: str, body: ApproveBody = ApproveBody(),
         updates["approved_video_status"] = "Approved"
     elif scope == "mark_live":
         updates["status"] = "Live"; updates["approval_status"] = "approved"
+        # Phase 5: mark Live exercises as client-safe by default.
+        updates["visibility"] = "client_visible"
+        updates["safe_for_programming"] = True
     elif scope == "needs_update":
         updates["status"] = "Needs Update"
     elif scope == "all":
@@ -477,6 +480,10 @@ async def ex_approve(ex_id: str, body: ApproveBody = ApproveBody(),
         cs["images"] = True; cs["video"] = True
         updates["content_status"] = cs
         updates["status"] = "Approved"; updates["approval_status"] = "approved"
+        # Phase 5: full approvals also flip client-safety flags so the
+        # v2_resolver immediately makes the exercise selectable.
+        updates["visibility"] = "client_visible"
+        updates["safe_for_programming"] = True
     else:
         raise HTTPException(400, "invalid scope")
     await db.exercises_v2.update_one({"id": ex_id}, {"$set": updates})

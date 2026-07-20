@@ -536,6 +536,246 @@ async def exercise_requests_list(
     return {"requests": rows, "count": len(rows)}
 
 
+@api.get("/exercise-requests/grouped")
+async def exercise_requests_grouped(admin: dict = Depends(require_role("coach"))):
+    """Return draft requests bucketed by urgency for the coach demand queue:
+      - needed_soon: draft requests referenced by workouts scheduled in the
+        next 7 days (highest urgency)
+      - awaiting_review: everything else with status='draft_requested'
+      - recent: latest 15 drafts (any status) for context
+      - history: rejected + merged
+    Each list is capped for UI responsiveness.
+    """
+    import datetime as _dt
+
+    drafts = await db.exercises_v2.find(
+        {"status": {"$in": list(DRAFT_STATUSES)}}, {"_id": 0}
+    ).sort([("request_count", -1), ("updated_at", -1)]).to_list(200)
+
+    # Which drafts are referenced by a workout in the next 7 days?
+    horizon_iso = (_dt.date.today() + _dt.timedelta(days=7)).isoformat()
+    today_iso = _dt.date.today().isoformat()
+    upcoming_workout_ids: set[str] = set()
+    try:
+        cur = db.workouts.find(
+            {"date": {"$gte": today_iso, "$lte": horizon_iso}}, {"_id": 0, "id": 1}
+        )
+        async for w in cur:
+            upcoming_workout_ids.add(w.get("id"))
+    except Exception:
+        pass
+
+    def _enrich(r: dict) -> dict:
+        r = dict(r)
+        r["clients_affected"] = len(set(r.get("requested_for_user_ids") or []))
+        r["programmes_affected"] = len(set(r.get("requested_for_programme_ids") or []))
+        return r
+
+    needed_soon: list[dict] = []
+    awaiting_review: list[dict] = []
+    for r in drafts:
+        ref_ids = set(r.get("requested_for_workout_ids") or [])
+        if ref_ids & upcoming_workout_ids:
+            needed_soon.append(_enrich(r))
+        else:
+            awaiting_review.append(_enrich(r))
+
+    recent = [
+        _enrich(r) for r in await db.exercises_v2.find(
+            {}, {"_id": 0}
+        ).sort([("updated_at", -1)]).to_list(15)
+    ]
+    history = [
+        _enrich(r) for r in await db.exercises_v2.find(
+            {"status": {"$in": ["rejected", "merged"]}}, {"_id": 0}
+        ).sort([("reviewed_at", -1)]).to_list(30)
+    ]
+
+    return {
+        "needed_soon": needed_soon,
+        "awaiting_review": awaiting_review,
+        "recent": recent,
+        "history": history,
+        "counts": {
+            "needed_soon": len(needed_soon),
+            "awaiting_review": len(awaiting_review),
+            "history": len(history),
+            "total_pending": len(drafts),
+        },
+    }
+
+
+class QuickApproveBody(BaseModel):
+    name: Optional[str] = None                 # optional rename
+    category: Optional[str] = None
+    movement_pattern: Optional[str] = None
+    body_area: Optional[str] = None
+    equipment_type: Optional[list[str]] = None
+    difficulty_level: Optional[str] = None
+    coaching_points: Optional[list[str]] = None
+    common_mistakes: Optional[list[str]] = None
+    regressions: Optional[list[str]] = None
+    progressions: Optional[list[str]] = None
+    contraindications: Optional[list[str]] = None
+    tags: Optional[list[str]] = None
+    trigger_media: bool = True                 # kick JIT media on approval
+
+
+@api.post("/exercise-requests/{ex_id}/approve-quick")
+async def exercise_request_quick_approve(
+    ex_id: str,
+    body: QuickApproveBody = QuickApproveBody(),
+    admin: dict = Depends(require_role("coach")),
+):
+    """Quick approve path used by the Coach Demand Queue.
+
+    Flips the draft to Approved + client_visible + safe_for_programming, applies
+    any inline edits Louis made, and (if requested) triggers just-in-time media
+    generation so the exercise ships with a demo image."""
+    ex = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0})
+    if not ex:
+        raise HTTPException(404, "Not found")
+    now = now_iso()
+    updates: dict[str, Any] = {
+        "status": "Approved",
+        "approval_status": "approved",
+        "visibility": "client_visible",
+        "safe_for_programming": True,
+        "needs_louis_review": False,
+        "reviewed_by": admin["id"],
+        "reviewed_at": now,
+        "approved_at": now,
+        "approved_by": admin["id"],
+        "updated_at": now,
+    }
+    inline = body.model_dump(exclude_none=True, exclude={"trigger_media"})
+    if body.name:
+        inline["exercise_name"] = body.name
+        inline.pop("name", None)
+    for k, v in inline.items():
+        updates[k] = v
+    await db.exercises_v2.update_one({"id": ex_id}, {"$set": updates})
+
+    triggered_media = False
+    if body.trigger_media:
+        triggered_media = await _maybe_kick_media(ex_id)
+
+    ex2 = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0})
+    return {"exercise": ex2, "media_triggered": triggered_media}
+
+
+@api.post("/exercise-requests/{ex_id}/generate-media")
+async def exercise_request_generate_media(
+    ex_id: str,
+    admin: dict = Depends(require_role("coach")),
+):
+    """Manual JIT media trigger — Louis can force-queue an image for an
+    approved exercise from the Demand Queue."""
+    triggered = await _maybe_kick_media(ex_id, force=True)
+    return {"media_triggered": triggered}
+
+
+# ---------------------------------------------------------------------------
+# Just-in-time media generation
+# ---------------------------------------------------------------------------
+
+async def _has_primary_image(ex: dict) -> bool:
+    """Cheap check — is a demo image already available for this exercise?"""
+    if ex.get("primary_image") or ex.get("images"):
+        return True
+    if (ex.get("approved_image_status") or "").lower() == "approved":
+        return True
+    if (ex.get("content_status") or {}).get("images"):
+        return True
+    return False
+
+
+async def _maybe_kick_media(ex_id: str, *, force: bool = False) -> bool:
+    """If the exercise is approved and has no demo media yet, fire a background
+    task through the existing exercise-content image pipeline so it lands in
+    the same storage layout the ExerciseThumbnail component reads.
+    Non-fatal: returns False on any error."""
+    ex = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0})
+    if not ex:
+        return False
+    if not force and await _has_primary_image(ex):
+        return False
+    if ex.get("status") not in APPROVED_STATUSES and not force:
+        return False
+    try:
+        import asyncio as _asyncio
+        from feature_exercise_content import _build_ex_prompt, _run_image_job
+        prompt = _build_ex_prompt(ex, "primary", None, False)
+        image_id = new_id()
+        now = now_iso()
+        await db.exercise_content_images.insert_one({
+            "id": image_id, "exercise_id": ex_id, "slot": "primary",
+            "requested_slot": "primary", "gender": "male",
+            "prompt": prompt, "status": "generating",
+            "storage_path": None, "size_bytes": None, "mime": None,
+            "created_by": "jit_media", "created_at": now, "updated_at": now,
+        })
+        await db.exercises_v2.update_one(
+            {"id": ex_id},
+            {"$set": {"primary_image_id": image_id,
+                      "demo_slots.primary": image_id,
+                      "approved_image_status": "Needs Review",
+                      "content_status.images": True,
+                      "updated_at": now}},
+        )
+        _asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=True))
+        logger.info("JIT media queued for %s (image_id=%s)", ex_id, image_id)
+        return True
+    except Exception:
+        logger.exception("JIT media pipeline failed for %s", ex_id)
+        return False
+
+
+async def jit_media_sweep_once() -> dict[str, int]:
+    """One pass of the scheduled sweep. For every approved exercise WITHOUT a
+    demo image that is referenced by a workout in the next 7 days, kick a
+    background media generation. Idempotent — checks image presence first."""
+    import datetime as _dt
+
+    horizon_iso = (_dt.date.today() + _dt.timedelta(days=7)).isoformat()
+    today_iso = _dt.date.today().isoformat()
+
+    # Collect exercise_ids referenced by upcoming workouts.
+    upcoming_ids: set[str] = set()
+    async for w in db.workouts.find(
+        {"date": {"$gte": today_iso, "$lte": horizon_iso}},
+        {"_id": 0, "exercises": 1},
+    ):
+        for e in (w.get("exercises") or []):
+            if e.get("exercise_id"):
+                upcoming_ids.add(e["exercise_id"])
+    if not upcoming_ids:
+        return {"queued": 0, "candidates": 0}
+
+    triggered = 0
+    for ex_id in list(upcoming_ids)[:20]:  # cap per sweep to avoid spikes
+        try:
+            ok = await _maybe_kick_media(ex_id, force=False)
+            if ok:
+                triggered += 1
+        except Exception:
+            continue
+    return {"queued": triggered, "candidates": len(upcoming_ids)}
+
+
+async def jit_media_sweep_loop() -> None:
+    """Background loop: run the sweep every 15 minutes. Cancels cleanly."""
+    import asyncio as _asyncio
+    while True:
+        try:
+            stats = await jit_media_sweep_once()
+            if stats.get("queued"):
+                logger.info("JIT media sweep: %s", stats)
+        except Exception:
+            logger.exception("JIT media sweep loop error")
+        await _asyncio.sleep(15 * 60)
+
+
 class RejectBody(BaseModel):
     reason: Optional[str] = None
 

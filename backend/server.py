@@ -7005,6 +7005,14 @@ async def _startup():
         await backfill_client_flags_once()
     except Exception:
         logger.exception("v2_resolver backfill on startup failed")
+    # Phase 5 P1 — just-in-time media sweep: every 15 minutes, look for
+    # approved exercises referenced by upcoming workouts and queue image
+    # generation for any that still lack a demo image.
+    try:
+        from feature_v2_resolver import jit_media_sweep_loop
+        asyncio.create_task(jit_media_sweep_loop())
+    except Exception:
+        logger.exception("JIT media sweep failed to start")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 

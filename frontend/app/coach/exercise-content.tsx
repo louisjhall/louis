@@ -84,6 +84,19 @@ export default function ExerciseContentScreen() {
   const [showEditVideo, setShowEditVideo] = useState(false);
   const [showEditInstr, setShowEditInstr] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  // Phase 5 P1: pending exercise-request count for the Demand Queue pill.
+  const [pendingRequests, setPendingRequests] = useState<number>(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const g = await api<any>(`/exercise-requests/grouped`);
+        if (cancelled) return;
+        setPendingRequests((g?.counts?.needed_soon || 0) + (g?.counts?.awaiting_review || 0));
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const [showLog, setShowLog] = useState(false);
   const [logRows, setLogRows] = useState<any[]>([]);
   const [logLoading, setLogLoading] = useState(false);
@@ -297,7 +310,20 @@ export default function ExerciseContentScreen() {
           <Ionicons name="chevron-back" size={24} color={theme.color.text} />
         </Pressable>
         <Text style={styles.topT}>EXERCISE CONTENT</Text>
-        <View style={{ flexDirection: "row", gap: 14 }}>
+        <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
+          <Pressable
+            testID="demand-queue-btn"
+            onPress={() => router.push("/coach/demand-queue" as any)}
+            hitSlop={12}
+            style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+          >
+            <Ionicons name="git-pull-request" size={20} color={pendingRequests > 0 ? "#e5a337" : theme.color.brand} />
+            {pendingRequests > 0 ? (
+              <View style={{ backgroundColor: "#e5a337", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 8, minWidth: 18, alignItems: "center" }}>
+                <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{pendingRequests}</Text>
+              </View>
+            ) : null}
+          </Pressable>
           <Pressable onPress={() => setShowCreate(true)} hitSlop={12} disabled={!!busy} testID="new-exercise">
             <Ionicons name="add-circle" size={22} color={theme.color.brand} />
           </Pressable>

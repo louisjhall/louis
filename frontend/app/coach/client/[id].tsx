@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Alert, Modal, TextInput } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -60,22 +60,34 @@ export default function ClientDetail() {
   const [changeLog, setChangeLog] = useState<any[]>([]);
   const [habitsData, setHabitsData] = useState<any>(null);
   const [standbyData, setStandbyData] = useState<any>(null);
+  const [programme, setProgramme] = useState<any>(null);
+  const [next7, setNext7] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [regenNote, setRegenNote] = useState("");
+  const [regenerating, setRegenerating] = useState(false);
+  const [approving, setApproving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [detail, ctrl, log, habits, standby] = await Promise.all([
+      const [detail, ctrl, log, habits, standby, prog, hist] = await Promise.all([
         api<any>(`/coach/clients/${id}`),
         api<{ controls: Controls }>(`/coach/clients/${id}/controls`).catch(() => ({ controls: null as any })),
         api<{ entries: any[] }>(`/coach/clients/${id}/change-log`).catch(() => ({ entries: [] })),
         api<any>(`/coach/clients/${id}/habits`).catch(() => null),
         api<any>(`/coach/clients/${id}/standby`).catch(() => null),
+        api<any>(`/coach/clients/${id}/programme`).catch(() => null),
+        api<any>(`/coach/clients/${id}/programme/history`).catch(() => ({ programmes: [] })),
       ]);
       setData(detail);
       if (ctrl?.controls) setControls(ctrl.controls);
       setChangeLog(log.entries || []);
       setHabitsData(habits);
       setStandbyData(standby);
+      setProgramme(prog?.programme || null);
+      setNext7(prog?.next_7_days || []);
+      setHistory(hist?.programmes || []);
     } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -97,6 +109,47 @@ export default function ClientDetail() {
       setControls(prev);
       Alert.alert("Couldn't save", e?.message || "Try again");
     } finally { setSavingCtrl(false); }
+  };
+
+  const doRegenerate = async () => {
+    setRegenerating(true);
+    try {
+      const res = await api<any>(`/coach/clients/${id}/programme/regenerate`, {
+        method: "POST",
+        body: { force_fresh_llm: true, note: regenNote || null },
+      });
+      setRegenOpen(false);
+      setRegenNote("");
+      Alert.alert(
+        "Regeneration started",
+        `We're rebuilding ${res.workouts_scheduled} days of workouts on the active roster. Refresh in ~30–60s.`,
+      );
+      setTimeout(load, 30000); // auto-refresh after ~30s
+    } catch (e: any) {
+      Alert.alert("Regenerate failed", e?.message || "Try again in a moment.");
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  const doApproveProgramme = async () => {
+    if (!programme) return;
+    setApproving(true);
+    try {
+      const res = await api<any>(`/coach/clients/${id}/programme/approve`, {
+        method: "POST",
+        body: { approve: true },
+      });
+      setProgramme(res.programme || programme);
+      Alert.alert(
+        "Programme approved",
+        `${res.workouts_touched || 0} workouts cleared of the review flag.`,
+      );
+    } catch (e: any) {
+      Alert.alert("Approval failed", e?.message || "Try again.");
+    } finally {
+      setApproving(false);
+    }
   };
 
   if (loading || !data) {
@@ -137,6 +190,135 @@ export default function ClientDetail() {
             <Ionicons name="sparkles" size={16} color={theme.color.brand} />
             <Text style={[styles.actionText, { color: theme.color.brand }]}>DRAFT REPLY</Text>
           </Pressable>
+        </View>
+
+        {/* Phase 4: Programme summary + Regenerate + Approve */}
+        <View testID="programme-card" style={[styles.card, styles.progCard, programme?.validation_status === "needs_review" && !programme?.coach_approved && styles.progCardReview]}>
+          <View style={styles.progHeader}>
+            <Text style={styles.sect}>PROGRAMME</Text>
+            {programme?.validation_status === "needs_review" && !programme?.coach_approved ? (
+              <View style={[styles.progStatusPill, { backgroundColor: theme.color.amber }]}>
+                <Text style={styles.progStatusPillText}>NEEDS REVIEW</Text>
+              </View>
+            ) : programme?.coach_approved ? (
+              <View style={[styles.progStatusPill, { backgroundColor: theme.color.green }]}>
+                <Text style={styles.progStatusPillText}>APPROVED</Text>
+              </View>
+            ) : programme ? (
+              <View style={[styles.progStatusPill, { backgroundColor: theme.color.green }]}>
+                <Text style={styles.progStatusPillText}>OK</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {programme ? (
+            <>
+              <View style={styles.progRow}>
+                <View style={styles.progCell}>
+                  <Text style={styles.progLabel}>GOAL</Text>
+                  <Text style={styles.progValue}>{programme.goal_label || programme.goal_key || "—"}</Text>
+                </View>
+                <View style={styles.progCell}>
+                  <Text style={styles.progLabel}>PHASE</Text>
+                  <Text style={styles.progValue}>{programme.phase?.label || "—"}</Text>
+                </View>
+              </View>
+              <View style={styles.progRow}>
+                <View style={styles.progCell}>
+                  <Text style={styles.progLabel}>WEEK</Text>
+                  <Text style={styles.progValue}>{programme.week_index || "—"}</Text>
+                </View>
+                <View style={styles.progCell}>
+                  <Text style={styles.progLabel}>TARGET</Text>
+                  <Text style={styles.progValue}>
+                    {programme.target_sessions_per_week ? `${programme.target_sessions_per_week}×/week` : "—"}
+                  </Text>
+                </View>
+              </View>
+              {programme.focus_copy ? (
+                <Text style={styles.progFocus}>{programme.focus_copy}</Text>
+              ) : null}
+              {programme.roster_context_summary ? (
+                <View style={styles.progContext}>
+                  <Text style={styles.progLabel}>ROSTER CONTEXT</Text>
+                  <Text style={styles.progContextText}>
+                    {typeof programme.roster_context_summary === "string"
+                      ? programme.roster_context_summary
+                      : JSON.stringify(programme.roster_context_summary)}
+                  </Text>
+                </View>
+              ) : null}
+              {programme.validation_errors?.length > 0 ? (
+                <View style={styles.progContext}>
+                  <Text style={[styles.progLabel, { color: theme.color.amber }]}>VALIDATION FLAGS</Text>
+                  {programme.validation_errors.map((err: string, i: number) => (
+                    <Text key={i} style={styles.progErrText}>· {err}</Text>
+                  ))}
+                </View>
+              ) : null}
+
+              {history.length > 1 ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={styles.progLabel}>HISTORY</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingTop: 6 }}>
+                    {history.map((h: any) => (
+                      <View
+                        key={h.id}
+                        style={[
+                          styles.histChip,
+                          h.id === programme.id && { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
+                        ]}
+                      >
+                        <Text style={styles.histChipTop}>V{h.version_number} · WK {h.week_index || "—"}</Text>
+                        <Text style={styles.histChipMid}>{h.phase?.label || "—"}</Text>
+                        <Text style={styles.histChipSub}>
+                          {h.validation_status === "needs_review" ? "REVIEW" : h.coach_approved ? "APPROVED" : "OK"}
+                        </Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              ) : null}
+
+              <View style={styles.progActions}>
+                {programme.validation_status === "needs_review" && !programme.coach_approved ? (
+                  <Pressable
+                    testID="programme-approve"
+                    onPress={doApproveProgramme}
+                    disabled={approving}
+                    style={[styles.progBtnAlt, approving && { opacity: 0.55 }]}
+                  >
+                    {approving ? <ActivityIndicator color={theme.color.brand} /> : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={14} color={theme.color.green} />
+                        <Text style={styles.progBtnAltText}>APPROVE ANYWAY</Text>
+                      </>
+                    )}
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  testID="programme-regenerate"
+                  onPress={() => setRegenOpen(true)}
+                  style={styles.progBtn}
+                >
+                  <Ionicons name="refresh" size={14} color="#fff" />
+                  <Text style={styles.progBtnText}>REGENERATE PLAN</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <View style={{ paddingVertical: 12 }}>
+              <Text style={styles.progEmpty}>No programme record yet. It's created automatically when the client uploads or confirms a roster.</Text>
+              <Pressable
+                testID="programme-regenerate-empty"
+                onPress={() => setRegenOpen(true)}
+                style={[styles.progBtn, { marginTop: 12, alignSelf: "flex-start" }]}
+              >
+                <Ionicons name="refresh" size={14} color="#fff" />
+                <Text style={styles.progBtnText}>GENERATE PLAN</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
 
         {controls ? (
@@ -364,6 +546,43 @@ export default function ClientDetail() {
           </View>
         ) : null}
       </ScrollView>
+
+      <Modal visible={regenOpen} transparent animationType="fade" onRequestClose={() => setRegenOpen(false)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Regenerate this client&apos;s plan?</Text>
+            <Text style={styles.modalBody}>
+              We&apos;ll rebuild the workouts on the active roster using the latest
+              programme context. Locked or completed sessions are preserved.
+            </Text>
+            <Text style={[styles.progLabel, { marginTop: 12 }]}>COACH NOTE (OPTIONAL)</Text>
+            <TextInput
+              testID="regen-note"
+              style={styles.modalInput}
+              value={regenNote}
+              onChangeText={setRegenNote}
+              placeholder="e.g. Adjust to new base after Dubai transfer"
+              placeholderTextColor={theme.color.textDim}
+              multiline
+            />
+            <View style={styles.modalRow}>
+              <Pressable testID="regen-cancel" style={styles.modalBtnGhost} onPress={() => setRegenOpen(false)}>
+                <Text style={styles.modalBtnGhostText}>CANCEL</Text>
+              </Pressable>
+              <Pressable
+                testID="regen-confirm"
+                style={[styles.modalBtn, regenerating && { opacity: 0.6 }]}
+                onPress={doRegenerate}
+                disabled={regenerating}
+              >
+                {regenerating ? <ActivityIndicator color="#fff" /> : (
+                  <Text style={styles.modalBtnText}>REGENERATE</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -446,4 +665,38 @@ const styles = StyleSheet.create({
   blockMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 4 },
   sbBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
   sbBadgeT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  // Phase 4: Programme card
+  progCard: { borderColor: theme.color.brand, borderWidth: 1 },
+  progCardReview: { borderColor: theme.color.amber, borderWidth: 2 },
+  progHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  progStatusPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.sm },
+  progStatusPillText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  progRow: { flexDirection: "row", gap: 12, marginTop: 8 },
+  progCell: { flex: 1 },
+  progLabel: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1.5 },
+  progValue: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 2 },
+  progFocus: { color: theme.color.textMuted, fontSize: 12, marginTop: 10, lineHeight: 16, fontStyle: "italic" },
+  progContext: { marginTop: 10, padding: 10, backgroundColor: theme.color.surface, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border },
+  progContextText: { color: theme.color.text, fontSize: 12, marginTop: 4, lineHeight: 16 },
+  progErrText: { color: theme.color.textMuted, fontSize: 12, marginTop: 2 },
+  progActions: { flexDirection: "row", gap: 8, marginTop: 14 },
+  progBtn: { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, backgroundColor: theme.color.brand, paddingVertical: 12, borderRadius: theme.radius.md },
+  progBtnText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  progBtnAlt: { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.green, paddingVertical: 12, borderRadius: theme.radius.md },
+  progBtnAltText: { color: theme.color.green, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
+  progEmpty: { color: theme.color.textMuted, fontSize: 13, lineHeight: 18 },
+  histChip: { minWidth: 100, padding: 8, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface },
+  histChipTop: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  histChipMid: { color: theme.color.text, fontSize: 12, fontWeight: "800", marginTop: 3 },
+  histChipSub: { color: theme.color.textDim, fontSize: 9, fontWeight: "700", letterSpacing: 1, marginTop: 3 },
+  modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center", padding: theme.space.lg },
+  modalCard: { width: "100%", maxWidth: 420, backgroundColor: theme.color.surface, borderRadius: theme.radius.md, padding: theme.space.lg, borderWidth: 1, borderColor: theme.color.border },
+  modalTitle: { color: theme.color.text, fontSize: 18, fontWeight: "900" },
+  modalBody: { color: theme.color.textMuted, fontSize: 13, marginTop: 8, lineHeight: 18 },
+  modalInput: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.text, padding: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 13, marginTop: 6, minHeight: 60 },
+  modalRow: { flexDirection: "row", gap: 8, marginTop: 16 },
+  modalBtn: { flex: 1, backgroundColor: theme.color.brand, paddingVertical: 12, borderRadius: theme.radius.md, alignItems: "center" },
+  modalBtnText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 12 },
+  modalBtnGhost: { flex: 1, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12, borderRadius: theme.radius.md, alignItems: "center" },
+  modalBtnGhostText: { color: theme.color.text, fontWeight: "800", letterSpacing: 1.5, fontSize: 12 },
 });

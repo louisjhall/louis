@@ -90,6 +90,23 @@ export default function Clients() {
                     {!exp.expired && exp.coverage === "critical" && <View style={[styles.pendingPill, { backgroundColor: theme.color.amber }]}><Text style={styles.pendingText}>{exp.days_remaining}D LEFT</Text></View>}
                   </View>
                 </View>
+                {cl.programme_pill ? (
+                  <View style={styles.progPillRow}>
+                    <View style={[styles.progPill, cl.programme_pill.validation_status === "needs_review" && !cl.programme_pill.coach_approved && styles.progPillReview]}>
+                      <Text style={styles.progPillText} numberOfLines={1}>
+                        {(cl.programme_pill.goal_label || "Programme").toUpperCase()}
+                        {cl.programme_pill.phase_label ? ` · ${cl.programme_pill.phase_label}` : ""}
+                        {cl.programme_pill.week_index ? ` · WK ${cl.programme_pill.week_index}` : ""}
+                        {cl.programme_pill.target_sessions_per_week ? ` · ${cl.programme_pill.target_sessions_per_week}×/WK` : ""}
+                      </Text>
+                    </View>
+                    {cl.programme_pill.validation_status === "needs_review" && !cl.programme_pill.coach_approved ? (
+                      <Text style={styles.progFlag}>NEEDS REVIEW</Text>
+                    ) : cl.programme_pill.coach_approved ? (
+                      <Text style={styles.progOk}>APPROVED</Text>
+                    ) : null}
+                  </View>
+                ) : null}
                 {days.length > 0 && (
                   <View style={styles.loadRow}>
                     {days.slice(0, 14).map((d: any, i: number) => (
@@ -155,4 +172,14 @@ const styles = StyleSheet.create({
   actionRow: { marginTop: 8, borderTopWidth: 1, borderTopColor: theme.color.divider, paddingTop: 8, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   metaSmall: { color: theme.color.amber, fontSize: 10, fontWeight: "700", letterSpacing: 1 },
   action: { color: theme.color.brand, letterSpacing: 2, fontWeight: "800", fontSize: 11 },
+  progPillRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  progPill: {
+    flex: 1, backgroundColor: theme.color.brandTint || "rgba(59,130,246,0.08)",
+    borderWidth: 1, borderColor: theme.color.brand,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm,
+  },
+  progPillReview: { borderColor: theme.color.amber, backgroundColor: "rgba(229,163,55,0.08)" },
+  progPillText: { color: theme.color.text, fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  progFlag: { color: theme.color.amber, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  progOk: { color: theme.color.green, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
 });

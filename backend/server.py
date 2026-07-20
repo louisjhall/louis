@@ -5932,6 +5932,24 @@ async def _client_summary(u: dict) -> dict:
     # workouts scheduled up to yesterday not completed
     y = today_str()
     missed = await db.workouts.count_documents({"user_id": u["id"], "date": {"$lt": y}, "completed": {"$ne": True}})
+    # Phase 4: attach a compact programme pill so the coach list can scan
+    # goal / phase / week / target-sessions at a glance without opening the
+    # client detail page.
+    prog = await db.programmes.find_one({"user_id": u["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    programme_pill = None
+    if prog:
+        phase = prog.get("phase") or {}
+        programme_pill = {
+            "goal_key": prog.get("goal_key"),
+            "goal_label": prog.get("goal_label"),
+            "phase_key": phase.get("key") if isinstance(phase, dict) else None,
+            "phase_label": phase.get("label") if isinstance(phase, dict) else None,
+            "week_index": prog.get("week_index"),
+            "target_sessions_per_week": prog.get("target_sessions_per_week"),
+            "validation_status": prog.get("validation_status"),
+            "coach_approved": bool(prog.get("coach_approved")),
+            "updated_at": prog.get("updated_at") or prog.get("created_at"),
+        }
     return {
         **u,
         "latest_roster": r or None,
@@ -5939,6 +5957,7 @@ async def _client_summary(u: dict) -> dict:
         "pending_approvals": pending,
         "red_days": red_days,
         "missed_workouts": missed,
+        "programme_pill": programme_pill,
     }
 
 

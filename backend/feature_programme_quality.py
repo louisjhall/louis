@@ -43,6 +43,8 @@ from server import (
     new_id,
     now_iso,
     logger,
+    _generate_month,
+    _merge_variants,
 )
 
 
@@ -478,3 +480,195 @@ async def coach_programme_for_client(client_id: str, coach: dict = Depends(requi
 async def coach_programme_history(client_id: str, coach: dict = Depends(require_role("coach"))):
     rows = await db.programmes.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(20)
     return {"programmes": rows, "count": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Coach actions: Regenerate Plan, Approve Programme
+# ---------------------------------------------------------------------------
+
+class CoachRegenerateBody(__import__("pydantic").BaseModel):
+    force_fresh_llm: bool = False  # future hook — currently always fresh
+    note: str | None = None        # optional coach note recorded on the job
+
+
+@api.post("/coach/clients/{client_id}/programme/regenerate")
+async def coach_programme_regenerate(
+    client_id: str,
+    body: CoachRegenerateBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Regenerate workouts for the client's currently active roster.
+
+    Runs the same worker as `/workouts/regenerate` but on behalf of the coach.
+    Returns { job_id } immediately; the coach dashboard polls the existing
+    gen_jobs collection for progress via GET /workouts/job/{job_id}.
+    """
+    import asyncio as _asyncio
+
+    client = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    roster = await db.rosters.find_one(
+        {"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)]
+    )
+    if not roster:
+        raise HTTPException(400, "This client has no active roster to regenerate.")
+
+    days = roster.get("days") or []
+    if not days:
+        raise HTTPException(400, "Active roster has no duty days.")
+
+    job_id = new_id()
+    await db.gen_jobs.insert_one({
+        "id": job_id,
+        "user_id": client_id,
+        "coach_id": coach["id"],
+        "roster_id": roster.get("id"),
+        "status": "running",
+        "created_at": now_iso(),
+        "total": len(days),
+        "done": 0,
+        "errors": [],
+        "kind": "coach_regenerate",
+        "note": body.note,
+    })
+
+    async def _worker():
+        try:
+            programme_ctx = await programme_context_for_llm(client, roster)
+        except Exception:
+            logger.exception("coach_regenerate: programme_context_for_llm failed")
+            programme_ctx = None
+        try:
+            workouts = await _asyncio.wait_for(
+                _generate_month(client, roster, programme_ctx=programme_ctx), timeout=180.0
+            )
+        except _asyncio.TimeoutError:
+            logger.warning("coach_regenerate TIMEOUT job=%s", job_id)
+            workouts = []
+        except Exception:
+            logger.exception("coach_regenerate generation raised job=%s", job_id)
+            workouts = []
+
+        used_template = False
+        try:
+            from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
+            if is_empty_or_llm_failure(workouts):
+                workouts = build_template_plan(client, roster) or []
+                used_template = bool(workouts)
+        except Exception:
+            logger.exception("coach_regenerate: template fallback raised")
+
+        # Upsert workouts (respecting locked / completed).
+        existing = {w["date"]: w for w in await db.workouts.find(
+            {"user_id": client_id, "roster_id": roster.get("id")}, {"_id": 0}
+        ).to_list(500)}
+        for w in workouts:
+            d = w.get("date")
+            if not d:
+                continue
+            prev = existing.get(d)
+            if prev and (prev.get("coach_locked") or prev.get("completed")):
+                continue
+            doc = {
+                "id": prev["id"] if prev else new_id(),
+                "user_id": client_id, "roster_id": roster.get("id"), "date": d,
+                "day_load": w.get("day_load", "green"),
+                "title": w.get("title", "Session"),
+                "location": w.get("location", "Home Workout"),
+                "duration_min": w.get("duration_min", 40),
+                "focus": w.get("focus", "full"),
+                "warmup": w.get("warmup", []),
+                "exercises": w.get("exercises", []),
+                "alternatives": w.get("alternatives", {}),
+                "rationale": w.get("rationale", ""),
+                "key_session": bool(w.get("key_session", False)),
+                "event_phase": w.get("event_phase"),
+                "source": "template" if used_template else "coaching_system",
+                "needs_coach_review": bool(used_template),
+                "variants": _merge_variants(w, prev),
+                "approved": prev.get("approved", False) if prev else False,
+                "completed": False,
+                "coach_notes": prev.get("coach_notes", "") if prev else "",
+                "coach_locked": False,
+                "created_at": prev.get("created_at", now_iso()) if prev else now_iso(),
+                "updated_at": now_iso(),
+            }
+            try:
+                await db.workouts.delete_many({"user_id": client_id, "date": d})
+                await db.workouts.insert_one(doc)
+            except Exception as e:
+                logger.warning("coach_regenerate upsert failed date=%s: %s", d, e)
+                continue
+
+        # Programme quality gate.
+        try:
+            if programme_ctx is not None:
+                persisted_workouts = await db.workouts.find(
+                    {"user_id": client_id, "roster_id": roster.get("id")}, {"_id": 0}
+                ).sort("date", 1).to_list(500)
+                validation = validate_programme(client, roster, persisted_workouts, programme_ctx)
+                await persist_programme_record(client, roster, persisted_workouts, programme_ctx, validation)
+                if not validation.get("ok"):
+                    await db.workouts.update_many(
+                        {"user_id": client_id, "roster_id": roster.get("id"), "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                        {"$set": {"needs_coach_review": True, "updated_at": now_iso()}},
+                    )
+        except Exception:
+            logger.exception("coach_regenerate: programme quality gate failed")
+
+        done_count = await db.workouts.count_documents({"user_id": client_id, "roster_id": roster.get("id")})
+        await db.gen_jobs.update_one(
+            {"id": job_id},
+            {"$set": {
+                "status": "done",
+                "done": done_count,
+                "used_template": used_template,
+                "finished_at": now_iso(),
+            }},
+        )
+
+    _asyncio.create_task(_worker())
+    return {"job_id": job_id, "status": "running", "workouts_scheduled": len(days)}
+
+
+class CoachApproveBody(__import__("pydantic").BaseModel):
+    approve: bool = True
+    note: str | None = None
+
+
+@api.post("/coach/clients/{client_id}/programme/approve")
+async def coach_programme_approve(
+    client_id: str,
+    body: CoachApproveBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Flip `coach_approved` on the latest programme row and (when approving)
+    clear `needs_coach_review` on the affected workouts.
+
+    Used when validation flagged the programme as needing review but the
+    coach has looked at it and is happy to accept it as-is.
+    """
+    prog = await db.programmes.find_one({"user_id": client_id}, {"_id": 0}, sort=[("created_at", -1)])
+    if not prog:
+        raise HTTPException(404, "No programme found for this client")
+    updates: dict[str, Any] = {
+        "coach_approved": bool(body.approve),
+        "coach_approval_note": body.note,
+        "coach_approved_by": coach["id"],
+        "coach_approved_at": now_iso() if body.approve else None,
+        "updated_at": now_iso(),
+    }
+    if body.approve:
+        updates["validation_status"] = "ok"
+    await db.programmes.update_one({"id": prog["id"]}, {"$set": updates})
+    workouts_touched = 0
+    if body.approve and prog.get("roster_id"):
+        res = await db.workouts.update_many(
+            {"user_id": client_id, "roster_id": prog["roster_id"], "needs_coach_review": True, "coach_locked": {"$ne": True}, "completed": {"$ne": True}},
+            {"$set": {"needs_coach_review": False, "coach_approved": True, "updated_at": now_iso()}},
+        )
+        workouts_touched = res.modified_count
+    p2 = await db.programmes.find_one({"id": prog["id"]}, {"_id": 0})
+    return {"programme": p2, "workouts_touched": workouts_touched}
+

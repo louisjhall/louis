@@ -1,0 +1,39 @@
+{
+  "summary": "Phase 4 Coach programme summary + Regenerate/Approve — verified end-to-end. BACKEND: 16/16 tests pass in test_iter63_programme_phase4.py. programme_pill correctly populated on every row of GET /api/coach/clients AND GET /api/coach/dashboard (all 9 fields present: goal_key, goal_label, phase_key, phase_label, week_index, target_sessions_per_week, validation_status, coach_approved, updated_at). For the seeded client (client@crewfit.com) the pill resolves to goal_label='Build strength / muscle', phase='Build', week=2, target=4×/wk. For clients with no programme row, programme_pill is null. POST /api/coach/clients/{cid}/programme/regenerate returns {job_id, status:'running', workouts_scheduled=31} on the seeded client, creates a gen_jobs row with kind='coach_regenerate' + coach_id=Louis's id + note, worker completes within ~60s, workouts collection is repopulated for that roster (source + needs_coach_review present), and the programmes row is upserted. 400 returned when the client has no active roster; 404 when the client id does not exist; 401 unauthenticated; 403 for a client-role token. POST /approve with {approve:true} on a needs_review programme flips coach_approved=true + validation_status='ok' + coach_approved_by=Louis id + coach_approved_at set, clears needs_coach_review on the roster's non-locked/non-completed workouts, and returns workouts_touched count matching the modified rows. {approve:false} does NOT touch workouts (workouts_touched=0) and only sets coach_approved=false. 404 when programme missing. Regression: /workouts/regenerate (client self-serve), /coach/pending-approvals, /coach/clients/{id}/programme + /programme/history all still 200. iter61 + iter62 suites still fully green (24/24).\n\nFRONTEND: /(coach)/clients renders the compact programme pill inline on the client card under the header row — text reads 'BUILD STRENGTH / MUSCLE · Build · WK 2 · 4×/WK'. With validation_status='needs_review' + coach_approved=false, the pill turns amber and a 'NEEDS REVIEW' badge appears next to it (verified via seeded DB row). For clients without a programme no pill renders. /coach/client/[id] renders the full Programme card at the top with GOAL / PHASE grid, WEEK / TARGET grid, focus_copy paragraph, ROSTER CONTEXT block, VALIDATION FLAGS list, HISTORY strip (v2 Build highlighted + v1 Foundation greyed), REGENERATE PLAN button (testID='programme-regenerate') always visible, and APPROVE ANYWAY button (testID='programme-approve') only visible when needs_review + not approved. Regenerate modal opens with testID='regen-note' textarea, 'regen-cancel' and 'regen-confirm' buttons. Empty state (testID='programme-regenerate-empty') is present in the code but wasn't exercised because the seeded client has a programme row.\n\nNo blockers. Only pre-existing style-deprecation warnings ('shadow*' and 'textShadow*') from React Native web — nothing new introduced by Phase 4.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter63_programme_phase4.py",
+    "/app/test_reports/pytest/iter63_programme_phase4.xml"
+  ],
+  "action_items": [
+    "(Optional, LOW) In feature_programme_quality.persist_programme_record: coach_approved is preserved across upserts, but validation_status is always recomputed from the fresh validation. Consider clearing coach_approved back to false on any regenerate so a fresh gen requires re-approval — otherwise a previously-approved programme can end up with coach_approved=true AND validation_status='needs_review' (contradictory state). Currently the frontend's amber+NEEDS_REVIEW branch already ignores coach_approved when validation_status='needs_review' && !coach_approved, so no user-visible bug, just a data-hygiene note.",
+    "(Optional, LOW) The client-list pill is not given a testID — tests currently locate it via body-text 'NEEDS REVIEW'/'APPROVED'. Adding testID='client-programme-pill-<clientId>' on the pill container would tighten future test selectors."
+  ],
+  "critical_code_review_comments": [
+    "feature_programme_quality.coach_programme_regenerate — the background worker uses `_asyncio.create_task(_worker())` but never awaits it and stores no handle on the job doc. If the FastAPI worker restarts mid-generation, the gen_jobs row is orphaned in status='running' forever. Recommend a timeout guard (e.g. cron sweeper) or capture the task on the job doc so we can detect stuck jobs.",
+    "feature_programme_quality.coach_programme_regenerate — when template fallback fires, `source='template'` and `needs_coach_review=True` are set on every workout — but the programme validation gate also then flips ALL non-locked/non-completed workouts to needs_coach_review=True on validation failure. Idempotent, but the double-write is redundant.",
+    "feature_programme_quality.coach_programme_approve — approve=false does clear coach_approved_at (sets it to None) but leaves validation_status unchanged. Correct behavior, worth documenting.",
+    "server._client_summary — one extra find_one to db.programmes per client on every /coach/clients call. Fine at 30 clients, but consider a single $lookup pipeline or client-side batching before this grows past a few hundred rows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter63_programme_phase4.py (new — 16 tests, all passing)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 on iter63 suite; iter61+iter62 regression 24/24 green)",
+    "frontend": "100% on the Phase 4 programme surface"
+  },
+  "seed_data_creation": "For the regenerate happy-path test, the client's most recent roster was flipped is_active=true temporarily (autouse fixture) and restored on teardown — original state was is_active=false on all client rosters. For the approve happy-path, the client's newest programmes row was directly patched to validation_status='needs_review' + coach_approved=false + validation_errors=['seed for test']. Two throwaway user rows (id prefix 'TEST_noprog_' and 'TEST_noroster_') are inserted for the 400/404 negative tests and deleted in the finally block. No lingering TEST_ users after the run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_iter63_programme_phase4.py polls db.gen_jobs directly for status='done' (up to 220s) — sufficient for LLM-timeout + template-fallback path (~50-70s observed). If future work parallelises workout generation, tighten the loop. The client@crewfit.com seeded roster is is_active=false in prod — always flip it active inside the fixture and restore in teardown. Approve tests rely on the seed_needs_review fixture (autouse) resetting state each test — don't remove. Frontend: the client-list pill has no dedicated testID; visual verification uses body-text 'NEEDS REVIEW' / 'APPROVED'.",
+  "rca_of_issue": "N/A — feature works as spec'd. Two minor code-hygiene notes captured in critical_code_review_comments."
+}

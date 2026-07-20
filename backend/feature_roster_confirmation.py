@@ -48,6 +48,7 @@ from server import (
     _open_coach_task_for_stuck_generation,
     _notify_coaches_of_new_roster,
     _emit_reassessment_prompt,
+    _merge_variants,
     ROSTER_SYSTEM,
     RosterConfirmBody,  # {days: list[dict]}
     RosterUploadGenerateBody,  # {file_base64, mime_type, filename}
@@ -416,7 +417,7 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
                 "event_phase": w.get("event_phase"),
                 "source": "template" if used_template else "coaching_system",
                 "needs_coach_review": bool(used_template),
-                "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
+                "variants": _merge_variants(w, prev),
                 "approved": prev.get("approved", False) if prev else False,
                 "completed": False,
                 "coach_notes": prev.get("coach_notes", "") if prev else "",

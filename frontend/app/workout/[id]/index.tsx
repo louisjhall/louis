@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,6 +18,13 @@ const PREFERRED_CHANNELS = [
   "Athlean-X", "Built With Science",
 ];
 
+type VariantKey = "green" | "amber" | "red";
+const VARIANT_LABELS: Record<VariantKey, { label: string; sub: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  green: { label: "FULL",     sub: "Planned session",  color: "#2f9e6c", icon: "flash" },
+  amber: { label: "LIGHTER",  sub: "~65% volume",      color: "#e5a337", icon: "battery-half" },
+  red:   { label: "RECOVERY", sub: "Mobility & breath", color: "#c85450", icon: "leaf" },
+};
+
 export default function WorkoutDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -30,6 +37,47 @@ export default function WorkoutDetail() {
   const [rpe, setRpe] = useState("");
   const [realityOpen, setRealityOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
+  // Traffic-light variants — client-only. Coach view always sees Green.
+  const [variant, setVariant] = useState<VariantKey>("green");
+  const [variants, setVariants] = useState<any>(null);
+
+  // Lazily fetch variants (backfills on the server if the doc has empty stubs).
+  useEffect(() => {
+    if (!w?.id || isCoach) return;
+    const v = w.variants;
+    if (v && v.green && v.amber && v.red) { setVariants(v); return; }
+    let cancelled = false;
+    api<any>(`/workouts/${w.id}/variants`)
+      .then((r) => { if (!cancelled) setVariants(r?.variants || null); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [w?.id, isCoach]);
+
+  // Overlay the selected variant on top of the base workout for rendering.
+  // The base `w` is preserved for edit/save/complete paths.
+  const view = useMemo(() => {
+    if (!w) return null;
+    if (isCoach || variant === "green" || !variants) return w;
+    const vv = variants[variant];
+    if (!vv || typeof vv !== "object") return w;
+    return {
+      ...w,
+      title: vv.title ?? w.title,
+      duration_min: vv.duration_min ?? w.duration_min,
+      focus: vv.focus ?? w.focus,
+      warmup: vv.warmup ?? w.warmup,
+      exercises: vv.exercises ?? w.exercises,
+      rationale: vv.rationale ?? w.rationale,
+      _variant_intensity_note: vv.intensity_note || null,
+    };
+  }, [w, variants, variant, isCoach]);
+
+  // Fire-and-forget: log the selected variant for coach dashboards.
+  const pickVariant = useCallback((next: VariantKey) => {
+    setVariant(next);
+    if (!w?.id || isCoach) return;
+    api(`/workouts/${w.id}/select-variant`, { method: "POST", body: { variant: next } }).catch(() => {});
+  }, [w?.id, isCoach]);
 
   const startWorkout = useCallback(async () => {
     // Route to the mode the user has remembered, or open the picker.
@@ -112,16 +160,16 @@ export default function WorkoutDetail() {
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 160 }}>
         <AIHeroImage
           ctx={{
-            workout_type: (w.focus || "").toLowerCase().includes("run") ? "endurance"
-              : (w.focus || "").toLowerCase().includes("strength") ? "strength"
+            workout_type: (view.focus || "").toLowerCase().includes("run") ? "endurance"
+              : (view.focus || "").toLowerCase().includes("strength") ? "strength"
               : "strength",
             phase: w.event_phase || undefined,
           }}
           style={styles.workoutBanner}
         >
           <View style={styles.workoutBannerInner}>
-            <Text style={styles.workoutBannerEyebrow}>{String(w.focus || "SESSION").toUpperCase()}</Text>
-            <Text style={styles.workoutBannerTitle} numberOfLines={2}>{w.title}</Text>
+            <Text style={styles.workoutBannerEyebrow}>{String(view.focus || "SESSION").toUpperCase()}</Text>
+            <Text style={styles.workoutBannerTitle} numberOfLines={2}>{view.title}</Text>
           </View>
         </AIHeroImage>
         <Text style={styles.date}>{w.date}</Text>
@@ -137,7 +185,7 @@ export default function WorkoutDetail() {
         {editing ? (
           <TextInput value={w.title} onChangeText={(v) => setW({ ...w, title: v })} style={styles.titleInput} testID="edit-title" />
         ) : (
-          <Text style={styles.title}>{w.title}</Text>
+          <Text style={styles.title}>{view.title}</Text>
         )}
         <View style={styles.metaRow}>
           <View style={styles.metaChipRow}>
@@ -146,9 +194,9 @@ export default function WorkoutDetail() {
           </View>
           <View style={styles.metaChipRow}>
             <Ionicons name="time" size={11} color={theme.color.textMuted} />
-            <Text style={styles.metaChipT}>{w.duration_min}min</Text>
+            <Text style={styles.metaChipT}>{view.duration_min}min</Text>
           </View>
-          <Text style={styles.metaChip}>{String(w.focus || "").toUpperCase()}</Text>
+          <Text style={styles.metaChip}>{String(view.focus || "").toUpperCase()}</Text>
           {w.key_session && (
             <View style={[styles.metaChipRow, { backgroundColor: theme.color.brand, borderColor: theme.color.brand }]}>
               <Ionicons name="star" size={11} color="#fff" />
@@ -157,6 +205,38 @@ export default function WorkoutDetail() {
           )}
           {w.event_phase && <Text style={[styles.metaChip, { color: theme.color.brand, borderColor: theme.color.brand }]}>{String(w.event_phase).toUpperCase().replace("_", " ")}</Text>}
         </View>
+
+        {!isCoach && !editing && variants && (
+          <View style={styles.variantRow} testID="variant-row">
+            {(Object.keys(VARIANT_LABELS) as VariantKey[]).map((k) => {
+              const meta = VARIANT_LABELS[k];
+              const active = variant === k;
+              return (
+                <Pressable
+                  key={k}
+                  testID={`variant-chip-${k}`}
+                  onPress={() => pickVariant(k)}
+                  style={[
+                    styles.variantChip,
+                    active && { borderColor: meta.color, backgroundColor: meta.color },
+                  ]}
+                >
+                  <Ionicons name={meta.icon} size={13} color={active ? "#fff" : meta.color} />
+                  <View style={{ marginLeft: 6 }}>
+                    <Text style={[styles.variantChipLabel, active && { color: "#fff" }]}>{meta.label}</Text>
+                    <Text style={[styles.variantChipSub, active && { color: "rgba(255,255,255,0.85)" }]}>{meta.sub}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+        {!isCoach && variant !== "green" && view._variant_intensity_note ? (
+          <View style={styles.variantNote}>
+            <Ionicons name="information-circle" size={14} color={VARIANT_LABELS[variant].color} />
+            <Text style={styles.variantNoteText}>{view._variant_intensity_note}</Text>
+          </View>
+        ) : null}
 
         {w.override_applied || w.override_generated ? (
           <View style={styles.overrideBanner}>
@@ -184,10 +264,10 @@ export default function WorkoutDetail() {
           </Pressable>
         )}
 
-        {w.rationale && (
+        {view.rationale && (
           <View style={styles.rationale}>
             <Text style={styles.rLabel}>WHY THIS SESSION?</Text>
-            <Text style={styles.rText}>{w.rationale}</Text>
+            <Text style={styles.rText}>{view.rationale}</Text>
           </View>
         )}
 
@@ -197,10 +277,10 @@ export default function WorkoutDetail() {
           </Pressable>
         )}
 
-        {w.warmup?.length > 0 && (
+        {view.warmup?.length > 0 && (
           <>
             <Text style={styles.sect}>WARM-UP</Text>
-            {w.warmup.map((wu: any, i: number) => (
+            {view.warmup.map((wu: any, i: number) => (
               <View key={i} style={styles.warmupRow}>
                 <Text style={styles.warmupName}>{wu.name}</Text>
                 <Text style={styles.warmupTime}>{wu.duration_sec || 30}s</Text>
@@ -210,7 +290,7 @@ export default function WorkoutDetail() {
         )}
 
         <Text style={styles.sect}>EXERCISES</Text>
-        {(w.exercises || []).map((ex: any, idx: number) => (
+        {((editing ? w.exercises : view.exercises) || []).map((ex: any, idx: number) => (
           <View key={idx} style={styles.exCard} testID={`ex-${idx}`}>
             {editing ? (
               <>
@@ -342,6 +422,21 @@ const styles = StyleSheet.create({
   metaChip: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.pill },
   metaChipRow: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.pill },
   metaChipT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", fontFamily: theme.font.textSemi },
+  variantRow: { flexDirection: "row", gap: 6, marginTop: theme.space.md },
+  variantChip: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+    borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2, paddingVertical: 10, paddingHorizontal: 8, minHeight: 48,
+  },
+  variantChipLabel: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  variantChipSub: { color: theme.color.textDim, fontSize: 9, marginTop: 1 },
+  variantNote: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: theme.color.surface2, borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.color.border,
+    paddingVertical: 10, paddingHorizontal: 12, marginTop: theme.space.sm,
+  },
+  variantNoteText: { color: theme.color.textMuted, fontSize: 12, flex: 1, lineHeight: 16 },
   realityIconWrapW: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   workoutBanner: { height: 180, borderRadius: 14, marginBottom: 14, overflow: "hidden" },
   workoutBannerInner: { flex: 1, justifyContent: "flex-end", padding: 14, gap: 4 },

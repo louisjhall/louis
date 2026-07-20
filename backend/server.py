@@ -747,6 +747,17 @@ def clean_doc(doc: dict) -> dict:
     doc.pop("_id", None)
     return doc
 
+def _merge_variants(w: dict, prev: Optional[dict]) -> dict:
+    """Pick the best traffic-light variants when persisting a workout.
+    Priority: LLM-returned (green shape valid) > previously stored > stub."""
+    v = w.get("variants") if isinstance(w, dict) else None
+    if isinstance(v, dict) and isinstance(v.get("green"), dict):
+        return v
+    if prev and isinstance(prev.get("variants"), dict) and isinstance(prev["variants"].get("green"), dict):
+        return prev["variants"]
+    return {"green": None, "amber": None, "red": None}
+
+
 def strip_data_url(b64: str) -> str:
     return b64.split(",", 1)[1] if b64.startswith("data:") else b64
 
@@ -2496,8 +2507,8 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     "event_phase": w.get("event_phase"),
                     "source": "template" if used_template else "coaching_system",
                     "needs_coach_review": bool(used_template),
-                    # Phase 1 stub: traffic-light variants populated in a later phase.
-                    "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
+                    # Traffic-light variants (Phase 3): LLM inline output preferred; falls back to prior stored or stub.
+                    "variants": _merge_variants(w, prev),
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
                     "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -2763,7 +2774,7 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
                 "event_phase": w.get("event_phase"),
                 "source": "template" if used_template else "coaching_system",
                 "needs_coach_review": bool(used_template),
-                "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
+                "variants": _merge_variants(w, prev),
                 "approved": prev.get("approved", False) if prev else False,
                 "completed": False,
                 "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -4243,7 +4254,11 @@ async def _generate_month(user: dict, roster: dict, programme_ctx: Optional[dict
             "Design exactly one workout per date in this chunk. Return JSON. "
             "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available. "
             "Follow the Programme context strictly: match the weekly session target, keep the movement-mix hint balanced across the week, respect the current phase (Foundation/Build/Peak/Deload) — Deload weeks reduce volume by 30–40%. "
-            "For EVERY workout, populate the `rationale` field with 1–2 short sentences answering 'Why this session?' — reference the phase, the roster context (e.g. long-haul day tomorrow, standby, layover in city X), and the client's goal. No client-facing 'AI' wording."
+            "For EVERY workout, populate the `rationale` field with 1–2 short sentences answering 'Why this session?' — reference the phase, the roster context (e.g. long-haul day tomorrow, standby, layover in city X), and the client's goal. No client-facing 'AI' wording. "
+            "TRAFFIC LIGHT VARIANTS — for EVERY workout, also populate a `variants` object with three keys: green, amber, red. "
+            "`green` = the full planned session (identical to the top-level workout — title, duration_min, focus, warmup, exercises, rationale, plus `intensity_note` set to the target RPE guidance). "
+            "`amber` = a ~65%-volume version of green for tired / short-on-time days: keep the same movement pattern but drop the last accessory if there are 5+ exercises, reduce sets ~35%, and shorten `duration_min` to about 65% of green. Set `intensity_note` to guide RPE 6 / stop 2 reps shy. "
+            "`red` = a context-aware recovery session (no strength work) of 10–15 minutes made of mobility + breathwork tailored to the roster day — e.g. long-haul day = calf drain + hip flexor release + box breathing; night flight = physiological sigh + 4-7-8 breath; layover = gentle mobility + nasal-breathing walk; standby = quiet flow you can do without changing clothes. Give it a clear `title`, `duration_min`, `focus='recovery'`, `exercises` (mobility/breath items with sets/reps or time durations), `rationale`, and `intensity_note='Restorative — no effort'`."
         )
         try:
             # Per-chunk cap so one slow LLM call cannot block sibling chunks or
@@ -4337,7 +4352,7 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                     "event_phase": w.get("event_phase"),
                     "source": "coaching_system",
                     "needs_coach_review": False,
-                    "variants": prev.get("variants") if prev and prev.get("variants") else {"green": None, "amber": None, "red": None},
+                    "variants": _merge_variants(w, prev),
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
                     "coach_notes": prev.get("coach_notes", "") if prev else "",
@@ -4472,7 +4487,7 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                     "event_phase": w.get("event_phase"),
                     "source": "coaching_system",
                     "needs_coach_review": False,
-                    "variants": existing.get("variants") if existing and existing.get("variants") else {"green": None, "amber": None, "red": None},
+                    "variants": _merge_variants(w, existing),
                     "approved": False,
                     "completed": False,
                     "coach_notes": existing.get("coach_notes", "") if existing else "",
@@ -7669,6 +7684,7 @@ import feature_setup_day             # noqa: E402,F401  Setup-day gate — first
 import feature_event_categories      # noqa: E402,F401  Category-aware Event Training
 import feature_programme_quality     # noqa: E402,F401  Programme quality: goals/phase/validation/persistence
 import feature_roster_confirmation   # noqa: E402,F401  Phase 2: parse → confirm → build roster flow
+import feature_traffic_light         # noqa: E402,F401  Phase 3: Green/Amber/Red workout variants
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

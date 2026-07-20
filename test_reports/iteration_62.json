@@ -1,0 +1,43 @@
+{
+  "summary": "Phase 3 Traffic Light workout variants (Green/Amber/Red) verified end-to-end. BACKEND: 14/14 tests pass in test_iter62_traffic_light.py. GET /api/workouts/{wid}/variants correctly backfills legacy workouts (empty stubs → fully populated green/amber/red with title/duration_min/focus/exercises/rationale/intensity_note), persists variants_source='derived' on the doc, and is idempotent on second call. Auth is enforced (no-token → 401/403; wrong client → 403). Amber shape rules hold: duration_min <= 0.75 * green.duration_min, sets reduced (when green sets >= 3), reps ranges preserved as ranges, and when green has 6 exercises amber has 5 (one culled). Short (3-ex) sessions keep all exercises. Red context tags resolve correctly from roster days: Layover → layover template, 9.5h flight → long_haul (Post-flight Recovery), Standby → standby, night_flight day → night_flight, no roster → default. POST /api/workouts/{wid}/select-variant with {variant:'amber'} returns {ok:true, variant:'amber'} and persists selected_variant + selected_variant_at; invalid variant → 400; wrong-user client → 403. GET /api/workouts/{wid} regression clean (title/exercises/warmup/rationale/duration_min/focus still present). Legacy iter61 suite still fully green. iter59 has 5 pre-existing failures around the retry pipeline (\"Original roster not found — please re-upload\") — unrelated to variants, flagged in critical review.\n\nFRONTEND (client): /workout/[id] renders variant-row with FULL / LIGHTER / RECOVERY chips. Tapping AMBER swaps the exercise list (5 → 4 exercises for a 5-ex session — one accessory culled; RPE per exercise dropped 2→5 note-wise via the intensity_note banner text visible with 'RPE 6 / Aim' language), amber title carries 'LIGHTER' badge in the header. Tapping RECOVERY replaces exercises entirely with the layover template (World's greatest stretch, Hip flexor + T-spine combo, Loaded carry, Nasal breathing walk) — context was correctly picked from the roster day. Green restores the original 5 exercises. The intensity_note banner appears below the chips for Amber/Red. The underlying `w` state is preserved (RPE input still available; MARK DONE and START WORKOUT CTAs unchanged). FRONTEND (coach): variant-row is NOT rendered — coach sees Approve/Reject sticky CTA and always the base (Green) exercises. Rationale (WHY THIS SESSION) still renders. Edit toggle in coach view hides variant-row (as expected — editing targets base workout).\n\nOne small non-blocking console warning noted (see minor).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "workout/[id]/index.tsx (variant chip render or nearby components)",
+        "issue": "Repeated console warning: 'Unexpected text node: . A text node cannot be a child of a <View>.' fires ~5+ times when the workout detail screen mounts. Not visually disruptive but indicates a stray whitespace/text node being rendered outside a <Text> wrapper in one of the child components (could be in variantRow, metaRow, ex cards or the rationale block). Should be traced and removed to keep the console clean and satisfy React Native's rule that all text must be inside <Text>.",
+        "testID": "variant-row",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter62_traffic_light.py",
+    "/app/test_reports/pytest/iter62_traffic_light.xml"
+  ],
+  "action_items": [
+    "(Optional) Trace the 'Unexpected text node' warning that fires on /workout/[id] — likely a stray '\\n' or ' ' inside a <View> block near the variantRow/metaRow/rationale render. Look for JSX like `{condition && ' '}` or trailing whitespace between components. Not blocking.",
+    "iter59 pre-existing failures (test_iter59_programme_quality.py — TestRetryWorkerFullPipeline + test_generate_month_end_to_end) are UNRELATED to variants; they fail because the seeded roster referenced by test_kick_off_retry no longer exists (404 'Original roster not found — please re-upload'). Recommend the main agent regenerate iter59 seed or update those tests to auto-seed a roster."
+  ],
+  "critical_code_review_comments": [
+    "feature_traffic_light._derive_amber() computes sets as max(2, round(sets*0.65)) but does NOT strictly guarantee amber sets < green sets — e.g. sets=3 → max(2, 2)=2 (OK), sets=2 → max(2, 1)=2 (no reduction). Acceptable given amber floor is 2, but tests reflect this by only asserting strict-<-when-green>=3.",
+    "feature_traffic_light.ensure_variants() catches all exceptions during persist and only logs — silently. If the DB write fails, the endpoint still returns the derived object but the next call will re-derive. Idempotence relies on the persist succeeding. Consider raising a metric/alert if persist fails repeatedly.",
+    "server._merge_variants() only checks isinstance(v.get('green'), dict) to decide LLM-priority. If the LLM returns partial variants (green dict, amber None, red None), the whole partial object wins over any prior populated variants, resulting in green-only. Consider requiring all three keys to be dicts, OR falling back to derive_variants on a per-key basis. Low likelihood but worth noting.",
+    "workout_variants endpoint returns `source` computed via `w.get('variants_source') if _variants_populated(w.get('variants'))`. But after ensure_variants persisted, the local `w` dict is stale — the second-call response `source` field will be 'derived' but on the FIRST call it may report the stale `variants_source` (None) which the code hedges with 'derived'. Logic is correct but confusing; consider re-reading the doc or explicitly setting source='derived' when a backfill just happened."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter62_traffic_light.py (new — 14 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (14/14 on iter62 suite; iter61 100%)", "frontend": "100% on the variants surface"},
+  "seed_data_creation": "During tests, workouts prefixed with TEST_wo_ and rosters prefixed with TEST_ro_ were inserted directly into db.workouts/db.rosters (source_filename='TEST_iter62_seed.pdf', active=False). All seeded rows are removed by the module-scoped teardown fixture (_cleanup_at_end). Verified: no lingering TEST_ rows post-run and the client's real active roster/workouts were untouched (tests used year 2099 dates to avoid unique-index collisions with real data).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_iter62_traffic_light.py uses direct pymongo seeding with 2099-* dates and a _DATE_COUNTER helper to avoid the (user_id, date) unique-index collision on db.workouts. Adopt the same pattern for future variant-related work. If touching the backfill algorithm (feature_traffic_light._derive_amber or _red_template), the assertions in TestAmberShape and TestRedContext will catch regressions. Frontend: variants are lazily fetched via /workouts/{id}/variants only when the local doc's variants stub is empty — if you populate variants inline via LLM, the network call is skipped. The frontend never mutates `w`; it only overlays via a `view` memo, so completion (POST /complete) always uses base green.",
+  "rca_of_issue": "Console 'Unexpected text node' RCA — React Native web's stricter enforcement of the rule that all text must be inside <Text>. Given the warning fires only on /workout/[id], the culprit is one of: (a) the metaRow (line 190) — the {view.event_phase && <Text>...} conditional inside a View might resolve to a bare string on some render passes, (b) the variantRow row where a stray whitespace between chips could leak, or (c) the rationale block which unconditionally renders a Text. Recommend adding boolean coercion (!!view.event_phase && ...) or using ternary with null to avoid false-y strings/numbers leaking through short-circuit evaluation."
+}

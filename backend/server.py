@@ -2247,6 +2247,22 @@ async def _get_dna_context(user_id: str) -> dict:
 # ==================================================================
 async def _emit_reassessment_prompt(user_id: str, kind: str, reason: str, meta: Optional[dict] = None) -> None:
     """Create a re-assessment prompt (dismissible) that appears on the client home."""
+    # Iter 82 — Don't emit prompts for brand-new users (< 3 days old AND no
+    # completed workouts). Prevents "you missed 10 sessions" nag on first login.
+    try:
+        from datetime import datetime as _dt2, timezone as _tz2
+        u = await db.users.find_one({"id": user_id}, {"_id": 0, "created_at": 1})
+        if u and u.get("created_at"):
+            created_dt = _dt2.fromisoformat(str(u["created_at"]).replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=_tz2.utc)
+            age_days = (_dt2.now(_tz2.utc) - created_dt).total_seconds() / 86400.0
+            if age_days < 3.0:
+                completed = await db.workouts.count_documents({"user_id": user_id, "completed": True})
+                if completed == 0:
+                    return
+    except Exception:
+        pass
     # Cool-down: don't re-emit the same kind if there's a pending prompt in the last 3 days
     from datetime import datetime as _dt, timedelta as _td, timezone as _tz
     cutoff = (_dt.now(_tz.utc) - _td(days=3)).isoformat()
@@ -2268,11 +2284,49 @@ async def _emit_reassessment_prompt(user_id: str, kind: str, reason: str, meta: 
 
 @api.get("/reassessment/prompts")
 async def reassessment_prompts(user: dict = Depends(current_user)):
-    """Return active (undismissed) re-assessment prompts for the user."""
+    """Return active (undismissed) re-assessment prompts for the user.
+
+    Iter 82 — Grace period for brand-new users. A user who "just logged in for
+    the first time" should not be nagged about missed sessions or roster
+    confirmation. Suppress ALL prompts when:
+      * the account was created in the last 3 days AND
+      * the user has < 1 completed workout AND
+      * the user has < 3 days of app engagement.
+    Additionally, suppress `missed_workouts` for any user with 0 completed
+    workouts ever — you can't miss what you never started.
+    """
+    from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+
+    # Compute account age
+    created_at = user.get("created_at") or user.get("onboarded_at")
+    is_new = False
+    try:
+        if created_at:
+            created_dt = _dt2.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=_tz2.utc)
+            age_days = (_dt2.now(_tz2.utc) - created_dt).total_seconds() / 86400.0
+            is_new = age_days < 3.0
+    except Exception:
+        is_new = False
+
+    completed = await db.workouts.count_documents({"user_id": user["id"], "completed": True})
+
+    # Fresh account with no completions → suppress everything for the grace period.
+    if is_new and completed == 0:
+        return {"prompts": []}
+
     rows = await db.reassessment_prompts.find(
         {"user_id": user["id"], "dismissed": False},
         {"_id": 0},
     ).sort("created_at", -1).to_list(20)
+
+    # Never surface a missed_workouts prompt for users who have zero
+    # completed workouts (they can't have "missed sessions" — they're
+    # brand new / haven't started training).
+    if completed == 0:
+        rows = [r for r in rows if r.get("kind") != "missed_workouts"]
+
     return {"prompts": rows}
 
 

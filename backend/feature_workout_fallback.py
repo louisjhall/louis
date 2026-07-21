@@ -4,7 +4,7 @@ feature_workout_fallback — Deterministic template workouts.
 Purpose: when the LLM (Claude via Emergent) fails for ANY reason — budget
 exceeded, rate limit, timeout, network error — the user should NEVER be left
 with an empty week. This module produces a sensible starter plan based on:
-  * the client's main goal (from profile)
+  * the client's main goal (from profile.main_goal_key + event_type_pref)
   * the roster day types
   * available equipment (hotel gym / home gym / bodyweight)
   * the setup-day gate (first workout starts tomorrow)
@@ -13,15 +13,11 @@ No Claude calls, no image generation, no ML — just a well-thought-out template
 that gives the client a real starting programme they can follow, and a coach
 task so Louis can review + upgrade later.
 
-Structure (repeats over the roster):
-  * Home / off-day  → Full-body strength or Push/Pull/Legs split
-  * Layover / hotel → Bodyweight or hotel-gym workout
-  * Flight / duty   → Short mobility (10-20 min)
-  * Standby         → Amber short activation
-  * Rest day        → Rest (no workout)
-
-Each generated workout has a plain-English rationale so the client understands
-why it's on that day.
+Plan B2 additions:
+  * Running templates (easy_run, long_run, tempo, intervals, strength_for_runners)
+  * Goal-aware branching via `feature_programme_quality.event_weekly_shape` and
+    `strength_weekly_shape` — the fallback now honours training_days_per_week
+    and produces a running-shaped week for marathon/half/10k/5k clients.
 """
 
 from __future__ import annotations
@@ -73,6 +69,53 @@ STANDBY_ACTIVATION = [
     {"name": "Dead bug",                  "sets": 2, "reps": "8 each side", "rest_sec": 30, "rpe": 5, "notes": "Ribs down."},
 ]
 
+# ---- Plan B2 — Running templates ----
+EASY_RUN_MAIN = [
+    {"name": "Easy Run",                  "sets": 1, "reps": "25-35 min steady",
+     "rest_sec": 0, "rpe": 4, "notes": "Conversational pace — you should be able to speak in short sentences."},
+]
+
+LONG_RUN_MAIN = [
+    {"name": "Long Run",                  "sets": 1, "reps": "60-90 min steady",
+     "rest_sec": 0, "rpe": 5, "notes": "Steady, comfortable. Fuel + hydration if >60min. Walk breaks fine."},
+]
+
+TEMPO_RUN_MAIN = [
+    {"name": "Tempo Effort",              "sets": 1, "reps": "20-25 min at RPE 7",
+     "rest_sec": 0, "rpe": 7, "notes": "Comfortably hard — half-marathon race pace. Hold the effort steady."},
+]
+
+INTERVAL_RUN_MAIN = [
+    {"name": "5 min warm-up jog",         "sets": 1, "reps": "5 min", "rest_sec": 0, "rpe": 4, "notes": "Progressive."},
+    {"name": "Intervals: 6 x 400m at RPE 8-9", "sets": 6, "reps": "400m",
+     "rest_sec": 90, "rpe": 9, "notes": "Walk-jog recovery between reps."},
+]
+
+STRENGTH_FOR_RUNNERS = [
+    {"name": "Single-leg glute bridge",   "sets": 3, "reps": "10 each side", "rest_sec": 45, "rpe": 6, "notes": "Slow, controlled — drive from the glute."},
+    {"name": "Dumbbell Romanian deadlift", "sets": 3, "reps": "10", "rest_sec": 60, "rpe": 7, "notes": "Hinge from hips, feel the hamstrings."},
+    {"name": "Split squat (rear-foot elevated if possible)", "sets": 3, "reps": "8 each side", "rest_sec": 60, "rpe": 7, "notes": "Vertical torso, knee tracks over toes."},
+    {"name": "Calf raise",                "sets": 3, "reps": "12-15", "rest_sec": 45, "rpe": 6, "notes": "Full range — pause at the top."},
+    {"name": "Bird-dog",                  "sets": 3, "reps": "8 each side", "rest_sec": 45, "rpe": 5, "notes": "Slow — extend opposite arm/leg without rotating hips."},
+    {"name": "Side plank",                "sets": 2, "reps": "30s each side", "rest_sec": 40, "rpe": 6, "notes": "Hips stacked, ribs down."},
+]
+
+CONDITIONING_CIRCUIT = [
+    {"name": "Kettlebell / dumbbell swing", "sets": 4, "reps": "15", "rest_sec": 45, "rpe": 7, "notes": "Hinge — power from the hips, not the arms."},
+    {"name": "Goblet squat",              "sets": 4, "reps": "10", "rest_sec": 45, "rpe": 7, "notes": "Chest up."},
+    {"name": "Push-up",                   "sets": 4, "reps": "8-12", "rest_sec": 45, "rpe": 7, "notes": "Scale to incline if needed."},
+    {"name": "Mountain climbers",         "sets": 4, "reps": "30s", "rest_sec": 30, "rpe": 8, "notes": "Steady, controlled — quality over speed."},
+    {"name": "Plank",                     "sets": 4, "reps": "30s hold", "rest_sec": 30, "rpe": 6, "notes": "Ribs down, glutes on."},
+]
+
+MOBILITY_FLOW = [
+    {"name": "Cat-cow",                   "sets": 2, "reps": "8 slow", "rest_sec": 20, "rpe": 2, "notes": "Follow the breath."},
+    {"name": "World's greatest stretch",  "sets": 2, "reps": "5 each side", "rest_sec": 20, "rpe": 3, "notes": "Rotate thoracic spine."},
+    {"name": "90/90 hip rotations",       "sets": 2, "reps": "8 each side", "rest_sec": 20, "rpe": 3, "notes": "Slow, no pain."},
+    {"name": "Downward dog to cobra flow", "sets": 2, "reps": "6", "rest_sec": 20, "rpe": 3, "notes": "Move with the breath."},
+    {"name": "Diaphragmatic breathing",   "sets": 1, "reps": "10 breaths", "rest_sec": 0, "rpe": 2, "notes": "Long exhale."},
+]
+
 WARMUP_GENERAL = [
     {"name": "5 min light cardio",        "duration_sec": 300},
     {"name": "Cat-cow x 5",               "duration_sec": 45},
@@ -80,19 +123,254 @@ WARMUP_GENERAL = [
     {"name": "Bodyweight squat x 10",     "duration_sec": 45},
 ]
 
+WARMUP_RUN = [
+    {"name": "3 min brisk walk",          "duration_sec": 180},
+    {"name": "Leg swings x 10 each side", "duration_sec": 60},
+    {"name": "Ankle circles x 10 each",   "duration_sec": 45},
+    {"name": "2 min easy jog",            "duration_sec": 120},
+]
+
+WARMUP_INTERVALS = [
+    {"name": "5 min easy jog",            "duration_sec": 300},
+    {"name": "Leg swings x 10 each",      "duration_sec": 60},
+    {"name": "4 x 30s strides",           "duration_sec": 120},
+]
+
 WARMUP_MOBILITY = [
     {"name": "Deep breathing x 5",        "duration_sec": 45},
     {"name": "Cat-cow x 6",               "duration_sec": 45},
 ]
 
+COOLDOWN_RUN = [
+    {"name": "5 min walk",                "duration_sec": 300},
+    {"name": "Hip flexor stretch 30s each", "duration_sec": 60},
+    {"name": "Calf stretch 30s each",     "duration_sec": 60},
+    {"name": "Diaphragmatic breathing x 5", "duration_sec": 60},
+]
+
+
+# ---------------------------------------------------------------------------
+# Session-type → workout stub factory (Plan B2)
+# ---------------------------------------------------------------------------
+
+def _stub_for_session_type(session_type: str, date: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Build a full workout doc from a session-type slot + roster context."""
+    hotel_pref = ctx.get("hotel_pref", "home")
+    day_load = ctx.get("day_load", "green")
+
+    if session_type == "easy_run":
+        return {
+            "date": date, "day_load": day_load, "title": "Easy Run",
+            "location": "Outdoor Run", "duration_min": 40, "focus": "long_run",
+            "warmup": WARMUP_RUN, "exercises": EASY_RUN_MAIN,
+            "cooldown": COOLDOWN_RUN,
+            "alternatives": {
+                "home": "Treadmill if outdoor isn't possible.",
+                "hotel": "Treadmill or a walking loop around the hotel.",
+                "no_equipment": "Just shoes.",
+                "easier": "Reduce to 20-25 min.",
+                "harder": "Add 4 x 30s strides at the end.",
+            },
+            "rationale": "Easy runs build the aerobic base — the most important adaptation for marathon prep. Conversational pace, controlled breathing.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type == "long_run":
+        return {
+            "date": date, "day_load": day_load, "title": "Long Run",
+            "location": "Outdoor Run", "duration_min": 75, "focus": "long_run",
+            "warmup": WARMUP_RUN, "exercises": LONG_RUN_MAIN,
+            "cooldown": COOLDOWN_RUN,
+            "alternatives": {
+                "home": "Treadmill — split into 2 x 35min if needed.",
+                "hotel": "Look for a park loop or long promenade.",
+                "no_equipment": "Just shoes + water bottle.",
+                "easier": "Reduce to 45-50 min.",
+                "harder": "Add 10 min at tempo pace in the middle.",
+            },
+            "rationale": "The long run is the KEY session of the week for marathon prep — teaches your body to stay efficient at low intensity for longer. Steady, conversational effort.",
+            "key_session": True, "event_phase": None,
+        }
+
+    if session_type == "tempo":
+        return {
+            "date": date, "day_load": day_load, "title": "Tempo Run",
+            "location": "Outdoor Run", "duration_min": 45, "focus": "tempo",
+            "warmup": WARMUP_RUN, "exercises": TEMPO_RUN_MAIN,
+            "cooldown": COOLDOWN_RUN,
+            "alternatives": {
+                "home": "Treadmill on 1% incline.",
+                "hotel": "Treadmill.",
+                "no_equipment": "Just shoes.",
+                "easier": "Reduce tempo portion to 12-15 min.",
+                "harder": "Split into 2 x 15 min tempo with 3 min jog.",
+            },
+            "rationale": "Tempo work lifts your lactate threshold — the pace you can hold before form breaks down. Comfortably hard, sustainable.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type == "intervals":
+        return {
+            "date": date, "day_load": day_load, "title": "Interval Session",
+            "location": "Outdoor Run", "duration_min": 45, "focus": "intervals",
+            "warmup": WARMUP_INTERVALS, "exercises": INTERVAL_RUN_MAIN,
+            "cooldown": COOLDOWN_RUN,
+            "alternatives": {
+                "home": "Treadmill — alternate 1 min hard / 90s easy for the interval block.",
+                "hotel": "Local track or a straight 400m road segment.",
+                "no_equipment": "Just shoes.",
+                "easier": "4 x 400m instead of 6.",
+                "harder": "8 x 400m or 6 x 500m.",
+            },
+            "rationale": "Intervals sharpen your VO2 max and running economy. Full effort on reps, easy recovery — quality over quantity.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type == "strength_support":
+        # Use hotel/bodyweight equivalent if roster is a layover
+        exs = STRENGTH_FOR_RUNNERS
+        loc = "Home Workout"
+        if hotel_pref == "hotel":
+            loc = "Hotel Gym Workout"
+        return {
+            "date": date, "day_load": day_load, "title": "Strength for Runners",
+            "location": loc, "duration_min": 40, "focus": "full",
+            "warmup": WARMUP_GENERAL, "exercises": exs,
+            "alternatives": {
+                "home": "Full home version.",
+                "hotel": "Bodyweight version — split squats + push-ups + planks.",
+                "no_equipment": "Bodyweight only.",
+                "easier": "Drop to 2 sets, longer rest.",
+                "harder": "Add a 4th set on the primary lifts.",
+            },
+            "rationale": "Strength support for runners — glutes, hamstrings, calves + core. Injury-prevention insurance that keeps you consistent on the road.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type in ("push_strength", "pull_strength", "upper_strength"):
+        return {
+            "date": date, "day_load": day_load,
+            "title": {"push_strength": "Upper Push + Core", "pull_strength": "Upper Pull + Core", "upper_strength": "Upper Body Strength"}[session_type],
+            "location": "Home Workout", "duration_min": 45,
+            "focus": "push" if session_type == "push_strength" else ("pull" if session_type == "pull_strength" else "push"),
+            "warmup": WARMUP_GENERAL,
+            "exercises": FULL_BODY_STRENGTH if session_type == "upper_strength" else FULL_BODY_STRENGTH[:5],
+            "alternatives": {
+                "home": "Full home version.",
+                "hotel": "Bodyweight version.",
+                "no_equipment": "Push-ups + row variations.",
+                "easier": "Drop to 2 sets.",
+                "harder": "Add a superset at the end.",
+            },
+            "rationale": "Upper-body strength keeps posture healthy on long-haul flights and around the roster.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type in ("leg_strength", "lower_strength"):
+        return {
+            "date": date, "day_load": day_load, "title": "Lower Body Strength",
+            "location": "Home Workout", "duration_min": 50, "focus": "legs",
+            "warmup": WARMUP_GENERAL, "exercises": FULL_BODY_STRENGTH,
+            "alternatives": {
+                "home": "Full home version.",
+                "hotel": "Bodyweight version.",
+                "no_equipment": "Bodyweight squat + reverse lunge + glute bridge.",
+                "easier": "Drop to 2 sets, longer rest.",
+                "harder": "Add tempo work to the primary lifts.",
+            },
+            "rationale": "Lower body strength — protect the knees and hips from long-standing / heavy walking on rotations.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type == "conditioning":
+        return {
+            "date": date, "day_load": day_load, "title": "Conditioning Circuit",
+            "location": "Home Workout", "duration_min": 30, "focus": "conditioning",
+            "warmup": WARMUP_GENERAL, "exercises": CONDITIONING_CIRCUIT,
+            "alternatives": {
+                "home": "Full home version.",
+                "hotel": "Bodyweight substitute — squats + push-ups + mountain climbers + planks.",
+                "no_equipment": "Bodyweight version.",
+                "easier": "3 sets instead of 4.",
+                "harder": "Add a 5th round of the first 3 exercises.",
+            },
+            "rationale": "Short conditioning to keep heart-rate variability high and support fat-loss / general fitness without stealing recovery.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type == "mobility":
+        return {
+            "date": date, "day_load": "amber", "title": "Mobility Flow",
+            "location": "Home Workout", "duration_min": 20, "focus": "mobility",
+            "warmup": WARMUP_MOBILITY, "exercises": MOBILITY_FLOW,
+            "alternatives": {
+                "home": "Same flow.", "hotel": "Same flow.", "no_equipment": "Fully bodyweight.",
+                "easier": "Halve the reps.", "harder": "Add 5 minutes of easy walking after.",
+            },
+            "rationale": "Mobility flow — release tissue that flying + strength / running loads up. Best after a run or on off days.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type == "recovery":
+        return {
+            "date": date, "day_load": "amber", "title": "Optional Recovery Walk",
+            "location": "Outdoor Run", "duration_min": 25, "focus": "recovery",
+            "warmup": WARMUP_MOBILITY, "exercises": [],
+            "alternatives": {"home": "Walk outside.", "hotel": "Walk the hotel neighbourhood.", "no_equipment": "Just shoes.", "easier": "10 min walk.", "harder": "Add 5 min of easy jog."},
+            "rationale": "Recovery walk — active recovery is optional. Skip it if you're tired; do it if you're moving well.",
+            "key_session": False, "event_phase": None, "optional": True,
+        }
+
+    if session_type == "swim":
+        return {
+            "date": date, "day_load": day_load, "title": "Swim",
+            "location": "Pool Swim", "duration_min": 45, "focus": "swim",
+            "warmup": [{"name": "200m easy swim", "duration_sec": 300}],
+            "exercises": [{"name": "Main swim set", "sets": 1, "reps": "1500m technique + steady", "rest_sec": 0, "rpe": 5, "notes": "Focus on stroke technique."}],
+            "alternatives": {"home": "Skip if no pool — replace with 40min easy bike or run.", "hotel": "Hotel pool if available.", "no_equipment": "Swap for cycling or running.", "easier": "800m only.", "harder": "2000m with some tempo 100s."},
+            "rationale": "Triathlon-focused swim session — technique-first, steady effort.",
+            "key_session": False, "event_phase": None,
+        }
+
+    if session_type in ("easy_bike", "long_bike"):
+        long = session_type == "long_bike"
+        return {
+            "date": date, "day_load": day_load, "title": "Long Ride" if long else "Easy Ride",
+            "location": "Bike Session", "duration_min": 90 if long else 60, "focus": "bike",
+            "warmup": [{"name": "10 min easy spin", "duration_sec": 600}],
+            "exercises": [{"name": "Ride", "sets": 1, "reps": ("70-80 min steady" if long else "45-50 min steady"), "rest_sec": 0, "rpe": 5, "notes": "Conversational pace."}],
+            "alternatives": {"home": "Indoor trainer.", "hotel": "Skip or replace with a run.", "no_equipment": "Swap for a run of similar duration.", "easier": "Reduce by 15 min.", "harder": "Add 15 min tempo effort mid-ride."},
+            "rationale": "Bike session — protects joints while building aerobic capacity. Long ride is the key session in triathlon prep.",
+            "key_session": long, "event_phase": None,
+        }
+
+    if session_type == "brick":
+        return {
+            "date": date, "day_load": day_load, "title": "Brick (Bike → Run)",
+            "location": "Bike Session", "duration_min": 60, "focus": "brick",
+            "warmup": [{"name": "5 min easy spin", "duration_sec": 300}],
+            "exercises": [
+                {"name": "45 min bike at RPE 6", "sets": 1, "reps": "45 min", "rest_sec": 0, "rpe": 6, "notes": "Steady effort."},
+                {"name": "Transition + 15 min easy run", "sets": 1, "reps": "15 min", "rest_sec": 0, "rpe": 5, "notes": "Get used to running off the bike."},
+            ],
+            "alternatives": {"home": "Indoor trainer + treadmill.", "hotel": "Skip or split into 2 sessions.", "no_equipment": "Skip bike, do 45 min run.", "easier": "30 min bike + 10 min run.", "harder": "60 min bike + 20 min run."},
+            "rationale": "Brick session — race-specific practice of running off the bike. Legs feel heavy the first km — that's normal.",
+            "key_session": False, "event_phase": None,
+        }
+
+    # Unknown session type — return None so caller can skip
+    return None  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Roster day → session-type override rules (aviation safety)
+# ---------------------------------------------------------------------------
 
 def _classify_day(day: dict[str, Any]) -> str:
     """Map a roster day into one of the workout templates."""
     dtype = str(day.get("day_type") or day.get("type") or "").lower()
-    # Explicit rest
     if dtype in ("rest", "off", "annual_leave", "leave"):
         return "off"
-    # Flight duties
     if any(k in dtype for k in ("night_flight", "night-flight", "overnight", "red_eye", "red-eye", "long_haul", "long-haul")):
         return "flight_heavy"
     if "flight" in dtype or "duty" in dtype:
@@ -103,171 +381,153 @@ def _classify_day(day: dict[str, Any]) -> str:
         return "standby"
     if any(k in dtype for k in ("sim", "training", "line_check")):
         return "activation"
-    # Default = home training day
     return "home"
 
 
-def _build_workout_for_day(day: dict[str, Any], goal_focus: str) -> dict[str, Any] | None:
-    """Return a single workout doc for one roster day, or None for a rest day."""
-    kind = _classify_day(day)
-    date = day.get("date")
-    if not date:
-        return None
-
+def _override_for_duty(kind: str, date: str) -> Any:
+    """If the roster day forces a specific stub (safety), return it. Else None."""
     if kind == "off":
-        # Explicit rest — return nothing so the day shows as a natural rest.
-        return None
-
+        return None  # explicit rest — no card
     if kind == "flight_heavy":
         return {
-            "date": date,
-            "day_load": "red",
-            "title": "Flight Recovery Mobility",
-            "location": "Post-Flight Mobility",
-            "duration_min": 15,
-            "focus": "recovery",
-            "warmup": WARMUP_MOBILITY,
-            "exercises": FLIGHT_RECOVERY_MOBILITY,
-            "alternatives": {
-                "home": "Same mobility flow in your bedroom.",
-                "hotel": "Same mobility flow in your hotel room.",
-                "no_equipment": "All bodyweight — no equipment needed.",
-                "easier": "Shorten to 10 minutes and skip the last two moves.",
-                "harder": "Add 10 minutes of walking after the flow.",
-            },
-            "rationale": "Placed after a heavy flying duty. Keep the session short and focused on hips, thoracic spine and breathing so you can down-regulate and sleep well.",
-            "key_session": False,
-            "event_phase": None,
+            "date": date, "day_load": "red", "title": "Flight Recovery Mobility",
+            "location": "Post-Flight Mobility", "duration_min": 15, "focus": "recovery",
+            "warmup": WARMUP_MOBILITY, "exercises": FLIGHT_RECOVERY_MOBILITY,
+            "alternatives": {"home": "Same flow.", "hotel": "Same flow.", "no_equipment": "Bodyweight only.", "easier": "10 min version.", "harder": "Add 10 min walk."},
+            "rationale": "Placed after heavy duty — short mobility + breathing to downregulate and support sleep.",
+            "key_session": False, "event_phase": None, "optional": True,
         }
-
     if kind == "flight_light":
         return {
-            "date": date,
-            "day_load": "amber",
-            "title": "Pre/Post-Flight Mobility",
-            "location": "Pre-Flight Mobility",
-            "duration_min": 12,
-            "focus": "mobility",
-            "warmup": WARMUP_MOBILITY,
-            "exercises": FLIGHT_RECOVERY_MOBILITY,
-            "alternatives": {
-                "home": "Same mobility flow.",
-                "hotel": "Same mobility flow.",
-                "no_equipment": "All bodyweight.",
-                "easier": "Halve the reps.",
-                "harder": "Add a 10-minute walk.",
-            },
-            "rationale": "Short mobility session around a flying duty — improve hip and shoulder position without adding fatigue.",
-            "key_session": False,
-            "event_phase": None,
+            "date": date, "day_load": "amber", "title": "Pre/Post-Flight Mobility",
+            "location": "Pre-Flight Mobility", "duration_min": 12, "focus": "mobility",
+            "warmup": WARMUP_MOBILITY, "exercises": FLIGHT_RECOVERY_MOBILITY,
+            "alternatives": {"home": "Same flow.", "hotel": "Same flow.", "no_equipment": "Bodyweight only.", "easier": "Halve the reps.", "harder": "Add 10 min walk."},
+            "rationale": "Short mobility around a flying duty — improve hip / shoulder position without adding fatigue.",
+            "key_session": False, "event_phase": None,
         }
-
-    if kind == "layover":
-        return {
-            "date": date,
-            "day_load": "amber",
-            "title": "Hotel / Bodyweight Session",
-            "location": "Bodyweight Layover Workout",
-            "duration_min": 30,
-            "focus": "full",
-            "warmup": WARMUP_GENERAL,
-            "exercises": BODYWEIGHT_LAYOVER,
-            "alternatives": {
-                "home": "Same session at home.",
-                "hotel": "This is the hotel version.",
-                "no_equipment": "Already bodyweight-only.",
-                "easier": "3 rounds instead of 3 x sets, longer rest.",
-                "harder": "Add push-up + squat superset for 3 rounds.",
-            },
-            "rationale": "You're on a layover — a short, controlled bodyweight session keeps consistency without fatigue.",
-            "key_session": False,
-            "event_phase": None,
-        }
-
     if kind == "standby":
         return {
-            "date": date,
-            "day_load": "amber",
-            "title": "Standby Activation",
-            "location": "Home Workout",
-            "duration_min": 20,
-            "focus": "mobility",
-            "warmup": WARMUP_MOBILITY,
-            "exercises": STANDBY_ACTIVATION,
-            "alternatives": {
-                "home": "Same short activation.",
-                "hotel": "Same short activation.",
-                "no_equipment": "Fully bodyweight.",
-                "easier": "Just do the mobility warm-up.",
-                "harder": "Add 10 minutes of light walking.",
-            },
-            "rationale": "You're on standby, so a short activation keeps you ready without spending real energy.",
-            "key_session": False,
-            "event_phase": None,
+            "date": date, "day_load": "amber", "title": "Standby Activation",
+            "location": "Home Workout", "duration_min": 20, "focus": "mobility",
+            "warmup": WARMUP_MOBILITY, "exercises": STANDBY_ACTIVATION,
+            "alternatives": {"home": "Same activation.", "hotel": "Same activation.", "no_equipment": "Fully bodyweight.", "easier": "Just the mobility warm-up.", "harder": "Add 10 min walking."},
+            "rationale": "Standby — short activation keeps you ready without spending real energy.",
+            "key_session": False, "event_phase": None,
         }
-
     if kind == "activation":
         return {
-            "date": date,
-            "day_load": "amber",
-            "title": "Light Activation",
-            "location": "Home Workout",
-            "duration_min": 20,
-            "focus": "mobility",
-            "warmup": WARMUP_MOBILITY,
-            "exercises": STANDBY_ACTIVATION,
+            "date": date, "day_load": "amber", "title": "Light Activation",
+            "location": "Home Workout", "duration_min": 20, "focus": "mobility",
+            "warmup": WARMUP_MOBILITY, "exercises": STANDBY_ACTIVATION,
             "alternatives": {"home": "Same session.", "hotel": "Same session.", "no_equipment": "Bodyweight-only.", "easier": "Skip the last 2 moves.", "harder": "Add 10 min walking."},
-            "rationale": "Simulator / training day — keep your body warm without adding fatigue that could impact your assessment.",
-            "key_session": False,
-            "event_phase": None,
+            "rationale": "Simulator / training day — keep the body warm without adding fatigue that could impact assessment.",
+            "key_session": False, "event_phase": None,
         }
+    # layover / home = no override — the goal-aware planner picks the session type
+    return None
 
-    # home
-    if goal_focus == "bodyweight":
-        exs, title, loc, dur = BODYWEIGHT_LAYOVER, "Full Body Bodyweight", "Home Workout", 35
-    elif goal_focus == "hotel":
-        exs, title, loc, dur = HOTEL_GYM, "Full Body Hotel Gym", "Hotel Gym Workout", 40
-    else:
-        exs, title, loc, dur = FULL_BODY_STRENGTH, "Full Body Strength", "Home Workout", 45
 
-    return {
-        "date": date,
-        "day_load": "green",
-        "title": title,
-        "location": loc,
-        "duration_min": dur,
-        "focus": "full",
-        "warmup": WARMUP_GENERAL,
-        "exercises": exs,
-        "alternatives": {
-            "home": "Use dumbbells, kettlebells or a band.",
-            "hotel": "Sub in bodyweight equivalents.",
-            "no_equipment": "Do the bodyweight version listed above.",
-            "easier": "Drop to 2 sets, add 30s extra rest.",
-            "harder": "Add a 4th set of the first two lifts, or superset the last two.",
-        },
-        "rationale": "Home / off-duty day — the best window to progress strength without competing with roster fatigue.",
-        "key_session": False,
-        "event_phase": None,
-    }
-
+# ---------------------------------------------------------------------------
+# Public: goal-aware plan builder (Plan B2)
+# ---------------------------------------------------------------------------
 
 def build_template_plan(user: dict[str, Any], roster: dict[str, Any]) -> list[dict[str, Any]]:
-    """Deterministic fallback plan for the whole roster window."""
+    """Deterministic fallback plan for the whole roster window.
+
+    NEW (Plan B2): goal-aware. Reads `profile.main_goal_key` and
+    `profile.event_type_pref` to pick an ideal weekly shape from
+    `feature_programme_quality.event_weekly_shape` or `strength_weekly_shape`.
+    Runs, long runs, and strength-for-runners now appear for marathon clients.
+    """
     profile = user.get("profile") or {}
     hotel_pref = str(profile.get("hotel_gyms") or "").lower()
     if hotel_pref in ("never", "rare"):
-        goal_focus = "bodyweight"
-    elif hotel_pref in ("always", "often"):
-        goal_focus = "hotel"
+        equip_pref = "bodyweight"
+    elif hotel_pref in ("always", "often", "hotel_gym_reliable"):
+        equip_pref = "hotel"
     else:
-        goal_focus = "home"
+        equip_pref = "home"
+
+    # Import lazily to avoid a cycle at module load
+    from feature_programme_quality import (
+        _resolve_goal_key, _phase_for_week,
+        event_weekly_shape, strength_weekly_shape,
+    )
+    goal_key = _resolve_goal_key(profile)
+    ev_type = profile.get("event_type_pref")
+    try:
+        target_sessions = int(profile.get("training_days_per_week") or 4)
+    except Exception:
+        target_sessions = 4
+    target_sessions = max(1, min(7, target_sessions))
+
+    # Phase — use week 1 by default; the roster worker will re-run
+    # `programme_context_for_llm` for real week_index after persistence.
+    phase = _phase_for_week(0)
+
+    if goal_key == "event" and ev_type:
+        shape = event_weekly_shape(ev_type, phase["key"], target_sessions)
+    else:
+        shape = strength_weekly_shape(goal_key, target_sessions)
+
+    # Split roster days into weeks of 7 (Mon-Sun aligned by ISO date order)
+    days = list(roster.get("days") or [])
+    if not days:
+        return []
 
     out: list[dict[str, Any]] = []
-    for d in (roster.get("days") or []):
-        w = _build_workout_for_day(d, goal_focus)
-        if w:
-            out.append(w)
+    ctx_stub = {"hotel_pref": equip_pref}
+
+    # Walk days sequentially. For each week (7 consecutive days), maintain a
+    # consumable session-type queue from `shape`. Duty overrides take
+    # precedence — running/strength slot slides to the next available day.
+    for wk_start in range(0, len(days), 7):
+        week = days[wk_start: wk_start + 7]
+        # Consumable queue: real training slots first, recovery/mobility last
+        real_slots = [s for s in shape if s not in ("mobility", "recovery")]
+        light_slots = [s for s in shape if s in ("mobility", "recovery")]
+        # Pad light slots so week is filled
+        while len(real_slots) + len(light_slots) < len(week):
+            light_slots.append("recovery")
+
+        queue = list(real_slots) + list(light_slots)
+
+        for d in week:
+            date = d.get("date")
+            if not date:
+                continue
+            kind = _classify_day(d)
+            override = _override_for_duty(kind, date)
+            if override is not None:
+                out.append(override)
+                # Override consumed a slot — remove the LAST light slot from
+                # queue to keep the total count aligned. Never remove a real
+                # training slot (they must still be placed on remaining days).
+                for i in range(len(queue) - 1, -1, -1):
+                    if queue[i] in ("mobility", "recovery"):
+                        queue.pop(i)
+                        break
+                else:
+                    # No light slot left — drop the LAST real slot instead
+                    # (the roster is heavy — reduce planned volume).
+                    if queue:
+                        queue.pop()
+                continue
+            if kind == "off":
+                continue  # explicit rest — no card
+            # kind is layover or home — pop next slot from queue
+            if not queue:
+                continue
+            slot = queue.pop(0)
+            # For layovers, prefer to swap heavy strength for bodyweight
+            local_ctx = dict(ctx_stub)
+            if kind == "layover":
+                local_ctx["hotel_pref"] = "hotel" if equip_pref != "bodyweight" else "bodyweight"
+            w = _stub_for_session_type(slot, date, local_ctx)
+            if w:
+                out.append(w)
+
     return out
 
 

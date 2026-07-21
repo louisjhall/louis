@@ -3027,6 +3027,13 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                             await apply_resolver_to_workouts(workouts, user=user, roster=roster)
                         except Exception:
                             logger.exception("v2_resolver on fallback failed (non-fatal)")
+                        # Plan A3/A4 also apply to the deterministic fallback —
+                        # the resolver may drop exercises which changes cap +
+                        # min-content assessments.
+                        try:
+                            _apply_days_cap_and_min_content(workouts, user.get("profile") or {})
+                        except Exception:
+                            logger.exception("days-cap / min-content pass on fallback failed (non-fatal)")
                     if used_template:
                         logger.warning("plan generation used TEMPLATE fallback for job %s (LLM unavailable)", job_id)
             except Exception:
@@ -4707,6 +4714,22 @@ EVENT TRAINING RULES (apply only if an event is provided):
  - For triathlon: rotate swim / bike / run and include one brick/week when possible.
  - Balance: if the roster forces cutting volume, prefer to keep the KEY session and drop optional sessions.
 
+MARATHON & RUNNING-RACE RULES (STRICT — apply whenever profile.event_type_pref is
+ marathon / half_marathon / 10k / 5k OR goal_key = "event" with a running race):
+ - The weekly plan MUST include at least ONE long_run and ONE easy_run per week (unless
+   the roster is a hard duty week with 6+ heavy days, in which case reduce to 1 easy_run).
+ - Every "run" workout MUST use `focus` from: easy_run, long_run, tempo, intervals, zone2.
+ - NEVER label a marathon client's session "Full Body Strength" — strength for runners is
+   `title: "Strength for Runners"`, `focus: "full"`, with posterior-chain + single-leg emphasis,
+   and NO heavy squat/deadlift in the 48h before the long run.
+ - A "one-exercise long_run session" is ACCEPTABLE (e.g. Easy Run 40min) — but MUST include
+   a warm-up (5min walk/jog), pace/RPE guidance, cool-down, and hydration/coaching notes.
+ - Do NOT invent running paces if `current_ability`/`longest_recent` are unknown — use
+   RPE 4–5 for easy, RPE 6–7 for tempo, RPE 8–9 for intervals with walk-jog recovery.
+ - Respect `programme_context.weekly_shape_ideal` — it is the ideal session-type slot list
+   for the client's phase. Deviate ONLY when the roster forces it (log the reason in the
+   session's `rationale`).
+
 For EACH day in the roster, output one workout object:
   date (YYYY-MM-DD)
   day_load — green | amber | red | blue | purple | grey (mirror the input where possible)
@@ -4835,10 +4858,17 @@ async def _generate_month(
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
-            f"Programme context (goal, phase, weekly target, roster summary): {json.dumps(programme_ctx)[:2000] if programme_ctx else 'None'}\n"
+            f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal): {json.dumps(programme_ctx)[:2500] if programme_ctx else 'None'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
             f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:7500]}\n"
             "Design exactly one workout per date in this chunk. Return JSON. "
+            "HARD RULES: (1) The number of REAL training sessions (focus not in recovery/mobility/rest) "
+            "in each 7-day chunk MUST NOT exceed `profile.training_days_per_week`. Extra days MUST be "
+            "focus='recovery' cards with title 'Optional Recovery Walk' or 'Mobility Flow'. "
+            "(2) If `programme_context.weekly_shape_ideal` is present, hit those session-type slots in that "
+            "order across the training days — DO NOT swap slots without a roster reason. "
+            "(3) For endurance/event goals with `event_type_pref` set, the week MUST include at least one "
+            "long_run and one easy_run (unless the roster is a hard duty week). "
             "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available. "
             "Follow the Programme context strictly: match the weekly session target, keep the movement-mix hint balanced across the week, respect the current phase (Foundation/Build/Peak/Deload) — Deload weeks reduce volume by 30–40%. "
             "For EVERY workout, populate the `rationale` field with 1–2 short sentences answering 'Why this session?' — reference the phase, the roster context (e.g. long-haul day tomorrow, standby, layover in city X), and the client's goal. No client-facing 'AI' wording. "

@@ -1,0 +1,49 @@
+{
+  "summary": "Plan B backend validation for CrewFit Marathon programme quality (goal-aware shapes + running templates + progression). 26/26 pytest cases pass in test_iter76_plan_b_marathon_shapes.py + Plan A regression 21/21 still passes. Verified: (T1) event_weekly_shape('marathon',*,4) returns correct ordered slots for foundation ([easy_run,long_run,strength_support,easy_run]+mob/rec), build (adds tempo, no intervals), peak (adds intervals, no tempo), deload (no tempo/no intervals but long_run preserved) — unknown event_type falls back to marathon; (T2) strength_weekly_shape('build_muscle',4)=[push_strength,pull_strength,leg_strength,upper_strength]+light, strength_weekly_shape('lose_fat',3)=[upper_strength,conditioning,lower_strength]+light, unknown key → general_fitness; (T3) Louis scenario (main_goal_key=event, event_type_pref=marathon, training_days_per_week=4, hotel_gym_reliable) with 14-day roster (2 long-hauls + 2 layovers) → NO 'Full Body Strength' title, ≥1 Long Run per 7-day window, ≥1 Easy Run per 7-day window, EXACTLY 1 Strength for Runners per 7-day window, real training sessions ≤ 4 per week after _apply_days_cap_and_min_content, long-haul days → 'Flight Recovery Mobility' override, no 30+min strength card <3 exercises (A4 preserved on fallback path); (T4) programme_context_for_llm returns weekly_shape_ideal list, event_type_pref='marathon', session_type_meta dict, and progression block with phase/phase_label/week_index/target_sessions_per_week/sessions_planned_this_week/sessions_completed_this_week/sessions_missed_this_week/next_progression/deload_status; (T5) persist_programme_record stores weekly_shape_ideal + event_type_pref + progression on the programmes row (verified via Mongo find_one); (T6) Plan A validator rules regression — marathon-no-run → error, target+2 → hard error, >50% template → warning, 5x repeated title → warning, incomplete_content workouts → error; (T7) main_goal_key=build_muscle produces push/pull/leg/upper split with ZERO run titles; (T8) backend smoke — /api/auth/login (client), /api/auth/me, /api/programme/current all 200 with correct shape (no _id leaked). No blocker issues found; Plan B ships as designed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "startup",
+        "issue": "Benign 'cannot schedule new futures after interpreter shutdown' motor traceback logged during pytest teardown from feature_event_categories._startup_backfill — pre-existing (same as iter75), no test impact. Consider FastAPI lifespan handler migration."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter76_plan_b_marathon_shapes.py",
+    "/app/test_reports/pytest/iter76_plan_b.xml"
+  ],
+  "action_items": [
+    "None blocking. Plan B backend is ready for Plan C (UI) work.",
+    "When Plan C ships, re-run test_iter76_plan_b_marathon_shapes.py alongside iter75 as regression guards.",
+    "Optional (housekeeping): migrate on_event('startup')/('shutdown') to FastAPI lifespan to eliminate the motor interpreter-shutdown log noise."
+  ],
+  "critical_code_review_comments": [
+    "event_weekly_shape correctly separates real training slots (top-N) from mobility/recovery padding (all trailing light slots) — deterministic and matches the fallback consumption pattern in build_template_plan.",
+    "build_template_plan reserves real training slots and only pops LIGHT slots on duty overrides — so a long-haul override never eats a Long Run slot. Verified by test_at_least_one_long_run_per_week + test_long_haul_days_get_flight_recovery passing simultaneously.",
+    "_apply_days_cap_and_min_content is now called on the fallback path too (server.py ~L3034) — verified via test_real_sessions_capped_at_training_days: 4-day cap holds even when fallback would otherwise place 5 real training slots.",
+    "_stub_for_session_type produces Long Run with key_session=True and focus='long_run' — protected from the days-cap demoter via the priority sort (key_session=0). Long Run always survives the cap.",
+    "programme_context_for_llm attaches weekly_shape_ideal from event_weekly_shape (endurance) OR strength_weekly_shape (else) — clean branch, no silent fall-through to a generic list.",
+    "persist_programme_record's idempotency-per-(user_id, roster_id) is intact — new B1/B3 fields (weekly_shape_ideal, event_type_pref, progression) are persisted on both insert AND update paths.",
+    "Validator rule 9 (endurance goal must have runs) reads event_type_pref off profile_snapshot inside context — ev_type var is bound but not required for the current 'has_run' check; safe.",
+    "STRENGTH_WEEKLY_SHAPES['build_muscle'] is 4 slots wide by design (push/pull/leg/upper) — if a client picks training_days_per_week=5, they'll only get 4 real strength sessions + mobility. Acceptable given the current target cap but worth noting for future 5+/wk clients."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter76_plan_b_marathon_shapes.py (new — 26 test cases across 8 test classes)"
+  ],
+  "success_rate": {
+    "backend": "100% (26/26 iter76 + 21/21 iter75 regression = 47/47)",
+    "frontend": "not tested (Plan B is backend-only per request; Plan C ships UI)"
+  },
+  "seed_data_creation": "test_persist_stores_weekly_shape_event_type_progression INSERTS a temp programmes row (id/user_id keyed with UTC timestamp) then DELETES it in the same test — no residue.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Plan B is validated at the deterministic level (shape catalogues + fallback + context + persistence + validator regressions). No LLM budget was spent — real _generate_month + _run_chunk output was NOT exercised (that would need a live Claude call). When Plan C (UI) is ready or when a live-generation cycle is affordable, add an integration test that: (1) uploads a real roster for Louis, (2) calls /api/workouts/regenerate, (3) polls until job done, (4) asserts db.workouts contains 'Long Run' + 'Easy Run' + 'Strength for Runners' titles and db.programmes row has weekly_shape_ideal populated. The MARATHON & RUNNING-RACE RULES prompt text in server.py::WORKOUT_SYSTEM and _run_chunk was reviewed statically but not exercised end-to-end.",
+  "rca_of_issue": "N/A — no bugs found. Plan B changes behave per spec."
+}

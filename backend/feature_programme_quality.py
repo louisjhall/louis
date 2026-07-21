@@ -119,6 +119,139 @@ GOAL_MATRIX: dict[str, dict[str, Any]] = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Plan B1 — Event-type specific weekly shapes
+# ---------------------------------------------------------------------------
+# Each shape defines the *ideal* session-type composition for a given
+# training availability (2/3/4/5/6 days/week) and phase (base/build/peak/taper).
+# Session types map to workout `focus` values downstream:
+#   easy_run/long_run/tempo/intervals/zone2 → running-focused
+#   strength_support → strength that supports running (posterior chain, single-leg)
+#   mobility/recovery → recovery days
+#
+# The shape is deterministic and used by:
+#   * `programme_context_for_llm` — injected as `weekly_shape_ideal` so the
+#     LLM has an explicit weekly template to hit.
+#   * `feature_workout_fallback.build_template_plan` — deterministic fallback
+#     branches on this shape.
+#   * `validate_programme` — endurance-goal-must-have-runs rule cross-checks.
+
+EVENT_WEEKLY_SHAPES: dict[str, dict[str, list[str]]] = {
+    "marathon": {
+        # phase -> ordered list of session-type slots (highest priority first)
+        # slots are consumed in order until target_sessions_per_week is met.
+        "foundation": ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"],
+        "build":      ["easy_run", "long_run", "tempo", "strength_support", "easy_run", "mobility", "recovery"],
+        "peak":       ["easy_run", "long_run", "intervals", "strength_support", "easy_run", "mobility", "recovery"],
+        "deload":     ["easy_run", "long_run", "easy_run", "strength_support", "mobility", "recovery", "recovery"],
+    },
+    "half_marathon": {
+        "foundation": ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"],
+        "build":      ["easy_run", "long_run", "tempo", "strength_support", "easy_run", "mobility", "recovery"],
+        "peak":       ["easy_run", "long_run", "intervals", "strength_support", "easy_run", "mobility", "recovery"],
+        "deload":     ["easy_run", "long_run", "easy_run", "strength_support", "mobility", "recovery", "recovery"],
+    },
+    "10k": {
+        "foundation": ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"],
+        "build":      ["easy_run", "tempo", "long_run", "intervals", "strength_support", "mobility", "recovery"],
+        "peak":       ["easy_run", "intervals", "long_run", "tempo", "strength_support", "mobility", "recovery"],
+        "deload":     ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"],
+    },
+    "5k": {
+        "foundation": ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"],
+        "build":      ["easy_run", "intervals", "tempo", "long_run", "strength_support", "mobility", "recovery"],
+        "peak":       ["easy_run", "intervals", "tempo", "long_run", "strength_support", "mobility", "recovery"],
+        "deload":     ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"],
+    },
+    "hyrox": {
+        "foundation": ["strength_support", "conditioning", "easy_run", "strength_support", "mobility", "recovery", "recovery"],
+        "build":      ["strength_support", "conditioning", "long_run", "intervals", "strength_support", "mobility", "recovery"],
+        "peak":       ["strength_support", "intervals", "long_run", "conditioning", "strength_support", "mobility", "recovery"],
+        "deload":     ["strength_support", "easy_run", "conditioning", "strength_support", "mobility", "recovery", "recovery"],
+    },
+    "ironman": {
+        "foundation": ["easy_run", "long_bike", "swim", "strength_support", "long_run", "mobility", "recovery"],
+        "build":      ["easy_run", "long_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "peak":       ["tempo", "long_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "deload":     ["easy_run", "easy_bike", "swim", "strength_support", "long_run", "mobility", "recovery"],
+    },
+    "half_ironman": {
+        "foundation": ["easy_run", "long_bike", "swim", "strength_support", "long_run", "mobility", "recovery"],
+        "build":      ["easy_run", "long_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "peak":       ["tempo", "long_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "deload":     ["easy_run", "easy_bike", "swim", "strength_support", "long_run", "mobility", "recovery"],
+    },
+    "sprint_tri": {
+        "foundation": ["easy_run", "easy_bike", "swim", "strength_support", "brick", "mobility", "recovery"],
+        "build":      ["intervals", "easy_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "peak":       ["intervals", "easy_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "deload":     ["easy_run", "easy_bike", "swim", "strength_support", "mobility", "recovery", "recovery"],
+    },
+    "olympic_tri": {
+        "foundation": ["easy_run", "long_bike", "swim", "strength_support", "long_run", "mobility", "recovery"],
+        "build":      ["intervals", "long_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "peak":       ["intervals", "long_bike", "swim", "brick", "long_run", "mobility", "recovery"],
+        "deload":     ["easy_run", "easy_bike", "swim", "strength_support", "long_run", "mobility", "recovery"],
+    },
+}
+
+# For sub-endurance goals (fat loss / build muscle / general) — reused by
+# fallback so it stops producing 7 identical Full-Body-Strength sessions.
+STRENGTH_WEEKLY_SHAPES: dict[str, list[str]] = {
+    "lose_fat":              ["upper_strength", "conditioning", "lower_strength", "mobility", "recovery", "recovery", "recovery"],
+    "build_muscle":          ["push_strength", "pull_strength", "leg_strength", "upper_strength", "mobility", "recovery", "recovery"],
+    "general_fitness":       ["upper_strength", "conditioning", "lower_strength", "mobility", "recovery", "recovery", "recovery"],
+    "aviation_consistency":  ["upper_strength", "mobility", "lower_strength", "mobility", "recovery", "recovery", "recovery"],
+    "health_markers":        ["easy_run", "upper_strength", "mobility", "lower_strength", "mobility", "recovery", "recovery"],
+    "improve_energy":        ["easy_run", "mobility", "upper_strength", "mobility", "recovery", "recovery", "recovery"],
+    "return_to_training":    ["upper_strength", "mobility", "mobility", "recovery", "recovery", "recovery", "recovery"],
+}
+
+# Session-type → workout stub metadata for the fallback engine and prompt.
+SESSION_TYPE_META: dict[str, dict[str, Any]] = {
+    "easy_run":         {"title": "Easy Run",        "focus": "long_run", "duration_min": 40, "location": "Outdoor Run",   "intensity": "RPE 4–5 / conversational"},
+    "long_run":         {"title": "Long Run",        "focus": "long_run", "duration_min": 75, "location": "Outdoor Run",   "intensity": "RPE 4–6 / long steady", "key_session": True},
+    "tempo":            {"title": "Tempo Run",       "focus": "tempo",    "duration_min": 45, "location": "Outdoor Run",   "intensity": "RPE 7 / comfortably hard"},
+    "intervals":        {"title": "Interval Session","focus": "intervals","duration_min": 45, "location": "Outdoor Run",   "intensity": "RPE 8–9 on efforts / walk-jog recovery"},
+    "strength_support": {"title": "Strength for Runners", "focus": "full", "duration_min": 40, "location": "Home Workout", "intensity": "RPE 6–7 / control emphasis"},
+    "push_strength":    {"title": "Upper Push + Core",    "focus": "push", "duration_min": 45, "location": "Home Workout", "intensity": "RPE 7 / 2 reps in reserve"},
+    "pull_strength":    {"title": "Upper Pull + Core",    "focus": "pull", "duration_min": 45, "location": "Home Workout", "intensity": "RPE 7 / 2 reps in reserve"},
+    "leg_strength":     {"title": "Lower Body Strength",  "focus": "legs", "duration_min": 50, "location": "Home Workout", "intensity": "RPE 7 / 2 reps in reserve"},
+    "upper_strength":   {"title": "Upper Body Strength",  "focus": "push", "duration_min": 45, "location": "Home Workout", "intensity": "RPE 7 / 2 reps in reserve"},
+    "lower_strength":   {"title": "Lower Body Strength",  "focus": "legs", "duration_min": 50, "location": "Home Workout", "intensity": "RPE 7 / 2 reps in reserve"},
+    "conditioning":     {"title": "Conditioning Circuit", "focus": "conditioning", "duration_min": 30, "location": "Home Workout", "intensity": "RPE 7–8 / hard but sustainable"},
+    "swim":             {"title": "Swim",              "focus": "swim",  "duration_min": 45, "location": "Pool Swim",     "intensity": "RPE 5–7 / technique-first"},
+    "easy_bike":        {"title": "Easy Ride",         "focus": "bike",  "duration_min": 60, "location": "Bike Session",  "intensity": "RPE 4–5 / conversational"},
+    "long_bike":        {"title": "Long Ride",         "focus": "bike",  "duration_min": 90, "location": "Bike Session",  "intensity": "RPE 4–6 / long steady", "key_session": True},
+    "brick":            {"title": "Brick (Bike → Run)", "focus": "brick","duration_min": 60, "location": "Bike Session",  "intensity": "RPE 6–7 / race prep"},
+    "mobility":         {"title": "Mobility Flow",     "focus": "mobility", "duration_min": 20, "location": "Home Workout", "intensity": "Restorative"},
+    "recovery":         {"title": "Recovery Walk",     "focus": "recovery", "duration_min": 25, "location": "Outdoor Run",  "intensity": "RPE 2–3 / gentle walk", "optional": True},
+}
+
+
+def event_weekly_shape(event_type: Optional[str], phase_key: str, target_sessions: int) -> list[str]:
+    """Return the ideal ordered session-type list for an event type + phase.
+
+    Consumes `target_sessions` slots off the front of the shape. Falls back
+    to marathon shape if the specific event isn't mapped.
+    """
+    et = (event_type or "").lower()
+    shapes = EVENT_WEEKLY_SHAPES.get(et) or EVENT_WEEKLY_SHAPES.get("marathon")
+    ordered = shapes.get(phase_key) or shapes.get("foundation") or []
+    # Return the top-N slots; keep recovery/mobility tail for the remaining days.
+    training = [s for s in ordered if s not in ("mobility", "recovery")][:target_sessions]
+    padding = [s for s in ordered if s in ("mobility", "recovery")]
+    return training + padding
+
+
+def strength_weekly_shape(goal_key: str, target_sessions: int) -> list[str]:
+    """Return the ideal ordered session-type list for a non-endurance goal."""
+    ordered = STRENGTH_WEEKLY_SHAPES.get(goal_key) or STRENGTH_WEEKLY_SHAPES["general_fitness"]
+    training = [s for s in ordered if s not in ("mobility", "recovery")][:target_sessions]
+    padding = [s for s in ordered if s in ("mobility", "recovery")]
+    return training + padding
+
+
 DEFAULT_GOAL_KEY = "general_fitness"
 
 
@@ -270,7 +403,71 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
             "primary_goal_id": profile.get("primary_goal_id"),
         },
     }
+
+    # Plan B1 — attach the ideal weekly shape (session-type slots) so the LLM
+    # and the fallback engine have an explicit blueprint. For endurance
+    # goals this is what forces "at least one run/wk" and matches the client's
+    # training_days_per_week without contradiction.
+    ev_type_pref = profile.get("event_type_pref")
+    if goal_key == "event" and ev_type_pref:
+        ctx["weekly_shape_ideal"] = event_weekly_shape(ev_type_pref, phase["key"], target)
+        ctx["session_type_meta"] = SESSION_TYPE_META
+        ctx["event_type_pref"] = ev_type_pref
+    else:
+        ctx["weekly_shape_ideal"] = strength_weekly_shape(goal_key, target)
+        ctx["session_type_meta"] = SESSION_TYPE_META
+
+    # Plan B3 — progression + this-week telemetry (best-effort — pulled from
+    # completed workouts if available; else zeros).
+    today = _dt.date.today()
+    monday = today - _dt.timedelta(days=today.weekday())
+    sunday = monday + _dt.timedelta(days=6)
+    try:
+        this_week = await db.workouts.find({
+            "user_id": user["id"],
+            "date": {"$gte": monday.isoformat(), "$lte": sunday.isoformat()},
+        }, {"_id": 0, "focus": 1, "completed": 1}).to_list(50)
+    except Exception:
+        this_week = []
+    real_this_week = [w for w in this_week if str(w.get("focus") or "").lower() not in ("recovery", "mobility", "rest")]
+    completed_this_week = [w for w in real_this_week if w.get("completed")]
+    missed_this_week = [
+        w for w in real_this_week
+        if not w.get("completed")
+    ]
+    ctx["progression"] = {
+        "phase": phase["key"],
+        "phase_label": phase["label"],
+        "week_index": week_index,
+        "target_sessions_per_week": target,
+        "sessions_planned_this_week": len(real_this_week),
+        "sessions_completed_this_week": len(completed_this_week),
+        "sessions_missed_this_week": len(missed_this_week),
+        "next_progression": _next_progression_note(goal_key, phase["key"]),
+        "deload_status": "deload_week" if phase["key"] == "deload" else "normal",
+    }
     return ctx
+
+
+def _next_progression_note(goal_key: str, phase_key: str) -> str:
+    """Human-readable next-week progression hint used in coach dashboard."""
+    if goal_key == "event":
+        return {
+            "foundation": "Add ~10% to easy run distance next week if you feel good.",
+            "build":      "Add one quality workout (tempo or intervals) if recovery is stable.",
+            "peak":       "Hold or slightly increase key session length — protect recovery.",
+            "deload":     "Return to build volume next week — focus on sleep + nutrition this week.",
+        }.get(phase_key, "Progress steadily if recovery and adherence hold.")
+    if goal_key == "build_muscle":
+        return {
+            "foundation": "Add 1–2 reps or one set to the primary lifts next week.",
+            "build":      "Add 2.5–5% load to primary lifts if reps are hit.",
+            "peak":       "Test top set intensity — RPE 8–9 on primary lifts.",
+            "deload":     "Reduce volume 30–40% — keep movement quality high.",
+        }.get(phase_key, "Progress steadily on the primary lifts.")
+    if goal_key == "lose_fat":
+        return "Keep strength consistent — small conditioning progression next week if energy allows."
+    return "Progress steadily. Consistency > intensity."
 
 
 # ---------------------------------------------------------------------------
@@ -542,6 +739,10 @@ async def persist_programme_record(
         "target_sessions_per_week": context.get("target_sessions_per_week"),
         "session_style": context.get("session_style"),
         "movement_mix_hint": context.get("movement_mix_hint"),
+        # Plan B1 / B3 additions
+        "weekly_shape_ideal": context.get("weekly_shape_ideal"),
+        "event_type_pref": context.get("event_type_pref"),
+        "progression": context.get("progression"),
         "start_date": start_iso,
         "end_date": end_iso,
         "roster_context_summary": context.get("roster_summary"),

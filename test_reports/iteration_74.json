@@ -1,0 +1,35 @@
+{
+  "summary": "Iter74 bug-fix verified — Review Roster confirmation screen now shows EDIT on EVERY day card (not just amber REVIEW ones) and the amber cards keep CONFIRM AS-IS. All 5 requested frontend test cases PASSED at 390x844 mobile viewport against a seeded pending roster. (T1) Every card has [data-testid=\"rc-edit-<date>\"] with visible 'EDIT'; amber cards additionally have [data-testid=\"rc-quick-confirm-<date>\"] with 'CONFIRM AS-IS'; non-review green cards do NOT show CONFIRM AS-IS. (T2) Tapping EDIT on a non-review (green) day opens the DayEditor modal, changing duty type to 'Sim / Training' updates the card back on the confirmation screen, and PATCH /api/roster/pending/{id} returns 200. (T3) Tapping CONFIRM AS-IS on the amber card POSTs /api/roster/pending/{id}/confirm-day (200), the REVIEW badge flips to CONFIRMED, and the 'N days to review' counter decrements to 0. (T4) Header subtitle contains the exact new phrase 'Any other day can also be edited if something looks wrong'. (T5 regression) The CONFIRM & BUILD PLAN button is disabled (aria-disabled=true, text '1 DAY TO REVIEW') while an unreviewed amber remains and becomes enabled (text 'CONFIRM & BUILD PLAN') after the amber is confirmed; clicking it POSTs /api/roster/pending/{id}/confirm and returns 200 with a job_id. Backend endpoints in play are /roster/pending/{id} (GET, PATCH), /roster/pending/{id}/confirm-day (POST), /roster/pending/{id}/confirm (POST) — the request text mentioned /roster/confirmations/{id} and /roster/confirm-and-build, but the actual code path uses /roster/pending/*, which is what was verified.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/roster/confirm/[id]",
+        "issues": [
+          "At 390x844, when the last day card in the ScrollView is amber (needs review), its CONFIRM AS-IS + EDIT action row sits just underneath the sticky footer (SAVE CHANGES / N DAYS TO REVIEW). Real users can scroll the inner ScrollView with touch and reach the buttons fine, so this is NOT a functional bug (T3 passes once the ScrollView is scrolled). But visually the button is very close to the sticky footer on the initial view — worth considering adding a bit more bottom padding to the ScrollView (currently paddingBottom: 140) or increasing to ~180 so the last card is comfortably above the CTA bar on small phones."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/seed_iter74_pending_roster.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is minimal and surgical — the EDIT Pressable is unconditionally rendered inside cardActions with an Ionicons pencil, and CONFIRM AS-IS remains guarded by the `needs` (review) flag. e.stopPropagation() on both action buttons prevents the outer card's onPress from double-firing (both would open the editor anyway, so it's cosmetically cleaner rather than functionally required).",
+    "Header hint copy is updated inline: existing amber-specific hint got the new sentence appended, so it only shows while there are unreviewed days. Non-review-only rosters will not see the hint at all — that matches the existing pattern (nothing to review, nothing to hint about). If Louis wants the 'you can edit any day' affordance to be discoverable even after all amber days are cleared, consider showing a lighter always-on hint. Not blocking.",
+    "Backend untouched — /api/roster/pending/{id} PATCH and /api/roster/pending/{id}/confirm-day POST verified 200 in flight during the UI test. Same RosterConfirmBody contract."
+  ],
+  "updated_files": [
+    "/app/backend/tests/seed_iter74_pending_roster.py (new — seeds a deterministic pending roster with 4 green + 1 amber days for iter74 verification)"
+  ],
+  "success_rate": {"backend": "N/A (out of scope)", "frontend": "100% (5/5 test cases)"},
+  "seed_data_creation": "Seeded a pending roster (id iter74-<hex>) for client@crewfit.com directly via motor: 4 pre-confirmed days (Home, Flight, Layover Bangkok 1n, Off) + 1 amber Unknown/Needs Confirmation day. Seed script at /app/backend/tests/seed_iter74_pending_roster.py — idempotent (purges prior pending_confirmation rosters for the user first). Also had to un-set status='deletion_pending' on client@crewfit.com in db.users mid-run — some other job/test had soft-deleted the client account between my seed & UI test (setup unrelated to this iteration).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The actual backend endpoints for the roster confirmation screen are /api/roster/pending/{id} (GET, PATCH, DELETE), /api/roster/pending/{id}/confirm-day (POST), and /api/roster/pending/{id}/confirm (POST) — NOT /api/roster/confirmations/{id} or /api/roster/confirm-and-build. When Playwright-testing the amber CONFIRM AS-IS button at 390x844, the button sits under the sticky footer if the amber card is the last one — you must scroll the INNER ScrollView (not window) into view. Use JS: `let p = el.parentElement; while (p) { if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) { p.scrollTop = p.scrollHeight; break } p = p.parentElement }` before clicking. Otherwise playwright's forced click will hit the sticky SAVE CHANGES button on top and issue a bogus PATCH instead of the intended POST /confirm-day. Client account may be in status='deletion_pending' from an unrelated admin lifecycle test — unset that field on db.users before running any client-login test. Test creds unchanged: client@crewfit.com / Client123!, louis@crewfit.net / Louis123!.",
+  "rca_of_issue": "Original UX bug: EDIT and CONFIRM AS-IS action buttons were only rendered for amber (needs_review) day cards. Non-review (green) cards had no visible edit affordance — even though the outer card Pressable did open the editor on tap, users had no visual cue that non-amber days were also editable. Fix (in /app/frontend/app/roster/confirm/[id].tsx): moved the EDIT Pressable out of the amber-only branch so it renders on every card, added an Ionicons 'create-outline' pencil for stronger affordance, kept CONFIRM AS-IS gated by `needs`, and appended 'Any other day can also be edited if something looks wrong — tap EDIT on the card.' to the summary hint. Verified end-to-end with 5 test cases against a seeded pending roster: EDIT visible on every card, editor opens for both amber and non-review days, edits persist via PATCH, CONFIRM AS-IS still works (POST /confirm-day 200), and the submit gate + POST /confirm (200 with job_id) still work correctly for the regression path."
+}

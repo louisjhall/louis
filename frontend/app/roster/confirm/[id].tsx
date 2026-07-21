@@ -215,7 +215,7 @@ export default function RosterConfirm() {
         </View>
         {unreviewed > 0 && (
           <Text style={styles.summaryHint}>
-            Tap the amber days to confirm or edit their duty type before we build your plan.
+            Tap the amber days to confirm or edit their duty type before we build your plan. Any other day can also be edited if something looks wrong — tap EDIT on the card.
           </Text>
         )}
       </View>
@@ -263,8 +263,8 @@ export default function RosterConfirm() {
                 </Text>
               ) : null}
               {d.notes ? <Text style={styles.cardNotes} numberOfLines={2}>{d.notes}</Text> : null}
-              {needs && (
-                <View style={styles.cardActions}>
+              <View style={styles.cardActions}>
+                {needs ? (
                   <Pressable
                     testID={`rc-quick-confirm-${d.date}`}
                     onPress={(e) => { e.stopPropagation(); confirmDayAsIs(d.date); }}
@@ -272,15 +272,16 @@ export default function RosterConfirm() {
                   >
                     <Text style={styles.confirmMiniText}>CONFIRM AS-IS</Text>
                   </Pressable>
-                  <Pressable
-                    testID={`rc-edit-${d.date}`}
-                    onPress={() => setEditorDate(d.date)}
-                    style={styles.editMini}
-                  >
-                    <Text style={styles.editMiniText}>EDIT</Text>
-                  </Pressable>
-                </View>
-              )}
+                ) : null}
+                <Pressable
+                  testID={`rc-edit-${d.date}`}
+                  onPress={(e) => { e.stopPropagation(); setEditorDate(d.date); }}
+                  style={styles.editMini}
+                >
+                  <Ionicons name="create-outline" size={13} color={theme.color.text} />
+                  <Text style={styles.editMiniText}>EDIT</Text>
+                </Pressable>
+              </View>
             </Pressable>
           );
         })}
@@ -460,7 +461,7 @@ const styles = StyleSheet.create({
   badgeText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   confirmMini: { flex: 1, backgroundColor: theme.color.brand, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center" },
   confirmMiniText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
-  editMini: { flex: 1, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center" },
+  editMini: { flex: 1, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
   editMiniText: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   sticky: {
     position: "absolute", bottom: 0, left: 0, right: 0,

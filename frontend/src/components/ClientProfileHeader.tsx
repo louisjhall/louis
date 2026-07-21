@@ -118,7 +118,7 @@ export function ClientProfileHeader({
       <View style={styles.metaRow}>
         <View style={[styles.loadPill, { borderColor: loadC }]} testID="header-load-pill">
           <View style={[styles.loadDot, { backgroundColor: loadC }]} />
-          <Text style={styles.loadT}>{(todayLoad || "grey").toUpperCase()} DAY</Text>
+          <Text style={styles.loadT}>{String(todayLoad || "grey").toUpperCase()} DAY</Text>
         </View>
         {isStandby ? (
           <View style={styles.standbyPill}>

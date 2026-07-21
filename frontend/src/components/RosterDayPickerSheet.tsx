@@ -141,11 +141,22 @@ export function RosterDayPickerSheet({ target, onClose, onSaved }: Props) {
               >
                 {DUTY_TYPES.map((t) => {
                   const active = (dayType || "").toLowerCase() === t.key.toLowerCase();
+                  const isLayover = t.key.toLowerCase() === "layover";
                   return (
                     <Pressable
                       key={t.key}
                       testID={`roster-day-picker-${t.key}`}
-                      onPress={() => { setDayType(t.key); save(t.key); }}
+                      onPress={() => {
+                        if (isLayover) {
+                          // Layover requires an optional city — reveal the input
+                          // and let the user tap SAVE LAYOVER explicitly instead
+                          // of auto-firing the PATCH.
+                          setDayType(t.key);
+                        } else {
+                          setDayType(t.key);
+                          save(t.key);
+                        }
+                      }}
                       disabled={saving}
                       style={[styles.chip, active && styles.chipActive, saving && { opacity: 0.6 }]}
                     >

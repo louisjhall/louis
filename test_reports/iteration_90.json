@@ -1,0 +1,27 @@
+{
+  "summary": "Retest of iter 89 HIGH bug: Layover chip auto-firing PATCH in RosterDayPickerSheet. FIX VERIFIED — all 6 acceptance criteria PASS. Steps executed at 390x844 mobile viewport against public preview URL: (1) seeded today's roster via /app/scripts/seed_client_roster_today.py (roster r_test_251d38, 2026-07-21 → 2026-07-27), (2) logged in as client@crewfit.com/Client123!, (3) long-pressed the 'Today · Tue 21 Jul · Test Workout 1' row → sheet opened with 'CORRECT YOUR ROSTER' + 'Currently: Turnaround', (4) tapped Layover chip → NO PATCH fired (network monitor: 0 PATCH calls after tap), sheet stayed open, chip turned red (rgb(163,24,46)), 'LAYOVER CITY (optional)' input became visible, 'SAVE LAYOVER' button became visible, (5) typed 'Bangkok', tapped SAVE LAYOVER → 1 PATCH fired to /api/roster/r_test_251d38/day with body {\"date\":\"2026-07-21\",\"day_type\":\"Layover\",\"layover_city\":\"Bangkok\"}, 200 response, sheet closed, home refreshed with REVIEW pill + change_reason 'You corrected the roster day type — Louis will rebuild this session to match.' The iter 89 blocker is resolved.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/scripts/seed_client_roster_today.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix implementation in /app/frontend/src/components/RosterDayPickerSheet.tsx:149-159 is clean — chip onPress branches on isLayover and only setDayType() is called for Layover, deferring the PATCH to the explicit SAVE LAYOVER button (line 187-197). No regressions observed for other chip types in this retest (only the Layover-specific happy path was exercised per E1 instruction not to re-run the other 8 scenarios)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only retest)", "frontend": "100% (6/6 acceptance criteria for the Layover flow)"},
+  "seed_data_creation": "Re-ran /app/scripts/seed_client_roster_today.py. Test roster id: r_test_251d38 (2026-07-21 → 2026-07-27). 7 Test Workouts inserted, one per day.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 89 Layover-chip bug fixed and re-verified in iter 90. Full network trace captured exactly 1 PATCH call, and it fired only after SAVE LAYOVER was tapped (not on chip tap). Body is exactly {date, day_type:'Layover', layover_city:'Bangkok'}. No further action needed on this flow.",
+  "rca_of_issue": "Original bug (iter 89): chip onPress unconditionally called save(t.key) for every duty-type chip including Layover, which fired PATCH with layover_city:null and closed the sheet before the user could enter a city. Fix (verified this iteration): the onPress handler now branches — for Layover it only calls setDayType(t.key) so the conditional LAYOVER CITY input + SAVE LAYOVER button render; for the other 7 chips the fast-path save(t.key) is preserved. The explicit SAVE LAYOVER button (testID roster-day-picker-save-layover) calls save() which reads the current city state and posts the PATCH with layover_city set correctly."
+}

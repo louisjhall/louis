@@ -186,6 +186,37 @@ export default function ClientDetail() {
     }
   };
 
+  // Plan C7 — Regenerate whole programme (preview → apply)
+  const [regenPreview, setRegenPreview] = useState<any>(null);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const openRegenProgramme = async () => {
+    setRegenBusy(true);
+    try {
+      const r = await api<any>(`/coach/clients/${id}/programme/regenerate-preview`, { method: "POST" });
+      setRegenPreview(r);
+    } catch (e: any) {
+      Alert.alert("Preview failed", e?.message || "Try again.");
+    } finally {
+      setRegenBusy(false);
+    }
+  };
+  const applyRegenProgramme = async () => {
+    setRegenBusy(true);
+    try {
+      const r = await api<any>(`/coach/clients/${id}/programme/regenerate-apply`, {
+        method: "POST",
+        body: { preserve_coach_locked: true, preserve_completed: true },
+      });
+      Alert.alert("Regeneration queued", r?.message || "The worker will process it shortly.");
+      setRegenPreview(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Apply failed", e?.message || "Try again.");
+    } finally {
+      setRegenBusy(false);
+    }
+  };
+
   // ---- Admin lifecycle actions ----
   const runAdmin = async (label: string, path: string, body?: any) => {
     setAdminBusy(label);
@@ -758,6 +789,19 @@ export default function ClientDetail() {
                 >
                   <Ionicons name="refresh" size={14} color="#fff" />
                   <Text style={styles.progBtnText}>REGENERATE PLAN</Text>
+                </Pressable>
+                <Pressable
+                  testID="programme-regenerate-preview"
+                  onPress={openRegenProgramme}
+                  disabled={regenBusy}
+                  style={[styles.progBtnAlt, regenBusy && { opacity: 0.6 }]}
+                >
+                  {regenBusy ? <ActivityIndicator color={theme.color.brand} /> : (
+                    <>
+                      <Ionicons name="eye" size={14} color={theme.color.brand} />
+                      <Text style={styles.progBtnAltText}>PREVIEW & REGEN</Text>
+                    </>
+                  )}
                 </Pressable>
               </View>
             </>
@@ -1489,6 +1533,65 @@ export default function ClientDetail() {
                 style={[styles.modalBtn, rDayBusy && { opacity: 0.55 }]}
               >
                 {rDayBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalBtnText}>SAVE</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Plan C7 — Regenerate Programme preview modal */}
+      <Modal visible={!!regenPreview} transparent animationType="slide" onRequestClose={() => setRegenPreview(null)}>
+        <View style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Regeneration preview</Text>
+              <Pressable onPress={() => setRegenPreview(null)} hitSlop={12}>
+                <Ionicons name="close" size={22} color={theme.color.text} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 460 }}>
+              {regenPreview && (
+                <>
+                  <Text style={styles.tlDetail}>
+                    Goal: {regenPreview.goal_key || "—"} · Target: {regenPreview.target_sessions_per_week || "—"}/wk · First new workout: {regenPreview.first_new_workout_date || "—"}
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+                    <View style={{ flex: 1, backgroundColor: theme.color.surface, padding: 10, borderRadius: 8 }}>
+                      <Text style={styles.ovLbl}>OLD</Text>
+                      <Text style={styles.ovVal}>{regenPreview.old_summary?.total_workouts || 0}</Text>
+                      <Text style={styles.ovSub}>workouts</Text>
+                      <Text style={styles.tlDetail}>keys: {regenPreview.old_summary?.key_sessions || 0}</Text>
+                    </View>
+                    <View style={{ flex: 1, backgroundColor: "#0d2018", padding: 10, borderRadius: 8, borderWidth: 1, borderColor: theme.color.green }}>
+                      <Text style={styles.ovLbl}>NEW</Text>
+                      <Text style={styles.ovVal}>{regenPreview.new_summary?.total_workouts || 0}</Text>
+                      <Text style={styles.ovSub}>workouts</Text>
+                      <Text style={styles.tlDetail}>keys: {regenPreview.new_summary?.key_sessions || 0}</Text>
+                    </View>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.ovLbl}>WOULD CHANGE</Text>
+                      <Text style={styles.ovVal}>{regenPreview.would_change || 0}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.ovLbl}>WOULD KEEP</Text>
+                      <Text style={styles.ovVal}>{regenPreview.would_keep || 0}</Text>
+                    </View>
+                  </View>
+                  <View style={{ marginTop: 12 }}>
+                    <Text style={styles.ovLbl}>PRESERVED</Text>
+                    <Text style={styles.tlDetail}>Completed workouts: {regenPreview.preserved?.completed_workouts || 0} · Coach-locked: {regenPreview.preserved?.coach_locked_workouts || 0}</Text>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+              <Pressable onPress={() => setRegenPreview(null)} style={styles.progBtnAlt}>
+                <Text style={styles.progBtnAltText}>CANCEL</Text>
+              </Pressable>
+              <Pressable onPress={applyRegenProgramme} disabled={regenBusy} style={[styles.progBtn, regenBusy && { opacity: 0.6 }]}>
+                {regenBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.progBtnText}>APPLY REGENERATION</Text>}
               </Pressable>
             </View>
           </View>

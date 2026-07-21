@@ -1,0 +1,66 @@
+{
+  "summary": "Plan C4/C5/C6/C7 validated. Created /app/backend/tests/test_iter79_plan_c_workout_editor.py with 30 pytest cases across T1-T8. 21/30 PASS, 9/30 FAIL — ALL 9 failures share a single ROOT CAUSE: feature_coach_workout_editor.py calls server._log_change(kind=...) but the helper signature is `_log_change(coach_id, client_id, category, title, description, actor, meta)` — NO `kind` kwarg. Every mutating endpoint that logs an audit entry (PATCH workout meta, POST/PATCH/DELETE exercises, POST swap, POST programme/regenerate-apply) returns 500 with TypeError. Non-writing endpoints (V2 search, workout regenerate-preview, programme regenerate-preview, exercise reorder-invalid 400 path, add-bogus-404, swap-bogus-404, edit-out-of-range-404, patch-completed-400) all PASS. Frontend smoke F1/F2/F3 ALL PASS: /coach/workout/edit/{wid} renders MAIN meta card + EXERCISES section with sets/reps/rest/RPE inline editors + all 12 REGENERATE presets; ADD opens the Exercise Swap sheet with search bar + 7 filter pills + populated result list; /coach/client/{id} shows PREVIEW & REGEN, opens a modal with OLD/NEW cards, WOULD CHANGE, WOULD KEEP, PRESERVED counts + APPLY REGENERATION button. Secondary consistency issue: `_log_change` writes to `db.coach_change_log` but the C1-C3 programme-timeline endpoint reads from `db.change_log` — so even if the `kind=` bug is fixed, none of the C4-C7 coach edits will show up in the timeline. Reg smoke green: coach dashboard, roster-alerts, programme-overview, programme-timeline endpoints all healthy. Deprecated Expo packages detected: none new in this slice. React Native red-screen NOT observed. Only expected deprecation warnings from Expo web (shadow*/textShadow* style props, expo-notifications web).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PATCH /api/coach/workouts/{wid}", "issue": "500 TypeError: _log_change() got an unexpected keyword argument 'kind'. feature_coach_workout_editor.py L109-116 passes kind='edit' but server._log_change signature (server.py L8145) does not accept `kind`. Bug repeats in every mutating helper below.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/coach/workouts/{wid}/exercises/add", "issue": "500 same kind= bug (L155-162)", "priority": "CRITICAL"},
+      {"endpoint": "PATCH /api/coach/workouts/{wid}/exercises/{idx}", "issue": "500 same kind= bug (L190-197)", "priority": "CRITICAL"},
+      {"endpoint": "DELETE /api/coach/workouts/{wid}/exercises/{idx}", "issue": "500 same kind= bug (L209-216)", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/coach/workouts/{wid}/exercises/{idx}/swap", "issue": "500 same kind= bug (L266-273)", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/coach/workouts/{wid}/exercises/reorder", "issue": "500 same kind= bug (L289-295). NOTE: the 400 branch (invalid permutation) runs BEFORE the log call and passes.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/coach/clients/{cid}/programme/regenerate-apply", "issue": "500 same kind= bug (L617-624). The gen_jobs row IS inserted successfully — verified via a follow-up direct DB check — but the response is 500 because _log_change raises AFTER the insert. This means Louis will see a failure toast but the job actually queues, causing double-queue on retry.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "cross-module", "issue": "Collection naming mismatch: server._log_change writes to db.coach_change_log (server.py L8160) but feature_coach_programme_overview.coach_programme_timeline reads from db.change_log (feature_coach_programme_overview.py L258). Even once the kind= bug is fixed, C4-C7 coach edits will NOT appear in the C3 programme timeline. Standardise on ONE collection name across both helpers."},
+      {"endpoint": "GET /api/exercises/v2/search", "issue": "limit is capped at 100 (correct) but the passed `limit` value is also used as the .to_list(limit) argument BEFORE the cap — passing limit=500 asks motor for 500 docs and then clamps at query stage. Cosmetic — no user impact today but slightly wasteful."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Coach Workout Editor · Save meta (title/duration/rationale onBlur)", "issue": "Backend PATCH returns 500 (see backend_issues.critical#1). Frontend catches and shows red 'Save failed' banner — verified in F1 body copy no error yet because tests didn't blur, but Louis will hit this on every edit. Root cause is backend, frontend code is correct.", "affected_testIDs": []},
+      {"flow": "Coach Workout Editor · Exercise CRUD + Swap", "issue": "All mutation calls will 500 → red error banner. Frontend implementation is correct.", "affected_testIDs": []},
+      {"flow": "Coach Client Detail · APPLY REGENERATION", "issue": "Same 500 — but the gen_job IS enqueued; Louis will see 'Apply failed' banner even though the job is actually queued.", "affected_testIDs": []}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter79_plan_c_workout_editor.py",
+    "/app/test_reports/pytest/iter79_plan_c.xml",
+    "/app/test_reports/iter79_f1_editor.png",
+    "/app/test_reports/iter79_f2_swap_sheet.png",
+    "/app/test_reports/iter79_f3_client_detail.png",
+    "/app/test_reports/iter79_f3_preview_modal.png"
+  ],
+  "action_items": [
+    "FIX (single line, 7 callsites): in /app/backend/feature_coach_workout_editor.py replace every `_log_change(..., kind='X', ...)` with a call that either drops the kwarg or folds it into meta={'kind':'X', ...}. Callsites: L109-116 (workout edit), L155-162 (exercise_add), L190-197 (exercise_edit), L209-216 (exercise_remove), L266-273 (exercise_swap), L289-295 (exercise_reorder), L617-624 (programme_regenerate_apply). Simplest patch is to widen server._log_change signature to accept optional kind and store it in meta['kind'].",
+    "AFTER FIX: reconcile collection naming: server._log_change writes to db.coach_change_log but feature_coach_programme_overview reads from db.change_log. Pick ONE (recommend db.change_log per C3 spec which said 'change_log entry appended') and update both files.",
+    "AFTER FIX: rerun /app/backend/tests/test_iter79_plan_c_workout_editor.py — expect 30/30 green.",
+    "OPTIONAL: consider consolidating the 3-arg PATCH endpoints so a single `_touch` call also emits the audit log — reduces surface area of the kind= bug family."
+  ],
+  "critical_code_review_comments": [
+    "feature_coach_workout_editor.py imports `_log_change` from server but never validated the signature — the spec inside the module docstring says 'audit-logged via _log_change' but the actual signature was never checked. Recommend a shared audit-log helper module with typed kwargs.",
+    "The programme regenerate-apply flow inserts the gen_job BEFORE writing the audit log. Because the audit log raises, the client receives 500 but the job is already queued. Suggest wrapping the insert+log in a try/except OR reversing the order so we don't queue if we can't log.",
+    "V2 search: `.limit(max(1, min(limit, 100))).to_list(limit)` — the to_list arg should be the clamped value, not raw `limit`. Cosmetic.",
+    "Both C7 endpoints correctly guard on `is_active=True` roster and return 400 with a clear message — verified.",
+    "MongoDB _id is excluded in all find_one projections in feature_coach_workout_editor — JSON serialisation OK.",
+    "Coach role guard via require_role('coach') applied consistently to all 10 endpoints.",
+    "C6 preset deterministic transforms match spec exactly: shorter→65% duration + drop last exercise (>=5) + sets*0.7, easier→rpe-2 floored at 4, harder→sets+1 capped at 6, tired→Recovery+Mobility 20min amber, as_running→Easy Run 40min long_run. Verified programmatically.",
+    "Frontend editor uses onBlur persistence which is good, but a save-in-flight → error onBlur may leave the local state ahead of the server. Consider optimistic UI + rollback on error toast.",
+    "Coach editor screen has no explicit testID props on interactive elements (ADD button, swap icon, trash icon, preset buttons, filter pills). Recommend adding testIDs so we can automate deeper tests in the next iteration.",
+    "The Exercise Swap sheet uses `useCallback(doSearch, [q, filters])` + `useEffect(doSearch)` — this fires an initial search on every filter/query change with no debounce. Acceptable because the search is small and cached, but a 250ms debounce would reduce backend load when the coach types quickly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter79_plan_c_workout_editor.py (new — 30 tests across T1-T8)"
+  ],
+  "success_rate": {
+    "backend": "21/30 pass = 70% (9 failures all share ONE root cause — _log_change kind= kwarg). Once fixed, expect 30/30.",
+    "frontend": "F1 PASS · F2 PASS · F3 PASS (3/3)"
+  },
+  "seed_data_creation": "Ephemeral TEST_iter79_* seeds: 5 rows in db.exercises_v2 (4 Approved/Live + 1 Draft to verify status filter), 1 client user + active roster + programme + upcoming workout with 5 exercises + 1 completed workout, plus 2 no-roster stub clients for the 400-branch tests. All seeded rows are prefixed with the run's TEST_iter79_<hex> tag and cleaned up in the session-scoped `seeded` fixture teardown (users, rosters, programmes, workouts, change_log, gen_jobs, exercises_v2).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Re-run /app/backend/tests/test_iter79_plan_c_workout_editor.py after the main agent fixes the `_log_change(kind=...)` bug in /app/backend/feature_coach_workout_editor.py — expect 30/30. Same single-event-loop pattern as iter77/iter78; motor client is pinned to the first-imported test module's loop. TEST_iter79_ ephemeral rows are cleaned up automatically. Note: the C3 programme-timeline endpoint reads from `db.change_log` while server._log_change writes to `db.coach_change_log` — if the main agent aligns them to one collection, the iter78 tests will still pass because iter78 seeds directly into db.change_log for its timeline assertions. The V2 exercises_v2 collection currently contains rows from prior iterations — my test tolerates that by filtering assertions to TEST_iter79_-prefixed rows only.",
+  "rca_of_issue": "ROOT CAUSE: feature_coach_workout_editor.py was written assuming `_log_change` accepts a `kind` kwarg (common in audit patterns), but server._log_change (L8145) actually stores kind implicitly via category+title and doesn't accept `kind`. FastAPI wraps the TypeError in a 500. REPRODUCTION: POST /api/coach/workouts/{wid}/exercises/{idx}/swap with any valid replacement_exercise_id → backend log shows `TypeError: _log_change() got an unexpected keyword argument 'kind'` (verified in /var/log/supervisor/backend.err.log). FIX: two clean options — (A) add `kind: Optional[str] = None` to server._log_change signature and store it in `doc['kind']`, (B) update all 7 callsites in feature_coach_workout_editor.py to move `kind` into the meta dict. Option A is cheaper (1 file, 2 lines) and preserves the timeline UX. VALIDATION: once patched, my 9 failing tests plus the existing iter78 regression should all pass."
+}

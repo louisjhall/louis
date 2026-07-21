@@ -3040,6 +3040,23 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 logger.exception("template fallback failed unexpectedly")
             finally:
                 heartbeat_task.cancel()
+            # Safety guard (Plan D5) — if the roster was deleted/cancelled
+            # while generation was running, abort persistence. A late job
+            # completion must not repopulate a deleted plan.
+            _roster_check = await db.rosters.find_one({"id": roster["id"]}, {"_id": 0, "is_active": 1, "status": 1})
+            if _roster_check and (not _roster_check.get("is_active") or _roster_check.get("status") == "deleted_by_client"):
+                logger.warning("roster %s was deleted/deactivated during generation — aborting job %s persist", roster["id"], job_id)
+                await _set_job(
+                    job_id, status="cancelled", stage="cancelled", progress=100,
+                    message="Roster was replaced or deleted while your plan was being built.",
+                    error=None, workouts_generated=0,
+                )
+                return
+            _job_check = await db.gen_jobs.find_one({"id": job_id}, {"_id": 0, "status": 1})
+            if _job_check and _job_check.get("status") == "cancelled":
+                logger.warning("job %s was cancelled while generation was running — skipping persist", job_id)
+                return
+
             existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
             for w in workouts:
                 d = w.get("date")
@@ -8588,9 +8605,12 @@ import feature_programme_quality     # noqa: E402,F401  Programme quality: goals
 import feature_roster_confirmation   # noqa: E402,F401  Phase 2: parse → confirm → build roster flow
 import feature_traffic_light         # noqa: E402,F401  Phase 3: Green/Amber/Red workout variants
 import feature_v2_resolver           # noqa: E402,F401  Phase 5: V2 Library resolver + demand-driven exercise requests
+import feature_exercise_request_tasks  # noqa: E402,F401  Plan D1-3: exercise-request → coach To-Do + reconciliation
 import feature_admin_lifecycle       # noqa: E402,F401  Coach dashboard slice 1: archive / delete / audit log
 import feature_coach_deep_edit       # noqa: E402,F401  Coach dashboard slice 3.5: workout/roster deep-edit endpoints
 import feature_preview_sandbox       # noqa: E402,F401  Persistent New Client Preview sandbox + reset
+import feature_roster_lifecycle      # noqa: E402,F401  Plan D4-7: client roster delete + restart + cascade cleanup
+import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reassessment forms (no full DNA rebuild)
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.
@@ -8616,6 +8636,10 @@ async def _tick_reminders_all() -> None:
         await feature_notifications._tick_roster_and_workout_reminders()
     except Exception:
         logger.exception("roster/workout tick failed")
+    try:
+        await feature_roster_lifecycle._tick_roster_no_replacement_warning()
+    except Exception:
+        logger.exception("roster no-replacement tick failed")
     try:
         await feature_social_studio._tick_daily_social()
     except Exception:

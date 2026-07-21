@@ -35,13 +35,32 @@ function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
 
 function titleFor(kind: string): string {
   switch (kind) {
-    case "roster_uploaded": return "NEW ROSTER · REFRESH YOUR DNA";
+    case "roster_uploaded": return "NEW ROSTER · QUICK CHECK";
     case "injury_flagged": return "INJURY FLAGGED · RE-PLAN NEEDED";
     case "annual_leave": return "ANNUAL LEAVE · SWITCH BLOCK?";
-    case "missed_workouts": return "MISSED SESSIONS · REVIEW";
-    case "event_completed": return "EVENT COMPLETE · WHAT'S NEXT?";
-    case "life_change": return "LIFE CHANGE · REFRESH DNA";
+    case "missed_workouts": return "MISSED SESSIONS · CHECK-IN";
+    case "event_completed": return "EVENT COMPLETE · DEBRIEF";
+    case "life_change": return "LIFE CHANGE · QUICK UPDATE";
     default: return "CREWFIT INTELLIGENCE";
+  }
+}
+
+// Prompts that route to a SHORT micro-form (not the full assessment).
+// The full `/assessment` flow is reserved for genuine goal shifts / fresh DNA.
+const MICRO_FORM_KINDS = new Set([
+  "missed_workouts",
+  "life_change",
+  "roster_uploaded",
+  "event_completed",
+]);
+
+function ctaLabelFor(kind: string): string {
+  switch (kind) {
+    case "missed_workouts": return "QUICK CHECK-IN";
+    case "life_change":     return "QUICK UPDATE";
+    case "roster_uploaded": return "QUICK CHECK";
+    case "event_completed": return "DEBRIEF";
+    default:                return "UPDATE DNA";
   }
 }
 
@@ -307,10 +326,19 @@ export default function Home() {
                           <View style={styles.promptCtaRow}>
                             <Pressable
                               testID={`prompt-take-${p.id}`}
-                              onPress={() => router.push("/assessment" as any)}
+                              onPress={() => {
+                                // Route to a SHORT micro-form for common signals;
+                                // fall back to the full assessment only for
+                                // unknown / genuine-goal-shift kinds.
+                                if (MICRO_FORM_KINDS.has(p.kind)) {
+                                  router.push(`/reassessment/${p.kind}?prompt_id=${p.id}` as any);
+                                } else {
+                                  router.push("/assessment" as any);
+                                }
+                              }}
                               style={styles.promptTakeBtn}
                             >
-                              <Text style={styles.promptTakeText}>UPDATE DNA</Text>
+                              <Text style={styles.promptTakeText}>{ctaLabelFor(p.kind)}</Text>
                               <Ionicons name="arrow-forward" size={11} color={theme.color.brand} />
                             </Pressable>
                             <Pressable testID={`prompt-dismiss-${p.id}`} onPress={() => dismissPrompt(p)} style={styles.promptDismissBtn}>

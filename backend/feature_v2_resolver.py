@@ -280,6 +280,17 @@ async def create_exercise_request_if_missing(
              "$push": {"request_history": usage_ctx},
              "$set": {"updated_at": now_iso()}},
         )
+        # Ensure the coach task is present + fresh (dedup + escalate priority).
+        try:
+            from feature_exercise_request_tasks import hook_exercise_request_task
+            refreshed = await db.exercises_v2.find_one({"id": existing["id"]}, {"_id": 0})
+            if refreshed:
+                await hook_exercise_request_task(
+                    refreshed, user,
+                    programme_id=programme_id, workout_id=workout_id,
+                )
+        except Exception:
+            logger.exception("hook_exercise_request_task (dedup path) failed — non-fatal")
         return existing["id"]
 
     # 2) Create fresh draft candidate.
@@ -333,23 +344,33 @@ async def create_exercise_request_if_missing(
     await db.exercises_v2.insert_one(doc)
 
     # 3) Coach task — one per newly-created draft so Louis sees it.
+    # Delegates to feature_exercise_request_tasks which handles dedup + urgency
+    # + payload merging + reconciliation. Fallback to inline task if the module
+    # is unavailable so we never lose an exercise request silently.
     try:
-        await _create_coach_task(
-            user,
-            task_type="exercise_review",
-            title=f"Exercise review needed: {requested_name}",
-            description=(reason or "")
-                + (f"\nSubstitute used: {(substitute_used or {}).get('exercise_name')}." if substitute_used else "")
-                + "\nApprove, edit, reject, or merge with an existing exercise.",
-            payload={
-                "exercise_id": ex_id,
-                "programme_id": programme_id,
-                "workout_id": workout_id,
-                "substitute_id": (substitute_used or {}).get("id"),
-            },
+        from feature_exercise_request_tasks import hook_exercise_request_task
+        await hook_exercise_request_task(
+            doc, user, programme_id=programme_id, workout_id=workout_id,
         )
     except Exception:
-        logger.exception("v2_resolver: coach task creation failed (non-fatal)")
+        logger.exception("hook_exercise_request_task failed — falling back to inline coach task")
+        try:
+            await _create_coach_task(
+                user,
+                task_type="exercise_review",
+                title=f"Exercise review needed: {requested_name}",
+                description=(reason or "")
+                    + (f"\nSubstitute used: {(substitute_used or {}).get('exercise_name')}." if substitute_used else "")
+                    + "\nApprove, edit, reject, or merge with an existing exercise.",
+                payload={
+                    "exercise_id": ex_id,
+                    "programme_id": programme_id,
+                    "workout_id": workout_id,
+                    "substitute_id": (substitute_used or {}).get("id"),
+                },
+            )
+        except Exception:
+            logger.exception("v2_resolver: coach task creation failed (non-fatal)")
     return ex_id
 
 

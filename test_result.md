@@ -1756,3 +1756,11 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Iter 81 Phase 5 shipped — Progression-Aware Marathon adjustments. When a client is progressing_well, their long run bumps +7%; when reduce_load, it pulls back -12%; when deload, it drops -45%. All endurance sessions (long_run/tempo/intervals/easy_run) get duration + reps ranges scaled with regex, and a 'Why this changed' reason string is stamped/appended (works alongside Phase 1 hotel reasons and Phase 2 equipment reasons — no clobbering). Wired into all 5 callsites of build_template_plan. 14/14 Phase 5 tests pass. Combined: 108/108 across Phase 1-5. TESTING_TYPE: backend only (frontend already renders change_reason via Phase 2 UI — no new components needed for Phase 5). Do NOT re-test earlier phase endpoints. NEXT PHASE (6): final 15-case audit report closeout."
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 81 — MASTER FIX PROMPT · PHASE 6 · FINAL AUDIT CLOSEOUT
+# ═════════════════════════════════════════════════════════════════════
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 81 Phase 6 (FINAL) shipped. Ran full Master Fix Prompt suite: 110/110 tests pass across all 5 phases + 1 designed skip. Zero regressions. Wrote /app/CrewFit_MASTER_FIX_PROMPT_FINAL_REPORT.md documenting all closed gaps, endpoints, files, decisions, and beta-readiness. Master Fix Prompt is COMPLETE. All four handover gaps (hotel system, strict equipment matching, reactive progression, why-this-changed UI) are closed. System is now roster-aware, hotel-aware, equipment-strict, and progression-reactive. Ready for beta with 20-50 cabin-crew users. NEXT: user acceptance test, deploy, and generate iOS/Android builds via Emergent Publish."

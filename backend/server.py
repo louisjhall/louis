@@ -340,6 +340,9 @@ class WorkoutUpdateBody(BaseModel):
     location: Optional[str] = None
     key_session: Optional[bool] = None
     event_phase: Optional[str] = None
+    # Phase 2 — Strict Equipment Matching (coach manual override)
+    change_reason: Optional[str] = None
+    needs_coach_review: Optional[bool] = None
 
 class WorkoutCompleteBody(BaseModel):
     completed_exercises: list[dict]

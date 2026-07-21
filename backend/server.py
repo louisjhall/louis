@@ -1047,9 +1047,9 @@ CORE RULES:
 3. NEVER ask nutrition macros/calories/protein numbers — the client doesn't know.
 4. NEVER ask FTP/threshold if goal isn't endurance-based.
 5. NEVER ask bodybuilding questions if goal is fat loss / health / general fitness.
-6. Aim for 15-25 questions total (fewer if answers are clear, more if goals require depth).
+6. Aim for **12-16 quality questions max** (fewer if answers are clear). We're not making a form — every question must earn its place.
 7. Adapt language & tone to their motivation style — supportive if they're returning from injury, sharper if they're driven / competitive.
-8. Track progress from 0 to 100. When you have enough to build a rich Coaching DNA, set `should_end: true`.
+8. Progress numbers are handled by the app — you can return any number for `progress`, it will be overridden. Focus purely on picking the best NEXT question.
 
 SECTIONS YOU CAN COVER (only when relevant):
 Who You Are · Your Aviation · Your Why · Your Goals · Your Events · Training History · Fitness Level · Lifestyle · Recovery · Nutrition Habits · Equipment · Time Available · Injuries · Motivation · Psychology · Coach Preferences · Wearables · Future Plans
@@ -1094,7 +1094,7 @@ RESPONSE FORMAT (STRICT JSON — nothing else):
   "section_context": "Building your flying profile..."
 }
 
-When you have enough context (usually after 15-22 quality answers), respond with:
+When you have enough context (usually after 10-14 quality answers), respond with:
 { "should_end": true, "progress": 100, "section_context": "Building your Coaching DNA..." }
 
 Do NOT return next_question when should_end is true. Return ONLY valid JSON."""
@@ -1163,7 +1163,18 @@ class AssessmentStartBody(BaseModel):
 
 
 async def _assessment_next_question(assessment: dict) -> dict:
-    """Feed the current transcript to Claude and get the next question / end signal."""
+    """Feed the current transcript to Claude and get the next question / end signal.
+
+    Iter 82 fixes:
+      * `progress` is now DETERMINISTIC (monotonic, based on answer count) — the
+        LLM's own progress number is ignored because it flaps back and forth.
+      * Hard cap: after MAX_ASSESSMENT_QUESTIONS answers we force `should_end`
+        regardless of what the LLM says, and never re-ask a prefilled question.
+    """
+    # Hard bounds. Anything above these creates fatigue and dropout.
+    TARGET_QUESTIONS = 14   # what the % is scaled to (80% at 11, 100% at end)
+    MAX_QUESTIONS    = 18   # hard cap — after this we END even if LLM disagrees
+
     transcript = []
     prefilled_ids: list[str] = []
     for a in (assessment.get("answers") or []):
@@ -1175,6 +1186,20 @@ async def _assessment_next_question(assessment: dict) -> dict:
         })
         if a.get("prefilled_from"):
             prefilled_ids.append(str(a.get("question_id")))
+    answered_ids = {t["q_id"] for t in transcript if t.get("q_id")}
+    n_answered = len(transcript)
+
+    # Deterministic monotonic progress — never goes backwards.
+    deterministic_progress = min(99, int(round(100 * n_answered / TARGET_QUESTIONS)))
+
+    # HARD CAP — end the assessment ourselves
+    if n_answered >= MAX_QUESTIONS:
+        return {
+            "should_end": True,
+            "progress": 100,
+            "section_context": "Building your Coaching DNA...",
+        }
+
     prefill_note = ""
     if prefilled_ids:
         prefill_note = (
@@ -1184,7 +1209,7 @@ async def _assessment_next_question(assessment: dict) -> dict:
         )
     prompt = (
         f"CLIENT NAME: {assessment.get('client_name') or 'the client'}\n"
-        f"ASSESSMENT SO FAR ({len(transcript)} answers):\n"
+        f"ASSESSMENT SO FAR ({n_answered} answers out of a target of {TARGET_QUESTIONS}):\n"
         f"{json.dumps(transcript)[:8500]}\n"
         f"{prefill_note}\n"
         "Return the next question JSON now. If enough context, set should_end true."
@@ -1194,10 +1219,23 @@ async def _assessment_next_question(assessment: dict) -> dict:
         parsed = parse_json_from_text(raw)
         if not isinstance(parsed, dict):
             raise ValueError("bad shape")
-        return parsed
     except Exception:
         logger.exception("assessment_next AI failed")
-        return _assessment_fallback_next(assessment)
+        parsed = _assessment_fallback_next(assessment)
+
+    # Sanitise: LLM sometimes re-asks a prefilled/answered question — swap to
+    # deterministic fallback in that case so we always move forward.
+    q = parsed.get("next_question") if isinstance(parsed, dict) else None
+    if q and q.get("id") in answered_ids:
+        parsed = _assessment_fallback_next(assessment)
+
+    # OVERRIDE progress with the deterministic value so the UI can't flap.
+    if isinstance(parsed, dict):
+        if parsed.get("should_end"):
+            parsed["progress"] = 100
+        else:
+            parsed["progress"] = deterministic_progress
+    return parsed
 
 
 def _assessment_fallback_next(assessment: dict) -> dict:
@@ -7091,7 +7129,27 @@ async def msg_thread(other_id: str, user: dict = Depends(current_user)):
         from feature_message_attachments import hydrate_message_attachments
         for r in rows:
             await hydrate_message_attachments(db, r)
+    # Iter 82 — mark incoming messages as read now that they've been opened.
+    try:
+        await db.messages.update_many(
+            {"to_user_id": user["id"], "from_user_id": other_id, "read": {"$ne": True}},
+            {"$set": {"read": True, "read_at": now_iso()}},
+        )
+    except Exception:
+        pass
     return rows
+
+
+@api.get("/messages-unread/count")
+async def msg_unread_count(user: dict = Depends(current_user)):
+    """Iter 82 — total unread messages FOR the current user. Powers the
+    tab-bar badge on the client bottom nav (and coach dashboard alerts)."""
+    count = await db.messages.count_documents({
+        "to_user_id": user["id"],
+        "read": {"$ne": True},
+    })
+    return {"count": int(count)}
+
 
 @api.get("/messages")
 async def msg_partners(user: dict = Depends(current_user)):

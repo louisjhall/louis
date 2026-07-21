@@ -11,7 +11,7 @@
  * - Safe-area aware (bottom inset), works on iPhone, Android, gesture bars.
  */
 import React from "react";
-import { View, Text, Pressable, StyleSheet, useWindowDimensions, Platform } from "react-native";
+import { View, Text, Pressable, StyleSheet, useWindowDimensions, Platform, AppState } from "react-native";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,6 +19,7 @@ import Animated, {
   useSharedValue, useAnimatedStyle, withSpring, withTiming,
 } from "react-native-reanimated";
 import { theme } from "@/src/lib/theme";
+import { api } from "@/src/lib/api";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -30,10 +31,32 @@ const TAB_META: Record<string, { label: string; icon: IconName; iconActive?: Ico
   profile:   { label: "PROFILE",   icon: "account-circle-outline",   iconActive: "account-circle"          },
 };
 
+// Iter 82 — unread badge on the MESSAGES tab. Polls /api/messages-unread/count
+// on focus + every 30s while the app is foregrounded.
+function useUnreadMessages() {
+  const [count, setCount] = React.useState(0);
+  const load = React.useCallback(async () => {
+    try {
+      const r = await api<{ count: number }>("/messages-unread/count");
+      setCount(Number(r?.count || 0));
+    } catch {
+      /* offline / logged out — silent */
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+    const iv = setInterval(load, 30_000);
+    const sub = AppState.addEventListener("change", (s) => { if (s === "active") load(); });
+    return () => { clearInterval(iv); sub.remove(); };
+  }, [load]);
+  return count;
+}
+
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const compact = width < 380; // small iPhones: tighten labels
+  const unreadMessages = useUnreadMessages();
 
   return (
     <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 10) }]}>
@@ -57,6 +80,8 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
             navigation.emit({ type: "tabLongPress", target: route.key });
           };
 
+          const badgeCount = route.name === "messages" ? unreadMessages : 0;
+
           return (
             <TabButton
               key={route.key}
@@ -67,6 +92,8 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
               onPress={onPress}
               onLongPress={onLongPress}
               accessibilityLabel={options.tabBarAccessibilityLabel ?? meta.label}
+              badgeCount={badgeCount}
+              testID={`tab-${route.name}`}
             />
           );
         })}
@@ -77,6 +104,7 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
 
 function TabButton({
   label, icon, focused, compact, onPress, onLongPress, accessibilityLabel,
+  badgeCount = 0, testID,
 }: {
   label: string;
   icon: IconName;
@@ -85,6 +113,8 @@ function TabButton({
   onPress: () => void;
   onLongPress: () => void;
   accessibilityLabel: string;
+  badgeCount?: number;
+  testID?: string;
 }) {
   const scale = useSharedValue(1);
   const opacity = useSharedValue(focused ? 1 : 0);
@@ -101,6 +131,8 @@ function TabButton({
     transform: [{ scale: scale.value }],
   }));
 
+  const badgeCount_ = badgeCount || 0;
+
   return (
     <Pressable
       onPress={onPress}
@@ -110,17 +142,26 @@ function TabButton({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected: focused }}
-      testID={`tab-${label.toLowerCase()}`}
+      testID={testID || `tab-${label.toLowerCase()}`}
       style={styles.tabPressable}
       hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
     >
       <Animated.View style={[styles.pill, animPillStyle]} />
       <Animated.View style={[styles.inner, animContentStyle]}>
-        <MaterialCommunityIcons
-          name={icon}
-          size={focused ? 23 : 22}
-          color={focused ? theme.color.brand : theme.color.textDim}
-        />
+        <View>
+          <MaterialCommunityIcons
+            name={icon}
+            size={focused ? 23 : 22}
+            color={focused ? theme.color.brand : theme.color.textDim}
+          />
+          {badgeCount_ > 0 ? (
+            <View style={styles.badge} testID={`tab-badge-${label.toLowerCase()}`}>
+              <Text style={styles.badgeText}>
+                {badgeCount_ > 99 ? "99+" : badgeCount_}
+              </Text>
+            </View>
+          ) : null}
+        </View>
         <Text
           numberOfLines={1}
           allowFontScaling={false}
@@ -211,5 +252,27 @@ const styles = StyleSheet.create({
   },
   labelInactive: {
     color: theme.color.textDim,
+  },
+  // Iter 82 — unread messages badge (top-right of icon)
+  badge: {
+    position: "absolute",
+    top: -6,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: theme.color.brand,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: "#08080B",
+  },
+  badgeText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "800",
+    lineHeight: 12,
+    includeFontPadding: false,
   },
 });

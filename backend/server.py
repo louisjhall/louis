@@ -236,6 +236,18 @@ class SignupBody(BaseModel):
     # Apple + Play require age gating. Privacy policy states 16+.
     # Field is required for new accounts; older seed rows are grandfathered.
     age_confirmed: bool = False
+    # Iter 82 — richer signup payload (asked BEFORE DNA assessment).
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    age: Optional[int] = None
+    sex: Optional[str] = None            # "male" | "female" | "other" | "prefer_not_to_say"
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    airline: Optional[str] = None
+    job_title: Optional[str] = None      # "Cabin Crew" | "Purser" | "Captain" | "First Officer" | ...
+    home_base: Optional[str] = None      # airport code e.g. "LHR"
+    photo_base64: Optional[str] = None   # optional avatar
+    photo_mime: Optional[str] = None
 
 class LoginBody(BaseModel):
     email: EmailStr
@@ -925,23 +937,55 @@ async def signup(body: SignupBody):
     if await db.users.find_one({"email": body.email.lower()}):
         raise HTTPException(400, "Email already registered")
     now = now_iso()
+    # Iter 82 — SECURITY: self-service signup always creates a CLIENT.
+    # Coach accounts can only be created by Louis (the head coach) via the
+    # coach onboarding flow. Any client-supplied role != "client" is silently
+    # ignored here.
+    role: Role = "client"
+    # Iter 82 — compose a canonical display name from first_name / last_name
+    # when provided; fall back to whatever the client sent in `name`.
+    display_name = body.name
+    if body.first_name or body.last_name:
+        display_name = f"{(body.first_name or '').strip()} {(body.last_name or '').strip()}".strip()
+        if not display_name:
+            display_name = body.name
+    # Seed a partial profile so downstream (DNA assessment, roster, meal plan)
+    # has these fields immediately without a second onboarding round-trip.
+    seeded_profile: dict = {}
+    for k, v in [
+        ("age", body.age),
+        ("sex", body.sex),
+        ("height_cm", body.height_cm),
+        ("weight_kg", body.weight_kg),
+        ("airline", body.airline),
+        ("job_title", body.job_title),
+        ("home_base", body.home_base),
+    ]:
+        if v is not None and (not isinstance(v, str) or v.strip()):
+            seeded_profile[k] = v.strip() if isinstance(v, str) else v
     u = {
-        "id": new_id(), "email": body.email.lower(), "name": body.name,
-        "role": body.role, "password_hash": hash_pw(body.password),
-        "created_at": now, "onboarded": False, "coach_id": None, "profile": {},
+        "id": new_id(), "email": body.email.lower(), "name": display_name,
+        "first_name": (body.first_name or "").strip() or None,
+        "last_name": (body.last_name or "").strip() or None,
+        "role": role, "password_hash": hash_pw(body.password),
+        "created_at": now, "onboarded": False, "coach_id": None,
+        "profile": seeded_profile,
         "age_confirmed": True,
         "age_confirmed_at": now,
         "status": "active",
     }
+    # Photo (optional) — stored as data-URL friendly base64 + mime
+    if body.photo_base64:
+        u["photo_base64"] = body.photo_base64
+        u["photo_mime"] = body.photo_mime or "image/jpeg"
     # Auto-assign new clients to Louis (default admin) so messaging routes work.
-    if body.role == "client":
-        try:
-            louis = await db.users.find_one({"email": "louis@crewfit.net"}, {"_id": 0, "id": 1, "name": 1})
-            if louis and louis.get("id"):
-                u["assigned_coach_id"] = louis["id"]
-                u["assigned_coach_name"] = louis.get("name") or "Louis Hall"
-        except Exception:
-            pass
+    try:
+        louis = await db.users.find_one({"email": "louis@crewfit.net"}, {"_id": 0, "id": 1, "name": 1})
+        if louis and louis.get("id"):
+            u["assigned_coach_id"] = louis["id"]
+            u["assigned_coach_name"] = louis.get("name") or "Louis Hall"
+    except Exception:
+        pass
     await db.users.insert_one(u)
     token = make_token(u["id"], u["role"])
     clean_doc(u)
@@ -1121,6 +1165,7 @@ class AssessmentStartBody(BaseModel):
 async def _assessment_next_question(assessment: dict) -> dict:
     """Feed the current transcript to Claude and get the next question / end signal."""
     transcript = []
+    prefilled_ids: list[str] = []
     for a in (assessment.get("answers") or []):
         transcript.append({
             "q_id": a.get("question_id"),
@@ -1128,10 +1173,20 @@ async def _assessment_next_question(assessment: dict) -> dict:
             "question": a.get("question_text"),
             "answer": a.get("answer"),
         })
+        if a.get("prefilled_from"):
+            prefilled_ids.append(str(a.get("question_id")))
+    prefill_note = ""
+    if prefilled_ids:
+        prefill_note = (
+            f"\n\nIMPORTANT: The client answered these question_ids DURING SIGNUP: "
+            f"{prefilled_ids}. Do NOT re-ask them under any circumstance. "
+            "Skip straight to the next unanswered question in your flow.\n"
+        )
     prompt = (
         f"CLIENT NAME: {assessment.get('client_name') or 'the client'}\n"
         f"ASSESSMENT SO FAR ({len(transcript)} answers):\n"
-        f"{json.dumps(transcript)[:8500]}\n\n"
+        f"{json.dumps(transcript)[:8500]}\n"
+        f"{prefill_note}\n"
         "Return the next question JSON now. If enough context, set should_end true."
     )
     try:
@@ -1396,6 +1451,64 @@ async def assessment_start(body: AssessmentStartBody = AssessmentStartBody(), us
         "created_at": now_iso(),
         "completed_at": None,
     }
+    # Iter 82 — Pre-seed answers from signup data so the DNA assessment doesn't
+    # re-ask questions already answered during signup (sex, aviation role).
+    profile = user.get("profile") or {}
+
+    # Sex → biological_sex — normalise our signup values to DNA option ids.
+    sex_signup = profile.get("sex")
+    if sex_signup and not profile.get("biological_sex"):
+        sex_map = {
+            "male": "male",
+            "female": "female",
+            "other": "intersex_prefer_not",
+            "prefer_not_to_say": "intersex_prefer_not",
+        }
+        bio_sex = sex_map.get(str(sex_signup).lower().strip())
+        if bio_sex:
+            doc["answers"].append({
+                "question_id": "biological_sex",
+                "section": "About You",
+                "question_text": "What is your biological sex? (used for training load, protein targets and recovery science — kept private)",
+                "question_type": "single_select",
+                "answer": bio_sex,
+                "answered_at": now_iso(),
+                "prefilled_from": "signup",
+            })
+            # Mirror onto user.profile so the DNA writer sees it downstream
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {"profile.biological_sex": bio_sex}},
+            )
+
+    # Job title → aviation role
+    job_title = profile.get("job_title")
+    if job_title and not profile.get("role"):
+        role_map = {
+            "cabin crew": "cabin_crew",
+            "senior cabin crew": "cabin_crew",
+            "purser": "cabin_crew",
+            "first officer": "pilot",
+            "captain": "pilot",
+            "ground crew": "ground_ops",
+            "other": "other",
+        }
+        role_val = role_map.get(str(job_title).lower().strip())
+        if role_val:
+            doc["answers"].append({
+                "question_id": "role",
+                "section": "Your Aviation",
+                "question_text": "What is your role in aviation?",
+                "question_type": "single_select",
+                "answer": role_val,
+                "answered_at": now_iso(),
+                "prefilled_from": "signup",
+            })
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {"profile.role": role_val, "profile.job_title": job_title}},
+            )
+
     await db.assessments.insert_one(doc)
     nxt = await _assessment_next_question(doc)
     q = nxt.get("next_question")
@@ -1461,6 +1574,85 @@ async def assessment_answer(body: AssessmentAnswerBody, user: dict = Depends(cur
         "section": q.get("section"),
     }})
     return nxt
+
+# ---------------------------------------------------------------------------
+# Iter 82 — Louis welcome message (fires once on assessment completion)
+# ---------------------------------------------------------------------------
+
+async def _send_louis_welcome_message_if_needed(user: dict) -> None:
+    """
+    Send a personalised welcome from Louis to a newly onboarded client, exactly
+    once. The message explains beta testing, invites feedback, and prompts a
+    roster upload if none exists.
+
+    Idempotent: uses `users.louis_welcome_sent` sentinel to avoid duplicates.
+    Falls back silently if Louis' account isn't seeded (dev environments).
+    """
+    if user.get("role") != "client":
+        return
+    # Idempotency guard
+    fresh = await db.users.find_one({"id": user["id"]}, {"louis_welcome_sent": 1})
+    if fresh and fresh.get("louis_welcome_sent"):
+        return
+    # Locate Louis (head coach) — prefer the canonical email; fall back to
+    # ANY coach so dev environments without seeded Louis still get a sender.
+    louis = await db.users.find_one(
+        {"email": "louis@crewfit.net"},
+        {"_id": 0, "id": 1, "name": 1, "email": 1},
+    )
+    if not louis:
+        louis = await db.users.find_one(
+            {"role": "coach"},
+            {"_id": 0, "id": 1, "name": 1, "email": 1},
+        )
+    if not louis or not louis.get("id"):
+        # No coach seeded — non-fatal, just mark as sent so we don't retry forever
+        await db.users.update_one({"id": user["id"]}, {"$set": {"louis_welcome_sent": True}})
+        return
+    # Roster check — do they need to upload one?
+    has_roster = await db.rosters.count_documents({"user_id": user["id"]}) > 0
+    first_name = (user.get("first_name") or (user.get("name") or "").split(" ")[0] or "there").strip()
+    lines = [
+        f"Hey {first_name}, welcome to CrewFit 👋",
+        "",
+        "I'm Louis — I built this platform for cabin crew and pilots after years of trying to train around bad rosters. Your assessment is done and I'll now review it and start dialling in your programme.",
+        "",
+        "One quick thing: we're in BETA right now. That means the coaching engine, the roster parser, and the workout logic are all live but still being polished with a small group of crew. If anything looks off, feels wrong, or just plain breaks — I actually want to know.",
+        "",
+        "Two ways to reach me:",
+        "• Reply here anytime — this thread pings me directly.",
+        "• Or email louis@crewfit.net for anything longer.",
+    ]
+    if not has_roster:
+        lines += [
+            "",
+            "One more thing: upload your next roster when you have a moment (Home → Upload roster). Once I've got that, your programme will start planning around your layovers, standbys, and turnarounds automatically.",
+        ]
+    lines += [
+        "",
+        "Talk soon — Louis",
+    ]
+    text = "\n".join(lines)
+    now = now_iso()
+    doc = {
+        "id": new_id(),
+        "from_user_id": louis["id"],
+        "to_user_id": user["id"],
+        "text": text,
+        "created_at": now,
+        "read": False,
+        "attachment_ids": [],
+        "welcome_message": True,
+    }
+    await db.messages.insert_one(doc)
+    # Also stamp the sentinel + assigned_coach if it wasn't already set
+    updates: dict = {"louis_welcome_sent": True, "louis_welcome_sent_at": now}
+    if not user.get("assigned_coach_id"):
+        updates["assigned_coach_id"] = louis["id"]
+        updates["assigned_coach_name"] = louis.get("name") or "Louis Hall"
+    await db.users.update_one({"id": user["id"]}, {"$set": updates})
+
+
 
 
 @api.post("/assessment/finalize")
@@ -1540,6 +1732,13 @@ async def assessment_finalize(body: dict = None, user: dict = Depends(current_us
     }})
     # Onboarded flag flip so router accepts client
     await db.users.update_one({"id": user["id"]}, {"$set": {"onboarded": True}})
+
+    # Iter 82 — Send Louis's welcome message as soon as the assessment is
+    # completed. Idempotent — only fires once per user.
+    try:
+        await _send_louis_welcome_message_if_needed(user)
+    except Exception:
+        logger.exception("welcome message send failed")
 
     # Seed the starter habits (async — don't block the finalize response)
     try:

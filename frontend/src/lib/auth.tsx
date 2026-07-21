@@ -21,11 +21,28 @@ export interface UserT {
   [key: string]: any;
 }
 
+export type SignupPayload = {
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  age_confirmed: boolean;
+  age?: number;
+  sex?: string;
+  height_cm?: number;
+  weight_kg?: number;
+  airline?: string;
+  job_title?: string;
+  home_base?: string;
+  photo_base64?: string;
+  photo_mime?: string;
+};
+
 interface AuthCtx {
   user: UserT | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<UserT>;
-  signup: (email: string, password: string, name: string, role: Role, ageConfirmed: boolean) => Promise<UserT>;
+  signup: (payload: SignupPayload) => Promise<UserT>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   setUser: (u: UserT | null) => void;
@@ -69,10 +86,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return r.user;
   };
 
-  const signup = async (email: string, password: string, name: string, role: Role, ageConfirmed: boolean) => {
+  const signup = async (payload: SignupPayload) => {
+    const name = `${(payload.first_name || "").trim()} ${(payload.last_name || "").trim()}`.trim();
     const r = await api<{ token: string; user: UserT }>("/auth/signup", {
       method: "POST",
-      body: { email, password, name, role, age_confirmed: ageConfirmed },
+      body: {
+        email: payload.email,
+        password: payload.password,
+        name,
+        first_name: payload.first_name,
+        last_name: payload.last_name,
+        role: "client",   // self-service signup is always client — coaches added by Louis only
+        age_confirmed: payload.age_confirmed,
+        age: payload.age,
+        sex: payload.sex,
+        height_cm: payload.height_cm,
+        weight_kg: payload.weight_kg,
+        airline: payload.airline,
+        job_title: payload.job_title,
+        home_base: payload.home_base,
+        photo_base64: payload.photo_base64,
+        photo_mime: payload.photo_mime,
+      },
       noAuth: true,
     });
     await setToken(r.token);

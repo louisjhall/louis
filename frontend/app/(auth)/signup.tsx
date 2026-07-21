@@ -5,7 +5,6 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
 import { useAuth, Role } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 
@@ -80,11 +79,12 @@ export default function Signup() {
             style={styles.ageRow}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: ageConfirmed }}
+            hitSlop={12}
           >
             <View style={[styles.checkbox, ageConfirmed && styles.checkboxOn]}>
-              {ageConfirmed ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+              {ageConfirmed ? <Text style={styles.checkTick}>✓</Text> : null}
             </View>
-            <Text style={styles.ageText}>I confirm I am 16 or older.</Text>
+            <Text style={styles.ageText}>I confirm I am 16 years of age or older.</Text>
           </Pressable>
 
           {err && <Text style={styles.err} testID="signup-error">{err}</Text>}
@@ -120,10 +120,11 @@ const styles = StyleSheet.create({
   },
   roleBtnActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   roleText: { color: theme.color.textMuted, fontWeight: "800", letterSpacing: 1.5 },
-  ageRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: theme.space.lg, paddingVertical: 4, minHeight: 44 },
-  checkbox: { width: 24, height: 24, borderRadius: 6, borderWidth: 1.5, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface2 },
+  ageRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: theme.space.lg, paddingVertical: 8, minHeight: 48 },
+  checkbox: { width: 28, height: 28, borderRadius: 6, borderWidth: 2, borderColor: theme.color.textMuted, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface2 },
   checkboxOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  ageText: { color: theme.color.text, fontSize: 14, flex: 1 },
+  checkTick: { color: "#fff", fontSize: 18, fontWeight: "900", lineHeight: 20 },
+  ageText: { color: theme.color.text, fontSize: 15, flex: 1, lineHeight: 21 },
   err: { color: theme.color.red, marginTop: theme.space.md, fontSize: 13 },
   cta: { backgroundColor: theme.color.brand, marginTop: theme.space.xl, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 14 },

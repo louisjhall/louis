@@ -2870,35 +2870,113 @@ def _align_days_to_weekday_labels(days: list[dict]) -> tuple[list[dict], int, in
 
 def _ensure_workout_content(doc: dict, user: dict) -> dict:
     """
-    Iter 82 — Hard gate: never persist a workout with zero content.
+    Iter 82 / Iter 83 — Hard gate: never persist a workout with zero *main*
+    content on a training day.
 
-    If the LLM returns an empty `exercises` list AND empty `warmup`, we:
+    If the LLM / equipment resolver returns an empty `exercises` list on a
+    non-rest day, we:
       * Replace the exercises with a bodyweight-safe strength_support fallback
         (works on any layover, home day, or unknown roster context).
+      * Preserve any existing warmup / cooldown content instead of clobbering.
       * Set `needs_coach_review = True`.
       * Stamp a client-facing `change_reason` explaining the fallback.
       * Bump `validation_status` to `needs_review`.
 
     Rest days (day_type = 'off' / 'rest') are exempt — they intentionally have
-    no content.
+    no content. Recovery walks / mobility-only sessions are also allowed to
+    have zero `exercises` if they carry a mobility-oriented title AND warmup
+    is populated (heuristic: "recovery", "mobility flow", "walk").
     """
     exs = doc.get("exercises") or []
     warm = doc.get("warmup") or []
     day_type = str(doc.get("day_type") or "").lower()
     title = str(doc.get("title") or "").lower()
-    is_rest = ("rest" in day_type) or ("off" in day_type) or ("rest" in title) or ("recovery" in title)
-    if exs or warm or is_rest:
+    is_rest = (
+        ("rest" in day_type) or ("off" in day_type)
+        or title.startswith("rest") or title.startswith("off")
+    )
+    # A pure mobility / recovery session (no equipment needed, warmup-only is OK)
+    is_mobility_only = (
+        (title.startswith("recovery ") or "recovery walk" in title
+         or title == "mobility flow" or "pre/post-flight mobility" in title
+         or "optional recovery" in title or title.startswith("standby activation"))
+        and bool(warm)
+    )
+    if exs or is_rest or is_mobility_only:
         return doc
-    # Empty workout on a training day — inject bodyweight-safe fallback
+    # Empty MAIN exercises on a training day — inject a session-type-matched fallback
+    # so a "Long Run" day fills with a long run, not a strength block.
     try:
         from feature_workout_fallback import _stub_for_session_type
-        stub = _stub_for_session_type("strength_support", doc.get("date"), {"hotel_pref": "bodyweight"})
+        # Pick the best fallback session_type from the doc metadata; default to strength_support.
+        session_type = str(doc.get("session_type") or "").strip().lower()
+        focus = str(doc.get("focus") or "").strip().lower()
+        title_norm = title
+        # Title has the strongest signal — override stored session_type if it's
+        # clearly a different session on the tin (e.g. focus="long_run" but
+        # title="Easy Run" was previously mis-tagged upstream).
+        if "easy run" in title_norm and session_type != "easy_run":
+            session_type = "easy_run"
+        elif "tempo" in title_norm and session_type != "tempo":
+            session_type = "tempo"
+        elif "interval" in title_norm and session_type != "intervals":
+            session_type = "intervals"
+        elif "long run" in title_norm and session_type != "long_run":
+            session_type = "long_run"
+        if not session_type:
+            # Title first (more specific), then focus (broad bucket).
+            if "long run" in title_norm:
+                session_type = "long_run"
+            elif "easy run" in title_norm:
+                session_type = "easy_run"
+            elif "tempo" in title_norm:
+                session_type = "tempo"
+            elif "interval" in title_norm:
+                session_type = "intervals"
+            elif "strength for runner" in title_norm:
+                session_type = "strength_support"
+            elif "conditioning" in title_norm:
+                session_type = "conditioning"
+            elif "swim" in title_norm:
+                session_type = "swim"
+            elif "bike" in title_norm or "cycle" in title_norm:
+                session_type = "bike"
+            elif focus == "long_run":
+                session_type = "long_run"
+            elif focus == "easy_run":
+                session_type = "easy_run"
+            elif focus == "tempo":
+                session_type = "tempo"
+            elif focus == "intervals":
+                session_type = "intervals"
+            elif focus == "strength_support":
+                session_type = "strength_support"
+            elif focus == "conditioning":
+                session_type = "conditioning"
+            else:
+                session_type = "strength_support"
+        stub = _stub_for_session_type(session_type, doc.get("date"), {"hotel_pref": "bodyweight"})
+        if not stub:
+            stub = _stub_for_session_type("strength_support", doc.get("date"), {"hotel_pref": "bodyweight"})
         if stub:
-            doc["warmup"] = stub.get("warmup", [])
+            # Preserve existing warmup if the plan already had one; only fill
+            # gaps so we never overwrite legitimate warmup content.
+            if not warm:
+                doc["warmup"] = stub.get("warmup", [])
             doc["exercises"] = stub.get("exercises", [])
+            if not doc.get("cooldown"):
+                doc["cooldown"] = stub.get("cooldown", []) or [
+                    "Slow diaphragmatic breathing x 10",
+                    "Chest opener stretch 30s",
+                    "Hip flexor stretch 30s each side",
+                ]
             doc["title"] = doc.get("title") or stub.get("title") or "Strength Support"
             doc["location"] = doc.get("location") or stub.get("location") or "Home Workout"
             doc["duration_min"] = doc.get("duration_min") or stub.get("duration_min") or 40
+            if not doc.get("focus"):
+                doc["focus"] = stub.get("focus")
+            if not doc.get("session_type"):
+                doc["session_type"] = session_type
     except Exception:
         logger.exception("workout content fallback failed")
     doc["needs_coach_review"] = True

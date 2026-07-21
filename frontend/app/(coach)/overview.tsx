@@ -68,6 +68,7 @@ export default function CoachOverview() {
     ...(counts.expiring_soon ? [{ tone: "amber", label: `${counts.expiring_soon} roster${counts.expiring_soon > 1 ? "s" : ""} expiring within 7 days` }] : []),
     ...(pending.length ? [{ tone: "info", label: `${pending.length} workout${pending.length > 1 ? "s" : ""} awaiting approval` }] : []),
     ...(counts.needs_confirmation ? [{ tone: "info", label: `${counts.needs_confirmation} roster${counts.needs_confirmation > 1 ? "s" : ""} awaiting client confirmation` }] : []),
+    ...(counts.hotels_pending_review ? [{ tone: "amber", label: `${counts.hotels_pending_review} hotel${counts.hotels_pending_review > 1 ? "s" : ""} awaiting your verification`, action: "/coach/hotels" }] : []),
   ];
 
   return (
@@ -107,6 +108,10 @@ export default function CoachOverview() {
             <Ionicons name="nutrition-outline" size={16} color={theme.color.brand} />
             <Text style={styles.headerBtnText}>NUTRITION</Text>
           </Pressable>
+          <Pressable testID="ov-goto-hotels" onPress={() => router.push("/coach/hotels" as any)} style={styles.headerBtn}>
+            <Ionicons name="bed-outline" size={16} color={theme.color.brand} />
+            <Text style={styles.headerBtnText}>HOTELS</Text>
+          </Pressable>
           {(user?.is_admin || (user as any)?.is_primary_coach || (user as any)?.coach_tier === "admin" || (user?.email || "").toLowerCase().endsWith("@crewfit.net")) ? (
             <Pressable testID="ov-goto-coaches" onPress={() => router.push("/coach/admin/coaches" as any)} style={[styles.headerBtn, { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint }]}>
               <Ionicons name="people-circle-outline" size={16} color={theme.color.brand} />
@@ -127,6 +132,7 @@ export default function CoachOverview() {
             <KPI icon="warning" label="EXPIRED" value={counts.expired || 0} sub="needs new roster" tint={theme.color.red} />
             <KPI icon="flame" label="RED DAYS" value={clients.reduce((s: number, c: any) => s + (c.red_days || 0), 0)} sub="across all clients" tint={theme.color.red} />
             <KPI icon="checkmark-done" label="PENDING APPROVALS" value={pending.length} sub="workouts to review" tint={theme.color.brand} />
+            <KPI icon="bed" label="HOTELS TO REVIEW" value={counts.hotels_pending_review || 0} sub="tap to open queue" tint={theme.color.amber} onPress={() => router.push("/coach/hotels" as any)} />
             <KPI icon="trending-up" label="COMPLIANCE" value={analytics ? `${analytics.global_compliance}%` : "—"} sub={`last ${analytics?.days || 30} days`} tint={theme.color.green} />
           </View>
 
@@ -134,12 +140,33 @@ export default function CoachOverview() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>ATTENTION REQUIRED</Text>
               <View style={{ gap: 8 }}>
-                {alerts.map((a, i) => (
-                  <View key={i} style={[styles.alertRow, { borderLeftColor: a.tone === "red" ? theme.color.red : a.tone === "amber" ? theme.color.amber : theme.color.brand }]}>
-                    <Ionicons name="alert-circle" size={18} color={a.tone === "red" ? theme.color.red : a.tone === "amber" ? theme.color.amber : theme.color.brand} />
-                    <Text style={styles.alertText}>{a.label}</Text>
-                  </View>
-                ))}
+                {alerts.map((a, i) => {
+                  const RowInner = (
+                    <>
+                      <Ionicons name="alert-circle" size={18} color={a.tone === "red" ? theme.color.red : a.tone === "amber" ? theme.color.amber : theme.color.brand} />
+                      <Text style={styles.alertText}>{a.label}</Text>
+                      {a.action ? <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} /> : null}
+                    </>
+                  );
+                  const bar = a.tone === "red" ? theme.color.red : a.tone === "amber" ? theme.color.amber : theme.color.brand;
+                  if (a.action) {
+                    return (
+                      <Pressable
+                        key={i}
+                        testID={`alert-action-${i}`}
+                        onPress={() => router.push(a.action as any)}
+                        style={[styles.alertRow, { borderLeftColor: bar }]}
+                      >
+                        {RowInner}
+                      </Pressable>
+                    );
+                  }
+                  return (
+                    <View key={i} style={[styles.alertRow, { borderLeftColor: bar }]}>
+                      {RowInner}
+                    </View>
+                  );
+                })}
               </View>
             </View>
           )}
@@ -187,6 +214,9 @@ export default function CoachOverview() {
                           </View>
                         </View>
                         <View style={{ alignItems: "flex-end", gap: 4, marginLeft: 12 }}>
+                          {cl.progression_pill?.status ? (
+                            <ProgressionPill status={cl.progression_pill.status} label={cl.progression_pill.status_label} />
+                          ) : null}
                           {cl.pending_approvals > 0 && <Pill tint={theme.color.brand}>{cl.pending_approvals} PENDING</Pill>}
                           {exp.expired && <Pill tint={theme.color.red}>EXPIRED</Pill>}
                           {!exp.expired && exp.coverage === "critical" && <Pill tint={theme.color.amber}>{exp.days_remaining}D LEFT</Pill>}
@@ -260,16 +290,17 @@ export default function CoachOverview() {
   );
 }
 
-function KPI({ icon, label, value, sub, tint }: any) {
+function KPI({ icon, label, value, sub, tint, onPress }: any) {
+  const Wrapper: any = onPress ? Pressable : View;
   return (
-    <View style={styles.kpi}>
+    <Wrapper style={styles.kpi} onPress={onPress}>
       <View style={styles.kpiTop}>
         <Ionicons name={icon} size={16} color={tint || theme.color.brand} />
         <Text style={styles.kpiLabel}>{label}</Text>
       </View>
       <Text style={[styles.kpiVal, tint && { color: tint }]}>{value}</Text>
       <Text style={styles.kpiSub}>{sub}</Text>
-    </View>
+    </Wrapper>
   );
 }
 
@@ -277,6 +308,24 @@ function Pill({ children, tint }: any) {
   return (
     <View style={[styles.pill, { backgroundColor: tint }]}>
       <Text style={styles.pillText}>{children}</Text>
+    </View>
+  );
+}
+
+// Iter 81 Phase 4 — small compact pill showing the client's latest weekly
+// progression_status. Colour-coded to match the client-side Your Progress card.
+function ProgressionPill({ status, label }: { status: string; label?: string }) {
+  const color =
+    status === "progressing_well" ? "#16A34A" :
+    status === "reduce_load"      ? "#B45309" :
+    status === "deload"           ? "#1D4ED8" : theme.color.brand;
+  const bg =
+    status === "progressing_well" ? "rgba(34,197,94,0.15)" :
+    status === "reduce_load"      ? "rgba(245,158,11,0.18)" :
+    status === "deload"           ? "rgba(59,130,246,0.15)" : "rgba(163,24,46,0.12)";
+  return (
+    <View style={[styles.pill, { backgroundColor: bg }]} testID={`prog-pill-${status}`}>
+      <Text style={[styles.pillText, { color }]}>{label || status.toUpperCase()}</Text>
     </View>
   );
 }

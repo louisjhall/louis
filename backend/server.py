@@ -6971,6 +6971,26 @@ async def _client_summary(u: dict) -> dict:
             "coach_approved": bool(prog.get("coach_approved")),
             "updated_at": prog.get("updated_at") or prog.get("created_at"),
         }
+    # Iter 81 Phase 4: attach the latest weekly progression snapshot so the
+    # coach can see 'PROGRESSING / STEADY / PULL BACK / DELOAD' at a glance.
+    progression_pill = None
+    try:
+        snap = await db.progression_snapshots.find_one(
+            {"user_id": u["id"]}, {"_id": 0}, sort=[("week_key", -1)]
+        )
+        if snap:
+            progression_pill = {
+                "status": snap.get("status"),
+                "status_label": snap.get("status_label"),
+                "reason": snap.get("reason"),
+                "coach_note": snap.get("coach_note"),
+                "week_key": snap.get("week_key"),
+                "week_start": snap.get("week_start"),
+                "week_end": snap.get("week_end"),
+                "metrics": snap.get("metrics") or {},
+            }
+    except Exception:
+        progression_pill = None
     return {
         **u,
         "latest_roster": r or None,
@@ -6979,6 +6999,7 @@ async def _client_summary(u: dict) -> dict:
         "red_days": red_days,
         "missed_workouts": missed,
         "programme_pill": programme_pill,
+        "progression_pill": progression_pill,
     }
 
 
@@ -7037,7 +7058,19 @@ async def coach_dashboard(filter: Optional[str] = None, include_archived: bool =
     }
     if filter and filter in buckets:
         return {"clients": buckets[filter], "counts": {k: len(v) for k, v in buckets.items() if k != "all"}, "total": len(summaries), "preview_sandbox": sandbox_summary}
-    return {"clients": summaries, "counts": {k: len(v) for k, v in buckets.items() if k != "all"}, "total": len(summaries), "preview_sandbox": sandbox_summary}
+    # Iter 81 Phase 4: expose the hotel review-queue depth on the overview
+    try:
+        hotels_pending_review = await db.hotels.count_documents({
+            "$and": [
+                {"$or": [{"verified_by_coach": {"$ne": True}}, {"verified_by_coach": {"$exists": False}}]},
+                {"$or": [{"confidence": {"$lt": 0.7}}, {"confidence": {"$exists": False}}]},
+            ],
+        })
+    except Exception:
+        hotels_pending_review = 0
+    counts = {k: len(v) for k, v in buckets.items() if k != "all"}
+    counts["hotels_pending_review"] = int(hotels_pending_review)
+    return {"clients": summaries, "counts": counts, "total": len(summaries), "preview_sandbox": sandbox_summary}
 
 
 @api.get("/coach/clients/{client_id}")
@@ -7059,6 +7092,25 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
         ev["phase_info"] = _event_phase(ev.get("event_date", ""))
     overrides = await db.day_overrides.find({"user_id": client_id}, {"_id": 0}).sort("date", -1).to_list(60)
     change_log = await db.day_change_log.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(30)
+    # Iter 81 Phase 4 — attach latest weekly progression snapshot for coach view
+    progression_pill = None
+    try:
+        snap = await db.progression_snapshots.find_one(
+            {"user_id": client_id}, {"_id": 0}, sort=[("week_key", -1)]
+        )
+        if snap:
+            progression_pill = {
+                "status": snap.get("status"),
+                "status_label": snap.get("status_label"),
+                "reason": snap.get("reason"),
+                "coach_note": snap.get("coach_note"),
+                "week_key": snap.get("week_key"),
+                "metrics": snap.get("metrics") or {},
+            }
+    except Exception:
+        progression_pill = None
+    if c is not None:
+        c["progression_pill"] = progression_pill
     return {
         "client": c, "roster": r, "workouts": workouts, "checkins": checkins,
         "roster_history": history, "event": ev or None,

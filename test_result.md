@@ -1668,3 +1668,52 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Iter 81 Phase 3 shipped — Reactive Progression + Your Progress. New feature_progression.py (~230 LOC) implements the weekly rule engine (progressing_well / maintain / reduce_load / deload) + on_workout_completed trigger + 5 new endpoints. Frontend: ProgressCard on /home + full /your-progress screen with recompute button and empty state. 19/19 phase 3 tests pass. Combined phases: 86/86 tests pass (Phase 1 = 38, Phase 2 = 29, Phase 3 = 19). TESTING_TYPE: both. Do NOT re-test Phase 1 or Phase 2 endpoints. NEXT PHASE (Phase 4-6): Coach hotel review queue UI, Marathon adjustments, final 15 test cases."
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 81 — MASTER FIX PROMPT · PHASE 4 · COACH DASHBOARD (HOTELS + PROGRESSION)
+# ═════════════════════════════════════════════════════════════════════
+
+backend:
+  - task: "Coach dashboard: hotels_pending_review count + progression_pill on client summaries"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 4 backend augmentation. (1) Extended _client_summary() to attach progression_pill (latest weekly snapshot from progression_snapshots) with status/status_label/reason/coach_note/week_key/week_start/week_end/metrics — appears on every client returned by /api/coach/dashboard and /api/coach/clients. (2) Extended coach_client_detail /api/coach/clients/{cid} to attach progression_pill on client doc. (3) Added counts.hotels_pending_review to /api/coach/dashboard payload (queries db.hotels where verified_by_coach !== true AND confidence < 0.7). 5/5 Phase 4 tests pass. Combined phases: 94/94 tests pass. No regressions."
+
+frontend:
+  - task: "Coach overview alerts + KPIs + client-row progression pill + /coach/hotels review screen + client detail progression"
+    implemented: true
+    working: true
+    file: "frontend/app/(coach)/overview.tsx, frontend/app/coach/hotels.tsx, frontend/app/coach/client/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 4 frontend. (1) Coach /overview now shows: (a) new KPI 'HOTELS TO REVIEW' (amber, tappable, routes to /coach/hotels), (b) new ATTENTION REQUIRED alert row with chevron and route action when hotels_pending_review > 0, (c) new HOTELS header button (testID ov-goto-hotels), (d) small ProgressionPill on each client row (colour-coded: PROGRESSING green / STEADY brand / PULL BACK amber / DELOAD blue) sourced from progression_pill.status. (2) New /coach/hotels screen (testID coach-hotels-back / coach-hotels-empty / coach-hotel-<id> / coach-hotel-<id>-eq-<key> / coach-hotel-<id>-verify) — lists all low-confidence unverified hotels sorted by last_confirmed_at desc, each card shows confidence %, gym_type label, submissions count, outdoor safety chip, equipment chips (12 items — tap to PATCH /api/hotels/{id}), client notes if any, and a VERIFY HOTEL button that POSTs /api/coach/hotels/{id}/verify (removes from queue on success). (3) Coach client detail /coach/client/[id] now shows progression pill under the client name with the coach_note as sub-text (testID cd-progression-pill). Lint clean."
+
+test_plan:
+  current_focus:
+    - "Backend: /api/coach/dashboard response includes counts.hotels_pending_review (int, ≥0)"
+    - "Backend: /api/coach/dashboard response includes progression_pill key on every client (may be null)"
+    - "Backend: /api/coach/clients/{cid} client doc includes progression_pill"
+    - "Backend: hotels_pending_review increments after a fresh client hotel submission"
+    - "Backend: /api/coach/hotels/review-queue + /api/coach/hotels/{id}/verify still work; verified hotel removed from queue after verify"
+    - "Frontend: coach /overview shows HOTELS TO REVIEW KPI + tappable alert row when count > 0"
+    - "Frontend: HOTELS header button routes to /coach/hotels"
+    - "Frontend: /coach/hotels renders list, chip toggle sends PATCH, verify button POSTs verify + removes card"
+    - "Frontend: /coach/client/[id] shows progression pill + coach_note when progression_pill exists on client"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 81 Phase 4 shipped — Coach Dashboard (Hotels + Progression). Backend: _client_summary now attaches progression_pill; coach_client_detail attaches progression_pill; coach_dashboard exposes counts.hotels_pending_review. Frontend: new /coach/hotels review-queue screen with chip toggles and per-hotel Verify button; coach overview alerts + KPIs + HOTELS header + per-client ProgressionPill; coach client detail pill+coach_note. 5/5 Phase 4 tests pass. Combined: 94/94 across all four phases. TESTING_TYPE: both. Do NOT re-test Phase 1/2/3 endpoints. NEXT PHASES (5-6): Marathon adjustments (progression-aware long-run scaling) + final 15 test cases + audit closeout."

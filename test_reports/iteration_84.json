@@ -1,0 +1,35 @@
+{
+  "summary": "Iter81 Phase 4 — Coach Dashboard (Hotels + Progression). Backend: 5/5 tests pass in test_iter81_phase4_coach_dashboard.py — (1) GET /api/coach/dashboard exposes counts.hotels_pending_review as int>=0; (2) every entry in clients[] has progression_pill key; (3) GET /api/coach/clients/{cid} exposes progression_pill; (4) POST /api/hotels bumps hotels_pending_review by exactly 1; (5) POST /api/coach/hotels/{id}/verify removes hotel from review-queue. Seeded live data via API: created a fresh hotel (id fc0b4fd1…) and forced progression snapshot for client 62f90680… via /api/progress/recompute (status=reduce_load, week 2026-W30, 0/7 sessions). counts.hotels_pending_review=65 in live env. Frontend (mobile 390x844): logged in as coach@crewfit.com; verified on /(coach)/overview: (a) ov-goto-hotels header button (Ionicon bed-outline), (b) 'HOTELS TO REVIEW' amber KPI tile with value 65, (c) alert-action-1 ATTENTION ROW showing '65 hotels awaiting your verification' with chevron — tap routes to /coach/hotels, (d) prog-pill-reduce_load rendered on the client row. On /coach/hotels: coach-hotels-back back button + HOTEL REVIEW QUEUE title render; 50 parent coach-hotel-<id> cards, each with 12 equipment chips (coach-hotel-<id>-eq-<key>) + one coach-hotel-<id>-verify button. Verified end-to-end: tapping an eq chip persisted PATCH (equipment.dumbbells=true confirmed via API); POST /coach/hotels/{id}/verify returns 200 verified_by_coach=true and removes hotel from queue. Coach client detail /coach/client/<cid>: cd-progression-pill visible with text 'PULL BACK · WK 2026-W30' + coach note 'Client under strain — high RPE or dropped sessions. Reduce load next block.' No red screen, no page errors. Only benign RN web deprecation warnings (shadow*, textShadow*, expo-notifications push token) — pre-existing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter81_phase4_coach_dashboard.py (5/5 pass)",
+    "/app/test_reports/pytest/iter81_phase4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py coach_dashboard correctly builds counts.hotels_pending_review from same low-confidence query the review-queue endpoint uses — counts and queue stay in sync.",
+    "_client_summary attaches progression_pill from progression_snapshots.find_one({user_id, week_key=current}), defaulting to None when absent — matches contract.",
+    "hotels.tsx equipment chip toggle sends full merged equipment map on PATCH — no accidental key removal. UI state (setHotels) updates locally on success.",
+    "overview.tsx alerts array conditionally injects hotel attention row only when counts.hotels_pending_review > 0 — no phantom rows.",
+    "ProgressionPill component in overview.tsx uses testID={`prog-pill-${status}`} — matches spec exactly, colour-coded map covers all 4 statuses (progressing_well/maintain/reduce_load/deload).",
+    "client/[id].tsx progression block correctly gates on client.progression_pill?.status (null-safe) and renders coach_note + week_key."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (5/5)",
+    "frontend": "100% (all Phase 4 testIDs render + all interactions verified end-to-end)"
+  },
+  "seed_data_creation": "Seeded via public API: (a) POST /api/hotels as client → hotel id fc0b4fd1-7c79-4c34-9fe8-5a3bfb5892f7 (Sydney, basic gym), (b) POST /api/progress/recompute as client → snapshot for user 62f90680-313b-4fca-bc3f-9a19ac49065d week 2026-W30 status=reduce_load. The seeded hotel was tapped-toggled (equipment.dumbbells=true) and later verified via /coach/hotels/{id}/verify during automation, so it is no longer in the review queue — this is expected and does not affect subsequent tests since 49 other low-conf hotels remain seeded.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 4 is production-ready. Backend: 5/5 pass. Frontend UI: all six required testIDs render + are tappable (ov-goto-hotels, alert-action-<i> when hotels_pending_review>0, HOTELS TO REVIEW KPI tile, prog-pill-<status>, coach-hotels-back, coach-hotels-empty | coach-hotel-<id> + -eq-<key> + -verify, cd-progression-pill). Chip toggle + verify hotel round-trips through backend correctly. To seed more low-conf hotels: POST /api/hotels as client. To (re)generate a progression pill: POST /api/progress/recompute as client. Note login testIDs are login-email-input / login-password-input / login-submit-button (not login-email / login-submit)."
+}

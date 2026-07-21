@@ -493,6 +493,45 @@ export default function ClientDetail() {
         <Text style={styles.name}>{client.name}</Text>
         <Text style={styles.email}>{client.email}</Text>
 
+        {client.progression_pill?.status ? (
+          <View style={styles.progRow} testID="cd-progression-pill">
+            <View style={[
+              styles.progPill,
+              client.progression_pill.status === "progressing_well" && { backgroundColor: "rgba(34,197,94,0.15)" },
+              client.progression_pill.status === "reduce_load"      && { backgroundColor: "rgba(245,158,11,0.18)" },
+              client.progression_pill.status === "deload"           && { backgroundColor: "rgba(59,130,246,0.15)" },
+              client.progression_pill.status === "maintain"         && { backgroundColor: "rgba(163,24,46,0.12)" },
+            ]}>
+              <Ionicons
+                name={
+                  client.progression_pill.status === "progressing_well" ? "trending-up" :
+                  client.progression_pill.status === "reduce_load"      ? "trending-down" :
+                  client.progression_pill.status === "deload"           ? "moon" : "remove"
+                }
+                size={11}
+                color={
+                  client.progression_pill.status === "progressing_well" ? "#16A34A" :
+                  client.progression_pill.status === "reduce_load"      ? "#B45309" :
+                  client.progression_pill.status === "deload"           ? "#1D4ED8" : theme.color.brand
+                }
+              />
+              <Text style={[
+                styles.progPillText,
+                { color:
+                  client.progression_pill.status === "progressing_well" ? "#16A34A" :
+                  client.progression_pill.status === "reduce_load"      ? "#B45309" :
+                  client.progression_pill.status === "deload"           ? "#1D4ED8" : theme.color.brand
+                }
+              ]}>
+                {client.progression_pill.status_label} · WK {client.progression_pill.week_key}
+              </Text>
+            </View>
+            {client.progression_pill.coach_note ? (
+              <Text style={styles.progNote} numberOfLines={2}>{client.progression_pill.coach_note}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={styles.actionRow}>
           <Pressable testID="cd-script-btn" onPress={() => router.push(`/coach/scripts/${client.id}`)} style={styles.actionBtn}>
             <Ionicons name="videocam" size={16} color="#fff" />
@@ -1630,6 +1669,19 @@ const styles = StyleSheet.create({
   headerT: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900" },
   name: { color: theme.color.text, fontSize: 26, fontWeight: "900" },
   email: { color: theme.color.textMuted, marginTop: 2 },
+  // Iter 81 Phase 4 — coach client progression pill + coach note
+  progRow: { marginTop: theme.space.sm, marginBottom: theme.space.md, gap: 4 },
+  progPill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: theme.color.brandTint,
+  },
+  progPillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.6, color: theme.color.brand },
+  progNote: {
+    fontSize: 12, color: theme.color.textMuted, lineHeight: 17, marginTop: 2,
+  },
   actionRow: { flexDirection: "row", gap: 8, marginTop: theme.space.md },
   actionBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.brand, paddingVertical: 10, paddingHorizontal: 14, borderRadius: theme.radius.md },
   actionText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 11 },

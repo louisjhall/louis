@@ -8,7 +8,9 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
+import { usePreview } from "@/src/lib/preview";
 import { theme } from "@/src/lib/theme";
+import { confirm as uxConfirm } from "@/src/lib/ux";
 import { DateField } from "@/src/components/DateField";
 import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
 import { NotificationPreferencesCard } from "@/src/components/NotificationPreferencesCard";
@@ -37,6 +39,7 @@ type EditSpec = {
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, logout, refresh } = useAuth();
+  const { preview, exit: exitPreview, resetSandbox } = usePreview();
 
   const [dna, setDna] = useState<any>(null);
   const [events, setEvents] = useState<any[]>([]);
@@ -117,15 +120,45 @@ export default function ProfileScreen() {
     );
   }
 
-  const confirmLogout = () => {
-    Alert.alert(
-      "Log out?",
-      "Are you sure you want to log out?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Log Out", style: "destructive", onPress: () => logout() },
-      ],
-    );
+  const confirmLogout = async () => {
+    // Preview mode: never log the coach out of their real session. Instead
+    // offer to reset the sandbox and exit back to the coach dashboard.
+    if (preview.active) {
+      const isSandbox = preview.mode === "sandbox" || preview.mode === "new_client";
+      if (isSandbox) {
+        const resetFirst = await uxConfirm({
+          title: "Exit preview?",
+          message: "You're in the New Client Preview sandbox. Reset it back to a brand-new client before exiting?",
+          confirmLabel: "Reset & Exit",
+          cancelLabel: "Exit (keep progress)",
+          destructive: true,
+        });
+        if (resetFirst) {
+          try { await resetSandbox(); } catch {}
+        }
+      }
+      await exitPreview();
+      router.replace("/(coach)/overview" as any);
+      return;
+    }
+
+    // Real client logout — cross-platform confirm (Alert.alert with buttons
+    // silently no-ops on React Native Web, which is why the button appeared
+    // "broken" in the browser preview).
+    const ok = await uxConfirm({
+      title: "Log out?",
+      message: "Are you sure you want to log out?",
+      confirmLabel: "Log Out",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await logout();
+    } catch {}
+    // AuthProvider clears the token; explicitly bounce to /login so the
+    // route guards don't have to fight a stale state.
+    router.replace("/(auth)/login" as any);
   };
 
   return (
@@ -593,7 +626,9 @@ export default function ProfileScreen() {
           onPress={confirmLogout}
           style={[styles.legacyCta, { borderColor: theme.color.red || "#c85450", marginTop: 8 }]}
         >
-          <Text style={[styles.legacyText, { color: theme.color.red || "#c85450" }]}>LOG OUT</Text>
+          <Text style={[styles.legacyText, { color: theme.color.red || "#c85450" }]}>
+            {preview.active ? "EXIT PREVIEW" : "LOG OUT"}
+          </Text>
         </Pressable>
       </ScrollView>
 

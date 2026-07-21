@@ -1,0 +1,29 @@
+{
+  "summary": "Verified iter72 fix for /app/frontend/app/(client)/profile.tsx logout button on React Native Web. Real-client LOG OUT confirm modal now renders and clears the token; Preview-mode button correctly relabels to EXIT PREVIEW and dispatches to /(coach)/overview without wiping the coach's token; Reset & Exit successfully fires POST /api/coach/preview/reset and lands on the coach overview. Backend smoke: login (client + Louis), /api/coach/preview/reset, /api/coach/preview/sandbox-info all 200. /api/auth/logout does not exist (404) which is expected — logout is client-side token clearing only.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/client_logout_label.png",
+    "/tmp/client_logout_modal.png",
+    "/tmp/preview_exit_button.png",
+    "/tmp/preview_exit_modal.png",
+    "/tmp/after_exit_keep.png",
+    "/tmp/after_reset_exit.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "profile.tsx is 1206 lines — consider splitting Section, EditSheet, PRAddModal, HabitsProfileSection into separate modules for maintainability (already flagged in earlier iterations; not blocking)."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "seed_data_creation": "None. Used existing seeded users client@crewfit.com and louis@crewfit.net and the persistent preview sandbox.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The hq-logout-primary button label switches based on preview.active. On web, cross-platform confirm() from src/lib/ux.tsx renders via the ToastHost Modal mounted in app/_layout.tsx. Verified real-client flow lands on /login (token cleared, subsequent API calls return 401), preview 'Exit (keep progress)' skips resetSandbox and preview 'Reset & Exit' fires POST /api/coach/preview/reset and sandbox-info afterwards shows onboarded:false, workouts_count:0. The small hq-logout header icon uses the same confirmLogout handler so it inherits the fix.",
+  "rca_of_issue": "React Native Web 0.21's Alert.alert(title, msg, buttons) does not render buttons — the confirmation dialog silently no-ops, so tapping LOG OUT never called logout(). Fix replaces Alert.alert with cross-platform uxConfirm (Modal on web, native Alert on iOS/Android) and additionally branches on preview.active to avoid clearing the coach's real token while previewing. Reproduction (pre-fix): log in as client on web → profile → tap LOG OUT → nothing happens. Post-fix: confirm modal appears, Log Out clears token and routes to /(auth)/login."
+}

@@ -444,7 +444,8 @@ def _override_for_duty(kind: str, date: str) -> Any:
 # ---------------------------------------------------------------------------
 
 def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
-                       hotel_lookup: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+                       hotel_lookup: dict[str, dict[str, Any]] | None = None,
+                       progression_status: str | None = None) -> list[dict[str, Any]]:
     """Deterministic fallback plan for the whole roster window.
 
     NEW (Plan B2): goal-aware. Reads `profile.main_goal_key` and
@@ -458,10 +459,17 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
       * Layover w/ unknown hotel → forced bodyweight fallback
       * Layover w/ bodyweight-only hotel → forced bodyweight fallback
       * Layover w/ known gym → normal hotel gym stub
+
+    NEW (Phase 5 Progression-Aware Marathon): if `progression_status` is
+    provided (one of progressing_well / maintain / reduce_load / deload),
+    long_run / tempo / intervals / easy_run sessions get their duration
+    and reps scaled up or down accordingly, with a `change_reason` explaining
+    the adjustment for the client "Why this changed" UI.
     """
     from feature_hotel_system import (
         classify_stay, is_bodyweight_only, reason_for,
     )
+    from feature_progression import scale_endurance_session
 
     profile = user.get("profile") or {}
     hotel_pref = str(profile.get("hotel_gyms") or "").lower()
@@ -579,6 +587,9 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                         w["hotel_name"] = hotel_doc.get("name")
                     if change_reason:
                         w["change_reason"] = change_reason
+                # Phase 5 — scale endurance sessions by progression_status
+                if progression_status and slot in ("long_run", "tempo", "intervals", "easy_run"):
+                    scale_endurance_session(w, progression_status, session_type=slot)
                 out.append(w)
 
     return out

@@ -383,9 +383,11 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
         try:
             from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
             from feature_hotel_system import load_hotel_lookup_for_roster
+            from feature_progression import get_current_status
             if is_empty_or_llm_failure(workouts):
                 hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
-                workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup)
+                prog_status = await get_current_status(db, user["id"])
+                workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup, progression_status=prog_status)
                 used_template = bool(workouts)
                 if workouts:
                     try:

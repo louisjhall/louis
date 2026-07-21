@@ -531,10 +531,12 @@ async def coach_programme_regenerate_preview(
     )
     from feature_workout_fallback import build_template_plan
     from feature_hotel_system import load_hotel_lookup_for_roster
+    from feature_progression import get_current_status
 
     profile = client.get("profile") or {}
     hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
-    ideal_plan = build_template_plan(client, roster, hotel_lookup=hotel_lookup)
+    prog_status = await get_current_status(db, client["id"])
+    ideal_plan = build_template_plan(client, roster, hotel_lookup=hotel_lookup, progression_status=prog_status)
     old_summary = _weekly_summary(current)
     new_summary = _weekly_summary(ideal_plan)
 

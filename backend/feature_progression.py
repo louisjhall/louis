@@ -285,3 +285,93 @@ async def snapshot_history(db, user_id: str, limit: int = 8) -> list[dict[str, A
         {"user_id": user_id}, {"_id": 0},
     ).sort([("week_key", -1)]).limit(limit).to_list(limit)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Progression-aware volume scaling for the fallback + resolver
+# ---------------------------------------------------------------------------
+
+# Multiplier applied to duration/volume for endurance sessions based on the
+# CURRENT progression_status (i.e. last week's snapshot). These are calibrated
+# to feel like a real coach's response — subtle progression, meaningful pull-back.
+PROGRESSION_SCALARS: dict[str, float] = {
+    STATUS_PROGRESSING: 1.07,   # ~+7% next week
+    STATUS_MAINTAIN:    1.00,   # hold
+    STATUS_REDUCE:      0.88,   # -12%
+    STATUS_DELOAD:      0.55,   # -45%
+}
+
+PROGRESSION_REASONS: dict[str, str] = {
+    STATUS_PROGRESSING: "You had a strong week — the long session is nudged up +7% this week.",
+    STATUS_MAINTAIN:    "Steady week last week — holding the long session at the same volume this week.",
+    STATUS_REDUCE:      "You were pushing hard last week — the long session is pulled back ~12% this week.",
+    STATUS_DELOAD:      "Planned deload — the long session drops ~45% this week to consolidate gains.",
+}
+
+
+def scale_endurance_session(
+    session: dict[str, Any],
+    progression_status: Optional[str],
+    *,
+    session_type: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Mutate an endurance/long-run/tempo/intervals workout in place, adjusting
+    `duration_min` and the `reps` string (e.g. '60-90 min steady' → '55-80 min steady')
+    based on the client's current progression_status.
+
+    Also stamps `change_reason` (if not already set) and `progression_status`
+    on the workout so the client-side "Why this changed" UI can surface it.
+
+    No-op when status is unknown or None.
+    """
+    if not session or not progression_status:
+        return session
+    scalar = PROGRESSION_SCALARS.get(progression_status)
+    if not scalar or abs(scalar - 1.0) < 0.02:
+        # Maintain or unknown → still stamp status for coach visibility
+        session["progression_status"] = progression_status
+        return session
+
+    # 1. duration_min
+    dur = session.get("duration_min")
+    if isinstance(dur, (int, float)):
+        new_dur = max(15, int(round(dur * scalar / 5.0) * 5))  # round to nearest 5 min
+        session["duration_min"] = new_dur
+
+    # 2. exercise reps strings — scale any "X-Y min" or "X min" patterns
+    exs = session.get("exercises") or []
+    import re as _re
+    for ex in exs:
+        reps = ex.get("reps")
+        if not isinstance(reps, str):
+            continue
+        def _scale_range(m):
+            lo, hi = int(m.group(1)), int(m.group(2))
+            return f"{max(10, int(round(lo * scalar)))}-{max(15, int(round(hi * scalar)))} {m.group(3)}"
+        new_reps = _re.sub(r"(\d+)-(\d+)\s+(min[a-z ]*)", _scale_range, reps)
+        def _scale_single(m):
+            v = int(m.group(1))
+            return f"{max(10, int(round(v * scalar)))} {m.group(2)}"
+        new_reps = _re.sub(r"^(\d+)\s+(min[a-z ]*)", _scale_single, new_reps)
+        if new_reps != reps:
+            ex["reps"] = new_reps
+
+    # 3. Stamp change_reason (does not overwrite an existing one from hotel/eq gate)
+    session["progression_status"] = progression_status
+    if not session.get("change_reason"):
+        session["change_reason"] = PROGRESSION_REASONS[progression_status]
+    else:
+        # Append (coach can see both hotel + progression reasons)
+        session["change_reason"] = (
+            session["change_reason"] + "  · " + PROGRESSION_REASONS[progression_status]
+        )
+    return session
+
+
+async def get_current_status(db, user_id: str) -> Optional[str]:
+    """Return the client's most recent progression_status, or None if no snapshot."""
+    snap = await latest_snapshot(db, user_id)
+    if not snap:
+        return None
+    return snap.get("status")

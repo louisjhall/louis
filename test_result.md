@@ -1717,3 +1717,42 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Iter 81 Phase 4 shipped — Coach Dashboard (Hotels + Progression). Backend: _client_summary now attaches progression_pill; coach_client_detail attaches progression_pill; coach_dashboard exposes counts.hotels_pending_review. Frontend: new /coach/hotels review-queue screen with chip toggles and per-hotel Verify button; coach overview alerts + KPIs + HOTELS header + per-client ProgressionPill; coach client detail pill+coach_note. 5/5 Phase 4 tests pass. Combined: 94/94 across all four phases. TESTING_TYPE: both. Do NOT re-test Phase 1/2/3 endpoints. NEXT PHASES (5-6): Marathon adjustments (progression-aware long-run scaling) + final 15 test cases + audit closeout."
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 81 — MASTER FIX PROMPT · PHASE 5 · PROGRESSION-AWARE MARATHON
+# ═════════════════════════════════════════════════════════════════════
+
+backend:
+  - task: "Progression-aware endurance scaling (long_run / tempo / intervals / easy_run)"
+    implemented: true
+    working: true
+    file: "backend/feature_progression.py, backend/feature_workout_fallback.py, backend/server.py, backend/feature_programme_quality.py, backend/feature_roster_confirmation.py, backend/feature_coach_workout_editor.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 5 of Master Fix Prompt shipped. New in feature_progression.py: (a) PROGRESSION_SCALARS = {progressing_well: 1.07, maintain: 1.00, reduce_load: 0.88, deload: 0.55} — multipliers applied to endurance session duration and reps. (b) PROGRESSION_REASONS — 4 client-facing strings ('You had a strong week — the long session is nudged up +7% this week.' etc.). (c) scale_endurance_session(session, status) — mutates duration_min (rounded to nearest 5 min, floored at 15 min) and any 'X-Y min' or 'X min' reps ranges via regex; stamps progression_status; appends to existing change_reason (does not clobber hotel/equipment reasons) or sets it. (d) get_current_status(db, user_id) helper reading latest snapshot. Wired build_template_plan(user, roster, hotel_lookup, progression_status) — new kwarg loaded from feature_progression.get_current_status at ALL 5 callsites (server.py x2, feature_programme_quality, feature_roster_confirmation, feature_coach_workout_editor). Inside the loop, only long_run/tempo/intervals/easy_run slots get scaled. 14/14 Phase 5 tests pass. Combined phases 1-5: 108/108. No regressions."
+
+test_plan:
+  current_focus:
+    - "Backend: PROGRESSION_SCALARS values direction — progressing_well > 1.0 > maintain, reduce < 1, deload < reduce"
+    - "Backend: scale_endurance_session no-op when status is None; stamps status even for MAINTAIN"
+    - "Backend: scale_endurance_session at PROGRESSING (~+7%) increases 75→80 min, reps '60-90 min' → '64-96 min'"
+    - "Backend: scale_endurance_session at REDUCE_LOAD (-12%) decreases 75→65 min, reps '60-90 min' → '53-79 min'"
+    - "Backend: scale_endurance_session at DELOAD (~-45%) decreases 75→40 min"
+    - "Backend: scale_endurance_session appends to existing change_reason (preserves hotel/eq reasons)"
+    - "Backend: 20 min floored to 15 min minimum on deload"
+    - "Backend: Non-endurance sessions ignored (strength_support reps '10' unchanged)"
+    - "Backend integration: build_template_plan(status=REDUCE) produces a Long Run with LESS duration than status=None"
+    - "Backend integration: build_template_plan(status=PROGRESSING) produces a Long Run with MORE duration than status=None"
+    - "Backend HTTP: POST /progress/recompute + downstream regeneration reflects the status in generated workouts"
+
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 81 Phase 5 shipped — Progression-Aware Marathon adjustments. When a client is progressing_well, their long run bumps +7%; when reduce_load, it pulls back -12%; when deload, it drops -45%. All endurance sessions (long_run/tempo/intervals/easy_run) get duration + reps ranges scaled with regex, and a 'Why this changed' reason string is stamped/appended (works alongside Phase 1 hotel reasons and Phase 2 equipment reasons — no clobbering). Wired into all 5 callsites of build_template_plan. 14/14 Phase 5 tests pass. Combined: 108/108 across Phase 1-5. TESTING_TYPE: backend only (frontend already renders change_reason via Phase 2 UI — no new components needed for Phase 5). Do NOT re-test earlier phase endpoints. NEXT PHASE (6): final 15-case audit report closeout."

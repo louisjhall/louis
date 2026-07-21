@@ -303,6 +303,19 @@ class HotelBody(BaseModel):
     pool: Optional[bool] = None
     opening_hours: Optional[str] = None
     notes: Optional[str] = None
+    # Phase 1 additions — Hotel System
+    gym_type: Optional[str] = None          # "full_gym" | "cardio_only" | "basic" | "bodyweight_only" | "none" | "unknown"
+    safe_outdoor_run: Optional[bool] = None  # explicit outdoor run safety
+    verified_by_coach: Optional[bool] = None  # coach-verified flag (coach-only writes)
+
+
+class HotelConfirmBody(BaseModel):
+    """Client-side confirmation payload for a hotel on a workout day."""
+    equipment: Optional[dict] = None         # override / patch equipment map
+    gym_type: Optional[str] = None
+    gym_available: Optional[bool] = None
+    safe_outdoor_run: Optional[bool] = None
+    notes: Optional[str] = None
 
 class HotelAttachBody(BaseModel):
     date: str
@@ -3018,8 +3031,10 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             used_template = False
             try:
                 from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
+                from feature_hotel_system import load_hotel_lookup_for_roster
                 if is_empty_or_llm_failure(workouts):
-                    workouts = build_template_plan(user, roster)
+                    hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
+                    workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup)
                     used_template = bool(workouts)
                     if workouts:
                         try:
@@ -3321,8 +3336,10 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
         used_template = False
         try:
             from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
+            from feature_hotel_system import load_hotel_lookup_for_roster
             if is_empty_or_llm_failure(workouts):
-                workouts = build_template_plan(user, roster)
+                hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
+                workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup)
                 used_template = bool(workouts)
                 if workouts:
                     try:
@@ -4657,16 +4674,45 @@ async def _upsert_hotel(body: HotelBody, submitted_by: str) -> dict:
         "last_confirmed_at": now,
         "last_submitted_by": submitted_by,
     }
+    # Phase 1 additions (only overwrite if provided — don't clobber prior data)
+    if body.gym_type is not None:
+        payload["gym_type"] = body.gym_type
+    if body.safe_outdoor_run is not None:
+        payload["safe_outdoor_run"] = body.safe_outdoor_run
+    # verified_by_coach can only be set via coach endpoint — never trust client
     if existing:
         new_conf = min(1.0, (existing.get("confidence", 0.5) + 0.15))
         await db.hotels.update_one({"id": existing["id"]}, {"$set": {**payload, "confidence": new_conf}, "$inc": {"submissions": 1}})
         return await db.hotels.find_one({"id": existing["id"]}, {"_id": 0})
     hotel = {
         "id": new_id(), "name_lower": q["name_lower"], "city_lower": q["city_lower"],
-        "created_at": now, "submissions": 1, "confidence": 0.5, **payload,
+        "created_at": now, "submissions": 1, "confidence": 0.5,
+        "gym_type": body.gym_type or "unknown",
+        "safe_outdoor_run": body.safe_outdoor_run,
+        "verified_by_coach": False,
+        **payload,
     }
     await db.hotels.insert_one(hotel)
     return await db.hotels.find_one({"id": hotel["id"]}, {"_id": 0})
+
+
+@api.get("/hotels/lookup")
+async def hotels_lookup(query: Optional[str] = None, user: dict = Depends(current_user)):
+    """
+    Unified lookup: matches on name OR city (case-insensitive fuzzy).
+    Returns hotels sorted by confidence desc, capped at 15.
+    """
+    q: dict = {}
+    if query:
+        s = query.strip().lower()
+        if s:
+            q = {"$or": [
+                {"name_lower": {"$regex": re.escape(s)}},
+                {"city_lower": {"$regex": re.escape(s)}},
+            ]}
+    rows = await db.hotels.find(q, {"_id": 0}).limit(50).to_list(50)
+    rows.sort(key=lambda h: -(h.get("confidence") or 0.0))
+    return rows[:15]
 
 
 @api.get("/hotels/search")
@@ -4683,6 +4729,150 @@ async def hotels_search(name: Optional[str] = None, city: Optional[str] = None, 
 @api.post("/hotels")
 async def hotels_upsert(body: HotelBody, user: dict = Depends(current_user)):
     return await _upsert_hotel(body, user["id"])
+
+
+@api.post("/hotels/{hid}/confirm")
+async def hotels_confirm(hid: str, body: HotelConfirmBody, user: dict = Depends(current_user)):
+    """
+    Client-side confirmation. Bumps confidence and optionally patches equipment.
+    Never sets verified_by_coach — that's coach-only.
+    """
+    existing = await db.hotels.find_one({"id": hid})
+    if not existing:
+        raise HTTPException(404, "Hotel not found")
+    patch: dict = {"last_confirmed_at": now_iso(), "last_submitted_by": user["id"]}
+    if body.equipment is not None:
+        # Shallow merge to preserve previously known items
+        merged = dict(existing.get("equipment") or {})
+        for k, v in (body.equipment or {}).items():
+            merged[k] = bool(v)
+        patch["equipment"] = merged
+    if body.gym_type is not None:
+        patch["gym_type"] = body.gym_type
+    if body.gym_available is not None:
+        patch["gym_available"] = body.gym_available
+    if body.safe_outdoor_run is not None:
+        patch["safe_outdoor_run"] = body.safe_outdoor_run
+    if body.notes is not None:
+        patch["notes"] = body.notes
+    new_conf = min(1.0, (existing.get("confidence", 0.5) + 0.15))
+    await db.hotels.update_one({"id": hid}, {"$set": {**patch, "confidence": new_conf}, "$inc": {"submissions": 1}})
+    return await db.hotels.find_one({"id": hid}, {"_id": 0})
+
+
+@api.patch("/hotels/{hid}")
+async def hotels_patch(hid: str, body: HotelConfirmBody, user: dict = Depends(current_user)):
+    """PATCH — same semantics as confirm, but does NOT bump submissions counter."""
+    existing = await db.hotels.find_one({"id": hid})
+    if not existing:
+        raise HTTPException(404, "Hotel not found")
+    patch: dict = {}
+    if body.equipment is not None:
+        merged = dict(existing.get("equipment") or {})
+        for k, v in (body.equipment or {}).items():
+            merged[k] = bool(v)
+        patch["equipment"] = merged
+    if body.gym_type is not None:
+        patch["gym_type"] = body.gym_type
+    if body.gym_available is not None:
+        patch["gym_available"] = body.gym_available
+    if body.safe_outdoor_run is not None:
+        patch["safe_outdoor_run"] = body.safe_outdoor_run
+    if body.notes is not None:
+        patch["notes"] = body.notes
+    if patch:
+        await db.hotels.update_one({"id": hid}, {"$set": patch})
+    return await db.hotels.find_one({"id": hid}, {"_id": 0})
+
+
+@api.get("/hotels/pending-for-today")
+async def hotels_pending_for_today(user: dict = Depends(current_user)):
+    """
+    For the client home: which upcoming (next 7 days) roster days are
+    layovers that either:
+      (a) have NO hotel attached, or
+      (b) have a low-confidence hotel that needs re-confirmation.
+
+    Returns a list of {date, layover_city, hotel_id, hotel_name, status, kind}
+    """
+    from feature_hotel_system import classify_stay, is_low_confidence
+    import datetime as _dt
+    r = await db.rosters.find_one({"user_id": user["id"], "active": True}, {"_id": 0})
+    if not r:
+        return []
+    today = _dt.date.today().isoformat()
+    horizon = (_dt.date.today() + _dt.timedelta(days=7)).isoformat()
+    days = [d for d in (r.get("days") or []) if today <= (d.get("date") or "") <= horizon]
+    # Order by date so we always sort chronologically
+    days.sort(key=lambda d: d.get("date") or "")
+    out: list[dict] = []
+    for i, d in enumerate(days):
+        nxt = days[i + 1] if i + 1 < len(days) else None
+        kind = classify_stay(d, nxt)
+        if kind != "layover":
+            continue
+        hid = d.get("hotel_id")
+        if not hid:
+            out.append({
+                "date": d.get("date"),
+                "layover_city": d.get("layover_city"),
+                "layover_country": d.get("layover_country"),
+                "hotel_id": None,
+                "hotel_name": d.get("hotel_name"),
+                "status": "missing",   # no hotel attached
+                "kind": kind,
+            })
+            continue
+        hotel = await db.hotels.find_one({"id": hid}, {"_id": 0})
+        if not hotel:
+            out.append({
+                "date": d.get("date"), "layover_city": d.get("layover_city"),
+                "hotel_id": hid, "hotel_name": d.get("hotel_name"),
+                "status": "missing", "kind": kind,
+            })
+            continue
+        if is_low_confidence(hotel):
+            out.append({
+                "date": d.get("date"), "layover_city": d.get("layover_city"),
+                "layover_country": d.get("layover_country"),
+                "hotel_id": hid, "hotel_name": hotel.get("name"),
+                "status": "needs_confirm", "kind": kind,
+                "confidence": hotel.get("confidence"),
+            })
+    return out
+
+
+@api.get("/coach/hotels/review-queue")
+async def coach_hotels_review_queue(user: dict = Depends(require_role("coach"))):
+    """
+    Coach review queue: low-confidence hotel submissions, most recent first.
+    """
+    rows = await db.hotels.find(
+        {"$and": [
+            {"$or": [{"verified_by_coach": {"$ne": True}}, {"verified_by_coach": {"$exists": False}}]},
+            {"$or": [{"confidence": {"$lt": 0.7}}, {"confidence": {"$exists": False}}]},
+        ]},
+        {"_id": 0},
+    ).sort([("last_confirmed_at", -1)]).limit(50).to_list(50)
+    return rows
+
+
+@api.post("/coach/hotels/{hid}/verify")
+async def coach_hotels_verify(hid: str, user: dict = Depends(require_role("coach"))):
+    """Coach marks a hotel profile as verified — bumps confidence and locks it."""
+    existing = await db.hotels.find_one({"id": hid})
+    if not existing:
+        raise HTTPException(404, "Hotel not found")
+    await db.hotels.update_one(
+        {"id": hid},
+        {"$set": {
+            "verified_by_coach": True,
+            "verified_by": user["id"],
+            "verified_at": now_iso(),
+            "confidence": min(1.0, (existing.get("confidence", 0.5) + 0.3)),
+        }},
+    )
+    return await db.hotels.find_one({"id": hid}, {"_id": 0})
 
 
 @api.get("/hotels/{hid}")

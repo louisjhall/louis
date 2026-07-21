@@ -530,9 +530,11 @@ async def coach_programme_regenerate_preview(
         event_weekly_shape, strength_weekly_shape,
     )
     from feature_workout_fallback import build_template_plan
+    from feature_hotel_system import load_hotel_lookup_for_roster
 
     profile = client.get("profile") or {}
-    ideal_plan = build_template_plan(client, roster)
+    hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
+    ideal_plan = build_template_plan(client, roster, hotel_lookup=hotel_lookup)
     old_summary = _weekly_summary(current)
     new_summary = _weekly_summary(ideal_plan)
 

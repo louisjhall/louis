@@ -20,6 +20,7 @@ import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
 import { TodayPersonalActivities } from "@/src/components/PersonalActivityCard";
 import { AddActivityModal } from "@/src/components/AddActivityModal";
+import { HotelSetupCard } from "@/src/components/HotelSetupCard";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -288,6 +289,9 @@ export default function Home() {
               </Pressable>
             </View>
           )}
+
+          {/* Phase 1: Hotel Setup — appears when upcoming layovers need a hotel/gym profile */}
+          <HotelSetupCard />
 
           {event ? (
             <Pressable testID="event-card" onPress={() => router.push("/event")}>

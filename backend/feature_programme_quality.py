@@ -867,8 +867,10 @@ async def coach_programme_regenerate(
         used_template = False
         try:
             from feature_workout_fallback import build_template_plan, is_empty_or_llm_failure
+            from feature_hotel_system import load_hotel_lookup_for_roster
             if is_empty_or_llm_failure(workouts):
-                workouts = build_template_plan(client, roster) or []
+                hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
+                workouts = build_template_plan(client, roster, hotel_lookup=hotel_lookup) or []
                 used_template = bool(workouts)
                 if workouts:
                     try:

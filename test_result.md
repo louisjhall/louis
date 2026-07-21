@@ -1511,3 +1511,59 @@ agent_communication:
   - agent: "main"
     message: "§40 shipped — Nutrition Phase 5 (Adaptive insights + Sunday check-in enrichment + Coach To-Do integration). Closes out the full Nutrition Centre spec. Backend: feature_nutrition_insights.py with 9 endpoints (client insights CRUD + coach approve/dismiss/scan-todos). Adaptive analyser looks at 14-day rolling window (logs, hydration, protein trend, layover count, tool usage) and picks ONE of 6 actions via Claude Sonnet 4.5 with a deterministic rule-based fallback. Dedupes per (user, week_start). Sanitises banned words. Coach scan-todos creates nutrition_review coach_tasks with dedupe (verified: 23 clients scanned → 22 tasks created; 2nd run creates 0). Frontend: (a) new /nutrition/insights screen with big action-badge card + previous-insights list + Refresh button, (b) Weekly Atlas Insight preview card on /nutrition home (screenshot-verified: renders correctly with REVIEW badge + AWAITING LOUIS + VIEW ALL link), (c) Sunday check-in fetches /nutrition/checkin/questions and appends 5-7 goal-personalised nutrition questions to the form, (d) coach nutrition dashboard has a '23 pending Atlas reviews · OPEN' bar + scan-icon in header + page-sheet modal with DISMISS / APPROVE + APPLY buttons (approve+apply writes new nutrition_targets row with target_type='coach_from_atlas'). TEST: backend all 9 endpoints, verify scan-todos dedupe, verify approve+applyTargetChange writes a target row. Frontend: (i) client home Weekly Insight card, (ii) coach dashboard pending bar + approve/dismiss modal. TESTING_TYPE: both. Do NOT re-test Phase 1-4."
 
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 81 — MASTER FIX PROMPT · PHASE 1 · HOTEL SYSTEM
+# ═════════════════════════════════════════════════════════════════════
+
+backend:
+  - task: "Hotel System · Layover vs Turnaround classifier + hotel_profiles endpoints"
+    implemented: true
+    working: true
+    file: "backend/feature_hotel_system.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 1 of Master Fix Prompt shipped. New feature_hotel_system.py module with (a) compute_layover_hours(day, next_day) computing hours between duty_end_time and next report_time, (b) classify_stay() returning layover/turnaround/home/off/flight/unknown with 18h threshold, (c) resolve_gym_equipment() mapping gym_type → equipment presets (full_gym / cardio_only / basic / bodyweight_only / none / unknown), (d) is_bodyweight_only() gating for safe fallback, (e) confidence_score() / is_low_confidence() for coach review queue, (f) reason_for() returning client-facing 'why this changed' strings. Extended HotelBody model (server.py) with gym_type, safe_outdoor_run, verified_by_coach (coach-only). New endpoints: GET /api/hotels/lookup?query= (unified fuzzy search), POST /api/hotels/{hid}/confirm (client-side confirmation bumps confidence), PATCH /api/hotels/{hid}, GET /api/hotels/pending-for-today (upcoming layovers needing hotel), GET /api/coach/hotels/review-queue (coach-only), POST /api/coach/hotels/{hid}/verify (coach-only). Wired hotel context into feature_workout_fallback.build_template_plan(hotel_lookup=...) — Turnaround (<18h) → forced mobility session; Layover with unknown/bodyweight hotel → bodyweight-safe stub; Layover with known gym → hotel gym stub. All 5 callsites (server.py x2, feature_programme_quality, feature_roster_confirmation, feature_coach_workout_editor) now preload hotels via load_hotel_lookup_for_roster(). Added bodyweight-safe strength_support template variant. 27/27 phase 1 unit + integration tests pass (backend/tests/test_iter81_phase1_hotel_system.py). No lint errors. No regressions vs pre-existing failures in iter58/64/68/79."
+
+frontend:
+  - task: "Hotel Setup Card (client home) + /hotel-setup screen"
+    implemented: true
+    working: true
+    file: "frontend/src/components/HotelSetupCard.tsx, frontend/app/hotel-setup.tsx, frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New HotelSetupCard component on client /home — polls /api/hotels/pending-for-today and appears when upcoming (next 7 days) layovers either have no hotel attached OR low-confidence (<0.6) hotel that needs re-confirmation. Card shows layover city + count of pending, taps into /hotel-setup?date=YYYY-MM-DD. New /hotel-setup screen with 3-step flow: (1) hotel name (fuzzy search via /hotels/lookup showing coach-verified badge) + city + country, (2) gym type picker (5 cards: full_gym / cardio_only / basic / bodyweight_only / none) applying sensible equipment presets, (3) equipment chip toggles for 13 items (dumbbells / barbell / bench / cable_stack / etc), outdoor-run safety toggle, notes textarea. Save flow: upsert /hotels → attach to roster day via /roster/{rid}/hotel → confirm via /hotels/{id}/confirm to bump confidence. Uses theme.color.brand (crimson) and testIDs on all interactive elements. Lint clean, expo restarted OK, /home renders."
+
+test_plan:
+  current_focus:
+    - "Backend: compute_layover_hours math (20h, 8h, missing data)"
+    - "Backend: classify_stay 18h threshold — layover ≥18h, turnaround <18h, flight with short/long gap"
+    - "Backend: is_bodyweight_only for None hotel, gym_available=False, gym_type=unknown+empty equipment, full_gym"
+    - "Backend: resolve_gym_equipment presets vs explicit equipment"
+    - "Backend: reason_for returns correct REASON_STRINGS for turnaround / unknown-hotel / bodyweight-only / confirmed"
+    - "Backend: POST /api/hotels creates with gym_type + safe_outdoor_run; equipment persisted; confidence=0.5 initial"
+    - "Backend: POST /api/hotels/{id}/confirm bumps confidence, merges equipment (does not clobber), sets gym_type"
+    - "Backend: PATCH /api/hotels/{id} patches without bumping submissions"
+    - "Backend: GET /api/hotels/lookup?query= returns rows sorted by confidence desc, max 15"
+    - "Backend: GET /api/hotels/pending-for-today returns [] when no roster, layover days with missing/needs_confirm status"
+    - "Backend: GET /api/coach/hotels/review-queue coach-only (403 for client), returns low-confidence rows"
+    - "Backend: POST /api/coach/hotels/{hid}/verify coach-only, sets verified_by_coach + verified_at + verified_by + bumps confidence"
+    - "Backend: feature_workout_fallback.build_template_plan(hotel_lookup=...) — Turnaround = mobility, Unknown-hotel-layover = bodyweight strength_support, Known gym layover = Hotel Gym Workout"
+    - "Frontend: /home shows HotelSetupCard when /hotels/pending-for-today returns rows; hidden when empty"
+    - "Frontend: tapping card navigates to /hotel-setup?date=..."
+    - "Frontend: /hotel-setup 3-step form — name search (verified-badge for coach-verified rows), gym type picker applies preset, chip toggles work, save flow upserts hotel + attaches to roster + confirms"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 81 shipped Phase 1 of the MASTER FIX PROMPT (Hotel System). New feature_hotel_system.py module (~230 LOC) with pure helpers for layover/turnaround detection (18h threshold), gym-type presets, bodyweight-only routing, confidence scoring, and client-facing 'why this changed' reason strings. Extended HotelBody + wired 6 new endpoints (lookup / confirm / patch / pending-for-today / coach review queue / coach verify). Wired hotel context into all 5 build_template_plan callsites so template fallbacks now respect layover vs turnaround AND known vs unknown hotel gyms — turnaround yields mobility only, unknown hotel yields bodyweight-safe strength support, known gym yields Hotel Gym Workout with equipment matching. Frontend: HotelSetupCard on /home (auto-hides when no pending layovers) + full /hotel-setup screen (name fuzzy search / gym type presets / equipment chips / outdoor-run toggle / notes) that saves via upsert→attach→confirm. 27/27 phase 1 backend tests pass. No regressions vs pre-existing test failures (iter58/64/68/79 — same 10 tests failing before + after). Ready for backend + frontend testing. TESTING_TYPE: both. Credentials: client@crewfit.com / Client123! and coach@crewfit.com / Coach123!. NEXT PHASES (waiting on user confirmation): Phase 2 — Strict Equipment Matching (hard validation gates in feature_v2_resolver); Phase 3 — Reactive progression + Your Progress card; Phase 4-6 — coach dashboard hotel review queue UI, Marathon adjustments, final 15 test cases."

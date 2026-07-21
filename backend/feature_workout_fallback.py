@@ -232,6 +232,17 @@ def _stub_for_session_type(session_type: str, date: str, ctx: dict[str, Any]) ->
         loc = "Home Workout"
         if hotel_pref == "hotel":
             loc = "Hotel Gym Workout"
+        elif hotel_pref == "bodyweight":
+            # Bodyweight-only substitute — no dumbbells, no equipment
+            exs = [
+                {"name": "Single-leg glute bridge",   "sets": 3, "reps": "10 each side", "rest_sec": 45, "rpe": 6, "notes": "Slow, drive from the glute."},
+                {"name": "Reverse lunge",             "sets": 3, "reps": "10 each leg", "rest_sec": 45, "rpe": 6, "notes": "Long step back — vertical torso."},
+                {"name": "Push-up (or incline push-up)", "sets": 3, "reps": "8-15", "rest_sec": 45, "rpe": 7, "notes": "Scale to bed/desk edge."},
+                {"name": "Calf raise",                "sets": 3, "reps": "15", "rest_sec": 40, "rpe": 6, "notes": "Slow, full range, pause at top."},
+                {"name": "Bird-dog",                  "sets": 3, "reps": "8 each side", "rest_sec": 40, "rpe": 5, "notes": "Extend opposite arm/leg without twisting."},
+                {"name": "Side plank",                "sets": 2, "reps": "30s each side", "rest_sec": 40, "rpe": 6, "notes": "Hips stacked, ribs down."},
+            ]
+            loc = "Hotel Room Workout"
         return {
             "date": date, "day_load": day_load, "title": "Strength for Runners",
             "location": loc, "duration_min": 40, "focus": "full",
@@ -432,14 +443,26 @@ def _override_for_duty(kind: str, date: str) -> Any:
 # Public: goal-aware plan builder (Plan B2)
 # ---------------------------------------------------------------------------
 
-def build_template_plan(user: dict[str, Any], roster: dict[str, Any]) -> list[dict[str, Any]]:
+def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
+                       hotel_lookup: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Deterministic fallback plan for the whole roster window.
 
     NEW (Plan B2): goal-aware. Reads `profile.main_goal_key` and
     `profile.event_type_pref` to pick an ideal weekly shape from
     `feature_programme_quality.event_weekly_shape` or `strength_weekly_shape`.
     Runs, long runs, and strength-for-runners now appear for marathon clients.
+
+    NEW (Phase 1 Hotel System): if `hotel_lookup` is provided (dict of
+    hotel_id -> hotel_doc), each layover day is inspected:
+      * Turnaround (<18h) → forced mobility (no strength / no long runs)
+      * Layover w/ unknown hotel → forced bodyweight fallback
+      * Layover w/ bodyweight-only hotel → forced bodyweight fallback
+      * Layover w/ known gym → normal hotel gym stub
     """
+    from feature_hotel_system import (
+        classify_stay, is_bodyweight_only, reason_for,
+    )
+
     profile = user.get("profile") or {}
     hotel_pref = str(profile.get("hotel_gyms") or "").lower()
     if hotel_pref in ("never", "rare"):
@@ -471,61 +494,91 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any]) -> list[di
     else:
         shape = strength_weekly_shape(goal_key, target_sessions)
 
-    # Split roster days into weeks of 7 (Mon-Sun aligned by ISO date order)
     days = list(roster.get("days") or [])
     if not days:
         return []
 
+    # Ensure days are in chronological order for layover-hour computation
+    days.sort(key=lambda d: str(d.get("date") or ""))
+
     out: list[dict[str, Any]] = []
     ctx_stub = {"hotel_pref": equip_pref}
+    hotel_lookup = hotel_lookup or {}
 
-    # Walk days sequentially. For each week (7 consecutive days), maintain a
-    # consumable session-type queue from `shape`. Duty overrides take
-    # precedence — running/strength slot slides to the next available day.
     for wk_start in range(0, len(days), 7):
         week = days[wk_start: wk_start + 7]
-        # Consumable queue: real training slots first, recovery/mobility last
         real_slots = [s for s in shape if s not in ("mobility", "recovery")]
         light_slots = [s for s in shape if s in ("mobility", "recovery")]
-        # Pad light slots so week is filled
         while len(real_slots) + len(light_slots) < len(week):
             light_slots.append("recovery")
 
         queue = list(real_slots) + list(light_slots)
 
-        for d in week:
+        for i, d in enumerate(week):
             date = d.get("date")
             if not date:
                 continue
-            kind = _classify_day(d)
+            # Use the NEXT day (across week boundary if needed) for layover-hours
+            global_idx = wk_start + i
+            next_d = days[global_idx + 1] if global_idx + 1 < len(days) else None
+            stay = classify_stay(d, next_d)
+            kind = _classify_day(d)  # legacy classifier for the safety overrides
             override = _override_for_duty(kind, date)
             if override is not None:
                 out.append(override)
-                # Override consumed a slot — remove the LAST light slot from
-                # queue to keep the total count aligned. Never remove a real
-                # training slot (they must still be placed on remaining days).
-                for i in range(len(queue) - 1, -1, -1):
-                    if queue[i] in ("mobility", "recovery"):
-                        queue.pop(i)
+                for j in range(len(queue) - 1, -1, -1):
+                    if queue[j] in ("mobility", "recovery"):
+                        queue.pop(j)
                         break
                 else:
-                    # No light slot left — drop the LAST real slot instead
-                    # (the roster is heavy — reduce planned volume).
                     if queue:
                         queue.pop()
                 continue
             if kind == "off":
-                continue  # explicit rest — no card
-            # kind is layover or home — pop next slot from queue
+                continue
+
+            # PHASE 1 HOTEL SYSTEM — hard classification override for turnaround
+            if stay == "turnaround":
+                # Force mobility session — never long run / heavy strength
+                w = _stub_for_session_type("mobility", date, dict(ctx_stub))
+                if w:
+                    w["hotel_stay_kind"] = "turnaround"
+                    w["change_reason"] = reason_for(d, None, next_d)
+                    out.append(w)
+                # Consume a queue slot to keep totals aligned
+                if queue:
+                    queue.pop(0)
+                continue
+
             if not queue:
                 continue
             slot = queue.pop(0)
-            # For layovers, prefer to swap heavy strength for bodyweight
             local_ctx = dict(ctx_stub)
-            if kind == "layover":
-                local_ctx["hotel_pref"] = "hotel" if equip_pref != "bodyweight" else "bodyweight"
+            hotel_doc = None
+            change_reason = None
+            if stay == "layover":
+                hid = d.get("hotel_id")
+                hotel_doc = hotel_lookup.get(hid) if hid else None
+                if is_bodyweight_only(hotel_doc):
+                    # Unknown or bodyweight-only hotel → force bodyweight
+                    local_ctx["hotel_pref"] = "bodyweight"
+                    # Route strength slots to a bodyweight-safe strength session
+                    if slot in ("push_strength", "pull_strength", "upper_strength",
+                                "leg_strength", "lower_strength", "strength_support"):
+                        slot = "strength_support"  # bodyweight-first template
+                else:
+                    local_ctx["hotel_pref"] = "hotel"
+                change_reason = reason_for(d, hotel_doc, next_d)
+
             w = _stub_for_session_type(slot, date, local_ctx)
             if w:
+                if stay == "layover":
+                    w["hotel_stay_kind"] = "layover"
+                    if hotel_doc:
+                        w["hotel_id"] = hotel_doc.get("id")
+                        w["hotel_name"] = hotel_doc.get("name")
+                    if change_reason:
+                        w["change_reason"] = change_reason
                 out.append(w)
 
     return out

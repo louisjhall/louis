@@ -1,0 +1,52 @@
+{
+  "summary": "Iter81 Phase 1 Hotel System — 26/27 reference tests pass + 11/11 verification tests pass + full frontend E2E flow verified. Backend endpoints all functional (lookup, create, confirm, patch, pending-for-today, coach review-queue, coach verify). Workout fallback wiring correctly injects hotel_stay_kind/hotel_pref/location for turnaround, unknown-hotel bodyweight, and full-gym scenarios. Frontend /hotel-setup screen renders all sections and testIDs. Save flow fires 3 API calls (POST /hotels, POST /roster/{id}/hotel, POST /hotels/{id}/confirm) all returning 200. HotelSetupCard on /home is correctly hidden because seeded roster's only layover (2026-08-06 Bangkok) is outside the 7-day pending window; endpoint semantics verified via curl.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "test_iter81_phase1_hotel_system.py::test_hotels_create_and_confirm",
+        "issue": "Reference test is stateful — uses fixed hotel name 'CrewFit Test Hotel'; after multiple runs the confidence is capped at 1.0 so the assertion `updated['confidence'] > hotel['confidence']` fails (1.0 > 1.0 false). Endpoint behaviour is CORRECT — verified with unique-name test in test_iter81_phase1_verify.py which passes cleanly (0.5 -> 0.65 bump). Recommend E1 add uuid suffix to hotel names in that reference test to make it re-runnable."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "hotel-setup screen (Alert.alert on save)",
+        "issue": "React Native `Alert.alert('Saved', ...)` does not surface as a browser dialog on Expo Web preview after successful save. Save operation completes correctly (all 3 backend calls return 200) but user gets no visual confirmation on web and stays on the screen since router.back() only fires from Alert's OK button. On native (iOS/Android/Expo Go) this will work normally.",
+        "testID": "hotel-save-btn",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter81_phase1_hotel_system.py (reference, 26/27 pass)",
+    "/app/backend/tests/test_iter81_phase1_verify.py (new — 11/11 pass, stateless with uuid names + workout fallback wiring)",
+    "/app/test_reports/pytest/iter81_phase1_results.xml",
+    "/app/test_reports/pytest/iter81_phase1_verify_results.xml"
+  ],
+  "action_items": [
+    "Optional: Make test_hotels_create_and_confirm in test_iter81_phase1_hotel_system.py stateless by using a uuid suffix in hotel name — it currently fails on re-runs due to confidence cap. Endpoint itself is correct."
+  ],
+  "critical_code_review_comments": [
+    "feature_hotel_system.py: clean, small pure module — good separation from server.py.",
+    "hotel-setup.tsx: canSave gate correctly requires hotelName + city. Save fires POST /hotels + POST /roster/{id}/hotel + POST /hotels/{id}/confirm in the right order.",
+    "HotelSetupCard.tsx: gracefully returns null on empty/loading — no phantom card renders.",
+    "server.py hotel endpoints: coach-only endpoints correctly return 403 for client role (verified)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter81_phase1_verify.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "97% (37/38 tests: 26/27 reference + 11/11 verification; the one failure is a test-isolation stateful issue, endpoint behaviour is correct)",
+    "frontend": "100% (all testIDs present, save flow completes with 3x 200 responses; Alert-on-web quirk is native-only, not a blocker)"
+  },
+  "seed_data_creation": "Created test hotels via /api/hotels (CrewFit E2E Hotel London, plus uuid-suffixed TEST_* hotels). No roster/user seed changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter81 Phase 1 hotel system is production-ready. All 7 endpoints work: /api/hotels/lookup, POST /api/hotels, POST /api/hotels/{id}/confirm, PATCH /api/hotels/{id}, GET /api/hotels/pending-for-today (returns [] when no active roster or no layovers in 7d window), GET /api/coach/hotels/review-queue (403 for client), POST /api/coach/hotels/{id}/verify (403 for client, bumps confidence by 0.3). Workout fallback correctly routes turnaround→mobility, unknown-hotel-layover→bodyweight, full-gym-layover→Hotel Gym. Frontend hotel-setup screen fully functional with all testIDs. HotelSetupCard visibility depends on pending-for-today returning rows — seeded roster's Bangkok layover on 2026-08-06 is outside the 7-day window so card is hidden (correct behaviour).",
+  "rca_of_issue": "The single failing reference test `test_hotels_create_and_confirm` uses a fixed hotel name ('CrewFit Test Hotel'). The upsert on POST /api/hotels keys off (name.lower(), city.lower()), so every subsequent run bumps confidence: 0.5, 0.65, 0.80, 0.95, 1.0 (capped). Once capped, `assert updated['confidence'] > hotel['confidence']` becomes `1.0 > 1.0` = False. Endpoint is correct — verified by running the same assertion with uuid-suffixed names in test_iter81_phase1_verify.py::test_hotels_create_then_confirm_bumps_confidence which asserts exact 0.5 → 0.65 bump and passes. Mitigation: add `uuid.uuid4().hex[:6]` suffix to the hotel name in the reference test."
+}

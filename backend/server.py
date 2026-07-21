@@ -1479,6 +1479,16 @@ async def assessment_finalize(body: dict = None, user: dict = Depends(current_us
     # Re-fetch to strip the mongo _id field before returning
     dna_doc_clean = await db.coaching_dna.find_one({"id": dna_doc["id"]}, {"_id": 0})
 
+    # Plan A1 + A2 — copy structured assessment answers into users.profile
+    # (main_goal_key, training_days_per_week, experience_level, etc.) and
+    # create endurance event stubs if needed. WITHOUT this handoff the
+    # workout generator has no idea the client picked marathon or 4 days.
+    handoff_summary: dict[str, Any] = {}
+    try:
+        handoff_summary = await _apply_assessment_answers_to_profile(user["id"], a)
+    except Exception:
+        logger.exception("assessment→profile handoff failed (non-fatal)")
+
     # Link Event Mode — if the assessment surfaced events, materialise them in db.events
     events_created = 0
     try:
@@ -1521,7 +1531,342 @@ async def assessment_finalize(body: dict = None, user: dict = Depends(current_us
     except Exception:
         logger.exception("habit seed trigger failed")
 
-    return {"dna": dna_doc_clean, "events_created": events_created, "already_completed": False}
+    return {"dna": dna_doc_clean, "events_created": events_created, "already_completed": False, "profile_handoff": handoff_summary}
+
+
+# ---------------------------------------------------------------------------
+# Assessment → users.profile handoff (Plan A1 + A2)
+# The assessment collects `training_days`, `primary_goal` (multi-select),
+# `experience`, `role`, `hotel_gyms`, `time_home`, `equipment_home`, `injuries`,
+# but historically these lived only inside `coaching_dna`. The workout
+# generator + `feature_programme_quality._resolve_goal_key` read from
+# `users.profile`, so the answers must be back-copied here on finalize.
+# Without this handoff, marathon clients silently fall back to
+# `general_fitness` at 3 sessions/week.
+# ---------------------------------------------------------------------------
+_GOAL_ID_TO_KEY: dict[str, str] = {
+    "lose_fat": "lose_fat",
+    "build_muscle": "build_muscle",
+    "general_fitness": "general_fitness",
+    "marathon": "event",
+    "half_marathon": "event",
+    "ironman": "event",
+    "seventy_three": "event",
+    "hyrox": "event",
+    "sprint_tri": "event",
+    "olympic_tri": "event",
+    "five_k": "event",
+    "ten_k": "event",
+    "mobility": "improve_energy",
+    "reduce_pain": "return_to_training",
+    "return_injury": "return_to_training",
+    "reduce_jetlag": "aviation_consistency",
+    "improve_sleep": "aviation_consistency",
+    "airline_medical": "health_markers",
+    "maintain": "aviation_consistency",
+}
+
+_GOAL_ID_TO_LABEL: dict[str, str] = {
+    "lose_fat": "Lose body fat",
+    "build_muscle": "Build muscle",
+    "general_fitness": "General fitness",
+    "marathon": "Marathon",
+    "half_marathon": "Half Marathon",
+    "ironman": "Ironman",
+    "seventy_three": "Ironman 70.3",
+    "hyrox": "HYROX",
+    "sprint_tri": "Sprint Triathlon",
+    "olympic_tri": "Olympic Triathlon",
+    "five_k": "5K",
+    "ten_k": "10K",
+    "mobility": "Improve mobility",
+    "reduce_pain": "Reduce pain",
+    "return_injury": "Return from injury",
+    "reduce_jetlag": "Reduce jet lag",
+    "improve_sleep": "Improve sleep",
+    "airline_medical": "Pass airline medical",
+    "maintain": "Maintain fitness",
+}
+
+_GOAL_ID_TO_EVENT_TYPE: dict[str, str] = {
+    "marathon": "marathon",
+    "half_marathon": "half_marathon",
+    "ironman": "ironman",
+    "seventy_three": "half_ironman",
+    "hyrox": "hyrox",
+    "sprint_tri": "sprint_tri",
+    "olympic_tri": "olympic_tri",
+    "five_k": "5k",
+    "ten_k": "10k",
+}
+
+
+async def _apply_assessment_answers_to_profile(user_id: str, assessment: dict) -> dict[str, Any]:
+    """Copy structured assessment answers into `users.profile` and create
+    endurance-event stubs where relevant. Returns a summary dict.
+
+    IMPORTANT: this fills the exact fields the workout generator reads
+    (`main_goal_key`, `training_days_per_week`, `experience_level`, etc.).
+    Without this, a marathon client is invisible to the generator.
+
+    Assessment question IDs are DYNAMIC (Claude adaptive interview) so we use
+    a mix of:
+      1. Exact-id lookups for the static seed questions
+      2. Fuzzy id/section pattern matching for adaptive follow-ups
+      3. Fallback to the Coaching DNA which is already structured
+    """
+    ans_map: dict[str, Any] = {}
+    ans_meta: list[dict] = []
+    for a in (assessment.get("answers") or []):
+        qid = a.get("question_id")
+        if qid:
+            ans_map[qid] = a.get("answer")
+            ans_meta.append({
+                "id": qid,
+                "section": (a.get("section") or "").lower(),
+                "text": (a.get("question_text") or "").lower(),
+                "answer": a.get("answer"),
+            })
+
+    def _find_by_pattern(patterns: list[str]) -> Any:
+        """Return the first answer whose question_id / section / text matches
+        any of the given lowercase substring patterns."""
+        for m in ans_meta:
+            for pat in patterns:
+                if pat in m["id"] or pat in m["section"] or pat in m["text"]:
+                    return m["answer"]
+        return None
+
+    profile_updates: dict[str, Any] = {}
+
+    # --- training_days_per_week: try common id patterns ---
+    td_raw = (
+        ans_map.get("training_days")
+        or ans_map.get("training_days_per_week")
+        or ans_map.get("weekly_training_days")
+        or ans_map.get("days_per_week")
+        or _find_by_pattern([
+            "days_per_week", "training_days", "weekly_training_time",
+            "how many days a week", "days a week can you train",
+        ])
+    )
+    if td_raw is not None:
+        try:
+            profile_updates["training_days_per_week"] = int(str(td_raw).strip())
+        except Exception:
+            pass
+
+    # --- primary_goal (single or multi) ---
+    goals = (
+        ans_map.get("primary_goal")
+        or ans_map.get("primary_goals")
+        or ans_map.get("goals")
+        or _find_by_pattern(["primary_goal", "primary_goals", "main goal", "what are you trying to achieve"])
+    )
+    if isinstance(goals, str):
+        goals = [goals]
+    if isinstance(goals, list) and goals:
+        endurance_priority = [
+            "marathon", "ironman", "seventy_three", "half_marathon",
+            "hyrox", "olympic_tri", "sprint_tri", "ten_k", "five_k",
+        ]
+        primary_id: Optional[str] = None
+        for eid in endurance_priority:
+            if eid in goals:
+                primary_id = eid
+                break
+        if primary_id is None:
+            primary_id = str(goals[0])
+        primary_id = str(primary_id)
+        key = _GOAL_ID_TO_KEY.get(primary_id, "general_fitness")
+        label = _GOAL_ID_TO_LABEL.get(primary_id, str(primary_id).replace("_", " ").title())
+        profile_updates["main_goal_key"] = key
+        profile_updates["main_goal"] = label
+        profile_updates["primary_goal_id"] = primary_id
+        profile_updates["secondary_goal_ids"] = [g for g in goals if g != primary_id][:4]
+        ev_type = _GOAL_ID_TO_EVENT_TYPE.get(primary_id)
+        if ev_type:
+            profile_updates["event_type_pref"] = ev_type
+
+    # --- experience level ---
+    exp = (
+        ans_map.get("experience")
+        or ans_map.get("experience_level")
+        or ans_map.get("training_experience")
+        or _find_by_pattern(["training_experience", "experience_level", "training history"])
+    )
+    if exp:
+        profile_updates["experience_level"] = str(exp).lower()
+
+    # --- aviation role → job_title ---
+    role_id = (
+        ans_map.get("role")
+        or ans_map.get("aviation_role")
+        or _find_by_pattern(["aviation_role"])
+    )
+    if role_id:
+        role_map = {
+            "pilot": "Pilot", "cabin_crew": "Cabin Crew",
+            "ground_ops": "Ground Ops", "corporate": "Corporate Aviation",
+            "other": "Other",
+        }
+        profile_updates["job_title"] = role_map.get(str(role_id), str(role_id).replace("_", " ").title())
+
+    # --- long/short haul ---
+    haul = ans_map.get("pilot_operation_type") or _find_by_pattern(["operation_type", "haul_mix", "long_haul", "short_haul"])
+    if haul:
+        profile_updates["route_focus"] = str(haul)
+
+    # --- hotel_gyms ---
+    hg = (
+        ans_map.get("hotel_gyms")
+        or ans_map.get("equipment_access_layover")
+        or _find_by_pattern(["hotel_gym", "layover_gym", "equipment_access_layover"])
+    )
+    if hg:
+        profile_updates["hotel_gyms"] = str(hg)
+
+    # --- time_home / minutes ---
+    th = ans_map.get("time_home") or ans_map.get("max_home_minutes")
+    if th is not None:
+        try:
+            profile_updates["max_home_minutes"] = int(th)
+        except Exception:
+            pass
+
+    # --- equipment (list OR dict {location, equipment: [...]}) ---
+    eq = (
+        ans_map.get("equipment_home")
+        or ans_map.get("equipment_access_home")
+        or _find_by_pattern(["equipment_access_home", "equipment_home", "home equipment"])
+    )
+    if isinstance(eq, dict):
+        eq = eq.get("equipment") or []
+    if isinstance(eq, list) and eq:
+        profile_updates["equipment"] = [str(e) for e in eq if e]
+        profile_updates["home_equipment"] = [str(e) for e in eq if e]
+
+    # --- injuries free-text ---
+    inj = (
+        ans_map.get("injuries")
+        or ans_map.get("injury_history_current")
+        or _find_by_pattern(["injury_history", "current injuries", "things you must avoid"])
+    )
+    if inj:
+        profile_updates["injury_notes"] = str(inj)
+
+    # --- biological_sex mirroring ---
+    bs = ans_map.get("biological_sex")
+    if bs:
+        profile_updates["biological_sex"] = str(bs)
+
+    # --- DNA fallback for missing structured fields ---
+    dna_row = await db.coaching_dna.find_one({"user_id": user_id}, {"_id": 0}, sort=[("version", -1)])
+    if dna_row:
+        # primary_goal from DNA if we didn't get one from answers
+        if "main_goal_key" not in profile_updates:
+            dna_goal = str(dna_row.get("primary_goal") or "").lower()
+            if dna_goal:
+                # Simple keyword map to our GOAL_MATRIX keys
+                if "marathon" in dna_goal or "10k" in dna_goal or "5k" in dna_goal or "ironman" in dna_goal or "hyrox" in dna_goal or "triathlon" in dna_goal:
+                    profile_updates["main_goal_key"] = "event"
+                    profile_updates["main_goal"] = dna_row.get("primary_goal")
+                    if "marathon" in dna_goal and "half" not in dna_goal:
+                        profile_updates["event_type_pref"] = "marathon"
+                    elif "half marathon" in dna_goal:
+                        profile_updates["event_type_pref"] = "half_marathon"
+                    elif "10k" in dna_goal:
+                        profile_updates["event_type_pref"] = "10k"
+                    elif "5k" in dna_goal:
+                        profile_updates["event_type_pref"] = "5k"
+                    elif "ironman" in dna_goal:
+                        profile_updates["event_type_pref"] = "ironman"
+                    elif "hyrox" in dna_goal:
+                        profile_updates["event_type_pref"] = "hyrox"
+                elif "fat" in dna_goal or "weight" in dna_goal or "lose" in dna_goal:
+                    profile_updates["main_goal_key"] = "lose_fat"
+                    profile_updates["main_goal"] = dna_row.get("primary_goal")
+                elif "muscle" in dna_goal or "strength" in dna_goal or "build" in dna_goal:
+                    profile_updates["main_goal_key"] = "build_muscle"
+                    profile_updates["main_goal"] = dna_row.get("primary_goal")
+        # training availability from DNA (best-effort parse of minutes/day pattern)
+        if "training_days_per_week" not in profile_updates:
+            avail = dna_row.get("training_availability") or {}
+            # e.g. "4 days/week" or "240min/week" — try to sniff a small int 1-7 mentioned
+            import re
+            for v in avail.values() if isinstance(avail, dict) else []:
+                if not isinstance(v, str):
+                    continue
+                m = re.search(r"\b([1-7])\s*(?:days?|d/w|d/wk|sessions?)", v.lower())
+                if m:
+                    profile_updates["training_days_per_week"] = int(m.group(1))
+                    break
+
+    if profile_updates:
+        set_doc = {f"profile.{k}": v for k, v in profile_updates.items()}
+        set_doc["profile.updated_at"] = now_iso()
+        await db.users.update_one({"id": user_id}, {"$set": set_doc})
+
+    # --- Endurance event materialisation (Plan A2) ---
+    events_created = 0
+    primary_id = profile_updates.get("primary_goal_id")
+    ev_type = profile_updates.get("event_type_pref")
+    # dated events may be inside adaptive answers as event_builder outputs.
+    dated_events: list[dict] = []
+    for m in ans_meta:
+        v = m["answer"]
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict) and item.get("date") and item.get("name"):
+                    dated_events.append(item)
+    # DNA next_event
+    if dna_row and isinstance(dna_row.get("next_event"), dict) and dna_row["next_event"].get("date"):
+        dated_events.append(dna_row["next_event"])
+
+    if dated_events:
+        for ev in dated_events:
+            dup = await db.events.find_one({"user_id": user_id, "event_date": ev["date"]}, {"_id": 0})
+            if dup:
+                continue
+            name = str(ev.get("name") or "").strip()
+            etype = _guess_event_type(name) or ev_type or "other"
+            await db.events.insert_one({
+                "id": new_id(),
+                "user_id": user_id,
+                "event_type": etype,
+                "event_name": name or etype,
+                "event_date": ev["date"],
+                "priority": ev.get("priority") or "A",
+                "is_active": True,
+                "source": "assessment_v1_dated",
+                "created_at": now_iso(),
+            })
+            events_created += 1
+    elif ev_type:
+        # No dated event but the goal implies one — insert a date-pending stub.
+        dup = await db.events.find_one(
+            {"user_id": user_id, "event_type": ev_type, "is_active": True},
+            {"_id": 0},
+        )
+        if not dup:
+            await db.events.insert_one({
+                "id": new_id(),
+                "user_id": user_id,
+                "event_type": ev_type,
+                "event_name": _GOAL_ID_TO_LABEL.get(primary_id or "", ev_type.replace("_", " ").title()),
+                "event_date": None,
+                "needs_date_confirmation": True,
+                "priority": "B",
+                "is_active": True,
+                "source": "assessment_v1_goal_only",
+                "created_at": now_iso(),
+            })
+            events_created += 1
+
+    return {
+        "profile_updates": list(profile_updates.keys()),
+        "events_created": events_created,
+    }
 
 
 def _guess_event_type(name: str) -> str:
@@ -2711,7 +3056,13 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     "key_session": bool(w.get("key_session", False)),
                     "event_phase": w.get("event_phase"),
                     "source": "template" if used_template else "coaching_system",
-                    "needs_coach_review": bool(used_template),
+                    # Plan A4 — carry through per-workout validation flags
+                    "needs_coach_review": bool(used_template or w.get("needs_coach_review")),
+                    "validation_status": w.get("validation_status") or ("ok" if not (used_template or w.get("needs_coach_review")) else "needs_review"),
+                    "insufficient_content_reason": w.get("insufficient_content_reason"),
+                    # Plan A3 — optional-recovery flag from days-per-week cap
+                    "optional": bool(w.get("optional", False)),
+                    "source_reason": w.get("source_reason"),
                     # Traffic-light variants (Phase 3): LLM inline output preferred; falls back to prior stored or stub.
                     "variants": _merge_variants(w, prev),
                     "approved": prev.get("approved", False) if prev else False,
@@ -4550,7 +4901,113 @@ async def _generate_month(
     except Exception:
         logger.exception("v2_resolver failed — falling through with raw LLM output")
 
+    # Plan A3 — hard cap sessions per rolling 7-day window to
+    # `profile.training_days_per_week`. Excess "real" training sessions
+    # (non recovery/mobility/rest) are demoted to Optional Recovery so the
+    # client never sees more workouts than they signed up for. Key sessions
+    # (long runs, key strength) are preserved first.
+    # Plan A4 — flag insufficient content on strength/gym/hotel/bodyweight
+    # cards where duration doesn't match remaining exercises after resolver drops.
+    try:
+        _apply_days_cap_and_min_content(unique, profile)
+    except Exception:
+        logger.exception("days-cap / min-content pass failed (non-fatal)")
+
     return unique
+
+
+def _apply_days_cap_and_min_content(workouts: list[dict], profile: dict) -> None:
+    """In-place: enforce training_days_per_week and flag incomplete cards.
+
+    Rules (Plan A3):
+    - If `training_days_per_week` is set (int 1-7), for each Mon-Sun window,
+      count "real" training sessions (focus not in recovery/mobility/rest).
+    - If count > cap, demote the LOWEST-priority extras to Optional Recovery
+      (focus='recovery', title='Optional Recovery Walk', duration_min=20).
+      Priority order preserved: key_session, long_run, then rest.
+
+    Rules (Plan A4):
+    - For any workout with duration_min >= 30 and focus not in
+      (recovery, mobility, rest, long_run, tempo, intervals, zone2, swim, bike)
+      that has fewer than 3 main exercises, set:
+        needs_coach_review = True
+        validation_status = "incomplete_content"
+        insufficient_content_reason = "45-min strength card has <3 exercises"
+    """
+    import datetime as _dt
+
+    ENDURANCE_FOCI = {"long_run", "long", "tempo", "intervals", "zone2", "swim", "bike", "brick", "race_prep"}
+    LIGHT_FOCI = {"recovery", "mobility", "rest"}
+    MIN_STRENGTH_EX = 3
+
+    # ---- A3 first (days-per-week cap): demote excess sessions to Optional
+    # Recovery so A4 (below) doesn't falsely flag demoted cards.
+    try:
+        cap = int(profile.get("training_days_per_week")) if profile.get("training_days_per_week") else None
+    except Exception:
+        cap = None
+    if cap and 1 <= cap <= 7:
+        def _week_key(iso: str) -> str:
+            try:
+                d = _dt.date.fromisoformat(iso[:10])
+                monday = d - _dt.timedelta(days=d.weekday())
+                return monday.isoformat()
+            except Exception:
+                return iso[:10]
+
+        weeks: dict[str, list[dict]] = {}
+        for w in workouts:
+            iso = w.get("date")
+            if not iso:
+                continue
+            weeks.setdefault(_week_key(iso), []).append(w)
+
+        for wk, items in weeks.items():
+            real = [w for w in items if str(w.get("focus") or "").lower() not in LIGHT_FOCI]
+            if len(real) <= cap:
+                continue
+
+            def _priority(w: dict) -> int:
+                if w.get("key_session"):
+                    return 0
+                f = str(w.get("focus") or "").lower()
+                if f in ENDURANCE_FOCI:
+                    return 1
+                if f in ("push", "pull", "hinge", "squat", "legs", "full"):
+                    return 2
+                return 3
+
+            real.sort(key=_priority)
+            demote = real[cap:]
+            for w in demote:
+                w["title"] = "Optional Recovery Walk"
+                w["focus"] = "recovery"
+                w["day_load"] = "amber"
+                w["duration_min"] = 20
+                w["exercises"] = []
+                w["warmup"] = [{"name": "Deep breathing x 5", "duration_sec": 45}]
+                w["rationale"] = (
+                    f"You picked {cap} training days per week — this day is now "
+                    "an optional easy recovery walk. Skip it if you're tired; do it "
+                    "if you're moving well."
+                )
+                w["optional"] = True
+                w["source_reason"] = "days_per_week_cap"
+
+    # ---- A4 (min-content) — runs AFTER A3 so demoted recovery cards are exempt
+    for w in workouts:
+        focus = str(w.get("focus") or "").lower()
+        dur = int(w.get("duration_min") or 0)
+        exs = w.get("exercises") or []
+        if focus in LIGHT_FOCI or focus in ENDURANCE_FOCI:
+            continue
+        if dur >= 30 and len(exs) < MIN_STRENGTH_EX:
+            w["needs_coach_review"] = True
+            w["validation_status"] = "incomplete_content"
+            w["insufficient_content_reason"] = (
+                f"{dur}-min strength/gym card has only {len(exs)} exercise(s) — "
+                f"needs at least {MIN_STRENGTH_EX}."
+            )
 
 
 @api.post("/workouts/generate-month")

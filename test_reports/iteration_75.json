@@ -1,0 +1,49 @@
+{
+  "summary": "Plan A backend validation for Marathon-Prep programme fix. 21/21 pytest cases pass in test_iter75_plan_a_marathon.py covering: (1) Louis (louishallpt@gmail.com) profile handoff — main_goal_key='event', training_days_per_week=4, event_type_pref='marathon', primary_goal_id='marathon' all confirmed in Mongo; static verification that _apply_assessment_answers_to_profile is called AFTER coaching_dna.insert_one inside assessment_finalize; (2) _apply_days_cap_and_min_content A3 — 7 identical 45-min full-body strength workouts capped to 4, remaining 3 demoted to focus='recovery', title='Optional Recovery Walk', duration_min=20, optional=True, source_reason='days_per_week_cap', key long-run preserved through cap, no-op when cap missing; (3) A4 min-content flag — 45-min/1-ex strength card flagged with validation_status='incomplete_content'+needs_coach_review=True, endurance (focus='long_run') and recovery (focus='recovery') correctly exempt, 3+ exercises OK, sub-30-min strength cards OK; (4) validate_programme rules 7-11 — marathon+no-run → 'no running-focused sessions' error, target+2 sessions → 'exceeds target' error, target+1 → soft warning, >50% template → template-fallback warning, 5x identical titles → repeated-title warning, incomplete_content workouts → 'too few exercises for their duration' error; (5) endpoint smoke — backend responds, Louis login works, /api/programme/current and /api/coach/clients return non-5xx. No blocker issues found; Plan A changes verified working as designed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "startup",
+        "issue": "feature_event_categories._startup_backfill logs a benign 'cannot schedule new futures after interpreter shutdown' motor traceback during pytest teardown (unrelated to Plan A; pre-existing race in on_event('startup') hook). Consider migrating to FastAPI lifespan events."
+      },
+      {
+        "endpoint": "/api/healthz",
+        "issue": "No explicit /api/healthz route exists (request mentioned it). Liveness is inferable via /api/auth/me → 401, which returns cleanly. Consider adding /api/healthz for uptime probes."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter75_plan_a_marathon.py",
+    "/app/test_reports/pytest/iter75_plan_a.xml"
+  ],
+  "action_items": [
+    "Optional: add /api/healthz endpoint for external liveness probes (currently /api/auth/me → 401 is the de-facto liveness check).",
+    "Optional (housekeeping, non-blocking): migrate FastAPI on_event('startup')/('shutdown') to lifespan handler to remove interpreter-shutdown motor race in feature_event_categories."
+  ],
+  "critical_code_review_comments": [
+    "_apply_days_cap_and_min_content correctly orders A3 (demote) BEFORE A4 (flag) — demoted 20-min recovery cards are then exempt from A4 via the LIGHT_FOCI check. Good.",
+    "Priority preservation in A3 uses stable sort key (key_session=0, endurance=1, strength=2, other=3) so long-runs / key sessions survive cap. Verified.",
+    "Rule 8 (weeks over target) groups by Monday of the ISO date via d.weekday(), matching the Mon-Sun window used in _apply_days_cap_and_min_content — consistent.",
+    "Rule 9 (endurance goal requires run) checks focus keywords AND title substring 'run' — covers both LLM-generated and template-source cases.",
+    "profile_snapshot in programme_context_for_llm now includes event_type_pref + primary_goal_id — visible to validator and LLM prompt. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter75_plan_a_marathon.py (new — 21 test cases)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21)",
+    "frontend": "not tested (Plan A backend-only per request)"
+  },
+  "seed_data_creation": "None. Tests operate on in-memory workout dicts (unit-level) plus live Mongo read of the already-migrated louishallpt@gmail.com user; no writes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Plan A (marathon-prep fix) is fully validated at the unit level. When Plan B (LLM prompt hardening or roster e2e) lands, re-run test_iter75_plan_a_marathon.py as a regression guard — especially the days-cap and rule-8/9 tests. For end-to-end validation (roster upload → generate → programme surfaced) the LLM budget was intentionally not spent here; a live-generation test would exercise _generate_month → _apply_days_cap_and_min_content → validate_programme in one go.",
+  "rca_of_issue": "N/A — no bugs found. Plan A shipped code behaves per spec."
+}

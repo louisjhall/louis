@@ -266,6 +266,8 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
             "injury_notes": profile.get("injury_notes") or profile.get("injuries"),
             "main_goal_key": profile.get("main_goal_key"),
             "main_goal_raw": profile.get("main_goal") or profile.get("primary_goal") or profile.get("goal"),
+            "event_type_pref": profile.get("event_type_pref"),
+            "primary_goal_id": profile.get("primary_goal_id"),
         },
     }
     return ctx
@@ -381,6 +383,89 @@ def validate_programme(
                 warnings.append(
                     f"{int(v2['substitute_ratio'] * 100)}% of exercises are substitutes — library coverage gap"
                 )
+
+        # 7. Plan A4 — count workouts flagged as incomplete_content by the
+        # post-resolver pass. Any 30+ min strength card with <3 exercises
+        # already carries validation_status='incomplete_content'.
+        incomplete = [
+            w for w in workouts
+            if w.get("validation_status") == "incomplete_content"
+        ]
+        if incomplete:
+            errors.append(
+                f"{len(incomplete)} workout(s) have too few exercises for their duration"
+            )
+
+        # 8. Plan A3 — sessions per rolling week vs target_sessions_per_week
+        target = int(context.get("target_sessions_per_week") or 0)
+        if target and target > 0:
+            weeks: dict[str, int] = {}
+            for w in workouts:
+                iso = w.get("date")
+                if not iso:
+                    continue
+                try:
+                    d = _dt.date.fromisoformat(iso[:10])
+                    monday = (d - _dt.timedelta(days=d.weekday())).isoformat()
+                except Exception:
+                    monday = iso[:10]
+                focus = str(w.get("focus") or "").lower()
+                if focus in ("recovery", "mobility", "rest"):
+                    continue
+                weeks[monday] = weeks.get(monday, 0) + 1
+            over = [(wk, c) for wk, c in weeks.items() if c > target]
+            if over:
+                # ERROR when >= target+2 in any week, WARNING when target+1
+                hard_over = [(wk, c) for wk, c in over if c >= target + 2]
+                soft_over = [(wk, c) for wk, c in over if c == target + 1]
+                if hard_over:
+                    errors.append(
+                        f"weekly session count exceeds target ({target}/wk) — "
+                        + ", ".join([f"{wk}:{c}" for wk, c in hard_over[:3]])
+                    )
+                elif soft_over:
+                    warnings.append(
+                        f"one week has {target + 1} sessions vs target {target}/wk"
+                    )
+
+        # 9. Plan A4 — endurance-goal must have at least one running session
+        # per week (unless roster is punishing).
+        goal_key = context.get("goal_key")
+        ev_type = ((context.get("profile_snapshot") or {}).get("event_type_pref")
+                   if isinstance(context.get("profile_snapshot"), dict) else None)
+        endurance_keys = ("event",)
+        if goal_key in endurance_keys and workouts:
+            running_focus = {"long_run", "long", "tempo", "intervals", "zone2", "run"}
+            has_run = any(
+                str(w.get("focus") or "").lower() in running_focus
+                or "run" in str(w.get("title") or "").lower()
+                for w in workouts
+            )
+            if not has_run:
+                errors.append(
+                    "endurance/event goal but no running-focused sessions were scheduled"
+                )
+
+        # 10. Template-source ratio — if >50% of workouts came from the
+        # deterministic fallback, the plan is a starter plan and coach
+        # should review it before it looks like the real thing.
+        template_count = sum(1 for w in workouts if w.get("source") == "template")
+        if workouts and template_count > 0.5 * len(workouts):
+            warnings.append(
+                f"{template_count}/{len(workouts)} workouts came from the template fallback — needs coach review"
+            )
+
+        # 11. Repeated identical titles — 7x "Full Body Strength" is a smell.
+        titles: dict[str, int] = {}
+        for w in workouts:
+            t = str(w.get("title") or "").strip()
+            if t:
+                titles[t] = titles.get(t, 0) + 1
+        repeats = [(t, c) for t, c in titles.items() if c >= 5]
+        if repeats:
+            warnings.append(
+                "repeated workout title — " + ", ".join(f"'{t}' x{c}" for t, c in repeats[:3])
+            )
 
     return {
         "ok": not errors,

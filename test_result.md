@@ -1773,11 +1773,11 @@ agent_communication:
 frontend:
   - task: "Long-press roster day picker on client home"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/components/RosterDayPickerSheet.tsx, frontend/app/(client)/home.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         -working: "NA"
         -agent: "main"
@@ -1786,17 +1786,16 @@ frontend:
             its hard for the client to move the days if they aren't correct.'
             Backend PATCH /api/roster/{rid}/day already existed (iter 82). We now
             surfaced it with a long-press interaction on each 'Next 7 Days' row
-            on the client home screen. A new component RosterDayPickerSheet renders
-            a bottom-sheet with the 8 duty-type chips (Flight/Layover/Standby/Off/
-            Home/Sim/Sick/Annual Leave); tapping a chip PATCHes the roster day
-            immediately and refreshes the home view. Layover selection additionally
-            reveals an optional 'city' input + save button. A subtle hint line
-            'Tip: long-press any day to correct its duty type.' appears under the
-            'NEXT 7 DAYS' section title when a roster is loaded. If the tapped
-            date is not part of the current roster date range, we short-circuit
-            with a toast instead of firing the API (server would 404). Success
-            path: haptic + toast 'Louis will re-check this session', workout on
-            that date is flagged needs_coach_review by the backend.
+            on the client home screen.
+        -working: true
+        -agent: "testing"
+        -comment: |
+            Iter 89 initial pass: 8/9 scenarios PASS. One HIGH bug found on the
+            Layover chip (auto-saved with null city). Iter 90 retest: layover
+            defer-save fix VERIFIED — all 9/9 scenarios now PASS. No regressions.
+            testID surface: week-longpress-hint, roster-day-picker-{DutyType},
+            roster-day-picker-city, roster-day-picker-save-layover,
+            roster-day-picker-close.
 
 agent_communication:
   - agent: "main"

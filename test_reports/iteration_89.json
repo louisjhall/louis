@@ -1,0 +1,40 @@
+{
+  "summary": "Iter 83 frontend surfacing of PATCH /api/roster/{rid}/day tested end-to-end via mobile web preview (375x667 → tested at 390x844). 8 of 9 scenarios pass. ONE BUG found: tapping the 'Layover' chip auto-fires the PATCH immediately with layover_city:null and closes the sheet — the LAYOVER CITY input + SAVE LAYOVER button are NEVER shown to the user, so a client can no longer set the city for a corrected layover. All other flows verified: hint visible only when a roster exists, sheet opens on long-press with title 'CORRECT YOUR ROSTER' + date + current day_type ('Currently: Turnaround'), all 8 chips render, tap-Standby fires PATCH 200 with correct body, sheet closes, success toast fires, home refreshes, corrected workout shows REVIEW pill + change_reason ('You corrected the roster day type — Louis will rebuild this session to…'). Long-press on a date NOT in roster.days fires the 'This day isn't on your current roster yet.' toast and does NOT open the sheet or hit the API. Short-tap on a workout row still navigates to /workout/{id}.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "RosterDayPickerSheet",
+        "issue": "Tapping the 'Layover' chip immediately fires PATCH with layover_city:null and closes the sheet, so the LAYOVER CITY TextInput and SAVE LAYOVER button (which are conditionally rendered when dayType==='Layover') are never shown to the user. Root cause: /app/frontend/src/components/RosterDayPickerSheet.tsx line 148 unconditionally calls `save(t.key)` on every chip press including 'Layover'. Fix: skip the auto-save when t.key.toLowerCase() === 'layover' — just call setDayType(t.key) so the city input reveals, and let the user tap SAVE LAYOVER (testID roster-day-picker-save-layover) to fire the PATCH.",
+        "testID": "roster-day-picker-Layover",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/scripts/seed_client_roster_today.py"
+  ],
+  "action_items": [
+    "Fix RosterDayPickerSheet chip onPress so Layover does NOT auto-save. Suggested patch: onPress={() => { setDayType(t.key); if (t.key.toLowerCase() !== 'layover') save(t.key); }} — this preserves the fast-path for the other 7 chips while giving the user a chance to type a city and tap SAVE LAYOVER.",
+    "(Optional robustness) home.tsx line 272 passes todaysWorkout?.day_load which is expected to be a color-key string ('red'/'amber'/'green'/'blue'/'grey'). If a legacy or malformed roster stores day_load as a number, ClientProfileHeader crashes with '(todayLoad || \"grey\").toUpperCase is not a function' (red screen). Consider coercing with String(...) or a type guard. Not introduced in iter 83 but easy hardening."
+  ],
+  "critical_code_review_comments": [
+    "RosterDayPickerSheet chip onPress logic doesn't distinguish Layover from other duty types — see BUG above.",
+    "ClientProfileHeader.tsx:121 assumes todayLoad is always a string; a defensive String(todayLoad || 'grey').toUpperCase() would prevent red-screen crashes if backend returns a numeric load."
+  ],
+  "updated_files": [
+    "/app/scripts/seed_client_roster_today.py (new — seeds a 7-day roster covering today so future-dated seed rosters don't block manual QA)"
+  ],
+  "success_rate": {"backend": "N/A (frontend-only per request)", "frontend": "89% (8/9 acceptance criteria)"},
+  "seed_data_creation": "Created /app/scripts/seed_client_roster_today.py which (1) deactivates existing rosters for client@crewfit.com, (2) inserts an active roster r_test_* covering today..today+6 with a mix of Turnaround/Layover/Standby/Off/Home day_types, (3) inserts 7 matching Test Workouts (one per day, no unique-index conflicts). String loads ('red'/'amber'/'green') used to avoid the todayLoad.toUpperCase crash. Test roster id at time of testing: r_test_684547 (start 2026-07-21, end 2026-07-27).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Only one bug remains after iter 83: RosterDayPickerSheet Layover chip auto-saves instead of revealing the LAYOVER CITY input + SAVE LAYOVER button. All other criteria pass (hint visibility, sheet open on long-press, 8 chips, chip-tap Standby happy path with correct PATCH body {date, day_type, layover_city:null}, 200 response, sheet close, success toast, home refresh with REVIEW pill + change_reason, out-of-roster date toast + no API call, short-tap still navigates to /workout/{id}). To reproduce quickly: (1) run `cd /app/backend && set -a && source .env && set +a && python /app/scripts/seed_client_roster_today.py`, (2) log in as client@crewfit.com/Client123!, (3) long-press any Next 7 Days row, (4) tap Layover — you'll see PATCH fire immediately and sheet close instead of the city input appearing. Backend PATCH endpoint itself is fine (iter 82 tests still green, and manual PATCH from Standby test returned 200 with client_corrected:true stamp).",
+  "rca_of_issue": "BUG RCA: /app/frontend/src/components/RosterDayPickerSheet.tsx line 148 renders every chip with onPress={() => { setDayType(t.key); save(t.key); }}. `save(nextType)` is called on ALL chips including 'Layover'. When Layover is tapped, save() immediately: (a) sends PATCH with layover_city: nextType==='Layover' ? (city || null) : null → but state `city` is still '' → layover_city posted as null; (b) on success onClose() closes the modal. The conditional layover UI block (line 163) only renders when the modal is still open AND dayType is 'Layover' — but by the time React re-renders with dayType='Layover', the PATCH has already resolved and the modal has been closed by the parent (target set to null). MITIGATION: gate the auto-save on chip type. Suggested one-line fix at line 148: `onPress={() => { setDayType(t.key); if (t.key.toLowerCase() !== 'layover') save(t.key); }}`. The existing SAVE LAYOVER button (testID roster-day-picker-save-layover) already calls save() with the current dayType+city, so no other changes needed."
+}

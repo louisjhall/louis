@@ -22,6 +22,8 @@ import { TodayPersonalActivities } from "@/src/components/PersonalActivityCard";
 import { AddActivityModal } from "@/src/components/AddActivityModal";
 import { HotelSetupCard } from "@/src/components/HotelSetupCard";
 import { ProgressCard } from "@/src/components/ProgressCard";
+import { RosterDayPickerSheet, type RosterDayPickerTarget } from "@/src/components/RosterDayPickerSheet";
+import { toast as uxToast } from "@/src/lib/ux";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -127,6 +129,8 @@ export default function Home() {
   const [rosterJob, setRosterJob] = useState<{ id: string; status?: string; stage?: string; progress?: number; message?: string; error?: string } | null>(null);
   // Plan C2 — Programme Overview card data (goal, phase, week, target, focus, next key session)
   const [programme, setProgramme] = useState<any>(null);
+  // Long-press-to-correct roster day-picker sheet (iter 82).
+  const [dayPickerTarget, setDayPickerTarget] = useState<RosterDayPickerTarget | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -177,6 +181,24 @@ export default function Home() {
     setScheduleMode(r.schedule_mode);
   };
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const openDayPicker = useCallback((dateStr: string) => {
+    if (!roster?.id) return;
+    // Only allow correcting dates the roster actually covers — otherwise the
+    // backend returns 404 ("No roster day found") and the client sees a
+    // confusing error. Fall back to a friendly toast in that case.
+    const rd = (roster.days || []).find((d: any) => d.date === dateStr);
+    if (!rd) {
+      uxToast("This day isn't on your current roster yet.", "info");
+      return;
+    }
+    setDayPickerTarget({
+      rosterId: roster.id,
+      date: dateStr,
+      currentDayType: rd?.day_type || null,
+      currentLayoverCity: rd?.layover_city || null,
+    });
+  }, [roster]);
 
   const today = localDateStr(new Date());
   const todaysWorkout = workouts.find((w) => w.date === today);
@@ -503,6 +525,11 @@ export default function Home() {
           ) : null}
 
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
+          {roster?.id ? (
+            <Text style={styles.sectionHint} testID="week-longpress-hint">
+              Tip: long-press any day to correct its duty type.
+            </Text>
+          ) : null}
           {rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing") ? (
             <View style={styles.planBanner} testID="plan-preparing-banner">
               <Ionicons name="hourglass" size={14} color={theme.color.brand} />
@@ -546,7 +573,13 @@ export default function Home() {
                 if (w.__rest) {
                   const dl = dayLabel(w.__key, today, tomorrowStr);
                   return (
-                    <View key={w.__key} style={[styles.wRow, styles.wRowRest]} testID={`week-rest-${w.__key}`}>
+                    <Pressable
+                      key={w.__key}
+                      onLongPress={() => openDayPicker(w.__key)}
+                      delayLongPress={350}
+                      style={[styles.wRow, styles.wRowRest]}
+                      testID={`week-rest-${w.__key}`}
+                    >
                       <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.wDate}>{dl.primary}</Text>
@@ -555,12 +588,19 @@ export default function Home() {
                         <Text style={styles.wMeta} numberOfLines={1}>{w.location ? `${w.location} · ` : ""}No session scheduled</Text>
                       </View>
                       <Ionicons name="moon" size={16} color={theme.color.textMuted} style={{ marginRight: theme.space.md }} />
-                    </View>
+                    </Pressable>
                   );
                 }
                 const dl = dayLabel(w.__key, today, tomorrowStr);
                 return (
-                  <Pressable key={w.id} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow} testID={`week-workout-${w.id}`}>
+                  <Pressable
+                    key={w.id}
+                    onPress={() => router.push(`/workout/${w.id}`)}
+                    onLongPress={() => openDayPicker(w.__key)}
+                    delayLongPress={350}
+                    style={styles.wRow}
+                    testID={`week-workout-${w.id}`}
+                  >
                     <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.wDate}>{dl.primary}</Text>
@@ -651,6 +691,11 @@ export default function Home() {
         onClose={() => setAddActivityOpen(false)}
         onCreated={() => { setActivityRefreshKey((k) => k + 1); load(); }}
         initialDate={today}
+      />
+      <RosterDayPickerSheet
+        target={dayPickerTarget}
+        onClose={() => setDayPickerTarget(null)}
+        onSaved={() => load()}
       />
     </View>
   );
@@ -790,6 +835,7 @@ const styles = StyleSheet.create({
   qBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12 },
   qBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 10 },
   sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
+  sectionHint: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic", marginBottom: theme.space.sm, marginTop: -6 },
   wRow: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, overflow: "hidden", borderWidth: 1, borderColor: theme.color.border },
   wRowRest: { opacity: 0.75 },
   wRowSetup: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },

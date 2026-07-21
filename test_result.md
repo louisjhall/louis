@@ -1764,3 +1764,40 @@ agent_communication:
 agent_communication:
   - agent: "main"
     message: "Iter 81 Phase 6 (FINAL) shipped. Ran full Master Fix Prompt suite: 110/110 tests pass across all 5 phases + 1 designed skip. Zero regressions. Wrote /app/CrewFit_MASTER_FIX_PROMPT_FINAL_REPORT.md documenting all closed gaps, endpoints, files, decisions, and beta-readiness. Master Fix Prompt is COMPLETE. All four handover gaps (hotel system, strict equipment matching, reactive progression, why-this-changed UI) are closed. System is now roster-aware, hotel-aware, equipment-strict, and progression-reactive. Ready for beta with 20-50 cabin-crew users. NEXT: user acceptance test, deploy, and generate iOS/Android builds via Emergent Publish."
+
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 83 — CLIENT-SIDE ROSTER DAY CORRECTION UI (long-press picker)
+# ═════════════════════════════════════════════════════════════════════
+
+frontend:
+  - task: "Long-press roster day picker on client home"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/RosterDayPickerSheet.tsx, frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            User complaint: 'The etihad roster still isn't accurate and currently
+            its hard for the client to move the days if they aren't correct.'
+            Backend PATCH /api/roster/{rid}/day already existed (iter 82). We now
+            surfaced it with a long-press interaction on each 'Next 7 Days' row
+            on the client home screen. A new component RosterDayPickerSheet renders
+            a bottom-sheet with the 8 duty-type chips (Flight/Layover/Standby/Off/
+            Home/Sim/Sick/Annual Leave); tapping a chip PATCHes the roster day
+            immediately and refreshes the home view. Layover selection additionally
+            reveals an optional 'city' input + save button. A subtle hint line
+            'Tip: long-press any day to correct its duty type.' appears under the
+            'NEXT 7 DAYS' section title when a roster is loaded. If the tapped
+            date is not part of the current roster date range, we short-circuit
+            with a toast instead of firing the API (server would 404). Success
+            path: haptic + toast 'Louis will re-check this session', workout on
+            that date is flagged needs_coach_review by the backend.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 83 shipped: client-side roster day correction UI (long-press picker sheet). Verified locally via playwright: long-press opens the sheet correctly and the PATCH fires with the right payload (returns 404 on out-of-range test date, which is expected — added client-side guard + friendly toast). Please test: (1) log in as client, scroll to NEXT 7 DAYS, verify hint text visible only when a roster exists; (2) long-press any day within the roster window and confirm the sheet opens with the current day_type highlighted; (3) tap a chip and confirm the sheet closes with a success toast, home reloads, and the workout on that date is flagged needs_coach_review; (4) select 'Layover' and confirm a city input + SAVE LAYOVER button appear; (5) attempt long-press on a date NOT covered by the roster and confirm we see the 'not on your current roster' toast instead of an API error. Also confirm no regressions to the existing 'onPress' (single-tap = open workout detail) behaviour on workout rows."

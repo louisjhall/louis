@@ -79,7 +79,7 @@ export function BetaDisclaimerGate() {
             <Text style={styles.p}>{status.disclaimer_text}</Text>
             <View style={styles.bullets}>
               <BulletRow icon="shield-checkmark" text="Your data is safe and encrypted in transit." />
-              <BulletRow icon="bug" text="Bugs are expected. Report anything odd via support@crewfit.com." />
+              <BulletRow icon="bug" text="Bugs are expected. Report anything odd to louis@crewfit.net." />
               <BulletRow icon="refresh" text="Test data may be reset before public launch." />
               <BulletRow icon="trash" text="You can delete your account and export your data any time." />
             </View>

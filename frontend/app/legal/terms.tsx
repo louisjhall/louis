@@ -66,8 +66,8 @@ export default function Terms() {
         </Section>
 
         <Section title="11. Contact">
-          <Pressable onPress={() => Linking.openURL("mailto:support@crewfit.com")}>
-            <Text style={styles.link}>support@crewfit.com</Text>
+          <Pressable onPress={() => Linking.openURL("mailto:louis@crewfit.net")}>
+            <Text style={styles.link}>louis@crewfit.net</Text>
           </Pressable>
         </Section>
       </ScrollView>

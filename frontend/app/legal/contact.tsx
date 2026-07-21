@@ -14,8 +14,8 @@ export default function Contact() {
 
         <View style={styles.card}>
           <Text style={styles.label}>General support</Text>
-          <Pressable onPress={() => Linking.openURL("mailto:support@crewfit.com")}>
-            <Text style={styles.link}>support@crewfit.com</Text>
+          <Pressable onPress={() => Linking.openURL("mailto:louis@crewfit.net")}>
+            <Text style={styles.link}>louis@crewfit.net</Text>
           </Pressable>
         </View>
 

@@ -188,7 +188,7 @@ export default function Messages() {
       "Send Louis a note about an issue in the app, an abusive message, or anything unsafe.",
       [
         { text: "Email Louis", onPress: () => Linking.openURL(`mailto:${LOUIS.email}?subject=CrewFit%20support`) },
-        { text: "Support inbox", onPress: () => Linking.openURL("mailto:support@crewfit.net?subject=CrewFit%20support") },
+        { text: "Support inbox", onPress: () => Linking.openURL("mailto:louis@crewfit.net?subject=CrewFit%20support") },
         { text: "Cancel", style: "cancel" },
       ],
     );

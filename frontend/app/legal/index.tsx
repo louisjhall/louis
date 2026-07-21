@@ -26,8 +26,8 @@ export default function LegalIndex() {
           </Pressable>
         ))}
         <View style={{ height: 24 }} />
-        <Pressable onPress={() => Linking.openURL("mailto:support@crewfit.com")} testID="legal-email">
-          <Text style={styles.email}>support@crewfit.com</Text>
+        <Pressable onPress={() => Linking.openURL("mailto:louis@crewfit.net")} testID="legal-email">
+          <Text style={styles.email}>louis@crewfit.net</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

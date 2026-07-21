@@ -23,7 +23,7 @@ export default function PrivacyPolicy() {
         <Text style={styles.updated}>Last updated: June 2026</Text>
 
         <Section title="Who we are">
-          <P>CrewFit is a fitness and wellbeing platform for aviation professionals. This policy explains how we collect, use, share and protect your personal data. If you have questions, contact us at support@crewfit.com.</P>
+          <P>CrewFit is a fitness and wellbeing platform for aviation professionals. This policy explains how we collect, use, share and protect your personal data. If you have questions, contact us at louis@crewfit.net.</P>
         </Section>
 
         <Section title="What data we collect">
@@ -84,8 +84,8 @@ export default function PrivacyPolicy() {
         </Section>
 
         <Section title="Contact">
-          <Pressable onPress={() => Linking.openURL("mailto:support@crewfit.com")}>
-            <Text style={styles.link}>support@crewfit.com</Text>
+          <Pressable onPress={() => Linking.openURL("mailto:louis@crewfit.net")}>
+            <Text style={styles.link}>louis@crewfit.net</Text>
           </Pressable>
         </Section>
       </ScrollView>

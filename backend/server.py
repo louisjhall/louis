@@ -2992,6 +2992,61 @@ def _ensure_workout_content(doc: dict, user: dict) -> dict:
     return doc
 
 
+async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
+    """
+    Iter 83 — Defence layer 2 of 4.
+
+    Runs `_ensure_workout_content` over a batch of workout docs read from the
+    DB. If any doc gets healed (empty exercises → filled), we persist the fix
+    back to Mongo so the next read (from any client, any device) sees the
+    healed version. Idempotent; safe to call on every read.
+
+    Returns the (possibly-mutated) list of rows.
+    """
+    if not rows:
+        return rows
+    healed_rows: list[dict] = []
+    to_persist: list[dict] = []
+    for w in rows:
+        before_ex = w.get("exercises") or []
+        # Never rewrite completed / user-touched sessions — respect the user's log.
+        if w.get("completed") or w.get("override_applied") or w.get("override_generated"):
+            healed_rows.append(w)
+            continue
+        healed = _ensure_workout_content(dict(w), user)
+        after_ex = healed.get("exercises") or []
+        if not before_ex and after_ex:
+            # Persist the heal so it sticks — one document per touched row.
+            to_persist.append(healed)
+            healed_rows.append(healed)
+        else:
+            healed_rows.append(w)
+    if to_persist:
+        for h in to_persist:
+            try:
+                await db.workouts.update_one({"id": h["id"]}, {"$set": {
+                    "exercises": h.get("exercises") or [],
+                    "warmup": h.get("warmup") or [],
+                    "cooldown": h.get("cooldown") or [],
+                    "title": h.get("title"),
+                    "location": h.get("location"),
+                    "duration_min": h.get("duration_min"),
+                    "focus": h.get("focus"),
+                    "session_type": h.get("session_type"),
+                    "needs_coach_review": h.get("needs_coach_review", True),
+                    "validation_status": h.get("validation_status"),
+                    "change_reason": h.get("change_reason"),
+                    "insufficient_content_reason": h.get("insufficient_content_reason"),
+                    "auto_healed_at": now_iso(),
+                }})
+            except Exception:
+                logger.exception("heal-persist failed for workout %s", h.get("id"))
+        logger.info("workout heal-on-read: healed %d workouts for user=%s",
+                    len(to_persist), user.get("id"))
+    return healed_rows
+
+
+
 
 ROSTER_SYSTEM = f"""You are an aviation-roster parser for airline crew (pilots and cabin crew).
 
@@ -6047,6 +6102,14 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
 @api.get("/workouts/week")
 async def workouts_week(user: dict = Depends(current_user)):
     rows = await db.workouts.find({"user_id": user["id"]}, {"_id": 0}).sort("date", 1).to_list(500)
+    # Iter 83 — Defence layer 2: read-time healing. Any workout that slipped
+    # through the persistence guards with empty main exercises on a training
+    # day gets healed on-read AND the DB row is updated so subsequent reads
+    # (and other clients) see the fixed version. Silent, idempotent, safe.
+    try:
+        rows = await _heal_workouts_batch(rows, user)
+    except Exception:
+        logger.exception("workouts/week read-time healing failed")
     # Living Profile: opportunistic missed-workout detection
     try:
         from datetime import date as _date, timedelta as _td
@@ -6096,6 +6159,13 @@ async def workout_get(wid: str, user: dict = Depends(current_user)):
         raise HTTPException(404, "Not found")
     if user["role"] == "client" and w["user_id"] != user["id"]:
         raise HTTPException(403, "Forbidden")
+    # Iter 83 — Defence layer 2: read-time healing on the single-workout GET
+    # too, so opening a workout page can never show an empty session.
+    try:
+        healed = await _heal_workouts_batch([w], user)
+        w = healed[0] if healed else w
+    except Exception:
+        logger.exception("workout_get heal failed for %s", wid)
     return w
 
 
@@ -8688,6 +8758,42 @@ async def _startup():
             logger.info("startup: swept %d zombie roster_jobs", stuck.modified_count)
     except Exception:
         logger.exception("startup zombie cleanup failed for roster_jobs")
+
+    # Iter 83 — Defence layer 3 of 4: on every backend boot, heal any workouts
+    # that got persisted with empty main exercises on a training day. This
+    # catches anything the read-time healer missed (e.g. a user who hasn't
+    # opened the app since a broken write) and gets rid of the whole class of
+    # "empty workout" bug at rest.
+    try:
+        from datetime import date as _date
+        today_iso = _date.today().isoformat()
+        broken = await db.workouts.find(
+            {
+                "$or": [{"exercises": []}, {"exercises": {"$exists": False}}, {"exercises": None}],
+                "date": {"$gte": today_iso},
+                "completed": {"$ne": True},
+            },
+        ).to_list(2000)
+        if broken:
+            per_user: dict[str, list[dict]] = {}
+            for w in broken:
+                per_user.setdefault(w.get("user_id"), []).append(w)
+            healed_total = 0
+            for uid, rows in per_user.items():
+                user = await db.users.find_one({"id": uid})
+                if not user:
+                    continue
+                try:
+                    healed_rows = await _heal_workouts_batch(rows, user)
+                    for r in healed_rows:
+                        if r.get("exercises"):
+                            healed_total += 1
+                except Exception:
+                    logger.exception("startup heal failed for user=%s", uid)
+            logger.info("startup: healed %d/%d empty workouts across %d users",
+                        healed_total, len(broken), len(per_user))
+    except Exception:
+        logger.exception("startup empty-workout sweep failed")
 
     # Watchdog: any roster_job whose updated_at is >5 minutes old and still
     # "processing" is orphaned. Kick off a background task that periodically

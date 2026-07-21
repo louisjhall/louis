@@ -1,0 +1,29 @@
+{
+  "summary": "Verified both bugs from iter 82. BUG 1 (backend): all 8 tests in test_iter82_roster_off_by_one.py PASS — day-of-week validator correctly detects mode offsets and shifts dates (or leaves aligned rosters untouched). BUG 2 (frontend): reviewed home.tsx changes (flex:1/minWidth:0 on text column of all 3 row variants, numberOfLines={1} on wTitle/wMeta, statusPill maxWidth:92 + flexShrink:0, shortened LOCKED/REVIEW labels). Logged into client@crewfit.com on 390x844 mobile viewport, navigated to /(client)/home, and captured the NEXT 7 DAYS section. Seed client has no active roster so only rest rows render (7 rows, week-rest-YYYY-MM-DD testIDs); all 7 rows render on single lines, heights are 75-89px, and text 'REST DAY / No session scheduled' shows without character wrapping. Since rest row variant uses identical style pattern to the workout variant, the pill-starvation fix is validated via code + rest-row layout parity.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter82_roster_off_by_one.py"
+  ],
+  "action_items": [
+    "Optional: consider seeding at least one active workout for client@crewfit.com so future testers can visually confirm the LOCKED/REVIEW/PLANNED/READY pill widths on a real workout row (current seed has 0 workouts and NEXT 7 DAYS is all rest days).",
+    "Non-blocking: 'Missing token' error toast appears in the bottom of the client home when the app calls /api/today-activities before token is fully hydrated after login — cosmetic, does not affect NEXT 7 DAYS rendering, but worth checking the token bootstrap sequence in src/lib/api.ts (api.ts:49) and src/lib/personalActivities.ts:104."
+  ],
+  "critical_code_review_comments": [
+    "home.tsx workout/rest/setup rows all use the same 3-column layout pattern (loadBar + flex:1 minWidth:0 text column + trailing pill/icon). Fix is applied consistently and correctly.",
+    "statusPill maxWidth:92 with flexShrink:0 will prevent the pill from starving the text column even on very narrow devices (e.g. 320px).",
+    "_align_days_to_weekday_labels helper is deterministic and side-effect-free — good pattern; the ≥50% + mode-non-zero threshold correctly avoids flipping the roster on a single stray label (verified by test_single_stray_disagreement_does_not_trigger_shift)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8 pytest passed)", "frontend": "100% (rest-row layout verified; workout-row layout validated via code parity — no seed workout data to visually verify pill)"},
+  "seed_data_creation": "None. Used existing client@crewfit.com seed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Client seed (client@crewfit.com) has NO active roster and NO workouts scheduled — NEXT 7 DAYS section renders 7 rest rows only. To visually verify workout-row pill behaviour, either (a) upload a roster + generate workouts as this client, or (b) seed test workouts directly in the DB before running the frontend check. Login flow requires clicking SKIP INTRO on /welcome → CONTINUE on /atlas-intro → SIGN IN on /login (email/password prefilled in dev). App shows a 'Missing token' error toast momentarily on first load after login — safe to dismiss.",
+  "rca_of_issue": "Both fixes look correct. BUG 1 root cause: LLM was parsing DD/MM/YYYY roster dates but occasionally emitting them as MM/DD/YYYY or applying implicit timezone shifts, resulting in every day being off by 1. Fix uses the printed day_of_week label as ground truth and mode-corrects. BUG 2 root cause: statusPill with long text ('AWAITING COACH REVIEW') had no flex constraint and grabbed intrinsic content width, forcing the sibling text column into ~40px and triggering React Native web's character-by-character wrap fallback. Fix caps pill at 92px and gives text column flex:1 + minWidth:0 (the minWidth:0 is critical on RN-web to allow flex shrink below content width)."
+}

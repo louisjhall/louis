@@ -2753,10 +2753,72 @@ async def send_push(recipients: list[str], data: dict, idempotency_key: Optional
 # ------------------------------------------------------------------
 # Roster: extract full month
 # ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Iter 82 — Day-of-week sanity check helper (used by roster upload path)
+# ---------------------------------------------------------------------------
+
+def _align_days_to_weekday_labels(days: list[dict]) -> tuple[list[dict], int, int]:
+    """
+    Detect and correct off-by-one day parsing on European DD/MM rosters
+    (Etihad, Emirates, Qatar, BA, easyJet, Ryanair, KLM, LH, AF, TK, SQ).
+
+    The vision model occasionally shifts every date by ±1 day when parsing a
+    DD/MM column — for example, treating "Wed 01/07/2026" as 2 July because of
+    a timezone or ordering ambiguity. This makes the ENTIRE calendar wrong.
+
+    Logic:
+      For every day dict that has BOTH a parsed `date` (ISO YYYY-MM-DD) and a
+      printed `day_of_week` (Mon-Sun), compute the offset needed so that
+      `datetime.date.fromisoformat(date).weekday()` == printed weekday. Take
+      the mode offset across the whole roster. If a strong majority (≥50% of
+      labelled rows) disagree with their printed weekday, shift EVERY day's
+      date by that mode offset.
+
+    Returns (days, shift_applied_days, n_labelled_disagreements).
+    """
+    import datetime as _dt_dow
+    _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+    offsets: list[int] = []
+    for d in days:
+        ds = d.get("date")
+        dow = str(d.get("day_of_week") or "").strip().lower()[:3]
+        if not ds or dow not in _WEEKDAYS:
+            continue
+        try:
+            parsed_day = _dt_dow.date.fromisoformat(ds)
+        except Exception:
+            continue
+        diff = (_WEEKDAYS[dow] - parsed_day.weekday()) % 7
+        if diff > 3:
+            diff -= 7
+        offsets.append(diff)
+    if not offsets:
+        return days, 0, 0
+    from collections import Counter as _Counter
+    mode_offset, mode_count = _Counter(offsets).most_common(1)[0]
+    n_disagree = sum(1 for o in offsets if o != 0)
+    if mode_offset != 0 and mode_count >= max(3, len(offsets) // 2):
+        for d in days:
+            ds = d.get("date")
+            if not ds:
+                continue
+            try:
+                d["date"] = (
+                    _dt_dow.date.fromisoformat(ds) + _dt_dow.timedelta(days=mode_offset)
+                ).isoformat()
+            except Exception:
+                pass
+        days.sort(key=lambda d: d.get("date") or "")
+        return days, mode_offset, n_disagree
+    return days, 0, n_disagree
+
+
+
 ROSTER_SYSTEM = f"""You are an aviation-roster parser for airline crew (pilots and cabin crew).
 Extract EVERY duty and off day the roster shows. Handle 3-day rosters up to multi-month rosters.
 For each date output ONE object with these fields (populate what you can, leave unknown as null):
   date (YYYY-MM-DD, required)
+  day_of_week — the exact 3-letter day-of-week label as printed next to the date in the roster ("Mon"|"Tue"|"Wed"|"Thu"|"Fri"|"Sat"|"Sun"). REQUIRED if visible — we use this to sanity-check the date and detect any off-by-one.
   day_type — one of: {", ".join(DAY_TYPES)}
   home_or_away — "home" | "away" | "unknown"
   report_time (HH:MM)
@@ -2765,6 +2827,13 @@ For each date output ONE object with these fields (populate what you can, leave 
   layover_city, layover_country, layover_nights (int)
   notes (short free text of any airline codes/duty codes you saw)
   confidence 0..1 — how sure you are about this day; put low confidence and day_type "Unknown/Needs Confirmation" if unsure.
+
+CRITICAL DATE-FORMAT RULES (Etihad, Emirates, BA, Ryanair, easyJet, Qatar all use European DD/MM/YYYY):
+ * European roster date columns are ALWAYS **DD/MM** or **DD/MM/YYYY** — never US MM/DD.
+   Examples: "01/07/2026" MUST parse as 1 July 2026 (NOT January 7). "12/03/2026" MUST parse as 12 March 2026.
+ * If the header shows a coverage range like "01/07/2026 - 31/07/2026" that unambiguously names ONE MONTH (July here), assume the ENTIRE roster is inside that month unless a row clearly straddles into the next.
+ * DO NOT shift dates by timezone offsets. The date printed next to "Wed 01/07" IS Wed 1 July local — never Tue 30 June UTC.
+ * When you emit a date, it must satisfy: `weekday_of(date) == day_of_week` (as printed in the roster). If your parse would violate this, RE-CHECK the date column before emitting.
 
 AIRLINE-SPECIFIC HINTS (recognise these format variations):
  - **Emirates (EK)** — "DXB" base, [CA]/[FO]/[SFO]/[CP] position codes, flights like "EK508 DXB-BOM-DXB", "Day Off" / "Rest Day" text, "Pickup Time HH:MM" for report time, hotel + local contact on layover days, "DXB LT" timezone.
@@ -3194,6 +3263,18 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
             await _set_job(job_id, parser_used=parser_used)
             await _set_job(job_id, stage="detecting", progress=50, message="Detecting layovers and turnarounds...")
             days.sort(key=lambda d: d.get("date") or "")
+            # Iter 82 — sanity check parsed dates against printed day_of_week labels.
+            # Fixes off-by-one on Etihad / Emirates / Qatar DD/MM rosters.
+            try:
+                days, dow_shift, dow_disagree = _align_days_to_weekday_labels(days)
+                if dow_shift != 0:
+                    logger.warning(
+                        f"[roster:{job_id}] day-of-week validator: shifted dates by {dow_shift:+d} "
+                        f"day(s) — {dow_disagree} rows disagreed with printed weekday"
+                    )
+            except Exception:
+                logger.exception("day-of-week sanity check failed (non-fatal)")
+
             for d in days:
                 d.setdefault("flights", [])
                 d.setdefault("day_type", "Unknown/Needs Confirmation")

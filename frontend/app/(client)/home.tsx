@@ -533,11 +533,11 @@ export default function Home() {
                   return (
                     <View key={w.__key} style={[styles.wRow, styles.wRowSetup]} testID="week-setup-today">
                       <View style={[styles.loadBar, { backgroundColor: theme.color.brand }]} />
-                      <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.wDate}>Today</Text>
                         <Text style={styles.wDateSub}>{dayLabel(w.__key, today, tomorrowStr).secondary || w.__key}</Text>
-                        <Text style={[styles.wTitle, { color: theme.color.brand }]}>SETUP DAY</Text>
-                        <Text style={styles.wMeta}>Your first workout starts tomorrow</Text>
+                        <Text style={[styles.wTitle, { color: theme.color.brand }]} numberOfLines={1}>SETUP DAY</Text>
+                        <Text style={styles.wMeta} numberOfLines={1}>Your first workout starts tomorrow</Text>
                       </View>
                       <Ionicons name="rocket" size={16} color={theme.color.brand} style={{ marginRight: theme.space.md }} />
                     </View>
@@ -548,11 +548,11 @@ export default function Home() {
                   return (
                     <View key={w.__key} style={[styles.wRow, styles.wRowRest]} testID={`week-rest-${w.__key}`}>
                       <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
-                      <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.wDate}>{dl.primary}</Text>
                         {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
-                        <Text style={[styles.wTitle, styles.wTitleRest]}>{w.title}</Text>
-                        <Text style={styles.wMeta}>{w.location ? `${w.location} · ` : ""}No session scheduled</Text>
+                        <Text style={[styles.wTitle, styles.wTitleRest]} numberOfLines={1}>{w.title}</Text>
+                        <Text style={styles.wMeta} numberOfLines={1}>{w.location ? `${w.location} · ` : ""}No session scheduled</Text>
                       </View>
                       <Ionicons name="moon" size={16} color={theme.color.textMuted} style={{ marginRight: theme.space.md }} />
                     </View>
@@ -562,11 +562,11 @@ export default function Home() {
                 return (
                   <Pressable key={w.id} onPress={() => router.push(`/workout/${w.id}`)} style={styles.wRow} testID={`week-workout-${w.id}`}>
                     <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
-                    <View style={{ flex: 1 }}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.wDate}>{dl.primary}</Text>
                       {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
-                      <Text style={styles.wTitle}>{w.title}</Text>
-                      <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
+                      <Text style={styles.wTitle} numberOfLines={1}>{w.title}</Text>
+                      <Text style={styles.wMeta} numberOfLines={1}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
                       {w.change_reason ? (
                         <View style={styles.reasonPill} testID={`workout-reason-${w.id}`}>
                           <Ionicons name="information-circle" size={11} color={theme.color.brand} />
@@ -578,23 +578,23 @@ export default function Home() {
                     {!w.completed && w.coach_locked && (
                       <View style={[styles.statusPill, styles.statusLocked]}>
                         <Ionicons name="lock-closed" size={11} color={theme.color.amber} />
-                        <Text style={[styles.statusPillText, { color: theme.color.amber }]}>LOCKED BY COACH</Text>
+                        <Text style={[styles.statusPillText, { color: theme.color.amber }]} numberOfLines={1}>LOCKED</Text>
                       </View>
                     )}
                     {!w.completed && !w.coach_locked && w.needs_coach_review && (
                       <View style={[styles.statusPill, styles.statusReview]}>
-                        <Text style={[styles.statusPillText, { color: theme.color.red }]}>AWAITING COACH REVIEW</Text>
+                        <Text style={[styles.statusPillText, { color: theme.color.red }]} numberOfLines={1}>REVIEW</Text>
                       </View>
                     )}
                     {!w.completed && !w.coach_locked && !w.needs_coach_review && !w.approved && (
                       <View style={[styles.statusPill, styles.statusPlanned]}>
-                        <Text style={[styles.statusPillText, { color: theme.color.textMuted }]}>{w.optional ? "OPTIONAL" : "PLANNED"}</Text>
+                        <Text style={[styles.statusPillText, { color: theme.color.textMuted }]} numberOfLines={1}>{w.optional ? "OPTIONAL" : "PLANNED"}</Text>
                       </View>
                     )}
                     {!w.completed && w.approved && !w.coach_locked && (
                       <View style={[styles.statusPill, styles.statusApproved]}>
                         <Ionicons name="checkmark" size={11} color={theme.color.green} />
-                        <Text style={[styles.statusPillText, { color: theme.color.green }]}>READY</Text>
+                        <Text style={[styles.statusPillText, { color: theme.color.green }]} numberOfLines={1}>READY</Text>
                       </View>
                     )}
                   </Pressable>
@@ -800,8 +800,18 @@ const styles = StyleSheet.create({
   wTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700", paddingHorizontal: theme.space.md, marginTop: 2 },
   wMeta: { color: theme.color.textDim, fontSize: 12, padding: theme.space.md, paddingTop: 2 },
   pendPill: { color: theme.color.amber, fontSize: 9, letterSpacing: 1.5, marginRight: theme.space.md, fontWeight: "800", backgroundColor: "rgba(245,158,11,0.15)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm },
-  // Plan C1 — split status pills
-  statusPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm, marginRight: theme.space.md, borderWidth: 1 },
+  // Plan C1 — split status pills — iter 82 fix: constrain to prevent
+  // text column from being squeezed on narrow screens (Tue 21 Jul bug).
+  statusPill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: theme.radius.sm,
+    marginRight: theme.space.md,
+    borderWidth: 1,
+    flexShrink: 0,
+    maxWidth: 92,
+    alignSelf: "center",
+  },
   statusPillText: { fontSize: 9, letterSpacing: 1.2, fontWeight: "800" },
   statusPlanned: { backgroundColor: "rgba(148,163,184,0.10)", borderColor: "rgba(148,163,184,0.30)" },
   statusReview: { backgroundColor: "rgba(239,68,68,0.10)", borderColor: "rgba(239,68,68,0.35)" },

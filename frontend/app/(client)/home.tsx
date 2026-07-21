@@ -51,6 +51,7 @@ const MICRO_FORM_KINDS = new Set([
   "missed_workouts",
   "life_change",
   "roster_uploaded",
+  "roster_confirmed",
   "event_completed",
 ]);
 
@@ -59,8 +60,9 @@ function ctaLabelFor(kind: string): string {
     case "missed_workouts": return "QUICK CHECK-IN";
     case "life_change":     return "QUICK UPDATE";
     case "roster_uploaded": return "QUICK CHECK";
+    case "roster_confirmed": return "QUICK CHECK";
     case "event_completed": return "DEBRIEF";
-    default:                return "UPDATE DNA";
+    default:                return "QUICK UPDATE";
   }
 }
 

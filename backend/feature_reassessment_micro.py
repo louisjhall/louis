@@ -223,6 +223,8 @@ def _button_label_for(kind: str) -> str:
 @api.get("/reassessment/short-form")
 async def reassessment_short_form_get(kind: str, user: dict = Depends(current_user)):
     """Return the questions + intro for a specific reassessment kind."""
+    # Alias legacy / adjacent prompt kinds to the closest micro-form.
+    kind = {"roster_confirmed": "roster_uploaded"}.get(kind, kind)
     form = MICRO_FORMS.get(kind)
     if not form:
         raise HTTPException(404, f"No short form for kind '{kind}'")
@@ -246,7 +248,9 @@ class ShortFormSubmit(BaseModel):
 async def reassessment_short_form_submit(body: ShortFormSubmit, user: dict = Depends(current_user)):
     """Persist the short-form answers + create a coach task + apply targeted
     profile updates. NEVER touches coaching_dna."""
-    form = MICRO_FORMS.get(body.kind)
+    # Alias legacy prompt kinds
+    kind = {"roster_confirmed": "roster_uploaded"}.get(body.kind, body.kind)
+    form = MICRO_FORMS.get(kind)
     if not form:
         raise HTTPException(404, f"No short form for kind '{body.kind}'")
 
@@ -263,7 +267,7 @@ async def reassessment_short_form_submit(body: ShortFormSubmit, user: dict = Dep
 
     # 2. Apply targeted profile updates (only for known safe fields)
     profile_updates: dict[str, Any] = {}
-    if body.kind == "roster_uploaded":
+    if body.kind == "roster_uploaded" or kind == "roster_uploaded":
         td = body.answers.get("training_days_per_week")
         if td is not None:
             try:

@@ -1567,3 +1567,51 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Iter 81 shipped Phase 1 of the MASTER FIX PROMPT (Hotel System). New feature_hotel_system.py module (~230 LOC) with pure helpers for layover/turnaround detection (18h threshold), gym-type presets, bodyweight-only routing, confidence scoring, and client-facing 'why this changed' reason strings. Extended HotelBody + wired 6 new endpoints (lookup / confirm / patch / pending-for-today / coach review queue / coach verify). Wired hotel context into all 5 build_template_plan callsites so template fallbacks now respect layover vs turnaround AND known vs unknown hotel gyms — turnaround yields mobility only, unknown hotel yields bodyweight-safe strength support, known gym yields Hotel Gym Workout with equipment matching. Frontend: HotelSetupCard on /home (auto-hides when no pending layovers) + full /hotel-setup screen (name fuzzy search / gym type presets / equipment chips / outdoor-run toggle / notes) that saves via upsert→attach→confirm. 27/27 phase 1 backend tests pass. No regressions vs pre-existing test failures (iter58/64/68/79 — same 10 tests failing before + after). Ready for backend + frontend testing. TESTING_TYPE: both. Credentials: client@crewfit.com / Client123! and coach@crewfit.com / Coach123!. NEXT PHASES (waiting on user confirmation): Phase 2 — Strict Equipment Matching (hard validation gates in feature_v2_resolver); Phase 3 — Reactive progression + Your Progress card; Phase 4-6 — coach dashboard hotel review queue UI, Marathon adjustments, final 15 test cases."
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 81 — MASTER FIX PROMPT · PHASE 2 · STRICT EQUIPMENT MATCHING
+# ═════════════════════════════════════════════════════════════════════
+
+backend:
+  - task: "Strict Equipment Matching — hard validation gates in resolver"
+    implemented: true
+    working: true
+    file: "backend/feature_equipment_matcher.py, backend/feature_v2_resolver.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 2 of Master Fix Prompt shipped. New feature_equipment_matcher.py module with: (a) CANONICAL_EQUIPMENT + EQUIPMENT_ALIASES lookup, (b) FULL_GYM_EXPANSION preset (dumbbells/barbell/bench/cable_stack/…), (c) EQUIPMENT_REGEXES list with ~35 patterns covering bench-press family, cable, machine, dumbbell/kettlebell, pull-up, cardio, bands, TRX, box, med ball, (d) required_equipment(exercise) — reads library equipment_type first then regex-matches on name, (e) validate_exercise_equipment(exercise, available) returns {passes, required, missing, reason} with friendly human strings ('Requires a bench — not available at your current setup.'), (f) normalise_available(items) accepts list OR dict form (hotel_profiles map) and expands 'hotel_gym' marker to FULL_GYM_EXPANSION, (g) enforce_equipment_gate(workout, available, hotel_context, hotel_name) mutates exercises in place with equipment_check='fail' + equipment_reason + equipment_required, and sets workout.needs_coach_review=true + workout.change_reason='Hotel gym is limited at Marina Bay Sands — 2 exercise(s) need coach review: X, Y. Louis will review before you train.'. Wired into feature_v2_resolver.apply_resolver_to_workouts: after resolving each workout, computes available equipment based on classify_stay(day, next_day) — layover with known hotel → resolve_gym_equipment(hotel_doc); layover with unknown hotel → {bodyweight}; home day → client profile equipment. New stats: equipment_failures, workouts_needs_review. 25/25 phase 2 unit tests pass. No regressions."
+
+frontend:
+  - task: "'Why this changed' UI — reason pill on home + banner + eq-warn per exercise"
+    implemented: true
+    working: true
+    file: "frontend/app/(client)/home.tsx, frontend/app/workout/[id]/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Client-facing 'Why this changed' visibility: (a) on client /home each workout row now shows a compact reason pill under the meta line when workout.change_reason is set (testID: workout-reason-<id>), (b) on the workout detail screen /workout/[id]/ a full 'WHY THIS CHANGED' brand-tinted banner sits above the WHY THIS SESSION rationale block (testID: workout-change-reason), (c) each individual exercise card in the workout preview shows an amber warning below the meta line when ex.equipment_check==='fail' with the specific equipment_reason (testID: ex-eq-warn-<idx>). Uses theme.color.brand for change-reason and theme.color.amber for equipment warnings. Lint clean."
+
+test_plan:
+  current_focus:
+    - "Backend: required_equipment name-based regex hits (barbell bench press, dumbbell bench press, cable row, pull-up with hyphen, dumbbell curl, kettlebell swing, RDL multi-option)"
+    - "Backend: required_equipment reads library equipment_type FIRST (skips regex when explicit)"
+    - "Backend: validate_exercise_equipment — bodyweight pass, missing bench fail with reason, any-of match passes, cable fail with reason"
+    - "Backend: normalise_available — list with aliases (DB, Barbell, no equipment), dict from hotel (False values excluded), 'hotel_gym' marker expands, None input → {bodyweight} only"
+    - "Backend: enforce_equipment_gate — all bodyweight passes no flag; mixed workout flags needs_coach_review with change_reason listing failed names; hotel_context uses 'Hotel gym is limited at <name>' prefix; full gym at layover all pass"
+    - "Backend integration: feature_v2_resolver.apply_resolver_to_workouts now sets stats.equipment_failures + stats.workouts_needs_review, and workouts on layover days with unknown hotels default to bodyweight-only equipment"
+    - "Frontend: /home workout row shows reason pill when change_reason is set"
+    - "Frontend: /workout/[id]/ shows WHY THIS CHANGED banner and per-exercise equipment warnings"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 81 Phase 2 shipped — Strict Equipment Matching. New feature_equipment_matcher.py (~275 LOC) with equipment taxonomy, ~35 regex patterns, and pure helpers required_equipment / validate_exercise_equipment / normalise_available / enforce_equipment_gate. Wired into feature_v2_resolver.apply_resolver_to_workouts — after LLM matching, each workout is validated against the correct equipment set (home vs hotel vs bodyweight), and any exercise that requires kit the client doesn't have gets equipment_check='fail' + reason string, and the whole workout gets needs_coach_review=true with a client-facing change_reason. Client-facing UI: reason pill on /home + full banner on /workout/[id] + per-exercise amber warning. 25/25 phase 2 tests pass. Combined phases: 63/63 tests pass. TESTING_TYPE: both. Ready for testing_agent verification. NEXT PHASE (Phase 3): Reactive progression + Your Progress card."

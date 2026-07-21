@@ -264,6 +264,16 @@ export default function WorkoutDetail() {
           </Pressable>
         )}
 
+        {view.change_reason && (
+          <View style={styles.changeReason} testID="workout-change-reason">
+            <Ionicons name="information-circle" size={16} color={theme.color.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.changeReasonLabel}>WHY THIS CHANGED</Text>
+              <Text style={styles.changeReasonText}>{view.change_reason}</Text>
+            </View>
+          </View>
+        )}
+
         {view.rationale && (
           <View style={styles.rationale}>
             <Text style={styles.rLabel}>WHY THIS SESSION?</Text>
@@ -314,6 +324,12 @@ export default function WorkoutDetail() {
                     {ex.sets} × {ex.reps} · rest {ex.rest_sec}s{ex.rpe ? ` · RPE ${ex.rpe}` : ""}
                   </Text>
                   {ex.notes ? <Text style={styles.exNotes} numberOfLines={2}>{ex.notes}</Text> : null}
+                  {ex.equipment_check === "fail" && ex.equipment_reason ? (
+                    <View style={styles.eqWarn} testID={`ex-eq-warn-${idx}`}>
+                      <Ionicons name="warning" size={11} color={theme.color.amber} />
+                      <Text style={styles.eqWarnText} numberOfLines={2}>{ex.equipment_reason}</Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             )}
@@ -443,6 +459,30 @@ const styles = StyleSheet.create({
   workoutBannerEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "900", fontFamily: theme.font.textSemi },
   workoutBannerTitle: { color: theme.color.text, fontSize: 22, letterSpacing: 0.4, fontWeight: "900", fontFamily: theme.font.display },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
+  changeReason: {
+    flexDirection: "row", alignItems: "flex-start", gap: 8,
+    marginTop: theme.space.md, padding: theme.space.md,
+    backgroundColor: "rgba(163,24,46,0.08)",
+    borderRadius: theme.radius.md,
+    borderLeftWidth: 3, borderLeftColor: theme.color.brand,
+  },
+  changeReasonLabel: {
+    fontSize: 10, letterSpacing: 1.2, fontWeight: "800",
+    color: theme.color.brand, marginBottom: 4,
+  },
+  changeReasonText: {
+    fontSize: 12, color: theme.color.text, lineHeight: 17,
+  },
+  eqWarn: {
+    flexDirection: "row", alignItems: "flex-start", gap: 4,
+    marginTop: 6, paddingHorizontal: 6, paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: "rgba(245,158,11,0.10)",
+    borderLeftWidth: 2, borderLeftColor: theme.color.amber,
+  },
+  eqWarnText: {
+    fontSize: 11, color: theme.color.textMuted, flex: 1, lineHeight: 15,
+  },
   rLabel: { color: theme.color.brand, letterSpacing: 2, fontSize: 10, fontWeight: "800" },
   overrideBanner: { marginTop: theme.space.md, padding: theme.space.md, backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.amber },
   overrideLabel: { color: theme.color.amber, letterSpacing: 2, fontSize: 10, fontWeight: "900" },

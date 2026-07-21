@@ -563,6 +563,12 @@ export default function Home() {
                       {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                       <Text style={styles.wTitle}>{w.title}</Text>
                       <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
+                      {w.change_reason ? (
+                        <View style={styles.reasonPill} testID={`workout-reason-${w.id}`}>
+                          <Ionicons name="information-circle" size={11} color={theme.color.brand} />
+                          <Text style={styles.reasonText} numberOfLines={2}>{w.change_reason}</Text>
+                        </View>
+                      ) : null}
                     </View>
                     {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} style={{ marginRight: 10 }} />}
                     {!w.completed && w.coach_locked && (
@@ -797,6 +803,18 @@ const styles = StyleSheet.create({
   statusReview: { backgroundColor: "rgba(239,68,68,0.10)", borderColor: "rgba(239,68,68,0.35)" },
   statusLocked: { backgroundColor: "rgba(245,158,11,0.10)", borderColor: "rgba(245,158,11,0.35)" },
   statusApproved: { backgroundColor: "rgba(34,197,94,0.10)", borderColor: "rgba(34,197,94,0.35)" },
+  // Phase 2 — "Why this changed" reason pill
+  reasonPill: {
+    flexDirection: "row", alignItems: "flex-start", gap: 4,
+    marginTop: 6, paddingHorizontal: 6, paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: "rgba(163,24,46,0.08)",
+    borderLeftWidth: 2, borderLeftColor: theme.color.brand,
+    alignSelf: "flex-start", maxWidth: "100%",
+  },
+  reasonText: {
+    fontSize: 10.5, color: theme.color.textMuted, flex: 1, lineHeight: 14,
+  },
   // Plan C2 — Programme Overview card
   progCard: { backgroundColor: theme.color.cardBg, borderWidth: 1, borderColor: theme.color.line, borderRadius: theme.radius.md, padding: theme.space.md, marginTop: theme.space.md, marginBottom: theme.space.sm },
   progHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },

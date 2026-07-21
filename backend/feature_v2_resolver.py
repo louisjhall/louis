@@ -393,11 +393,20 @@ async def apply_resolver_to_workouts(
       - substitute_for / substitution_reason (when a substitute was used)
     Exercises that cannot resolve at all are DROPPED from the workout.
 
+    Phase 2: after resolving, runs strict equipment gate against the client's
+    available equipment (or, on a layover, the hotel's equipment). Any
+    exercise that requires kit the client doesn't have is FLAGGED with
+    equipment_check="fail" and the workout is marked needs_coach_review.
+    No silent drops — the coach reviews these before the client trains.
+
     Also creates deduplicated draft exercise requests for unmatched items, up
     to MAX_REQUESTS_PER_PROGRAMME per call.
 
-    Returns a summary dict: {matched, substituted, dropped, requests_created}.
+    Returns a summary dict: {matched, substituted, dropped, requests_created,
+    equipment_failures, workouts_needs_review}.
     """
+    from feature_equipment_matcher import normalise_available, enforce_equipment_gate
+    from feature_hotel_system import classify_stay, resolve_gym_equipment
     pool = await get_approved_pool()
     profile = (user or {}).get("profile") or {}
     client_ctx = {
@@ -405,7 +414,25 @@ async def apply_resolver_to_workouts(
         "injuries": profile.get("injuries"),
         "goal": profile.get("main_goal_key"),
     }
-    stats = {"matched": 0, "substituted": 0, "dropped": 0, "requests_created": 0}
+    # Pre-normalise home equipment once
+    home_available = normalise_available(profile.get("equipment") or [])
+
+    # Pre-load hotel lookup if we have a roster (for layover-aware gating)
+    hotel_lookup: dict[str, dict] = {}
+    if roster:
+        try:
+            from feature_hotel_system import load_hotel_lookup_for_roster
+            hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
+        except Exception:
+            hotel_lookup = {}
+    # Build a map date -> day dict for quick lookup
+    days_by_date = {d.get("date"): d for d in ((roster or {}).get("days") or []) if d.get("date")}
+    sorted_dates = sorted(days_by_date.keys())
+
+    stats = {
+        "matched": 0, "substituted": 0, "dropped": 0, "requests_created": 0,
+        "equipment_failures": 0, "workouts_needs_review": 0,
+    }
     requests_this_run = 0
 
     for w in workouts:
@@ -496,6 +523,44 @@ async def apply_resolver_to_workouts(
                     green_out.append(item_out)
                 # else drop from variant (client never sees unresolved)
             green["exercises"] = green_out
+
+        # === Phase 2: Strict Equipment Gate ================================
+        # Determine what equipment is available for this workout:
+        #   - If workout has a linked roster date that is a Layover with a
+        #     known hotel → use hotel equipment (or bodyweight if unknown).
+        #   - Otherwise → use client home equipment.
+        w_date = w.get("date")
+        w_day = days_by_date.get(w_date) if w_date else None
+        w_next = None
+        if w_date and w_date in days_by_date:
+            idx = sorted_dates.index(w_date)
+            if idx + 1 < len(sorted_dates):
+                w_next = days_by_date[sorted_dates[idx + 1]]
+        hotel_context = False
+        hotel_name = None
+        available = home_available
+        if w_day:
+            stay = classify_stay(w_day, w_next)
+            if stay == "layover":
+                hotel_context = True
+                hid = w_day.get("hotel_id")
+                hotel_doc = hotel_lookup.get(hid) if hid else None
+                if hotel_doc:
+                    hotel_name = hotel_doc.get("name")
+                    eq_map = resolve_gym_equipment(hotel_doc)
+                    available = normalise_available(eq_map) if eq_map else {"bodyweight"}
+                else:
+                    # Unknown hotel → bodyweight only
+                    available = {"bodyweight"}
+        gate = enforce_equipment_gate(
+            w,
+            available=available,
+            hotel_context=hotel_context,
+            hotel_name=hotel_name,
+        )
+        stats["equipment_failures"] += gate["fails"]
+        if gate["needs_review"]:
+            stats["workouts_needs_review"] += 1
     return stats
 
 

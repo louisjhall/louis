@@ -14,13 +14,14 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import {
-  View, Text, ScrollView, Pressable, TextInput, StyleSheet, ActivityIndicator, Alert,
+  View, Text, ScrollView, Pressable, TextInput, StyleSheet, ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { toast } from "@/src/lib/ux";
 
 type GymType = "full_gym" | "cardio_only" | "basic" | "bodyweight_only" | "none" | "unknown";
 
@@ -47,6 +48,12 @@ const EQUIPMENT: { key: string; label: string }[] = [
   { key: "yoga_mat",          label: "Yoga mat" },
   { key: "pool",              label: "Pool" },
 ];
+
+// Small wrapper to keep call-sites simple — surfaces as native Alert on mobile,
+// animated toast on web (both via @/src/lib/ux).
+function Alert(title: string, _body?: string, kind: "info" | "error" | "success" = "success") {
+  toast(title, kind === "error" ? "error" : "success");
+}
 
 export default function HotelSetup() {
   const router = useRouter();
@@ -200,11 +207,10 @@ export default function HotelSetup() {
         } catch { /* non-fatal */ }
       }
 
-      Alert.alert("Saved", "Hotel setup saved. Your next workout at this hotel will match the gym.", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      Alert("Saved", "Hotel setup saved — your next workout at this hotel will match the gym.");
+      router.back();
     } catch (e: any) {
-      Alert.alert("Couldn't save", e?.message || "Please try again.");
+      Alert("Couldn't save", e?.message || "Please try again.", "error");
     } finally {
       setSaving(false);
     }

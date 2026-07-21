@@ -2868,7 +2868,55 @@ def _align_days_to_weekday_labels(days: list[dict]) -> tuple[list[dict], int, in
 
 
 
+def _ensure_workout_content(doc: dict, user: dict) -> dict:
+    """
+    Iter 82 — Hard gate: never persist a workout with zero content.
+
+    If the LLM returns an empty `exercises` list AND empty `warmup`, we:
+      * Replace the exercises with a bodyweight-safe strength_support fallback
+        (works on any layover, home day, or unknown roster context).
+      * Set `needs_coach_review = True`.
+      * Stamp a client-facing `change_reason` explaining the fallback.
+      * Bump `validation_status` to `needs_review`.
+
+    Rest days (day_type = 'off' / 'rest') are exempt — they intentionally have
+    no content.
+    """
+    exs = doc.get("exercises") or []
+    warm = doc.get("warmup") or []
+    day_type = str(doc.get("day_type") or "").lower()
+    title = str(doc.get("title") or "").lower()
+    is_rest = ("rest" in day_type) or ("off" in day_type) or ("rest" in title) or ("recovery" in title)
+    if exs or warm or is_rest:
+        return doc
+    # Empty workout on a training day — inject bodyweight-safe fallback
+    try:
+        from feature_workout_fallback import _stub_for_session_type
+        stub = _stub_for_session_type("strength_support", doc.get("date"), {"hotel_pref": "bodyweight"})
+        if stub:
+            doc["warmup"] = stub.get("warmup", [])
+            doc["exercises"] = stub.get("exercises", [])
+            doc["title"] = doc.get("title") or stub.get("title") or "Strength Support"
+            doc["location"] = doc.get("location") or stub.get("location") or "Home Workout"
+            doc["duration_min"] = doc.get("duration_min") or stub.get("duration_min") or 40
+    except Exception:
+        logger.exception("workout content fallback failed")
+    doc["needs_coach_review"] = True
+    doc["validation_status"] = "needs_review"
+    existing_reason = doc.get("change_reason")
+    fill_reason = (
+        "Content was missing when this session was generated — CrewFit filled it "
+        "with a safe bodyweight session. Louis will review and swap in the right "
+        "training block."
+    )
+    doc["change_reason"] = f"{existing_reason}  · {fill_reason}" if existing_reason else fill_reason
+    doc["insufficient_content_reason"] = doc.get("insufficient_content_reason") or "llm_returned_empty_exercises"
+    return doc
+
+
+
 ROSTER_SYSTEM = f"""You are an aviation-roster parser for airline crew (pilots and cabin crew).
+
 Extract EVERY duty and off day the roster shows. Handle 3-day rosters up to multi-month rosters.
 For each date output ONE object with these fields (populate what you can, leave unknown as null):
   date (YYYY-MM-DD, required)
@@ -3493,6 +3541,7 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 # data. Deleting by "id" alone missed cross-roster collisions
                 # and triggered E11000 on insert.
                 try:
+                    doc = _ensure_workout_content(doc, user)
                     await db.workouts.delete_many({"user_id": user["id"], "date": d})
                     await db.workouts.insert_one(doc)
                 except Exception as e:
@@ -3765,6 +3814,7 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
                 "updated_at": now_iso(),
             }
             try:
+                doc = _ensure_workout_content(doc, user)
                 await db.workouts.delete_many({"user_id": user["id"], "date": d})
                 await db.workouts.insert_one(doc)
             except Exception as e:
@@ -5012,6 +5062,69 @@ async def calendar_timeline(months_back: int = 2, months_ahead: int = 4, user: d
     }
 
 
+# === Iter 82 — client-side roster day correction ============================
+
+class RosterDayCorrectionBody(BaseModel):
+    date: str                          # YYYY-MM-DD of the day to correct
+    day_type: Optional[str] = None     # any value from DAY_TYPES
+    layover_city: Optional[str] = None
+    layover_country: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api.patch("/roster/{rid}/day")
+async def roster_day_correct(rid: str, body: RosterDayCorrectionBody, user: dict = Depends(current_user)):
+    """
+    Client-side quick correction of a roster day. Used from the client home
+    when the parsed roster is wrong (e.g., off-by-one, wrong day_type).
+
+    Surgically patches the single day and re-emits its load score. Downstream
+    workouts on that date get `needs_coach_review` so Louis can rebuild.
+    """
+    r = await db.rosters.find_one({"id": rid, "user_id": user["id"]})
+    if not r:
+        raise HTTPException(404, "Roster not found")
+    days = list(r.get("days") or [])
+    target = None
+    for i, d in enumerate(days):
+        if d.get("date") == body.date:
+            target = i
+            break
+    if target is None:
+        raise HTTPException(404, f"No roster day found for {body.date}")
+    day = days[target]
+    if body.day_type is not None:
+        day["day_type"] = body.day_type
+        day["home_or_away"] = (
+            "away" if "layover" in body.day_type.lower()
+            else ("home" if "home" in body.day_type.lower() else day.get("home_or_away"))
+        )
+    if body.layover_city is not None:
+        day["layover_city"] = body.layover_city.strip() or None
+    if body.layover_country is not None:
+        day["layover_country"] = body.layover_country.strip() or None
+    if body.notes is not None:
+        day["notes"] = body.notes
+    day["client_corrected"] = True
+    day["client_corrected_at"] = now_iso()
+    try:
+        day["load"] = score_load(day)
+    except Exception:
+        pass
+    days[target] = day
+    await db.rosters.update_one({"id": rid}, {"$set": {"days": days, "updated_at": now_iso()}})
+    # Flag downstream workout for coach re-review
+    await db.workouts.update_many(
+        {"user_id": user["id"], "date": body.date},
+        {"$set": {
+            "needs_coach_review": True,
+            "change_reason": "You corrected the roster day type — Louis will rebuild this session to match.",
+        }},
+    )
+    return {"day": day}
+
+
+
 @api.post("/roster/{rid}/hotel")
 async def roster_attach_hotel(rid: str, body: HotelAttachBody, user: dict = Depends(current_user)):
     r = await db.rosters.find_one({"id": rid, "user_id": user["id"]})
@@ -5698,6 +5811,7 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                 # avoid E11000 when a prior roster or manual entry occupies
                 # the same slot. See iteration 44 fix.
                 try:
+                    doc = _ensure_workout_content(doc, user)
                     await db.workouts.delete_many({"user_id": user["id"], "date": d})
                     await db.workouts.insert_one(doc)
                 except Exception as e:
@@ -5831,6 +5945,7 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                 }
                 # Sweep by (user_id, date) — see iteration 44 fix.
                 try:
+                    doc = _ensure_workout_content(doc, user)
                     await db.workouts.delete_many({"user_id": user["id"], "date": d})
                     await db.workouts.insert_one(doc)
                 except Exception as e:

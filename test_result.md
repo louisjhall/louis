@@ -1615,3 +1615,56 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Iter 81 Phase 2 shipped — Strict Equipment Matching. New feature_equipment_matcher.py (~275 LOC) with equipment taxonomy, ~35 regex patterns, and pure helpers required_equipment / validate_exercise_equipment / normalise_available / enforce_equipment_gate. Wired into feature_v2_resolver.apply_resolver_to_workouts — after LLM matching, each workout is validated against the correct equipment set (home vs hotel vs bodyweight), and any exercise that requires kit the client doesn't have gets equipment_check='fail' + reason string, and the whole workout gets needs_coach_review=true with a client-facing change_reason. Client-facing UI: reason pill on /home + full banner on /workout/[id] + per-exercise amber warning. 25/25 phase 2 tests pass. Combined phases: 63/63 tests pass. TESTING_TYPE: both. Ready for testing_agent verification. NEXT PHASE (Phase 3): Reactive progression + Your Progress card."
+
+# ═════════════════════════════════════════════════════════════════════
+# ITER 81 — MASTER FIX PROMPT · PHASE 3 · REACTIVE PROGRESSION + YOUR PROGRESS
+# ═════════════════════════════════════════════════════════════════════
+
+backend:
+  - task: "Reactive weekly progression + snapshot storage"
+    implemented: true
+    working: true
+    file: "backend/feature_progression.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Phase 3 of Master Fix Prompt shipped. New feature_progression.py module with: (a) iso_week_bounds() and week_key() helpers, (b) compute_status(workouts, week_start, week_end) — pure rule engine returning progression_status: progressing_well | maintain | reduce_load | deload, with STATUS_LABELS (PROGRESSING / STEADY / PULL BACK / DELOAD), STATUS_COPY (client-facing reason), STATUS_COACH_NOTE. Rule order: 2+ very-high RPE (≥9.5) + n_completed≥3 → deload; adherence<60% → reduce_load; avg_rpe≥9 → reduce_load; key_missed≥1 & adherence<80% → reduce_load; adherence≥80% & 6≤rpe≤8.5 → progressing_well; else → maintain. (c) compute_and_store_week(db, user_id, week_date, force) — persists to progression_snapshots collection with {user_id, week_key, status, reason, metrics, week_start, week_end, computed_at}. (d) on_workout_completed(db, user, workout) trigger — called from POST /api/workouts/{wid}/complete; ONLY snapshots when this workout was the LAST planned session of the ISO week (no remaining incomplete planned workouts). (e) latest_snapshot() + snapshot_history() readers. New endpoints: GET /api/progress/current (returns latest or {}), GET /api/progress/history?weeks=8 (last N weeks), POST /api/progress/recompute (manual refresh), GET /api/coach/clients/{cid}/progress/current + /history (coach-only). 19/19 phase 3 unit + endpoint tests pass. No regressions."
+
+frontend:
+  - task: "ProgressCard on /home + /your-progress screen"
+    implemented: true
+    working: true
+    file: "frontend/src/components/ProgressCard.tsx, frontend/app/your-progress.tsx, frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "New ProgressCard component on client /home — auto-hides when GET /progress/current returns {} (no snapshot yet). Shows status pill (PROGRESSING green / STEADY brand / PULL BACK amber / DELOAD blue) with trending icon, client-facing reason string (max 2 lines), and 3-column metrics strip (SESSIONS x/y, ADHERENCE %, AVG RPE). Border-left color matches status. Tapping opens /your-progress. testID: progress-card. New /your-progress full-screen: header with back button + 'Recompute' button (testID progress-recompute-btn, calls POST /progress/recompute), scrollable list of last 8 weekly snapshots as cards (testID snap-{week_key}) each showing dates, status pill, reason, and 3-4 column metrics (adds KEY MISSED column in red when >0). Empty state (testID your-progress-empty) with 'Complete a full training week...' copy. Uses theme.color.brand + cross-platform toast helper for notifications. Lint clean."
+
+test_plan:
+  current_focus:
+    - "Backend: iso_week_bounds + week_key produce Mon-Sun and 'YYYY-Www' key"
+    - "Backend: compute_status rule engine — progressing_well (4/4 adherence, RPE 7-8), maintain (2/3 adherence RPE 7-8), reduce_load (1/4 adherence), reduce_load (avg RPE ≥9), reduce_load (missed key session + <80% adherence), deload (4 sessions RPE ≥9.5), deload (2 sessions ≥9.5 + n_completed≥3)"
+    - "Backend: compute_status ignores placeholder workouts (no exercises)"
+    - "Backend: compute_status empty week produces well-formed snapshot"
+    - "Backend: HTTP GET /progress/current returns {} or dict"
+    - "Backend: HTTP GET /progress/history?weeks=8 returns list, clamps to [1..52]"
+    - "Backend: HTTP POST /progress/recompute returns snapshot with status + metrics"
+    - "Backend: HTTP GET /coach/clients/{cid}/progress/current denied for client (403), OK for coach"
+    - "Backend: HTTP GET /coach/clients/{cid}/progress/history denied for client (403), OK for coach"
+    - "Backend integration: POST /workouts/{wid}/complete triggers on_workout_completed — only creates snapshot when this is the last planned session of the ISO week"
+    - "Frontend: ProgressCard auto-hides on /home when no snapshot; shows correctly when snapshot exists (verify with recompute button on /your-progress)"
+    - "Frontend: /your-progress renders empty state when no snapshots, list of snapshots when present"
+    - "Frontend: Recompute button triggers POST /progress/recompute, refreshes list, shows toast"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 81 Phase 3 shipped — Reactive Progression + Your Progress. New feature_progression.py (~230 LOC) implements the weekly rule engine (progressing_well / maintain / reduce_load / deload) + on_workout_completed trigger + 5 new endpoints. Frontend: ProgressCard on /home + full /your-progress screen with recompute button and empty state. 19/19 phase 3 tests pass. Combined phases: 86/86 tests pass (Phase 1 = 38, Phase 2 = 29, Phase 3 = 19). TESTING_TYPE: both. Do NOT re-test Phase 1 or Phase 2 endpoints. NEXT PHASE (Phase 4-6): Coach hotel review queue UI, Marathon adjustments, final 15 test cases."

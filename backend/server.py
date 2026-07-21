@@ -5633,7 +5633,70 @@ async def workout_complete(wid: str, body: WorkoutCompleteBody, user: dict = Dep
         {"id": wid, "user_id": user["id"]},
         {"$set": {"completed": True, "completed_at": now_iso(), "completion": body.model_dump()}},
     )
-    return await db.workouts.find_one({"id": wid}, {"_id": 0})
+    doc = await db.workouts.find_one({"id": wid}, {"_id": 0})
+    # Phase 3 — reactive progression: if this was the last workout of the ISO
+    # week, compute the progression snapshot. Non-fatal on error.
+    try:
+        from feature_progression import on_workout_completed
+        snap = await on_workout_completed(db, user, doc or {})
+        if snap:
+            doc = doc or {}
+            doc["_progression_snapshot"] = snap
+    except Exception as _e:
+        logger.warning(f"progression trigger failed for workout {wid}: {_e}")
+    return doc
+
+
+# ------------------------------------------------------------------
+# Phase 3 — Progression endpoints
+# ------------------------------------------------------------------
+
+@api.get("/progress/current")
+async def progress_current(user: dict = Depends(current_user)):
+    """Return the latest progression snapshot for the logged-in client.
+
+    Returns {} if none exists yet (client hasn't completed a full week).
+    """
+    from feature_progression import latest_snapshot
+    snap = await latest_snapshot(db, user["id"])
+    return snap or {}
+
+
+@api.get("/progress/history")
+async def progress_history(weeks: int = 8, user: dict = Depends(current_user)):
+    """Return the last `weeks` progression snapshots (most recent first)."""
+    from feature_progression import snapshot_history
+    weeks = max(1, min(52, int(weeks or 8)))
+    return await snapshot_history(db, user["id"], limit=weeks)
+
+
+@api.post("/progress/recompute")
+async def progress_recompute(user: dict = Depends(current_user)):
+    """
+    Client / coach manual trigger to recompute this week's progression snapshot.
+    Used by the "Your Progress" card refresh button.
+    """
+    from feature_progression import compute_and_store_week
+    import datetime as _dt
+    today = _dt.date.today()
+    snap = await compute_and_store_week(db, user["id"], today, force=True)
+    return snap or {}
+
+
+@api.get("/coach/clients/{cid}/progress/current")
+async def coach_client_progress(cid: str, _: dict = Depends(require_role("coach"))):
+    """Coach view — latest progression snapshot for a specific client."""
+    from feature_progression import latest_snapshot
+    snap = await latest_snapshot(db, cid)
+    return snap or {}
+
+
+@api.get("/coach/clients/{cid}/progress/history")
+async def coach_client_progress_history(cid: str, weeks: int = 8, _: dict = Depends(require_role("coach"))):
+    """Coach view — progression history for a specific client."""
+    from feature_progression import snapshot_history
+    weeks = max(1, min(52, int(weeks or 8)))
+    return await snapshot_history(db, cid, limit=weeks)
 
 
 # ------------------------------------------------------------------

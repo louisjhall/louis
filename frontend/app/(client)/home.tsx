@@ -21,6 +21,7 @@ import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
 import { TodayPersonalActivities } from "@/src/components/PersonalActivityCard";
 import { AddActivityModal } from "@/src/components/AddActivityModal";
 import { HotelSetupCard } from "@/src/components/HotelSetupCard";
+import { ProgressCard } from "@/src/components/ProgressCard";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -292,6 +293,9 @@ export default function Home() {
 
           {/* Phase 1: Hotel Setup — appears when upcoming layovers need a hotel/gym profile */}
           <HotelSetupCard />
+
+          {/* Phase 3: Your Progress — appears when a weekly snapshot exists */}
+          <ProgressCard />
 
           {event ? (
             <Pressable testID="event-card" onPress={() => router.push("/event")}>

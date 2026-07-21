@@ -8611,6 +8611,7 @@ import feature_coach_deep_edit       # noqa: E402,F401  Coach dashboard slice 3.
 import feature_preview_sandbox       # noqa: E402,F401  Persistent New Client Preview sandbox + reset
 import feature_roster_lifecycle      # noqa: E402,F401  Plan D4-7: client roster delete + restart + cascade cleanup
 import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reassessment forms (no full DNA rebuild)
+import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

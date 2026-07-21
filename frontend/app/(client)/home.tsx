@@ -123,11 +123,13 @@ export default function Home() {
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [setupDay, setSetupDay] = useState<{ is_setup_day: boolean; first_workout_date?: string | null; reason?: string | null } | null>(null);
   const [rosterJob, setRosterJob] = useState<{ id: string; status?: string; stage?: string; progress?: number; message?: string; error?: string } | null>(null);
+  // Plan C2 — Programme Overview card data (goal, phase, week, target, focus, next key session)
+  const [programme, setProgramme] = useState<any>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, pr, sb, sd, rj] = await Promise.all([
+      const [ws, r, ev, pr, sb, sd, rj, prog] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
@@ -135,6 +137,7 @@ export default function Home() {
         api<any>("/standby/today").catch(() => null),
         api<any>("/setup-day/status").catch(() => null),
         api<any>("/roster/jobs/active").catch(() => null),
+        api<any>("/programme/current").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -144,6 +147,7 @@ export default function Home() {
       setStandbyToday(sb);
       setSetupDay(sd);
       setRosterJob(rj && rj.id ? rj : null);
+      setProgramme(prog && (prog as any).id ? prog : null);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -435,6 +439,61 @@ export default function Home() {
           <WeeklyCheckinCard />
           <PushPermissionPrompt />
 
+          {/* Plan C2 — Programme Overview card */}
+          {programme ? (
+            (() => {
+              const goal = programme.goal_label || programme.goal_key || "Your Plan";
+              const phaseLbl = (programme.phase && (programme.phase.label || programme.phase.key)) || "Current Phase";
+              const wkIdx = (programme.week_index ?? 0) + 1;
+              const target = programme.target_sessions_per_week || programme.progression?.target_sessions_per_week;
+              const planned = programme.progression?.sessions_planned_this_week;
+              const done = programme.progression?.sessions_completed_this_week;
+              const nextKey = (next7 || []).find((w: any) => !w.__rest && w?.key_session && !w?.completed);
+              const focus = programme.focus_copy || programme.session_style;
+              return (
+                <View style={styles.progCard}>
+                  <View style={styles.progHeaderRow}>
+                    <Text style={styles.progHeader}>YOUR CURRENT FOCUS</Text>
+                    {programme.validation_status && programme.validation_status !== "ok" ? (
+                      <View style={styles.progWarn}>
+                        <Ionicons name="alert-circle" size={12} color={theme.color.amber} />
+                        <Text style={styles.progWarnT}>NEEDS COACH REVIEW</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.progGoal}>{goal} · {phaseLbl}{wkIdx ? ` · Week ${wkIdx}` : ""}</Text>
+                  {focus ? <Text style={styles.progFocus}>{focus}</Text> : null}
+                  <View style={styles.progMetricsRow}>
+                    {target !== undefined ? (
+                      <View style={styles.progMetric}>
+                        <Text style={styles.progMetricV}>{done ?? 0}/{target}</Text>
+                        <Text style={styles.progMetricL}>this week</Text>
+                      </View>
+                    ) : null}
+                    {planned !== undefined ? (
+                      <View style={styles.progMetric}>
+                        <Text style={styles.progMetricV}>{planned}</Text>
+                        <Text style={styles.progMetricL}>planned</Text>
+                      </View>
+                    ) : null}
+                    {programme.progression?.deload_status === "deload_week" ? (
+                      <View style={styles.progMetric}>
+                        <Text style={styles.progMetricV}>DELOAD</Text>
+                        <Text style={styles.progMetricL}>this week</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  {nextKey ? (
+                    <View style={styles.progNext}>
+                      <Ionicons name="star" size={12} color={theme.color.brand} />
+                      <Text style={styles.progNextL}>Next key session · {nextKey.title || "Session"}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })()
+          ) : null}
+
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
           {rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing") ? (
             <View style={styles.planBanner} testID="plan-preparing-banner">
@@ -502,8 +561,28 @@ export default function Home() {
                       <Text style={styles.wMeta}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
                     </View>
                     {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} style={{ marginRight: 10 }} />}
-                    {w.coach_locked && <Ionicons name="lock-closed" size={16} color={theme.color.amber} style={{ marginRight: 10 }} />}
-                    {!w.approved && !w.completed && <Text style={styles.pendPill}>PENDING</Text>}
+                    {!w.completed && w.coach_locked && (
+                      <View style={[styles.statusPill, styles.statusLocked]}>
+                        <Ionicons name="lock-closed" size={11} color={theme.color.amber} />
+                        <Text style={[styles.statusPillText, { color: theme.color.amber }]}>LOCKED BY COACH</Text>
+                      </View>
+                    )}
+                    {!w.completed && !w.coach_locked && w.needs_coach_review && (
+                      <View style={[styles.statusPill, styles.statusReview]}>
+                        <Text style={[styles.statusPillText, { color: theme.color.red }]}>AWAITING COACH REVIEW</Text>
+                      </View>
+                    )}
+                    {!w.completed && !w.coach_locked && !w.needs_coach_review && !w.approved && (
+                      <View style={[styles.statusPill, styles.statusPlanned]}>
+                        <Text style={[styles.statusPillText, { color: theme.color.textMuted }]}>{w.optional ? "OPTIONAL" : "PLANNED"}</Text>
+                      </View>
+                    )}
+                    {!w.completed && w.approved && !w.coach_locked && (
+                      <View style={[styles.statusPill, styles.statusApproved]}>
+                        <Ionicons name="checkmark" size={11} color={theme.color.green} />
+                        <Text style={[styles.statusPillText, { color: theme.color.green }]}>READY</Text>
+                      </View>
+                    )}
                   </Pressable>
                 );
               });
@@ -707,6 +786,27 @@ const styles = StyleSheet.create({
   wTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700", paddingHorizontal: theme.space.md, marginTop: 2 },
   wMeta: { color: theme.color.textDim, fontSize: 12, padding: theme.space.md, paddingTop: 2 },
   pendPill: { color: theme.color.amber, fontSize: 9, letterSpacing: 1.5, marginRight: theme.space.md, fontWeight: "800", backgroundColor: "rgba(245,158,11,0.15)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm },
+  // Plan C1 — split status pills
+  statusPill: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm, marginRight: theme.space.md, borderWidth: 1 },
+  statusPillText: { fontSize: 9, letterSpacing: 1.2, fontWeight: "800" },
+  statusPlanned: { backgroundColor: "rgba(148,163,184,0.10)", borderColor: "rgba(148,163,184,0.30)" },
+  statusReview: { backgroundColor: "rgba(239,68,68,0.10)", borderColor: "rgba(239,68,68,0.35)" },
+  statusLocked: { backgroundColor: "rgba(245,158,11,0.10)", borderColor: "rgba(245,158,11,0.35)" },
+  statusApproved: { backgroundColor: "rgba(34,197,94,0.10)", borderColor: "rgba(34,197,94,0.35)" },
+  // Plan C2 — Programme Overview card
+  progCard: { backgroundColor: theme.color.cardBg, borderWidth: 1, borderColor: theme.color.line, borderRadius: theme.radius.md, padding: theme.space.md, marginTop: theme.space.md, marginBottom: theme.space.sm },
+  progHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  progHeader: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: "800" },
+  progWarn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, backgroundColor: "rgba(245,158,11,0.10)", borderWidth: 1, borderColor: "rgba(245,158,11,0.35)" },
+  progWarnT: { color: theme.color.amber, fontSize: 9, letterSpacing: 1.0, fontWeight: "800" },
+  progGoal: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 6 },
+  progFocus: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  progMetricsRow: { flexDirection: "row", gap: 16, marginTop: 12 },
+  progMetric: { alignItems: "flex-start" },
+  progMetricV: { color: theme.color.text, fontSize: 18, fontWeight: "900" },
+  progMetricL: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 0.8, fontWeight: "700", marginTop: 2, textTransform: "uppercase" },
+  progNext: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.color.line },
+  progNextL: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
   pulseCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand, marginTop: theme.space.md },
   pulseTitle: { color: theme.color.text, fontSize: 12, letterSpacing: 1.5, fontWeight: "800" },
   pulseSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },

@@ -88,6 +88,9 @@ export default function ClientDetail() {
   const [approving, setApproving] = useState(false);
   // Slice 1: admin lifecycle actions + audit log.
   const [auditLog, setAuditLog] = useState<any[]>([]);
+  // Plan C3 — programme overview + timeline
+  const [overview, setOverview] = useState<any>(null);
+  const [timeline, setTimeline] = useState<any[]>([]);
   const [permDeleteOpen, setPermDeleteOpen] = useState(false);
   const [permDeleteText, setPermDeleteText] = useState("");
   const [adminBusy, setAdminBusy] = useState<string | null>(null);
@@ -95,7 +98,7 @@ export default function ClientDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [detail, ctrl, log, habits, standby, prog, hist, audit] = await Promise.all([
+      const [detail, ctrl, log, habits, standby, prog, hist, audit, overview, timeline] = await Promise.all([
         api<any>(`/coach/clients/${id}`),
         api<{ controls: Controls }>(`/coach/clients/${id}/controls`).catch(() => ({ controls: null as any })),
         api<{ entries: any[] }>(`/coach/clients/${id}/change-log`).catch(() => ({ entries: [] })),
@@ -104,6 +107,9 @@ export default function ClientDetail() {
         api<any>(`/coach/clients/${id}/programme`).catch(() => null),
         api<any>(`/coach/clients/${id}/programme/history`).catch(() => ({ programmes: [] })),
         api<{ entries: any[] }>(`/admin/clients/${id}/audit-log?limit=25`).catch(() => ({ entries: [] })),
+        // Plan C3 — programme overview + timeline
+        api<any>(`/coach/clients/${id}/programme-overview`).catch(() => null),
+        api<any>(`/coach/clients/${id}/programme-timeline?limit=120`).catch(() => ({ timeline: [] })),
       ]);
       setData(detail);
       if (ctrl?.controls) setControls(ctrl.controls);
@@ -114,6 +120,8 @@ export default function ClientDetail() {
       setNext7(prog?.next_7_days || []);
       setHistory(hist?.programmes || []);
       setAuditLog(audit?.entries || []);
+      setOverview(overview || null);
+      setTimeline(timeline?.timeline || []);
     } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -270,7 +278,7 @@ export default function ClientDetail() {
   const [coachPickerOpen, setCoachPickerOpen] = useState(false);
   const [availableCoaches, setAvailableCoaches] = useState<any[]>([]);
   // Slice 3: tabbed layout state.
-  type Tab = "overview" | "calendar" | "roster" | "programme" | "workouts" | "checkins" | "messages" | "profile" | "admin";
+  type Tab = "overview" | "calendar" | "roster" | "programme" | "timeline" | "workouts" | "checkins" | "messages" | "profile" | "admin";
   const [tab, setTab] = useState<Tab>("overview");
 
   const openCoachPicker = async () => {
@@ -489,8 +497,8 @@ export default function ClientDetail() {
         {/* Slice 3: Tab bar. Sections below render according to the selected tab. */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 8, paddingRight: 12, gap: 6 }}>
           {(isAdmin
-            ? ["overview","admin","calendar","roster","programme","workouts","checkins","messages","profile"]
-            : ["overview","calendar","roster","programme","workouts","checkins","messages","profile"]
+            ? ["overview","admin","calendar","roster","programme","timeline","workouts","checkins","messages","profile"]
+            : ["overview","calendar","roster","programme","timeline","workouts","checkins","messages","profile"]
           ).map((t) => {
             const active = tab === (t as Tab);
             const isAdminTab = t === "admin";
@@ -529,6 +537,112 @@ export default function ClientDetail() {
               {"\n"}
               {programme?.goal_label ? `Goal: ${programme.goal_label} · ${programme?.phase?.label || ""} · Week ${programme?.week_index || "—"}` : "No programme yet."}
             </Text>
+          </View>
+        )}
+
+        {/* Plan C3 — Programme Overview enriched card */}
+        {(tab === "overview" || tab === "programme") && overview ? (
+          <View testID="programme-overview-card" style={[styles.card, overview.needs_coach_review && { borderColor: "#f59e0b" }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={styles.sect}>PROGRAMME OVERVIEW</Text>
+              {overview.needs_coach_review ? (
+                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "800", letterSpacing: 1 }}>NEEDS REVIEW</Text>
+              ) : null}
+            </View>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
+              <View>
+                <Text style={styles.ovLbl}>THIS WEEK</Text>
+                <Text style={styles.ovVal}>{overview.week_counts?.completed || 0}/{overview.week_counts?.target || overview.week_counts?.planned || 0}</Text>
+                <Text style={styles.ovSub}>completed / target</Text>
+              </View>
+              <View>
+                <Text style={styles.ovLbl}>MISSED</Text>
+                <Text style={styles.ovVal}>{overview.week_counts?.missed || 0}</Text>
+                <Text style={styles.ovSub}>this week</Text>
+              </View>
+              <View>
+                <Text style={styles.ovLbl}>REVIEW</Text>
+                <Text style={styles.ovVal}>{overview.upcoming?.needs_coach_review || 0}</Text>
+                <Text style={styles.ovSub}>next 14d</Text>
+              </View>
+              <View>
+                <Text style={styles.ovLbl}>LOCKED</Text>
+                <Text style={styles.ovVal}>{overview.upcoming?.coach_locked || 0}</Text>
+                <Text style={styles.ovSub}>upcoming</Text>
+              </View>
+              <View>
+                <Text style={styles.ovLbl}>TEMPLATE</Text>
+                <Text style={styles.ovVal}>{overview.upcoming?.template_count || 0}</Text>
+                <Text style={styles.ovSub}>of {overview.upcoming?.total_14d || 0}</Text>
+              </View>
+            </View>
+            {overview.next_key_session ? (
+              <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.color.line }}>
+                <Text style={styles.ovLbl}>NEXT KEY SESSION</Text>
+                <Text style={{ color: theme.color.text, fontSize: 13, fontWeight: "700", marginTop: 4 }}>{overview.next_key_session.title}</Text>
+                <Text style={{ color: theme.color.textMuted, fontSize: 11, marginTop: 2 }}>{overview.next_key_session.date} · {overview.next_key_session.focus}</Text>
+              </View>
+            ) : null}
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+              <View style={styles.sourcePill}>
+                <Text style={styles.sourcePillT}>SOURCE: {(overview.source || "").replace("_", " ").toUpperCase()}</Text>
+              </View>
+              {overview.open_coach_tasks_for_client ? (
+                <View style={styles.sourcePill}>
+                  <Text style={styles.sourcePillT}>{overview.open_coach_tasks_for_client} OPEN TASK{overview.open_coach_tasks_for_client > 1 ? "S" : ""}</Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Plan C3 — Timeline tab */}
+        {tab === "timeline" && (
+          <View style={styles.card}>
+            <Text style={styles.sect}>PROGRAMME TIMELINE</Text>
+            <Text style={{ color: theme.color.textMuted, fontSize: 11, marginTop: 4 }}>
+              Onboarding · roster · programme · workouts · check-ins · coach changes.
+            </Text>
+            <View style={{ marginTop: 12 }}>
+              {timeline.length === 0 ? (
+                <Text style={{ color: theme.color.textMuted, fontSize: 12 }}>No timeline events yet.</Text>
+              ) : (
+                timeline.slice(0, 60).map((e: any, idx: number) => {
+                  const at = (e.at || "").slice(0, 16).replace("T", " ");
+                  const kind = String(e.kind || "");
+                  const iconMap: Record<string, string> = {
+                    "onboarding.started": "person-add",
+                    "assessment.completed": "checkmark-circle",
+                    "dna.version": "git-branch",
+                    "roster.uploaded": "cloud-upload",
+                    "roster.confirmed": "checkmark",
+                    "roster.deleted": "trash",
+                    "roster.deactivated": "close-circle",
+                    "programme.generated": "sparkles",
+                    "programme.validation_flag": "alert-circle",
+                    "workout.completed": "barbell",
+                    "checkin.completed": "chatbubbles",
+                    "workout.edit": "create",
+                    "programme.edit": "settings",
+                  };
+                  const icon = iconMap[kind] || "ellipse-outline";
+                  const tone = kind.includes("deleted") || kind.includes("validation_flag") ? "#f59e0b"
+                    : kind.includes("completed") ? "#22c55e" : theme.color.text;
+                  return (
+                    <View key={idx} style={styles.tlRow}>
+                      <View style={styles.tlIconWrap}>
+                        <Ionicons name={icon as any} size={14} color={tone} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.tlTitle}>{e.title}</Text>
+                        {e.detail ? <Text style={styles.tlDetail}>{e.detail}</Text> : null}
+                        <Text style={styles.tlMeta}>{at} · {e.actor || "system"} · {kind}</Text>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
           </View>
         )}
 
@@ -1518,4 +1632,15 @@ const styles = StyleSheet.create({
   dEditBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 12, paddingHorizontal: 14, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2 },
   dEditBtnT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
   hText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "600", marginTop: 2 },
+  // Plan C3 — Programme Overview enrichment + Timeline styles
+  ovLbl: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.0, fontWeight: "800" },
+  ovVal: { color: theme.color.text, fontSize: 18, fontWeight: "900", marginTop: 3 },
+  ovSub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  sourcePill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.line, backgroundColor: theme.color.surface },
+  sourcePillT: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1, fontWeight: "800" },
+  tlRow: { flexDirection: "row", gap: 10, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.color.line },
+  tlIconWrap: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.line, marginTop: 1 },
+  tlTitle: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
+  tlDetail: { color: theme.color.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
+  tlMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 3, letterSpacing: 0.6 },
 });

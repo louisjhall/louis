@@ -1,0 +1,47 @@
+{
+  "summary": "Plan C partial (C1 client PENDING badge split + C2 client Programme Overview card + C3 coach Programme Overview + Timeline) validated end-to-end. Created /app/backend/tests/test_iter78_plan_c_programme_overview.py with 13 pytest cases — ALL 13 pass. Full regression against Plan A (21) + Plan B (26) + Plan D (16) + Plan C (13) = 76/76 pytest green. Frontend smoke F1/F2/F3 confirmed via Playwright screenshots. One backend infra fix applied: shared test-client (client@crewfit.com) had status='deletion_pending' left over from a previous iter77 delete-and-restart run — flipped back to 'active' so downstream regression tests can log in. This is TEST DATA, not production data.\n\nT1 programme-overview: response shape + all counters verified (week_counts.completed/planned/target/missed, upcoming.total_14d/template_count/needs_coach_review/coach_locked/incomplete_content), next_key_session correctly picks the LONG RUN (key_session=true, focus=long_run) and IGNORES the recovery workout even though it had key_session=true. Source label matrix verified in isolation: (a) no programme → 'awaiting_generation'; (b) coach_edited=true → 'coach_edited' (wins over template ratio); (c) >50% templates → 'template_fallback'; (d) low template % + programme + validation_status=ok → 'full_planning'. needs_coach_review is True when validation_status != 'ok' OR upcoming has needs_coach_review/incomplete_content. Coach role guard verified (403 for client role, 404 for unknown client_id).\n\nT2 programme-timeline: response shape { timeline:[…], count } + DESC sort by 'at' verified. All 10 expected event kinds present after seeding across all sources: onboarding.started, assessment.completed, dna.version, roster.uploaded, roster.confirmed, roster.deleted (from roster_audit_log), programme.generated, programme.validation_flag, workout.completed, checkin.completed. Limit param respected (?limit=3 → count<=3). 404 for unknown client; 403 for client role.\n\nT3 Regression: 21 (Plan A) + 26 (Plan B) + 16 (Plan D) + 13 (Plan C) = 76/76 pass in one pytest run.\n\nFRONTEND F1 (client@crewfit.com /home post-migration marathon profile): 'YOUR CURRENT FOCUS' card renders TRUE — spec allowed hidden state, but card actually rendered with content, so both branches OK. 'NEXT 7 DAYS' section renders (single occurrence, correct). Legacy 'PENDING' pill NOT present (0 occurrences) — badge split working. At least one workout showed 'AWAITING COACH REVIEW' pill (needs_coach_review path exercised). PLANNED/OPTIONAL/LOCKED BY COACH/READY did not appear in visible viewport for this specific client but code path exists in home.tsx L575-583. F2 (coach → Test Client → TIMELINE tab): 'PROGRAMME TIMELINE' section rendered with chronological events — Programme generated v3 → Programme validation flag → Roster confirmed → Roster uploaded (v1) → older Programme v2 → Programme validation flag → Programme v1 → Programme validation flag. Each row shows title / detail / date · actor · kind (e.g. '2026-07-21 15:42 · system · programme.generated'). Icons render per kind. F3 (Test Client → Overview tab): 'PROGRAMME OVERVIEW' card renders with border-amber NEEDS REVIEW pill (validation_status != ok), metrics grid { THIS WEEK 0/4 completed/target · MISSED 1 this week · REVIEW 9 next 14d · LOCKED 0 upcoming · TEMPLATE 9 of 14 }, NEXT KEY SESSION 'Home Push + Core Strength · 2026-07-30 · push', SOURCE pill 'SOURCE: TEMPLATE FALLBACK'. Screenshots at /tmp/iter78/f1_home_top.png, /tmp/iter78/f3_client_detail.png, /tmp/iter78/f2_timeline_top.png.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter78_plan_c_programme_overview.py",
+    "/app/test_reports/pytest/iter78_plan_c.xml",
+    "/app/test_reports/pytest/iter78_full_regression.xml"
+  ],
+  "action_items": [
+    "No functional action items — Plan C1/C2/C3 shipped correctly. Backend endpoints match the spec exactly.",
+    "(Housekeeping, pre-existing) Consider migrating server.py on_event('startup')/('shutdown') to FastAPI lifespan events to silence DeprecationWarnings during pytest runs.",
+    "(Housekeeping, pre-existing) The shared test client client@crewfit.com had status='deletion_pending' left behind by iter77 delete-and-restart tests; I reset it to 'active' so this iteration's regression could run. Recommend the iter77 delete tests either use a truly isolated user OR the shared account should be re-seeded to active in a pytest fixture teardown so regression runs stay green in CI."
+  ],
+  "critical_code_review_comments": [
+    "feature_coach_programme_overview.coach_programme_overview correctly filters recovery/mobility/rest out of BOTH real_this (week_counts) AND next_key_session — verified via seed where a key_session=True recovery workout was ignored in favour of the long_run.",
+    "Source label precedence is correct: coach_edited > template_fallback (>50%) > full_planning > awaiting_generation. Verified all 4 branches with isolated seeds.",
+    "coach_programme_overview.needs_coach_review is a compound OR (review_count OR incomplete_count OR programme.validation_status != 'ok') — correctly flips True even when only the programme row itself has a validation flag with zero upcoming issues.",
+    "coach_programme_timeline correctly merges 10 event sources into one sorted list, filters out events missing 'at' timestamps, sorts DESC, and honours the limit param. change_log iteration uses category IN ('workout','programme','roster','coach_note') which cleanly wires C4-C7 coach edits into the timeline in the next slice.",
+    "MongoDB _id is excluded in all find/find_one projections in feature_coach_programme_overview — JSON-serialisable payloads confirmed by the test HTTP round-trip.",
+    "Role guard via require_role('coach') is applied to BOTH endpoints; the (auth)/login route seeds an httpauth token that carries role — client role gets 403 not 404, so unknown-client 404 remains distinguishable.",
+    "app/(client)/home.tsx L562-585: the 4 badge states are mutually exclusive via cascading !w.coach_locked / !w.needs_coach_review / !w.approved guards, matching the spec exactly.",
+    "app/coach/client/[id].tsx correctly guards both cards with `overview` truthiness and renders on both 'overview' and 'programme' tabs (spec compliance).",
+    "programme-overview.programme returns the FULL programme document — this is intentional per the spec (frontend uses phase, target, goal_label, progression, focus_copy etc). No PII beyond what the client would see for themselves."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter78_plan_c_programme_overview.py (new — 13 pytest cases across TestT1ProgrammeOverview, TestT2ProgrammeTimeline, TestT3RegressionSmoke)",
+    "db.users → reset client@crewfit.com status from 'deletion_pending' to 'active' so regression suites can log in (TEST DATA ONLY — not part of Plan C shipping code)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 iter78 + 63/63 regression = 76/76)",
+    "frontend": "F1 PASS · F2 PASS · F3 PASS"
+  },
+  "seed_data_creation": "TestT1/T2 seed a self-contained TEST_iter78_<uuid> client with roster, coaching_dna, programmes (with validation_errors), roster_audit_log (deleted event), workouts (completed + missed + needs_coach_review + coach_locked + incomplete_content + plain template + recovery), change_log, and checkins — then delete every row across users/coaching_dna/rosters/roster_audit_log/programmes/workouts/change_log/checkins/coach_tasks in the teardown. Extra ephemeral users created for source_label matrix tests are also cleaned up.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "iter78 uses the same single-loop motor pattern as iter77 but auto-reuses any pre-existing event loop from prior test modules (see try/except around asyncio.get_event_loop). This is required so both files can coexist in a single pytest session — otherwise the second module's `_LOOP = asyncio.new_event_loop()` bumps the shared motor client off the first loop and every prior test errors on the next DB call. Apply the same pattern to any future iter79+ direct-DB test module. Reminder: MongoDB has a unique index `uniq_user_date` on (user_id, date) in db.workouts — every seeded workout for a single user MUST have a distinct date string; iter78 handles this by conditionally skipping the 'missed' seed when today == Monday (missed_date would collide with the Monday completed workout). The shared test client (client@crewfit.com) may again drift into status='paused'/'deletion_pending' after iter77 delete-and-restart tests run; if so, reset it in Mongo before running regression.",
+  "rca_of_issue": ""
+}

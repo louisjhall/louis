@@ -1,23 +1,30 @@
-import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
+import { confirm as uxConfirm } from "@/src/lib/ux";
 
 export default function CoachProfile() {
   const { user, logout } = useAuth();
   const router = useRouter();
-  const doLogout = async () => { await logout(); router.replace("/(auth)/login"); };
-  const confirmLogout = () => {
-    Alert.alert(
-      "Log out?",
-      "Are you sure you want to log out?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Log Out", style: "destructive", onPress: doLogout },
-      ],
-    );
+  const confirmLogout = async () => {
+    // Cross-platform confirm — React Native Web's Alert.alert with buttons
+    // silently no-ops, which is why the "LOG OUT" button appeared broken in
+    // the browser/coach preview.
+    const ok = await uxConfirm({
+      title: "Log out?",
+      message: "Are you sure you want to log out?",
+      confirmLabel: "Log Out",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await logout();
+    } catch {}
+    router.replace("/(auth)/login" as any);
   };
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>

@@ -614,14 +614,19 @@ async def coach_programme_regenerate_apply(
         "created_at": now_iso(),
     }
     await db.gen_jobs.insert_one(job)
-    await _log_change(
-        coach_id=coach.get("id"), client_id=client_id,
-        category="programme", kind="regenerate",
-        title="Coach queued programme regeneration",
-        description=body.reason or "",
-        actor="coach",
-        meta={"job_id": job["id"], "roster_id": roster["id"]},
-    )
+    # Best-effort logging — a log failure MUST NOT cause the caller to think
+    # the enqueue failed (that would trigger a retry → duplicate job).
+    try:
+        await _log_change(
+            coach_id=coach.get("id"), client_id=client_id,
+            category="programme", kind="regenerate",
+            title="Coach queued programme regeneration",
+            description=body.reason or "",
+            actor="coach",
+            meta={"job_id": job["id"], "roster_id": roster["id"]},
+        )
+    except Exception:
+        logger.exception("regen apply: change log insert failed (non-fatal)")
     return {
         "ok": True,
         "job_id": job["id"],

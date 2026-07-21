@@ -8144,22 +8144,40 @@ def _task_category_for(task_type: str) -> str:
 # --- Shared change-log helper (used by multiple feature modules) -----------
 async def _log_change(coach_id: Optional[str], client_id: Optional[str], category: str,
                       title: str, description: str = "", actor: str = "coach",
-                      meta: Optional[dict] = None) -> None:
+                      meta: Optional[dict] = None,
+                      kind: Optional[str] = None,
+                      at: Optional[str] = None) -> None:
+    """Append a change-log entry.
+
+    Writes to BOTH `db.coach_change_log` (legacy coach-only view) and
+    `db.change_log` (unified stream read by the programme timeline in
+    feature_coach_programme_overview). Idempotent under retries via random id.
+    """
+    ts = at or now_iso()
     doc = {
         "id": new_id(),
         "coach_id": coach_id,
         "client_id": client_id,
-        "category": category,          # message / programme / controls / script / workout / other
+        "category": category,          # message / programme / controls / script / workout / roster / coach_note / other
+        "kind": kind,                  # optional finer-grained event type (edit / swap / regenerate / etc.)
         "title": title,
         "description": description,
         "actor": actor,                # coach / atlas / client / system
         "meta": meta or {},
-        "created_at": now_iso(),
+        "created_at": ts,
+        "at": ts,
     }
+    # Best-effort dual write — either failure is non-fatal.
     try:
-        await db.coach_change_log.insert_one(doc)
+        await db.coach_change_log.insert_one({**doc})
     except Exception:
-        logger.exception("change log insert failed")
+        logger.exception("coach_change_log insert failed")
+    try:
+        # Same doc but with a fresh _id to satisfy Mongo's unique constraint
+        # since Motor assigns _id to the dict passed to insert_one.
+        await db.change_log.insert_one({**doc, "id": new_id()})
+    except Exception:
+        logger.exception("change_log insert failed")
 
 
 @api.post("/checkins/submit")

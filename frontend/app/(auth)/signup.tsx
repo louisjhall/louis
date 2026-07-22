@@ -145,7 +145,7 @@ export default function Signup() {
       });
       // All new signups are clients — head straight to the DNA assessment.
       if (u.role === "coach") router.replace("/(coach)/clients" as any);
-      else router.replace("/assessment" as any);
+      else router.replace("/training-setup" as any);   // Iter 84 (Task 1.3): setup first, then assessment
     } catch (e: any) {
       setErr(e.message);
     } finally {

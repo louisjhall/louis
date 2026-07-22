@@ -2323,6 +2323,138 @@ class CoachingDNAPatchBody(BaseModel):
     reason: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Iter 84 (Task 1.3) — Profile setup-status + training-setup endpoints.
+#
+# `GET  /api/profile/setup-status` — tells the frontend whether the user still
+#   needs to fill in essential fields. Frontend uses this on app boot to
+#   decide whether to redirect to the /training-setup screen.
+#
+# `POST /api/profile/training-setup` — persists any subset of the essential
+#   fields directly onto users.profile with the correct normalized keys the
+#   plan builder actually reads. Idempotent, partial payloads OK.
+# ---------------------------------------------------------------------------
+
+_PROFILE_KEY_MAP = {
+    # incoming setup field → users.profile.* key(s) to write
+    "primary_goal":         ["primary_goal_id", "main_goal_key", "main_goal"],
+    "secondary_goals":      ["secondary_goal_ids"],
+    "training_days":        ["training_days_per_week", "training_days"],
+    "time_home":            ["time_home_min"],
+    "time_layover":         ["time_layover_min"],
+    "equipment_home":       ["equipment"],
+    "hotel_gym_reliability": ["hotel_gym_reliability", "hotel_gyms"],
+    "injuries":             ["injuries"],
+    "no_go_movements":      ["no_go_movements"],
+}
+
+
+async def _user_essentials_present(user_id: str) -> tuple[bool, list[str]]:
+    """
+    Compute setup-completeness for a given user by looking at BOTH:
+      1. Any latest assessment (so answered-in-DNA fields count)
+      2. Their profile fields (in case they went through /training-setup)
+    Returns (complete, missing_field_ids).
+    """
+    u = await db.users.find_one({"id": user_id}, {"_id": 0}) or {}
+    profile = u.get("profile") or {}
+    # Grab the latest assessment even if it's in_progress (some fields may be
+    # answered already even before the finalize step).
+    a = await db.assessments.find_one(
+        {"user_id": user_id}, {"_id": 0}, sort=[("updated_at", -1), ("created_at", -1)],
+    ) or {"answers": []}
+    missing_from_asmnt = set(_missing_essential_fields(a, u))
+    # For each field, if the profile already has the corresponding value, drop
+    # it from the missing set. This is what makes the top-up flow work.
+    def _prof_has(fid: str) -> bool:
+        if fid == "biological_sex":
+            return bool(profile.get("biological_sex") or profile.get("sex"))
+        if fid == "crew_role":
+            return bool(profile.get("crew_role") or profile.get("role") or profile.get("job_title"))
+        if fid == "primary_goal":
+            return bool(profile.get("primary_goal_id") or profile.get("main_goal_key") or profile.get("main_goal"))
+        if fid == "training_days":
+            v = profile.get("training_days_per_week")
+            return isinstance(v, (int, float)) and 1 <= int(v) <= 7
+        if fid == "time_home":
+            return profile.get("time_home_min") is not None
+        if fid == "time_layover":
+            return profile.get("time_layover_min") is not None
+        if fid == "equipment_home":
+            eq = profile.get("equipment")
+            return isinstance(eq, list) and len(eq) > 0
+        if fid == "hotel_gyms":
+            return bool(profile.get("hotel_gym_reliability") or profile.get("hotel_gyms"))
+        if fid == "injuries":
+            return profile.get("injuries") not in (None, "")
+        if fid == "no_go_movements":
+            v = profile.get("no_go_movements")
+            return isinstance(v, list) and len(v) > 0
+        return False
+    still_missing = sorted(fid for fid in missing_from_asmnt if not _prof_has(fid))
+    return (len(still_missing) == 0, still_missing)
+
+
+@api.get("/profile/setup-status")
+async def profile_setup_status(user: dict = Depends(current_user)):
+    """Return whether the user still needs to fill in essential setup fields."""
+    complete, missing = await _user_essentials_present(user["id"])
+    return {
+        "complete": complete,
+        "missing_fields": missing,
+        "friendly_labels": [_FRIENDLY_ESSENTIAL_LABELS.get(f, f) for f in missing],
+        "setup_completed_at": (user.get("profile") or {}).get("setup_completed_at"),
+    }
+
+
+class TrainingSetupBody(BaseModel):
+    primary_goal:         Optional[str] = None
+    secondary_goals:      Optional[list[str]] = None
+    training_days:        Optional[int] = None
+    time_home:            Optional[int] = None          # minutes
+    time_layover:         Optional[int] = None          # minutes
+    equipment_home:       Optional[list[str]] = None
+    hotel_gym_reliability: Optional[str] = None         # always/often/sometimes/rare/never
+    injuries:             Optional[str] = None
+    no_go_movements:      Optional[list[str]] = None
+    biological_sex:       Optional[str] = None
+    crew_role:            Optional[str] = None
+
+
+@api.post("/profile/training-setup")
+async def profile_training_setup(body: TrainingSetupBody, user: dict = Depends(current_user)):
+    """
+    Persist any subset of essential fields onto users.profile. Idempotent —
+    call once with everything, or repeatedly with individual fields. Only
+    non-None fields are written; existing values are preserved otherwise.
+    """
+    payload = body.model_dump(exclude_none=True)
+    profile_updates: dict[str, Any] = {}
+    for setup_key, val in payload.items():
+        prof_keys = _PROFILE_KEY_MAP.get(setup_key)
+        # Fields not in the map (biological_sex, crew_role) are written directly.
+        if not prof_keys:
+            profile_updates[f"profile.{setup_key}"] = val
+            continue
+        for pk in prof_keys:
+            profile_updates[f"profile.{pk}"] = val
+    profile_updates["profile.updated_at"] = now_iso()
+    # Stamp setup_completed_at if the resulting state is complete.
+    if profile_updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": profile_updates})
+    complete, missing = await _user_essentials_present(user["id"])
+    if complete:
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"profile.setup_completed_at": now_iso()}},
+        )
+    return {
+        "complete": complete,
+        "missing_fields": missing,
+        "friendly_labels": [_FRIENDLY_ESSENTIAL_LABELS.get(f, f) for f in missing],
+    }
+
+
 @api.patch("/coaching-dna")
 async def coaching_dna_patch(body: CoachingDNAPatchBody, user: dict = Depends(current_user)):
     dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("version", -1)])

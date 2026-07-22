@@ -14,6 +14,7 @@ import { ToastHost } from "@/src/lib/ux";
 import { PreviewProvider } from "@/src/lib/preview";
 import { PreviewBanner } from "@/src/components/PreviewBanner";
 import { BetaDisclaimerGate } from "@/src/components/BetaDisclaimerGate";
+import { TrainingSetupGate } from "@/src/components/TrainingSetupGate";
 import { initSentry } from "@/src/lib/sentry";
 
 // One-shot at module load; safe no-op when EXPO_PUBLIC_SENTRY_DSN is unset.
@@ -82,6 +83,7 @@ export default function RootLayout() {
             <PreviewBanner />
             <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
             <BetaDisclaimerGate />
+            <TrainingSetupGate />
             <ToastHost />
           </PreviewWiring>
         </AuthProvider>

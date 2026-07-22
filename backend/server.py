@@ -2906,7 +2906,24 @@ def _ensure_workout_content(doc: dict, user: dict) -> dict:
          or "optional recovery" in title or title.startswith("standby activation"))
         and bool(warm)
     )
-    if exs or is_rest or is_mobility_only:
+    # Iter 83.1 — thin-plan detection: a strength/conditioning workout with 1-2
+    # exercises is broken (equipment resolver dropped most items). Treat as
+    # empty and rebuild with the bodyweight fallback so the client sees a
+    # proper session, not a single Goblet Squat pretending to be Upper Body.
+    is_endurance = ("run" in (doc.get("session_type") or "").lower()
+                    or "run" in title or (doc.get("focus") or "").lower() in {"long_run","easy_run","tempo","intervals"})
+    is_strength_or_cond = (
+        (doc.get("focus") or "").lower() in {"push", "pull", "legs", "full", "conditioning"}
+        or ("strength" in title) or ("conditioning" in title)
+    )
+    thin_plan = (
+        len(exs) < 3
+        and is_strength_or_cond
+        and not is_endurance
+        and not is_rest
+        and not is_mobility_only
+    )
+    if (exs and not thin_plan) or is_rest or is_mobility_only:
         return doc
     # Empty MAIN exercises on a training day — inject a session-type-matched fallback
     # so a "Long Run" day fills with a long run, not a strength block.
@@ -2927,6 +2944,13 @@ def _ensure_workout_content(doc: dict, user: dict) -> dict:
             session_type = "intervals"
         elif "long run" in title_norm and session_type != "long_run":
             session_type = "long_run"
+        # Iter 83.1 — strength/conditioning title routing → all map to
+        # strength_support (bodyweight-safe) which gives a full 6-exercise plan.
+        elif ("upper body" in title_norm or "lower body" in title_norm
+              or "full body" in title_norm or "strength" in title_norm
+              or "conditioning circuit" in title_norm) and session_type not in (
+              "strength_support", "conditioning"):
+            session_type = "strength_support"
         if not session_type:
             # Title first (more specific), then focus (broad bucket).
             if "long run" in title_norm:

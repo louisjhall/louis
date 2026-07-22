@@ -479,6 +479,7 @@ def _roster_summary(roster: dict) -> dict[str, Any]:
     except Exception:
         classify_stay = None  # type: ignore
     recovery_first_days: list[str] = []
+    recovery_tiered_days: list[dict[str, Any]] = []
     for i, d in enumerate(days):
         dtype = str(d.get("day_type") or "").lower()
         is_long = any(k in dtype for k in
@@ -486,6 +487,17 @@ def _roster_summary(roster: dict) -> dict[str, Any]:
                        "overnight", "red_eye", "red-eye"))
         if not is_long:
             continue
+        # Iter 94d (Gap 3) — annotate the tier so the LLM picks the right length.
+        try:
+            dh = float(d.get("duty_hours") or 0)
+        except Exception:
+            dh = 0.0
+        tier = "medium"
+        if 0 < dh < 6:
+            tier = "short"
+        elif dh >= 12:
+            tier = "ulr"
+        recovery_tiered_days.append({"date": d.get("date"), "tier": tier, "duty_hours": dh})
         if not d.get("hotel_id"):
             continue
         nxt = days[i + 1] if (i + 1) < len(days) else None
@@ -508,6 +520,7 @@ def _roster_summary(roster: dict) -> dict[str, Any]:
         "long_haul_days": long_haul,
         "night_or_overnight_days": night_or_overnight,
         "recovery_first_days": recovery_first_days,
+        "recovery_tiered_days": recovery_tiered_days,
     }
 
 

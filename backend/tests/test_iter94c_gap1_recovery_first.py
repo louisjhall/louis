@@ -97,7 +97,10 @@ class TestGap1RecoveryFirstLayover:
         assert any("diaphragmatic" in (n or "").lower() for n in warmup_names)
 
     def test_no_hotel_still_forces_safety_override(self):
-        """If we don't know the hotel, we must NOT try to run a full session."""
+        """If we don't know the hotel, we must NOT try to run a full training
+        session. We still emit ONLY a recovery override (any tier: short 8,
+        medium 15, or ULR 25 min) — never a strength/run session — and never
+        set recovery_first."""
         u = _make_user("build_muscle")
         r = _make_roster_long_haul_into_layover(hotel_id=None)
         # Remove hotel_id so lookup misses.
@@ -105,11 +108,13 @@ class TestGap1RecoveryFirstLayover:
         plan = build_template_plan(u, r, hotel_lookup=HOTEL_LOOKUP)
         day0 = r["days"][0]["date"]
         session = next((w for w in plan if w["date"] == day0), None)
-        # Safety override kicks in — 15-min mobility with RED load.
+        # Safety override kicks in — recovery focus, RED load, no recovery_first.
         assert session is not None
         assert session.get("day_load") == "red"
-        assert (session.get("duration_min") or 0) <= 20
+        assert session.get("focus") == "recovery"
         assert not session.get("recovery_first")
+        # Any of the 3 recovery tiers is fine.
+        assert (session.get("duration_min") or 0) in (8, 15, 25)
 
     def test_endurance_slot_downshifted(self):
         """A marathon client whose weekly-shape wanted a long_run on the long-haul day

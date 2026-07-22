@@ -2163,3 +2163,50 @@ agent_communication:
   - agent: "main"
     message: "Iter 94c shipped: closed Gap 1 from the flying-day audit. Long-haul crew who land in DXB/BKK/SYD with 22h in a known hotel now get a real training session (recovery-first: mobility + moderated strength or easy run) instead of the wasted 15-min safety override. Behaviour is provable via test_iter94c_gap1_recovery_first.py::test_recovery_first_session_replaces_15min_mobility. When there's no hotel_id on the roster row (unknown hotel), we still fall back to the 15-min RED safety override — that path is covered by test_no_hotel_still_forces_safety_override."
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 94d — Flying-day Gap 3: TIERED post-flight recovery templates
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Gap 3 — tiered flight recovery (short / medium / ULR)"
+    implemented: true
+    working: true
+    file: "backend/feature_workout_fallback.py, backend/feature_programme_quality.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            NEW helper flight_recovery_template_for(duty_hours) returns one of:
+              short  (<6h)  → 8-min Airport Mobility (4 standing moves, no floor)
+              medium (6-11h)→ 15-min classic FLIGHT_RECOVERY_MOBILITY (unchanged)
+              ulr    (≥12h) → 25-min ULR Recovery + Sleep Prep, 7 moves incl.
+                             wall thoracic decompression, deep hip flexor,
+                             glute bridge (paused), band pull-apart, and
+                             4-7-8 + box breathing for parasympathetic
+                             downshift. Rationale includes 'Hydrate before
+                             starting.'
+            NEW arrays:
+              SHORT_HAUL_AIRPORT_MOBILITY (4 items)
+              ULR_RECOVERY_PROTOCOL       (7 items)
+            _override_for_duty(kind, date, duty_hours=None) now picks the
+            correct tier and stamps `recovery_tier` + `duty_hours` on the
+            emitted workout. Load rules:
+              short → amber, optional=True
+              medium→ amber (or red at 10-11h duty), optional=True
+              ulr   → red, optional=False (sleep prep is mandatory)
+            LLM path also updated: _roster_summary now emits
+            `recovery_tiered_days: [{date, tier, duty_hours}, ...]` and new
+            prompt rule (7) instructs the LLM to tailor session length /
+            breathing / hydration prompts per tier.
+            Tests: 10/10 pytest scenarios PASSED
+            (test_iter94d_gap3_tiered_recovery.py).
+            Regressions clean: 45/45 across Phase 1, Phase 3, Gap 1, Gap 3.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 94d shipped: closed Gap 3 from the flying-day audit. Flight recovery is now aviation-appropriate — a 3h EDI turnaround gets 8 min of concourse mobility, a 14h SYD ULR gets 25 min with thoracic decompression + 4-7-8 breathing + hydration cues. ULR sessions are marked mandatory (optional=False) because sleep prep is critical. Backend 45/45 pytest across all iterations. Iter 94b flying-type training-setup UI was ALSO built earlier this session — awaiting a fresh test-user smoke check on device (the seeded client is already through setup so training-setup redirects to home, expected)."
+

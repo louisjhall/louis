@@ -23,7 +23,7 @@ Plan B2 additions:
 from __future__ import annotations
 
 import datetime as _dt
-from typing import Any
+from typing import Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +61,96 @@ FLIGHT_RECOVERY_MOBILITY = [
     {"name": "90/90 hip rotations",       "sets": 2, "reps": "8 each side", "rest_sec": 20, "rpe": 3, "notes": "Move slowly, no pain."},
     {"name": "Diaphragmatic breathing",   "sets": 1, "reps": "10 breaths", "rest_sec": 0, "rpe": 2, "notes": "Long exhale to help recovery."},
 ]
+
+# ---------------------------------------------------------------------------
+# Iter 94d (Gap 3) — Tiered post-flight recovery templates.
+# Same 5-move mobility isn't right for a 4h red-eye AND a 14h SYD ULR.
+# We now pick by duty_hours:
+#   SHORT   <  6h → 8-min airport mobility (concourse-friendly, no floor work)
+#   MEDIUM  6-11h → 15-min classic FLIGHT_RECOVERY_MOBILITY (unchanged)
+#   ULR    ≥12h → 25-min ultra-long-range protocol with hydration cues,
+#                 thoracic decompression, and sleep-prep breathing.
+# ---------------------------------------------------------------------------
+
+SHORT_HAUL_AIRPORT_MOBILITY = [
+    {"name": "Standing figure-4 hip open", "sets": 2, "reps": "30s each side", "rest_sec": 15, "rpe": 3,
+     "notes": "Standing — grip a wall / rail. Great for concourse or gate seating."},
+    {"name": "Doorway pec stretch",        "sets": 2, "reps": "30s each side", "rest_sec": 15, "rpe": 3,
+     "notes": "Use a doorway or vertical post — opens the chest after seated flight."},
+    {"name": "Standing thoracic rotation", "sets": 2, "reps": "8 each side",   "rest_sec": 15, "rpe": 3,
+     "notes": "Feet planted. Rotate through the mid-back only, not the low back."},
+    {"name": "Calf pump + ankle circles",  "sets": 2, "reps": "20 pumps + 10 circles each",
+     "rest_sec": 15, "rpe": 2, "notes": "Wakes circulation up after a seated leg."},
+]
+
+ULR_RECOVERY_PROTOCOL = [
+    # Phase A — decompression (thoracic + hips first)
+    {"name": "Wall thoracic decompression", "sets": 2, "reps": "45s hang", "rest_sec": 30, "rpe": 3,
+     "notes": "Arms on wall or door frame, hips back — decompresses the spine after 12+ hours seated."},
+    {"name": "Deep hip flexor stretch (kneeling)", "sets": 2, "reps": "60s each side",
+     "rest_sec": 30, "rpe": 3, "notes": "Extra hold today — hips take the brunt of ULR seat time."},
+    {"name": "World's greatest stretch (slow)", "sets": 3, "reps": "5 each side",
+     "rest_sec": 30, "rpe": 3, "notes": "Very slow — thoracic rotation is the priority."},
+
+    # Phase B — activation (gentle gluteal + shoulder wake-up)
+    {"name": "Glute bridge (paused)", "sets": 3, "reps": "10 slow, 2s pause at top",
+     "rest_sec": 30, "rpe": 4, "notes": "Wake the glutes — they've been switched off for 14 hours."},
+    {"name": "Band pull-apart",       "sets": 3, "reps": "12 slow",
+     "rest_sec": 30, "rpe": 4, "notes": "If no band, use a shirt for tension. Opens the upper back."},
+
+    # Phase C — sleep-prep breathing (parasympathetic downshift)
+    {"name": "4-7-8 breathing",       "sets": 1, "reps": "4 cycles",
+     "rest_sec": 0, "rpe": 1,
+     "notes": "Inhale 4s • hold 7s • exhale 8s. Drops heart rate, signals sleep."},
+    {"name": "Box breathing (parasympathetic)", "sets": 1, "reps": "5 min",
+     "rest_sec": 0, "rpe": 1,
+     "notes": "4s in, 4s hold, 4s out, 4s hold. Repeat for 5 min in bed if landing at night."},
+]
+
+
+def flight_recovery_template_for(duty_hours: Optional[float]) -> dict[str, Any]:
+    """Iter 94d (Gap 3) — pick the right recovery template + metadata for the
+    given flight length. Returns dict with keys: title, duration_min,
+    exercises, rationale, tier ("short"|"medium"|"ulr"). Never raises."""
+    dh: float = 0.0
+    try:
+        dh = float(duty_hours) if duty_hours is not None else 0.0
+    except Exception:
+        dh = 0.0
+    if dh > 0 and dh < 6:
+        return {
+            "tier": "short",
+            "title": "Airport Mobility",
+            "duration_min": 8,
+            "exercises": list(SHORT_HAUL_AIRPORT_MOBILITY),
+            "rationale": (
+                "Short-haul (~"
+                f"{int(dh)}h) — quick concourse-friendly mobility to undo the "
+                "seated posture without adding fatigue."
+            ),
+        }
+    if dh >= 12:
+        return {
+            "tier": "ulr",
+            "title": "ULR Recovery + Sleep Prep",
+            "duration_min": 25,
+            "exercises": list(ULR_RECOVERY_PROTOCOL),
+            "rationale": (
+                f"Ultra-long-range ({int(dh)}h) — decompress the thoracic spine, "
+                "wake the glutes, then drop into 4-7-8 / box breathing to help "
+                "you sleep. Hydrate before starting."
+            ),
+        }
+    # Default: 6-11h (medium-haul) — the classic mobility block
+    return {
+        "tier": "medium",
+        "title": "Flight Recovery Mobility",
+        "duration_min": 15,
+        "exercises": list(FLIGHT_RECOVERY_MOBILITY),
+        "rationale": (
+            "Post-duty mobility + breathing to downregulate and support sleep."
+        ),
+    }
 
 STANDBY_ACTIVATION = [
     {"name": "Bodyweight squat + calf raise", "sets": 2, "reps": "12", "rest_sec": 30, "rpe": 5, "notes": "Wake the legs up."},
@@ -407,18 +497,32 @@ def _classify_day(day: dict[str, Any]) -> str:
     return "home"
 
 
-def _override_for_duty(kind: str, date: str) -> Any:
-    """If the roster day forces a specific stub (safety), return it. Else None."""
+def _override_for_duty(kind: str, date: str, duty_hours: Optional[float] = None) -> Any:
+    """If the roster day forces a specific stub (safety), return it. Else None.
+
+    Iter 94d (Gap 3) — flight_heavy override is now tiered by duty_hours:
+      * <6h duty → 8-min airport mobility (short-haul)
+      * 6-11h  → 15-min classic recovery mobility (medium-haul)
+      * ≥12h   → 25-min ULR recovery + sleep prep protocol
+    """
     if kind == "off":
         return None  # explicit rest — no card
     if kind == "flight_heavy":
+        tpl = flight_recovery_template_for(duty_hours)
+        # ULR is red load (sleep is the priority); shorter durations sit amber.
+        load = "red" if tpl["tier"] == "ulr" or (duty_hours or 0) >= 10 else "amber"
         return {
-            "date": date, "day_load": "red", "title": "Flight Recovery Mobility",
-            "location": "Post-Flight Mobility", "duration_min": 15, "focus": "recovery",
-            "warmup": WARMUP_MOBILITY, "exercises": FLIGHT_RECOVERY_MOBILITY,
-            "alternatives": {"home": "Same flow.", "hotel": "Same flow.", "no_equipment": "Bodyweight only.", "easier": "10 min version.", "harder": "Add 10 min walk."},
-            "rationale": "Placed after heavy duty — short mobility + breathing to downregulate and support sleep.",
-            "key_session": False, "event_phase": None, "optional": True,
+            "date": date, "day_load": load, "title": tpl["title"],
+            "location": "Post-Flight Mobility", "duration_min": tpl["duration_min"],
+            "focus": "recovery",
+            "warmup": WARMUP_MOBILITY, "exercises": tpl["exercises"],
+            "alternatives": {"home": "Same flow.", "hotel": "Same flow.",
+                             "no_equipment": "Bodyweight only.",
+                             "easier": "Halve the reps.", "harder": "Add 10 min easy walk."},
+            "rationale": tpl["rationale"],
+            "recovery_tier": tpl["tier"],
+            "duty_hours": duty_hours,
+            "key_session": False, "event_phase": None, "optional": tpl["tier"] != "ulr",
         }
     if kind == "flight_light":
         return {
@@ -669,7 +773,7 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                     kind = "layover"   # downgrade so the override below is bypassed
                     recovery_first = True
                 # If no hotel doc, we keep flight_heavy — safer to force mobility.
-            override = _override_for_duty(kind, date)
+            override = _override_for_duty(kind, date, duty_hours=d.get("duty_hours"))
             if override is not None:
                 out.append(override)
                 for j in range(len(queue) - 1, -1, -1):

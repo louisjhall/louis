@@ -458,7 +458,8 @@ def _override_for_duty(kind: str, date: str) -> Any:
 def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                        hotel_lookup: dict[str, dict[str, Any]] | None = None,
                        progression_status: str | None = None,
-                       effective_goal: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+                       effective_goal: dict[str, Any] | None = None,
+                       live_state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Deterministic fallback plan for the whole roster window.
 
     NEW (Plan B2): goal-aware. Reads `profile.main_goal_key` and
@@ -478,6 +479,17 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
     long_run / tempo / intervals / easy_run sessions get their duration
     and reps scaled up or down accordingly, with a `change_reason` explaining
     the adjustment for the client "Why this changed" UI.
+
+    NEW (Iter 94 · Phase 3.5): live_state wire-back. If `live_state` is
+    provided, honour the same rules that gate the LLM path:
+      * `auto_deload_trigger=True` → override phase to deload BEFORE resolving
+        the weekly shape, cutting real strength/hard-run slots and adding
+        recovery/mobility to fill.
+      * `avoid_movement_patterns` → downstream guardrail pass will substitute,
+        BUT we also short-circuit here by demoting a strength_support slot to
+        recovery_walk when overhead_press / deep_squat is on the avoid list
+        AND the phase isn't already deload (so we skip landing the risky
+        template in the first place).
     """
     from feature_hotel_system import (
         classify_stay, is_bodyweight_only, reason_for,
@@ -530,6 +542,18 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
         phase = _phase_for_week(0)
         long_km = None
 
+    # Iter 94 (Phase 3.5) — Live-state wire-back for the deterministic fallback.
+    # If check-ins fired the auto-deload rule, we OVERRIDE the phase before
+    # picking the weekly shape so the whole week gets built as a deload.
+    ls = live_state or {}
+    live_avoid = list(ls.get("avoid_movement_patterns") or [])
+    if ls.get("auto_deload_trigger") and phase.get("key") != "deload":
+        phase = {"key": "deload", "label": "Deload (auto)",
+                 "note": f"Auto-deload triggered — {ls.get('auto_deload_reason') or 'adherence + RPE'}"}
+        # Also dial down long_km for endurance clients: use a cutback profile.
+        if long_km is not None:
+            long_km = round(long_km * 0.65, 1)
+
     if goal_key == "event" and ev_type:
         shape = event_weekly_shape(ev_type, phase["key"], target_sessions, weeks_to_race=weeks_to_race)
         # Iter 84 (Task 1.5) — volume_bias overlay: replace or drop sessions to
@@ -546,6 +570,48 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                     break
     else:
         shape = strength_weekly_shape(goal_key, target_sessions)
+
+    # Iter 94 (Phase 3.5) — Auto-deload: cut ~35% of hard slots to recovery.
+    if ls.get("auto_deload_trigger"):
+        hard_slot_names = {
+            "push_strength", "pull_strength", "upper_strength", "lower_strength",
+            "leg_strength", "full_body_strength", "tempo", "intervals", "hyrox_wod",
+            "long_run", "strength_support",
+        }
+        hard_indices = [i for i, s in enumerate(shape) if s in hard_slot_names]
+        cut_n = max(1, len(hard_indices) // 3)  # drop ~1/3 to recovery
+        # Prefer to demote the LAST hard slots (keep the first key session)
+        for idx in reversed(hard_indices[-cut_n:]):
+            shape[idx] = "recovery"
+
+    # Iter 94 (Phase 3.5) — Pain-avoid short-circuit: if any pattern on the
+    # avoid list matches upper-body pressing/pulling, demote a corresponding
+    # strength slot to mobility so we never serve a risky stub. The downstream
+    # guardrail will still catch anything that slips through at exercise level.
+    if live_avoid and phase.get("key") != "deload":
+        risky_upper = any(p in live_avoid for p in
+                          ("overhead_press", "military_press", "handstand",
+                           "close_grip_press", "chin_up", "heavy_pull"))
+        risky_lower = any(p in live_avoid for p in
+                          ("deep_squat", "pistol_squat", "box_jump",
+                           "heavy_squat", "long_lunges"))
+        risky_hinge = any(p in live_avoid for p in
+                          ("deadlift", "hinge", "loaded_carry"))
+        if risky_upper:
+            for i, s in enumerate(shape):
+                if s in ("push_strength", "upper_strength", "pull_strength"):
+                    shape[i] = "mobility"
+                    break
+        if risky_lower:
+            for i, s in enumerate(shape):
+                if s in ("leg_strength", "lower_strength"):
+                    shape[i] = "mobility"
+                    break
+        if risky_hinge:
+            for i, s in enumerate(shape):
+                if s in ("full_body_strength",):
+                    shape[i] = "mobility"
+                    break
 
     days = list(roster.get("days") or [])
     if not days:
@@ -637,6 +703,11 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                 # Phase 5 — scale endurance sessions by progression_status
                 if progression_status and slot in ("long_run", "tempo", "intervals", "easy_run"):
                     scale_endurance_session(w, progression_status, session_type=slot)
+                # Iter 94 (Phase 3.5) — stamp auto-deload provenance
+                if ls.get("auto_deload_trigger"):
+                    w["auto_deload"] = True
+                    w.setdefault("change_reason",
+                                 "Auto-deload week — reduced load in response to your check-ins.")
                 out.append(w)
 
     return out

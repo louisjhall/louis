@@ -83,15 +83,26 @@ const NO_GO_OPTIONS: { id: string; label: string; icon: keyof typeof Ionicons.gl
   { id: "heavy_lifting",     label: "Heavy lifting",                 icon: "barbell-outline" },
 ];
 
+// Iter 94b — flying pattern (drives whether layover-time is relevant)
+const FLYING_TYPE_OPTIONS: { id: string; label: string; sub: string; icon: keyof typeof Ionicons.glyphMap; hasLayovers: boolean }[] = [
+  { id: "short_haul",  label: "Short-haul / turnarounds only", sub: "Home every night. No layovers.",          icon: "return-up-back",         hasLayovers: false },
+  { id: "mixed",       label: "Mixed",                          sub: "Some turnarounds, some layovers.",       icon: "swap-horizontal",        hasLayovers: true  },
+  { id: "long_haul",   label: "Long-haul",                      sub: "Mostly overnight layovers away.",        icon: "airplane",               hasLayovers: true  },
+  { id: "charter",     label: "Charter / ad-hoc",               sub: "Irregular pattern — layovers possible.", icon: "shuffle",                hasLayovers: true  },
+  { id: "cargo",       label: "Cargo",                          sub: "Freight ops — mostly overnight.",        icon: "cube",                   hasLayovers: true  },
+  { id: "ground_only", label: "Ground / office based",          sub: "No flying. Fixed schedule.",             icon: "business",               hasLayovers: false },
+];
+
 // ---------------------------------------------------------------------------
 // Page config — each "page" collects a related group of fields
 // ---------------------------------------------------------------------------
 
-type PageId = "goals" | "time" | "environment";
+type PageId = "goals" | "flying" | "time" | "environment";
 type SetupStatus = { complete: boolean; missing_fields: string[] };
 
 const PAGE_FIELDS: Record<PageId, string[]> = {
   goals:       ["primary_goal"],                                    // secondary_goals is not required
+  flying:      ["flying_type"],                                     // Iter 94b — always ask
   time:        ["training_days", "time_home", "time_layover"],
   environment: ["equipment_home", "hotel_gyms", "injuries", "no_go_movements"],
 };
@@ -105,6 +116,7 @@ export default function TrainingSetupScreen() {
 
   // Local answer state
   const [primaryGoal, setPrimaryGoal] = useState<string>("");
+  const [flyingType, setFlyingType] = useState<string>("");
   const [trainingDays, setTrainingDays] = useState<number | null>(null);
   const [timeHome, setTimeHome] = useState<number | null>(null);
   const [timeLayover, setTimeLayover] = useState<number | null>(null);
@@ -113,6 +125,13 @@ export default function TrainingSetupScreen() {
   const [injuries, setInjuries] = useState<string>("");
   const [noneInjuries, setNoneInjuries] = useState(false);
   const [noGoMovements, setNoGoMovements] = useState<string[]>([]);
+
+  // Whether the picked flying type actually implies layovers.
+  const doesLayovers = useMemo(() => {
+    const opt = FLYING_TYPE_OPTIONS.find((f) => f.id === flyingType);
+    // Default to TRUE (safer) so we still ask if they haven't picked yet.
+    return opt ? opt.hasLayovers : true;
+  }, [flyingType]);
 
   // ── Load current setup status ─────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -159,21 +178,26 @@ export default function TrainingSetupScreen() {
     if (currentPage === "goals") {
       return !requiredOnPage.includes("primary_goal") || !!primaryGoal;
     }
+    if (currentPage === "flying") {
+      return !requiredOnPage.includes("flying_type") || !!flyingType;
+    }
     if (currentPage === "time") {
       const daysOk = !requiredOnPage.includes("training_days") || trainingDays !== null;
       const homeOk = !requiredOnPage.includes("time_home") || timeHome !== null;
-      const lyOk   = !requiredOnPage.includes("time_layover") || timeLayover !== null;
+      // Iter 94b — only require layover time when the client actually does layovers.
+      const lyOk   = !doesLayovers || !requiredOnPage.includes("time_layover") || timeLayover !== null;
       return daysOk && homeOk && lyOk;
     }
     if (currentPage === "environment") {
       const eqOk = !requiredOnPage.includes("equipment_home") || equipment.length > 0;
-      const hgOk = !requiredOnPage.includes("hotel_gyms") || !!hotelGym;
+      // Iter 94b — hotel_gyms is only relevant if the client does layovers.
+      const hgOk = !doesLayovers || !requiredOnPage.includes("hotel_gyms") || !!hotelGym;
       const injOk = !requiredOnPage.includes("injuries") || noneInjuries || injuries.trim().length > 0;
       const ngOk = !requiredOnPage.includes("no_go_movements") || noGoMovements.length > 0;
       return eqOk && hgOk && injOk && ngOk;
     }
     return false;
-  }, [currentPage, requiredOnPage, primaryGoal, trainingDays, timeHome, timeLayover, equipment, hotelGym, injuries, noneInjuries, noGoMovements]);
+  }, [currentPage, requiredOnPage, primaryGoal, flyingType, trainingDays, timeHome, timeLayover, equipment, hotelGym, injuries, noneInjuries, noGoMovements, doesLayovers]);
 
   // ── Advance / submit ──────────────────────────────────────────────────────
   const submitCurrentPage = useCallback(async () => {
@@ -184,14 +208,33 @@ export default function TrainingSetupScreen() {
       if (currentPage === "goals") {
         if (requiredOnPage.includes("primary_goal")) body.primary_goal = primaryGoal;
       }
+      if (currentPage === "flying") {
+        // Map friendly id → route_focus enum on the backend.
+        // short_haul & ground_only → no layovers.
+        body.flying_type = flyingType;
+        const opt = FLYING_TYPE_OPTIONS.find((f) => f.id === flyingType);
+        body.route_focus = flyingType === "ground_only" ? "ground" : flyingType;
+        body.does_layovers = !!opt?.hasLayovers;
+        // Also auto-set the layover-dependent fields for non-layover clients
+        // so we don't force them onto irrelevant screens.
+        if (opt && !opt.hasLayovers) {
+          body.time_layover = 0;
+          body.hotel_gym_reliability = "never";
+        }
+      }
       if (currentPage === "time") {
         if (requiredOnPage.includes("training_days")) body.training_days = trainingDays;
         if (requiredOnPage.includes("time_home"))     body.time_home = timeHome;
-        if (requiredOnPage.includes("time_layover"))  body.time_layover = timeLayover;
+        // Iter 94b — layover time only if they actually do layovers.
+        if (requiredOnPage.includes("time_layover")) {
+          body.time_layover = doesLayovers ? timeLayover : 0;
+        }
       }
       if (currentPage === "environment") {
         if (requiredOnPage.includes("equipment_home"))    body.equipment_home = equipment;
-        if (requiredOnPage.includes("hotel_gyms"))        body.hotel_gym_reliability = hotelGym;
+        if (requiredOnPage.includes("hotel_gyms")) {
+          body.hotel_gym_reliability = doesLayovers ? hotelGym : "never";
+        }
         if (requiredOnPage.includes("injuries"))          body.injuries = noneInjuries ? "None" : injuries.trim();
         if (requiredOnPage.includes("no_go_movements"))   body.no_go_movements = noGoMovements;
       }
@@ -215,7 +258,7 @@ export default function TrainingSetupScreen() {
     } finally {
       setSaving(false);
     }
-  }, [canAdvance, saving, currentPage, requiredOnPage, primaryGoal, trainingDays, timeHome, timeLayover, equipment, hotelGym, injuries, noneInjuries, noGoMovements, router]);
+  }, [canAdvance, saving, currentPage, requiredOnPage, primaryGoal, flyingType, trainingDays, timeHome, timeLayover, equipment, hotelGym, injuries, noneInjuries, noGoMovements, doesLayovers, router]);
 
   if (loading) {
     return (
@@ -240,6 +283,7 @@ export default function TrainingSetupScreen() {
         <View style={s.header}>
           <Text style={s.eyebrow}>TRAINING SETUP · {stepLabel}</Text>
           {currentPage === "goals"       && <Text style={s.title}>What&apos;s the ONE thing?</Text>}
+          {currentPage === "flying"      && <Text style={s.title}>How do you fly?</Text>}
           {currentPage === "time"        && <Text style={s.title}>How you&apos;ll actually train</Text>}
           {currentPage === "environment" && <Text style={s.title}>Your training environment</Text>}
         </View>
@@ -262,6 +306,36 @@ export default function TrainingSetupScreen() {
                     >
                       <Ionicons name={g.icon} size={14} color={active ? "#fff" : theme.color.textMuted} />
                       <Text style={[s.chipT, active && { color: "#fff" }]}>{g.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
+          {currentPage === "flying" && (
+            <>
+              <Text style={s.help}>
+                This tells Louis whether you sleep in hotels or at home. It changes everything: equipment access, session length, recovery windows.
+              </Text>
+              <View style={{ gap: 8 }}>
+                {FLYING_TYPE_OPTIONS.map((f) => {
+                  const active = flyingType === f.id;
+                  return (
+                    <Pressable
+                      key={f.id}
+                      testID={`setup-flying-${f.id}`}
+                      onPress={() => setFlyingType(f.id)}
+                      style={[s.flyingRow, active && s.flyingRowActive]}
+                    >
+                      <View style={[s.flyingIcon, active && { backgroundColor: theme.color.brand }]}>
+                        <Ionicons name={f.icon} size={16} color={active ? "#fff" : theme.color.brand} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.flyingLabel, active && { color: theme.color.brand }]}>{f.label}</Text>
+                        <Text style={s.flyingSub}>{f.sub}</Text>
+                      </View>
+                      {active ? <Ionicons name="checkmark-circle" size={18} color={theme.color.brand} /> : null}
                     </Pressable>
                   );
                 })}
@@ -309,7 +383,7 @@ export default function TrainingSetupScreen() {
                   </View>
                 </>
               )}
-              {requiredOnPage.includes("time_layover") && (
+              {requiredOnPage.includes("time_layover") && doesLayovers && (
                 <>
                   <Text style={s.qLabel}>Time per session on a layover?</Text>
                   <View style={s.rowChips}>
@@ -328,6 +402,14 @@ export default function TrainingSetupScreen() {
                     })}
                   </View>
                 </>
+              )}
+              {requiredOnPage.includes("time_layover") && !doesLayovers && (
+                <View style={s.infoNote} testID="setup-tLy-skipped">
+                  <Ionicons name="information-circle" size={12} color={theme.color.textMuted} />
+                  <Text style={s.infoNoteT} numberOfLines={2}>
+                    Layover time skipped — you told us you don&apos;t do layovers.
+                  </Text>
+                </View>
               )}
             </>
           )}
@@ -364,7 +446,7 @@ export default function TrainingSetupScreen() {
                   </View>
                 </>
               )}
-              {requiredOnPage.includes("hotel_gyms") && (
+              {requiredOnPage.includes("hotel_gyms") && doesLayovers && (
                 <>
                   <Text style={s.qLabel}>How reliable are hotel gyms on your typical layovers?</Text>
                   <View style={{ gap: 8 }}>
@@ -383,6 +465,14 @@ export default function TrainingSetupScreen() {
                     })}
                   </View>
                 </>
+              )}
+              {requiredOnPage.includes("hotel_gyms") && !doesLayovers && (
+                <View style={s.infoNote} testID="setup-hg-skipped">
+                  <Ionicons name="information-circle" size={12} color={theme.color.textMuted} />
+                  <Text style={s.infoNoteT} numberOfLines={2}>
+                    Hotel gym question skipped — you told us you don&apos;t do layovers.
+                  </Text>
+                </View>
               )}
               {requiredOnPage.includes("injuries") && (
                 <>
@@ -528,4 +618,25 @@ const s = StyleSheet.create({
   },
   ctaT: { color: "#fff", fontSize: 13, fontWeight: "900", letterSpacing: 1.5 },
   footerHelp: { color: theme.color.textMuted, fontSize: 11, textAlign: "center", marginTop: 8 },
+  // Iter 94b — flying type row + info note
+  flyingRow: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 12, borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  flyingRowActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
+  flyingIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  flyingLabel: { color: theme.color.text, fontSize: 14, fontWeight: "800" },
+  flyingSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
+  infoNote: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    marginTop: 8, padding: 10, borderRadius: theme.radius.sm,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+  },
+  infoNoteT: { color: theme.color.textMuted, fontSize: 11, flex: 1, lineHeight: 15 },
 });

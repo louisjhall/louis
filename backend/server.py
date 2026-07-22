@@ -1847,6 +1847,11 @@ def _missing_essential_fields(assessment: dict, user: dict) -> list[str]:
         else:
             if v in (None, "", []):
                 missing.append(fid)
+    # Iter 94b — If the client's profile explicitly says they don't do layovers,
+    # drop layover-only essentials so they never get asked (or blocked).
+    prof_route = profile.get("route_focus") or profile.get("flying_type")
+    if profile.get("does_layovers") is False or prof_route in ("short_haul", "ground_only", "ground"):
+        missing = [f for f in missing if f not in ("time_layover", "hotel_gyms")]
     return missing
 
 
@@ -2348,6 +2353,10 @@ _PROFILE_KEY_MAP = {
     # incoming setup field → users.profile.* key(s) to write
     "primary_goal":         ["primary_goal_id", "main_goal_key", "main_goal"],
     "secondary_goals":      ["secondary_goal_ids"],
+    # Iter 94b — flying pattern
+    "flying_type":          ["flying_type", "route_focus"],
+    "route_focus":          ["route_focus"],
+    "does_layovers":        ["does_layovers"],
     "training_days":        ["training_days_per_week", "training_days"],
     "time_home":            ["time_home_min"],
     "time_layover":         ["time_layover_min"],
@@ -2406,6 +2415,14 @@ async def _user_essentials_present(user_id: str) -> tuple[bool, list[str]]:
             return False
         return False
     still_missing = sorted(fid for fid in missing_from_asmnt if not _prof_has(fid))
+    # Iter 94b — If the client explicitly does NOT do layovers, drop layover-only
+    # fields from the essentials list. `time_layover=0` and `hotel_gyms="never"`
+    # are auto-persisted at flying_type submission time, so this is defence-in-depth.
+    does_layovers = profile.get("does_layovers")
+    route_focus = profile.get("route_focus") or profile.get("flying_type")
+    non_layover_route = route_focus in ("short_haul", "ground_only", "ground")
+    if does_layovers is False or non_layover_route:
+        still_missing = [f for f in still_missing if f not in ("time_layover", "hotel_gyms")]
     return (len(still_missing) == 0, still_missing)
 
 
@@ -2678,6 +2695,10 @@ async def profile_setup_status(user: dict = Depends(current_user)):
 class TrainingSetupBody(BaseModel):
     primary_goal:         Optional[str] = None
     secondary_goals:      Optional[list[str]] = None
+    # Iter 94b — flying pattern gates whether layover-related fields are essential.
+    flying_type:          Optional[str] = None           # short_haul/mixed/long_haul/charter/cargo/ground_only
+    route_focus:          Optional[str] = None           # alias set from flying_type
+    does_layovers:        Optional[bool] = None
     training_days:        Optional[int] = None
     time_home:            Optional[int] = None          # minutes
     time_layover:         Optional[int] = None          # minutes
@@ -4194,7 +4215,16 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
                     prog_status = await get_current_status(db, user["id"])
                     _eff = await _resolve_effective_goal_and_event(user["id"])
-                    workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup, progression_status=prog_status, effective_goal=_eff)
+                    # Iter 94 (Phase 3.5) — pull live_state so the fallback
+                    # respects auto-deload + pain-avoid the same way the LLM path does.
+                    _live = (programme_ctx or {}).get("live_state") if programme_ctx else None
+                    workouts = build_template_plan(
+                        user, roster,
+                        hotel_lookup=hotel_lookup,
+                        progression_status=prog_status,
+                        effective_goal=_eff,
+                        live_state=_live,
+                    )
                     used_template = bool(workouts)
                     if workouts:
                         try:

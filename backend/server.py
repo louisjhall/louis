@@ -1742,6 +1742,33 @@ async def assessment_answer(body: AssessmentAnswerBody, user: dict = Depends(cur
             {"$set": {"profile.biological_sex": str(body.answer)}},
         )
 
+    # Iter 94e — Persist aviation role directly onto profile.crew_role so the
+    # essentials check passes without training-setup re-asking.
+    if q_id == "role" and isinstance(body.answer, (str,)):
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"profile.crew_role": str(body.answer).lower()}},
+        )
+
+    # Iter 94e — Persist primary_goal too. It may arrive as a list (multi_select)
+    # or a string. First goal becomes main_goal_key.
+    if q_id == "primary_goal":
+        val = body.answer
+        first_goal = None
+        if isinstance(val, list) and val:
+            first_goal = str(val[0])
+        elif isinstance(val, str) and val:
+            first_goal = val
+        if first_goal:
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {
+                    "profile.primary_goal_id": first_goal,
+                    "profile.main_goal_key": first_goal,
+                    "profile.main_goal": first_goal,
+                }},
+            )
+
     # Iter 94e — Persist flying_type onto profile AND auto-inject layover
     # answers when the client does not do layovers so we never ask them.
     if q_id == "flying_type" and isinstance(body.answer, (str,)):

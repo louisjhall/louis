@@ -136,8 +136,18 @@ export default function TrainingSetupScreen() {
   // ── Load current setup status ─────────────────────────────────────────────
   const load = useCallback(async () => {
     try {
-      const r = await api<SetupStatus>("/profile/setup-status");
+      // Iter 94e — also read profile so we can prefill flying_type if it was
+      // answered during DNA (short_haul / ground_only clients must NOT be
+      // asked layover questions again on this screen).
+      const [r, me] = await Promise.all([
+        api<SetupStatus>("/profile/setup-status"),
+        api<any>("/auth/me").catch(() => null),
+      ]);
       setStatus(r);
+      const prof = me?.profile || {};
+      if (prof.flying_type) {
+        setFlyingType(String(prof.flying_type));
+      }
       if (r.complete) {
         // Nothing to do — bounce to home.
         router.replace("/");

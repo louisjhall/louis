@@ -2421,6 +2421,122 @@ async def _assert_profile_complete_or_409(user_id: str, coach_hint: bool = False
     raise HTTPException(status_code=409, detail=detail)
 
 
+# ---------------------------------------------------------------------------
+# Iter 84 (Task 1.5) — Reconcile primary goal + registered events.
+# ---------------------------------------------------------------------------
+
+_ENDURANCE_EVENT_TYPES = {
+    "marathon", "half_marathon", "10k", "5k", "ultra",
+    "hyrox", "ironman", "70.3", "olympic_tri", "sprint_tri",
+}
+
+_ENDURANCE_GOAL_KEYS = {
+    "marathon", "half_marathon", "10k", "5k", "hyrox",
+    "ironman", "olympic_tri", "sprint_tri", "70.3",
+}
+
+async def _resolve_effective_goal_and_event(user_id: str) -> dict:
+    """
+    Iter 84 (Task 1.5) — Effective-goal resolver. Considers BOTH primary
+    goal AND any registered endurance event within 24 weeks. Returns the
+    struct the plan builder / home banner uses. Never raises.
+    """
+    from datetime import date as _date
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0}) or {}
+    profile = u.get("profile") or {}
+    primary = (
+        profile.get("primary_goal_id")
+        or profile.get("main_goal_key")
+        or profile.get("main_goal")
+        or "general_fitness"
+    )
+    primary_norm = str(primary).strip().lower()
+
+    # Look for the soonest active endurance event within 24 weeks
+    event = None
+    weeks_to_event: Optional[int] = None
+    try:
+        today = _date.today()
+        cursor = db.events.find({
+            "user_id": user_id,
+            "event_date": {"$gte": today.isoformat()},
+            "is_active": {"$ne": False},
+        }).sort([("event_date", 1)]).limit(5)
+        candidates = await cursor.to_list(5)
+        for ev in candidates:
+            et = str(ev.get("event_type") or "").strip().lower().replace(" ", "_")
+            if et in _ENDURANCE_EVENT_TYPES:
+                try:
+                    ed = _date.fromisoformat(ev["event_date"][:10])
+                    wks = (ed - today).days // 7
+                    if 0 <= wks <= 24:
+                        event = ev
+                        weeks_to_event = wks
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # Decide effective goal_key + volume_bias
+    if event:
+        et = str(event.get("event_type") or "").strip().lower().replace(" ", "_")
+        goal_key = "event"
+        event_type = et
+        event_date = event.get("event_date")
+        # Volume bias — driven by the client's primary goal even though the
+        # event drives session selection.
+        if primary_norm in ("lose_fat", "fat_loss", "cut", "leaner"):
+            volume_bias = "deficit"
+            secondary_note = f"maintaining fat-loss deficit"
+        elif primary_norm in ("build_muscle", "hypertrophy", "muscle", "size"):
+            volume_bias = "surplus"
+            secondary_note = f"retaining strength blocks alongside"
+        else:
+            volume_bias = "neutral"
+            secondary_note = None
+        pretty_event = event_type.replace("_", " ").title()
+        explanation = f"{pretty_event} in {weeks_to_event} weeks"
+        if secondary_note:
+            explanation += f" · {secondary_note}"
+    elif primary_norm in _ENDURANCE_GOAL_KEYS:
+        # Primary goal IS an endurance goal — treat as event even without
+        # a registered event. weeks_to_event unknown (None).
+        goal_key = "event"
+        event_type = primary_norm
+        event_date = None
+        volume_bias = "neutral"
+        explanation = f"{event_type.replace('_',' ').title()} focus · no event date set"
+    else:
+        goal_key = primary_norm or "general_fitness"
+        event_type = None
+        event_date = None
+        volume_bias = "neutral"
+        explanation = f"{goal_key.replace('_',' ').title()} · no event registered"
+
+    return {
+        "goal_key": goal_key,
+        "event_type": event_type,
+        "event_date": event_date,
+        "weeks_to_event": weeks_to_event,
+        "primary_goal_key": primary_norm,
+        "volume_bias": volume_bias,
+        "explanation": explanation,
+    }
+
+
+@api.get("/programme/focus")
+async def programme_focus(user: dict = Depends(current_user)):
+    """Return the reconciled goal+event summary the home screen banner shows."""
+    eff = await _resolve_effective_goal_and_event(user["id"])
+    return {
+        **eff,
+        "banner_text": eff["explanation"],
+    }
+
+
+
+
 
 @api.get("/profile/setup-status")
 async def profile_setup_status(user: dict = Depends(current_user)):
@@ -3947,7 +4063,8 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 if is_empty_or_llm_failure(workouts):
                     hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
                     prog_status = await get_current_status(db, user["id"])
-                    workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup, progression_status=prog_status)
+                    _eff = await _resolve_effective_goal_and_event(user["id"])
+                    workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup, progression_status=prog_status, effective_goal=_eff)
                     used_template = bool(workouts)
                     if workouts:
                         try:
@@ -4255,7 +4372,8 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
             if is_empty_or_llm_failure(workouts):
                 hotel_lookup = await load_hotel_lookup_for_roster(db, roster)
                 prog_status = await get_current_status(db, user["id"])
-                workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup, progression_status=prog_status)
+                _eff = await _resolve_effective_goal_and_event(user["id"])
+                workouts = build_template_plan(user, roster, hotel_lookup=hotel_lookup, progression_status=prog_status, effective_goal=_eff)
                 used_template = bool(workouts)
                 if workouts:
                     try:

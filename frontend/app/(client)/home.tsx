@@ -129,13 +129,15 @@ export default function Home() {
   const [rosterJob, setRosterJob] = useState<{ id: string; status?: string; stage?: string; progress?: number; message?: string; error?: string } | null>(null);
   // Plan C2 — Programme Overview card data (goal, phase, week, target, focus, next key session)
   const [programme, setProgramme] = useState<any>(null);
+  // Iter 84 (Task 1.5) — Programme focus banner (event + primary goal reconciliation)
+  const [programmeFocus, setProgrammeFocus] = useState<any>(null);
   // Long-press-to-correct roster day-picker sheet (iter 82).
   const [dayPickerTarget, setDayPickerTarget] = useState<RosterDayPickerTarget | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, pr, sb, sd, rj, prog] = await Promise.all([
+      const [ws, r, ev, pr, sb, sd, rj, prog, focus] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
@@ -144,6 +146,7 @@ export default function Home() {
         api<any>("/setup-day/status").catch(() => null),
         api<any>("/roster/jobs/active").catch(() => null),
         api<any>("/programme/current").catch(() => null),
+        api<any>("/programme/focus").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -154,6 +157,7 @@ export default function Home() {
       setSetupDay(sd);
       setRosterJob(rj && rj.id ? rj : null);
       setProgramme(prog && (prog as any).id ? prog : null);
+      setProgrammeFocus(focus);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -525,6 +529,12 @@ export default function Home() {
           ) : null}
 
           <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
+          {programmeFocus?.banner_text ? (
+            <View style={styles.focusBanner} testID="programme-focus-banner">
+              <Ionicons name="flag" size={12} color={theme.color.brand} />
+              <Text style={styles.focusBannerT} numberOfLines={2}>{programmeFocus.banner_text}</Text>
+            </View>
+          ) : null}
           {roster?.id ? (
             <Text style={styles.sectionHint} testID="week-longpress-hint">
               Tip: long-press any day to correct its duty type.
@@ -836,6 +846,15 @@ const styles = StyleSheet.create({
   qBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 10 },
   sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
   sectionHint: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic", marginBottom: theme.space.sm, marginTop: -6 },
+  focusBanner: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 12, paddingVertical: 10,
+    marginBottom: theme.space.sm, marginTop: -4,
+    backgroundColor: theme.color.brandTint,
+    borderRadius: theme.radius.md,
+    borderLeftWidth: 3, borderLeftColor: theme.color.brand,
+  },
+  focusBannerT: { color: theme.color.brand, fontSize: 11, fontWeight: "700", flex: 1, lineHeight: 15 },
   wRow: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, overflow: "hidden", borderWidth: 1, borderColor: theme.color.border },
   wRowRest: { opacity: 0.75 },
   wRowSetup: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },

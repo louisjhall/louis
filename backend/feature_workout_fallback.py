@@ -445,7 +445,8 @@ def _override_for_duty(kind: str, date: str) -> Any:
 
 def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                        hotel_lookup: dict[str, dict[str, Any]] | None = None,
-                       progression_status: str | None = None) -> list[dict[str, Any]]:
+                       progression_status: str | None = None,
+                       effective_goal: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Deterministic fallback plan for the whole roster window.
 
     NEW (Plan B2): goal-aware. Reads `profile.main_goal_key` and
@@ -485,8 +486,19 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
         _resolve_goal_key, _phase_for_week,
         event_weekly_shape, strength_weekly_shape,
     )
-    goal_key = _resolve_goal_key(profile)
-    ev_type = profile.get("event_type_pref")
+    # Iter 84 (Task 1.5) — Effective-goal reconciliation. If the caller pre-
+    # resolved an "effective goal" that considers registered events (e.g.
+    # primary_goal=lose_fat + marathon in 14 weeks → goal_key=event,
+    # ev_type=marathon), use it. Falls back to profile-only resolution.
+    eff = effective_goal if isinstance(effective_goal, dict) else None
+    if eff:
+        goal_key = eff.get("goal_key") or _resolve_goal_key(profile)
+        ev_type = eff.get("event_type") or profile.get("event_type_pref")
+        volume_bias = eff.get("volume_bias") or "neutral"
+    else:
+        goal_key = _resolve_goal_key(profile)
+        ev_type = profile.get("event_type_pref")
+        volume_bias = "neutral"
     try:
         target_sessions = int(profile.get("training_days_per_week") or 4)
     except Exception:
@@ -499,6 +511,20 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
 
     if goal_key == "event" and ev_type:
         shape = event_weekly_shape(ev_type, phase["key"], target_sessions)
+        # Iter 84 (Task 1.5) — volume_bias overlay: replace or drop sessions to
+        # honour the client's primary non-endurance goal alongside the event.
+        if volume_bias == "deficit" and target_sessions >= 4:
+            # Drop one Strength for Runners → replace with an extra Recovery Walk
+            for i, s in enumerate(shape):
+                if s == "strength_support":
+                    shape[i] = "recovery_walk"
+                    break
+        elif volume_bias == "surplus" and target_sessions >= 4:
+            # Keep both strength sessions; convert one Easy Run → Strength Support
+            for i, s in enumerate(shape):
+                if s == "easy_run":
+                    shape[i] = "strength_support"
+                    break
     else:
         shape = strength_weekly_shape(goal_key, target_sessions)
 

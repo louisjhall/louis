@@ -23,6 +23,16 @@ const DUTY_TYPES: { key: string; label: string; icon: keyof typeof Ionicons.glyp
   { key: "Unknown/Needs Confirmation", label: "Not sure yet", icon: "help-circle" },
 ];
 
+// Iter 83 · Tool 3 — the 5 most-common duty types, shown inline on each card
+// for a single-tap change without opening the full editor.
+const QUICK_CHIPS: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { key: "Flight",  label: "Flight",  icon: "airplane" },
+  { key: "Layover", label: "Layover", icon: "bed" },
+  { key: "Standby", label: "Standby", icon: "time" },
+  { key: "Off",     label: "Off",     icon: "sunny" },
+  { key: "Home",    label: "Home",    icon: "home" },
+];
+
 type Day = {
   date: string;
   day_type: string;
@@ -67,6 +77,11 @@ export default function RosterConfirm() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editorDate, setEditorDate] = useState<string | null>(null);
+  // Iter 83 — bulk-shift + swap state
+  const [shifting, setShifting] = useState(false);
+  const [swapFromDate, setSwapFromDate] = useState<string | null>(null);
+  const [quickChipBusy, setQuickChipBusy] = useState<string | null>(null);   // date being patched
+  const [shiftBannerDismissed, setShiftBannerDismissed] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,6 +110,74 @@ export default function RosterConfirm() {
         ),
       };
     });
+  };
+
+  // ── Iter 83 · Tool 1: Bulk shift ±1 day ───────────────────────────────────
+  const doShift = async (direction: "forward" | "back") => {
+    if (!pending || shifting) return;
+    setShifting(true);
+    try {
+      const updated = await api<Pending>(`/roster/pending/${pending.id}/shift`, {
+        method: "POST", body: { direction },
+      });
+      setPending(updated);
+      setSwapFromDate(null);
+    } catch (e: any) {
+      Alert.alert("Shift failed", e?.message || "Please try again.");
+    } finally {
+      setShifting(false);
+    }
+  };
+
+  // ── Iter 83 · Tool 2: Two-tap swap ────────────────────────────────────────
+  const onCardTap = async (date: string) => {
+    if (!pending) return;
+    if (swapFromDate) {
+      // Second tap → perform the swap
+      if (swapFromDate === date) {
+        setSwapFromDate(null);   // cancel
+        return;
+      }
+      try {
+        const updated = await api<Pending>(`/roster/pending/${pending.id}/swap`, {
+          method: "POST", body: { date_a: swapFromDate, date_b: date },
+        });
+        setPending(updated);
+      } catch (e: any) {
+        Alert.alert("Swap failed", e?.message || "Please try again.");
+      } finally {
+        setSwapFromDate(null);
+      }
+    } else {
+      // Not in swap mode — open the full editor
+      setEditorDate(date);
+    }
+  };
+
+  // ── Iter 83 · Tool 3: Inline quick-chip day-type change ────────────────────
+  const setDayTypeQuick = async (date: string, newType: string) => {
+    if (!pending || quickChipBusy) return;
+    setQuickChipBusy(date);
+    // Optimistic local update
+    updateDay(date, { day_type: newType });
+    try {
+      const days = pending.days.map((d) =>
+        d.date === date
+          ? { ...d, day_type: newType, _confirmed_by_user: true, _needs_review: false }
+          : d,
+      );
+      const updated = await api<Pending>(`/roster/pending/${pending.id}`, {
+        method: "PATCH",
+        body: { days: days.map(({ _needs_review, ...d }) => d) },
+      });
+      setPending(updated);
+    } catch (e: any) {
+      Alert.alert("Save failed", e?.message || "Please try again.");
+      // Reload to reset local optimistic edits
+      await load();
+    } finally {
+      setQuickChipBusy(null);
+    }
   };
 
   const confirmDayAsIs = async (date: string) => {
@@ -221,22 +304,100 @@ export default function RosterConfirm() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140 }}>
+        {/* Iter 83 · Tool 1: Bulk-shift banner (auto-hide once dismissed) */}
+        {!shiftBannerDismissed && (
+          <View style={styles.shiftBanner} testID="rc-shift-banner">
+            <View style={styles.shiftHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.shiftTitle}>Whole roster off by a day?</Text>
+                <Text style={styles.shiftSub}>
+                  If Wed&apos;s duty is actually on Thu (or vice-versa), shift everything in one tap.
+                </Text>
+              </View>
+              <Pressable
+                testID="rc-shift-dismiss"
+                onPress={() => setShiftBannerDismissed(true)}
+                hitSlop={12}
+              >
+                <Ionicons name="close" size={18} color={theme.color.textMuted} />
+              </Pressable>
+            </View>
+            <View style={styles.shiftBtnRow}>
+              <Pressable
+                testID="rc-shift-back"
+                onPress={() => doShift("back")}
+                disabled={shifting}
+                style={[styles.shiftBtn, shifting && { opacity: 0.55 }]}
+              >
+                {shifting ? (
+                  <ActivityIndicator color={theme.color.brand} size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="arrow-back" size={14} color={theme.color.brand} />
+                    <Text style={styles.shiftBtnT}>SHIFT BACK 1 DAY</Text>
+                  </>
+                )}
+              </Pressable>
+              <Pressable
+                testID="rc-shift-forward"
+                onPress={() => doShift("forward")}
+                disabled={shifting}
+                style={[styles.shiftBtn, shifting && { opacity: 0.55 }]}
+              >
+                {shifting ? (
+                  <ActivityIndicator color={theme.color.brand} size="small" />
+                ) : (
+                  <>
+                    <Text style={styles.shiftBtnT}>SHIFT FORWARD 1 DAY</Text>
+                    <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Iter 83 · Tool 2: Swap-mode active indicator */}
+        {swapFromDate && (
+          <View style={styles.swapBanner} testID="rc-swap-active-banner">
+            <Ionicons name="swap-horizontal" size={16} color="#fff" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.swapBannerT}>SWAP MODE</Text>
+              <Text style={styles.swapBannerSub}>
+                Now tap the day you want to swap with {fmtDate(swapFromDate)}.
+              </Text>
+            </View>
+            <Pressable testID="rc-swap-cancel" onPress={() => setSwapFromDate(null)} hitSlop={10}>
+              <Text style={styles.swapCancelT}>CANCEL</Text>
+            </Pressable>
+          </View>
+        )}
+
         {pending.days.map((d) => {
           const needs = d._needs_review;
+          const isSwapSource = swapFromDate === d.date;
+          const isSwapTarget = swapFromDate && swapFromDate !== d.date;
           const cardStyle = [
             styles.card,
             needs ? styles.cardAmber : d._confirmed_by_user ? styles.cardConfirmed : styles.cardDefault,
+            isSwapSource && styles.cardSwapSource,
+            isSwapTarget && styles.cardSwapTarget,
           ];
           return (
             <Pressable
               key={d.date}
               testID={`rc-day-${d.date}`}
               style={cardStyle}
-              onPress={() => setEditorDate(d.date)}
+              onPress={() => onCardTap(d.date)}
             >
               <View style={styles.cardTop}>
                 <Text style={styles.cardDate}>{fmtDate(d.date)}</Text>
-                {needs ? (
+                {isSwapSource ? (
+                  <View style={styles.badgeSwap}>
+                    <Ionicons name="swap-horizontal" size={12} color="#fff" />
+                    <Text style={styles.badgeText}>SWAPPING</Text>
+                  </View>
+                ) : needs ? (
                   <View style={styles.badgeAmber}>
                     <Ionicons name="alert-circle" size={12} color="#fff" />
                     <Text style={styles.badgeText}>REVIEW</Text>
@@ -263,6 +424,29 @@ export default function RosterConfirm() {
                 </Text>
               ) : null}
               {d.notes ? <Text style={styles.cardNotes} numberOfLines={2}>{d.notes}</Text> : null}
+
+              {/* Iter 83 · Tool 3: Inline quick-chip day-type change (hidden in swap mode to reduce noise) */}
+              {!swapFromDate && (
+                <View style={styles.quickChipsRow}>
+                  {QUICK_CHIPS.map((c) => {
+                    const active = (d.day_type || "").toLowerCase().startsWith(c.key.toLowerCase().split(" ")[0]);
+                    const busy = quickChipBusy === d.date;
+                    return (
+                      <Pressable
+                        key={c.key}
+                        testID={`rc-quick-${d.date}-${c.key}`}
+                        onPress={(e) => { e.stopPropagation(); setDayTypeQuick(d.date, c.key); }}
+                        disabled={busy}
+                        style={[styles.quickChip, active && styles.quickChipActive, busy && { opacity: 0.5 }]}
+                      >
+                        <Ionicons name={c.icon} size={11} color={active ? "#fff" : theme.color.textMuted} />
+                        <Text style={[styles.quickChipT, active && { color: "#fff" }]}>{c.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+
               <View style={styles.cardActions}>
                 {needs ? (
                   <Pressable
@@ -273,6 +457,15 @@ export default function RosterConfirm() {
                     <Text style={styles.confirmMiniText}>CONFIRM AS-IS</Text>
                   </Pressable>
                 ) : null}
+                <Pressable
+                  testID={`rc-swap-${d.date}`}
+                  onPress={(e) => { e.stopPropagation(); setSwapFromDate(d.date); }}
+                  style={styles.swapMini}
+                  disabled={!!swapFromDate}
+                >
+                  <Ionicons name="swap-horizontal" size={13} color={theme.color.brand} />
+                  <Text style={styles.swapMiniText}>SWAP</Text>
+                </Pressable>
                 <Pressable
                   testID={`rc-edit-${d.date}`}
                   onPress={(e) => { e.stopPropagation(); setEditorDate(d.date); }}
@@ -458,11 +651,72 @@ const styles = StyleSheet.create({
   cardActions: { flexDirection: "row", gap: 8, marginTop: 10 },
   badgeAmber: { flexDirection: "row", alignItems: "center", backgroundColor: AMBER, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, gap: 4 },
   badgeConfirmed: { flexDirection: "row", alignItems: "center", backgroundColor: CONFIRMED, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, gap: 4 },
+  badgeSwap: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.brand, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, gap: 4 },
   badgeText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
   confirmMini: { flex: 1, backgroundColor: theme.color.brand, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center" },
   confirmMiniText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   editMini: { flex: 1, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
   editMiniText: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  swapMini: {
+    flex: 1, backgroundColor: "transparent",
+    borderWidth: 1, borderColor: theme.color.brand,
+    paddingVertical: 8, borderRadius: theme.radius.sm,
+    alignItems: "center", justifyContent: "center",
+    flexDirection: "row", gap: 6,
+  },
+  swapMiniText: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  // Iter 83 · Tool 1 · Shift banner
+  shiftBanner: {
+    padding: theme.space.md, borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderLeftWidth: 3, borderLeftColor: theme.color.brand,
+    borderWidth: 1, borderColor: theme.color.border,
+    marginBottom: theme.space.md,
+  },
+  shiftHeader: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginBottom: 8 },
+  shiftTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
+  shiftSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
+  shiftBtnRow: { flexDirection: "row", gap: 8 },
+  shiftBtn: {
+    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, paddingVertical: 10, paddingHorizontal: 8,
+    borderRadius: theme.radius.sm,
+    backgroundColor: "transparent",
+    borderWidth: 1, borderColor: theme.color.brand,
+    minHeight: 40,
+  },
+  shiftBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  // Iter 83 · Tool 2 · Swap-mode banner + card highlight
+  swapBanner: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    padding: theme.space.md, borderRadius: theme.radius.md,
+    backgroundColor: theme.color.brand,
+    marginBottom: theme.space.md,
+  },
+  swapBannerT: { color: "#fff", fontSize: 10, letterSpacing: 1.5, fontWeight: "900" },
+  swapBannerSub: { color: "rgba(255,255,255,0.9)", fontSize: 11, marginTop: 2 },
+  swapCancelT: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  cardSwapSource: {
+    borderColor: theme.color.brand, borderWidth: 2,
+    backgroundColor: theme.color.brandTint,
+  },
+  cardSwapTarget: {
+    borderStyle: "dashed", borderColor: theme.color.brand, borderWidth: 1.5,
+  },
+  // Iter 83 · Tool 3 · Inline quick chips
+  quickChipsRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8,
+  },
+  quickChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 9, paddingVertical: 6,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1, borderColor: theme.color.border,
+    minHeight: 28,
+  },
+  quickChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  quickChipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700" },
   sticky: {
     position: "absolute", bottom: 0, left: 0, right: 0,
     padding: theme.space.lg, backgroundColor: theme.color.surface,

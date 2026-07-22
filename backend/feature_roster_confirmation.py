@@ -309,6 +309,162 @@ async def roster_pending_delete(rid: str, user: dict = Depends(current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Iter 83 — Bulk shift (fixes whole-roster off-by-one parser errors)
+# ---------------------------------------------------------------------------
+
+class RosterShiftBody(BaseModel):
+    direction: str  # "forward" or "back"
+
+
+@api.post("/roster/pending/{rid}/shift")
+async def roster_pending_shift(rid: str, body: RosterShiftBody, user: dict = Depends(current_user)):
+    """
+    Iter 83 — Shift EVERY day's *content* (day_type, flights, layover meta,
+    report/duty times, notes, load, confidence, home_or_away) forward or back
+    by exactly 1 day, keeping the date column fixed.
+
+    Real-world example: the parser tagged Wed=Layover, Thu=Off, Fri=Flight
+    but the roster actually shows Thu=Layover, Fri=Off, Sat=Flight.
+    User taps "Shift forward 1 day" → every day inherits the previous day's
+    content in a single click. Fixes the entire roster in one action.
+
+    The last day (when shifting forward) or first day (when shifting back) is
+    padded with an Unknown/Needs Confirmation placeholder so the client can
+    fill it in.
+    """
+    if body.direction not in ("forward", "back"):
+        raise HTTPException(400, "direction must be 'forward' or 'back'")
+    r = await db.rosters.find_one(
+        {"id": rid, "user_id": user["id"], "status": "pending_confirmation"},
+        {"_id": 0},
+    )
+    if not r:
+        raise HTTPException(404, "Pending roster not found")
+    days = list(r.get("days") or [])
+    if len(days) < 2:
+        raise HTTPException(400, "Not enough days to shift")
+
+    # Fields that move with content (everything EXCEPT the date).
+    content_keys = [
+        "day_type", "flights", "layover_city", "layover_country", "layover_nights",
+        "report_time", "duty_end_time", "notes", "confidence", "home_or_away",
+        "load", "standby_type", "day_of_week",
+    ]
+
+    def _empty_content() -> dict:
+        return {
+            "day_type": "Unknown/Needs Confirmation",
+            "flights": [],
+            "confidence": 0.3,
+            "_shift_padded": True,
+            "notes": "Filled in by shift — please confirm.",
+        }
+
+    new_days: list[dict] = []
+    if body.direction == "forward":
+        # Each day gets the CONTENT of the previous day; first day = placeholder.
+        placeholder = _empty_content()
+        for idx, d in enumerate(days):
+            date = d.get("date")
+            src = placeholder if idx == 0 else days[idx - 1]
+            merged = {"date": date}
+            for k in content_keys:
+                if k in src:
+                    merged[k] = src.get(k)
+            merged["_confirmed_by_user"] = False
+            merged["_shifted"] = True
+            new_days.append(merged)
+    else:   # "back"
+        # Each day gets the CONTENT of the next day; last day = placeholder.
+        placeholder = _empty_content()
+        for idx, d in enumerate(days):
+            date = d.get("date")
+            src = placeholder if idx == len(days) - 1 else days[idx + 1]
+            merged = {"date": date}
+            for k in content_keys:
+                if k in src:
+                    merged[k] = src.get(k)
+            merged["_confirmed_by_user"] = False
+            merged["_shifted"] = True
+            new_days.append(merged)
+
+    review_flags = {"low_confidence_count": sum(1 for d in new_days if _needs_review(d))}
+    await db.rosters.update_one({"id": rid}, {"$set": {
+        "days": new_days,
+        "review_flags": review_flags,
+        "updated_at": now_iso(),
+        "last_shift_direction": body.direction,
+        "last_shift_at": now_iso(),
+    }})
+    r2 = await db.rosters.find_one({"id": rid}, {"_id": 0})
+    for d in (r2 or {}).get("days") or []:
+        d["_needs_review"] = _needs_review(d)
+    return r2
+
+
+# ---------------------------------------------------------------------------
+# Iter 83 — Swap two days (fixes adjacent-days-in-wrong-order parser errors)
+# ---------------------------------------------------------------------------
+
+class RosterSwapBody(BaseModel):
+    date_a: str
+    date_b: str
+
+
+@api.post("/roster/pending/{rid}/swap")
+async def roster_pending_swap(rid: str, body: RosterSwapBody, user: dict = Depends(current_user)):
+    """
+    Iter 83 — Swap the CONTENT (day_type, flights, layover, times, notes,
+    load, confidence) of two days on a pending roster while keeping their
+    dates fixed. Used by the two-tap SWAP flow on the confirmation screen.
+    """
+    if body.date_a == body.date_b:
+        raise HTTPException(400, "Cannot swap a day with itself")
+    r = await db.rosters.find_one(
+        {"id": rid, "user_id": user["id"], "status": "pending_confirmation"},
+        {"_id": 0},
+    )
+    if not r:
+        raise HTTPException(404, "Pending roster not found")
+    days = list(r.get("days") or [])
+    ia = next((i for i, d in enumerate(days) if d.get("date") == body.date_a), None)
+    ib = next((i for i, d in enumerate(days) if d.get("date") == body.date_b), None)
+    if ia is None or ib is None:
+        raise HTTPException(404, f"One or both dates not found ({body.date_a}, {body.date_b})")
+
+    content_keys = [
+        "day_type", "flights", "layover_city", "layover_country", "layover_nights",
+        "report_time", "duty_end_time", "notes", "confidence", "home_or_away",
+        "load", "standby_type", "day_of_week",
+    ]
+
+    a_content = {k: days[ia].get(k) for k in content_keys if k in days[ia]}
+    b_content = {k: days[ib].get(k) for k in content_keys if k in days[ib]}
+
+    # Strip old content keys, then apply the swapped content.
+    for k in content_keys:
+        days[ia].pop(k, None)
+        days[ib].pop(k, None)
+    days[ia].update(b_content)
+    days[ib].update(a_content)
+    days[ia]["_confirmed_by_user"] = True
+    days[ib]["_confirmed_by_user"] = True
+    days[ia]["_swapped_with"] = body.date_b
+    days[ib]["_swapped_with"] = body.date_a
+
+    review_flags = {"low_confidence_count": sum(1 for d in days if _needs_review(d))}
+    await db.rosters.update_one({"id": rid}, {"$set": {
+        "days": days,
+        "review_flags": review_flags,
+        "updated_at": now_iso(),
+    }})
+    r2 = await db.rosters.find_one({"id": rid}, {"_id": 0})
+    for d in (r2 or {}).get("days") or []:
+        d["_needs_review"] = _needs_review(d)
+    return r2
+
+
+# ---------------------------------------------------------------------------
 # Confirm & build plan
 # ---------------------------------------------------------------------------
 

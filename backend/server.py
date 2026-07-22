@@ -1251,6 +1251,17 @@ async def _assessment_next_question(assessment: dict) -> dict:
             f"{prefilled_ids}. Do NOT re-ask them under any circumstance. "
             "Skip straight to the next unanswered question in your flow.\n"
         )
+    # Iter 94e2 — HARD guard against LLM re-asking any mandatory question that
+    # the deterministic fast path already served. This is the fix for the
+    # "asked flying_type twice" complaint. We tell the LLM the full list of
+    # question_ids already answered and instruct it explicitly not to ask
+    # any of them again — even in slightly reworded form.
+    if answered_ids:
+        prefill_note += (
+            f"\nALREADY ANSWERED question_ids (do NOT re-ask any of these, "
+            f"even rephrased): {sorted(answered_ids)}. If your next question "
+            "would land on any of these ids, pick the next unanswered topic instead.\n"
+        )
     prompt = (
         f"CLIENT NAME: {assessment.get('client_name') or 'the client'}\n"
         f"ASSESSMENT SO FAR ({n_answered} answers out of a target of {TARGET_QUESTIONS}):\n"

@@ -1065,10 +1065,30 @@ QUESTION TYPES you can return:
 - "event_builder" — client adds one or more upcoming events {name, event_type, date, priority}
 - "equipment_picker" — multi-select equipment at a location; meta:{location:"home"|"hotel"|"commercial_gym"|"parents"}
 
-REQUIRED FIRST QUESTIONS (ask early, in this order):
-- **Biological sex** (id: `biological_sex`) — single_select {male, female, intersex_prefer_not}. Explain briefly it's used for training load, protein targets and recovery science. NEVER skip this — it materially changes the programme. Use this to derive pronouns automatically (male→he/him, female→she/her, intersex_prefer_not→they/them). Do NOT ask a separate pronouns question.
-- Aviation role (Pilot / Cabin Crew / Ground Ops / Corporate Aviation / Other) — single_select
-- Primary goal category — multi_select from: [Lose body fat, Build muscle, General fitness, Improve health, Improve confidence, Ironman, 70.3, Sprint Triathlon, Olympic Triathlon, Marathon, Half Marathon, HYROX, 5K, 10K, Improve mobility, Reduce pain, Return from injury, Reduce jet lag, Improve sleep, Pass airline medical, Maintain fitness, Other]
+REQUIRED QUESTIONS — YOU MUST COLLECT ALL OF THE FOLLOWING BEFORE YOU MAY SET
+`should_end: true`. If ANY are missing from the answers so far, keep asking. Do
+NOT emit `should_end:true` under any circumstances until every one of these is
+present. This is a HARD contract — Louis needs these to plan a real programme.
+
+  1. **biological_sex** (id: `biological_sex`) — single_select {male, female, intersex_prefer_not}. Skip only if already provided at signup. NEVER skippable via allow_skip. Used to derive pronouns automatically (male→he/him, female→she/her, intersex_prefer_not→they/them). Do NOT ask a separate pronouns question.
+  2. **aviation_role** (id: `crew_role`) — single_select from Pilot / Cabin Crew / Ground Ops / Corporate Aviation / Other. Skip only if already at signup.
+  3. **primary_goal** (id: `primary_goal`) — single_select from the goal catalogue below. This is the ONE main thing they care about most.
+  4. **secondary_goals** (id: `secondary_goals`) — multi_select, 0-3 allowed, from the goal catalogue below. Optional in count but MUST be asked.
+  5. **training_days_per_week** (id: `training_days`) — integer 1-7. Ask "How many days per week can you realistically train?"
+  6. **time_home_min** (id: `time_home`) — single_select from [15, 30, 45, 60, 75, 90] min. "How much time do you have per session when you're at home?"
+  7. **time_layover_min** (id: `time_layover`) — single_select from [0, 15, 30, 45, 60] min. "How much time do you typically have on a layover between duty and rest?" (0 = "I don't train on layovers")
+  8. **equipment_home** (id: `equipment_home`) — equipment_picker with meta:{location:"home"}, MULTI-SELECT ≥1 required. Options MUST include "bodyweight_only" as a valid explicit pick. NEVER `allow_skip: true`.
+  9. **hotel_gym_reliability** (id: `hotel_gym_reliability`) — single_select from [always, often, sometimes, rare, never]. "How reliable are hotel gyms on your typical layovers?"
+  10. **injuries** (id: `injuries`) — long_text with an explicit "No injuries currently" pick alongside. NEVER `allow_skip: true`. If they type nothing but tick "No injuries currently", that's valid.
+  11. **no_go_movements** (id: `no_go_movements`) — multi_select from [none, running, jumping, overhead_pressing, deep_squatting, deadlifts, heavy_lifting]. "No" (none) is a valid explicit pick.
+
+Goal catalogue (used by both primary_goal and secondary_goals):
+[Lose body fat, Build muscle, General fitness, Improve health, Improve confidence, Ironman, 70.3, Sprint Triathlon, Olympic Triathlon, Marathon, Half Marathon, HYROX, 5K, 10K, Improve mobility, Reduce pain, Return from injury, Reduce jet lag, Improve sleep, Pass airline medical, Maintain fitness, Other]
+
+You may ask up to 4 additional context questions AFTER the 11 above (e.g. sectors,
+long/short haul, target event date if applicable, wearables). NEVER ask context
+questions before the 11 are complete. NEVER emit `should_end:true` until all 11
+are present in the answers.
 
 BRANCHING (examples — you should adapt intelligently):
 - If Pilot chosen → ask about sectors, long/short haul, layover length, time zones crossed.
@@ -1299,14 +1319,37 @@ def _assessment_fallback_next(assessment: dict) -> dict:
          "type": "range", "meta": {"min": 0, "max": 90, "step": 5, "unit": "min", "left_label": "None", "right_label": "1h30"}},
         {"id": "training_days", "section": "Time Available", "text": "How many days a week can you train?",
          "type": "single_select", "options": [
+             {"id": "1", "label": "1 day",  "icon": "calendar-outline"},
              {"id": "2", "label": "2 days", "icon": "calendar-outline"},
              {"id": "3", "label": "3 days", "icon": "calendar-outline"},
              {"id": "4", "label": "4 days", "icon": "calendar-outline"},
              {"id": "5", "label": "5 days", "icon": "calendar-outline"},
              {"id": "6", "label": "6 days", "icon": "calendar-outline"},
+             {"id": "7", "label": "7 days", "icon": "calendar-outline"},
          ]},
+        # Iter 84 (Task 1.2) — Time-per-session gates. Required so the plan
+        # builder can size sessions accurately instead of silently defaulting.
+        {"id": "time_home", "section": "Time Available", "text": "How much time do you have per session at home?",
+         "type": "single_select", "options": [
+             {"id": "15", "label": "15 min", "icon": "time-outline"},
+             {"id": "30", "label": "30 min", "icon": "time-outline"},
+             {"id": "45", "label": "45 min", "icon": "time-outline"},
+             {"id": "60", "label": "60 min", "icon": "time-outline"},
+             {"id": "75", "label": "75 min", "icon": "time-outline"},
+             {"id": "90", "label": "90 min", "icon": "time-outline"},
+         ]},
+        {"id": "time_layover", "section": "Time Available", "text": "How much time do you typically have on a layover?",
+         "type": "single_select", "options": [
+             {"id": "0",  "label": "I don't train on layovers", "icon": "close-circle"},
+             {"id": "15", "label": "15 min", "icon": "time-outline"},
+             {"id": "30", "label": "30 min", "icon": "time-outline"},
+             {"id": "45", "label": "45 min", "icon": "time-outline"},
+             {"id": "60", "label": "60 min", "icon": "time-outline"},
+         ]},
+        # Iter 84 (Task 1.2) — Equipment is now HARD required (no allow_skip).
+        # "bodyweight_only" is a valid explicit pick.
         {"id": "equipment_home", "section": "Equipment", "text": "What equipment do you have at home?",
-         "type": "equipment_picker", "meta": {"location": "home"}, "allow_skip": True},
+         "type": "equipment_picker", "meta": {"location": "home"}},
         {"id": "hotel_gyms", "section": "Your Aviation", "text": "Do you usually find gyms in your hotels?",
          "type": "single_select", "options": [
              {"id": "always", "label": "Always", "icon": "checkmark-done"},
@@ -1315,8 +1358,21 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "rare", "label": "Rarely", "icon": "remove-circle"},
              {"id": "never", "label": "Never", "icon": "close-circle"},
          ]},
-        {"id": "injuries", "section": "Injuries", "text": "Any current injuries or things you must avoid?",
-         "type": "long_text", "allow_skip": True},
+        # Iter 84 (Task 1.2) — Injuries required, but "No injuries currently"
+        # is an explicit valid pick so users don't need to type "none".
+        {"id": "injuries", "section": "Injuries", "text": "Any current injuries, or things you must avoid?",
+         "type": "long_text",
+         "meta": {"explicit_none_label": "No injuries currently"}},
+        {"id": "no_go_movements", "section": "Injuries", "text": "Any movement patterns to avoid entirely?",
+         "type": "multi_select", "options": [
+             {"id": "none", "label": "None — I can do all movements", "icon": "checkmark-done"},
+             {"id": "running", "label": "Running / impact", "icon": "walk"},
+             {"id": "jumping", "label": "Jumping", "icon": "trending-up"},
+             {"id": "overhead_pressing", "label": "Overhead pressing", "icon": "arrow-up"},
+             {"id": "deep_squatting", "label": "Deep squatting", "icon": "arrow-down"},
+             {"id": "deadlifts", "label": "Deadlifts", "icon": "barbell"},
+             {"id": "heavy_lifting", "label": "Heavy lifting", "icon": "barbell-outline"},
+         ]},
         {"id": "sleep_quality", "section": "Recovery", "text": "On average, how would you rate your sleep?",
          "type": "range", "meta": {"min": 1, "max": 10, "step": 1, "unit": "/10", "left_label": "Poor", "right_label": "Great"}},
         {"id": "stress", "section": "Lifestyle", "text": "How would you rate your daily stress?",
@@ -1697,6 +1753,94 @@ async def _send_louis_welcome_message_if_needed(user: dict) -> None:
 
 
 
+# ---------------------------------------------------------------------------
+# Iter 84 (Task 1.2) — Mandatory-fields helper for /assessment/finalize.
+#
+# These are the 8 essential DNA fields (plus biological_sex + crew_role which
+# are locked at signup, checked separately). Every client MUST have them before
+# we finalize the assessment and build their programme.
+# ---------------------------------------------------------------------------
+_ESSENTIAL_DNA_FIELDS: list[str] = [
+    "primary_goal",
+    # secondary_goals is 0-3 — asked but empty list is OK
+    "training_days",
+    "time_home",
+    "time_layover",
+    "equipment_home",
+    "hotel_gyms",
+    "injuries",
+    "no_go_movements",
+]
+_FRIENDLY_ESSENTIAL_LABELS: dict[str, str] = {
+    "primary_goal":     "Your primary goal",
+    "training_days":    "How many days per week you can train",
+    "time_home":        "Time per session at home",
+    "time_layover":     "Time per session on a layover",
+    "equipment_home":   "Equipment you have at home",
+    "hotel_gyms":       "How reliable hotel gyms are for you",
+    "injuries":         "Current injuries or things to avoid",
+    "no_go_movements":  "Movements you must avoid",
+    "biological_sex":   "Biological sex",
+    "crew_role":        "Aviation role",
+}
+
+
+def _missing_essential_fields(assessment: dict, user: dict) -> list[str]:
+    """
+    Return the list of essential-field IDs missing from the assessment / user
+    profile. Empty list = all fields present, safe to finalize.
+
+    Assessment.answers is a LIST of {question_id, answer} entries. We flatten
+    it into a dict for O(1) lookups. If the same question was answered twice,
+    the LATER answer wins (users can revise).
+
+    Special rules:
+      * "equipment_home" — must be a non-empty list. "bodyweight_only" is OK.
+      * "no_go_movements" — must be a non-empty list. ["none"] is OK.
+      * "injuries" — either non-empty text OR the explicit-none payload
+        ({"__explicit_none": true, ...}) OR the boolean-flag "no_injuries".
+    """
+    profile = (user or {}).get("profile") or {}
+    # Flatten answers list into dict (latest-wins)
+    answers_flat: dict[str, Any] = {}
+    for a in (assessment or {}).get("answers") or []:
+        if not isinstance(a, dict):
+            continue
+        qid = a.get("question_id")
+        if qid:
+            answers_flat[qid] = a.get("answer")
+
+    missing: list[str] = []
+
+    if not (answers_flat.get("biological_sex") or profile.get("biological_sex") or profile.get("sex")):
+        missing.append("biological_sex")
+    if not (answers_flat.get("crew_role") or profile.get("crew_role") or profile.get("role") or profile.get("job_title")):
+        missing.append("crew_role")
+
+    for fid in _ESSENTIAL_DNA_FIELDS:
+        v = answers_flat.get(fid)
+        if fid == "equipment_home":
+            if not v or not isinstance(v, list) or len(v) == 0:
+                missing.append(fid)
+        elif fid == "no_go_movements":
+            if not v or not isinstance(v, list) or len(v) == 0:
+                missing.append(fid)
+        elif fid == "injuries":
+            # Accept: non-empty text OR explicit-none dict OR a legacy boolean flag
+            has_explicit_none = (
+                (isinstance(v, dict) and v.get("__explicit_none"))
+                or bool(answers_flat.get("no_injuries"))
+                or bool(answers_flat.get("injuries_none"))
+            )
+            has_text = bool(v and isinstance(v, str) and v.strip())
+            if not (has_explicit_none or has_text):
+                missing.append(fid)
+        else:
+            if v in (None, "", []):
+                missing.append(fid)
+    return missing
+
+
 @api.post("/assessment/finalize")
 async def assessment_finalize(body: dict = None, user: dict = Depends(current_user)):
     body = body or {}
@@ -1710,6 +1854,21 @@ async def assessment_finalize(body: dict = None, user: dict = Depends(current_us
         # Return existing DNA
         dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("updated_at", -1)])
         return {"dna": dna, "already_completed": True}
+
+    # Iter 84 (Task 1.2) — Mandatory-fields guard.
+    # Refuse to finalize until the 8 essential fields are present.
+    # (biological_sex, aviation_role are locked at signup; the other 8 are DNA.)
+    missing = _missing_essential_fields(a, user)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "profile_incomplete",
+                "message": "Louis needs a few more answers before finalising your plan.",
+                "missing_fields": missing,
+                "friendly_labels": [_FRIENDLY_ESSENTIAL_LABELS.get(f, f) for f in missing],
+            },
+        )
 
     dna = await _generate_coaching_dna(user["id"], a)
 

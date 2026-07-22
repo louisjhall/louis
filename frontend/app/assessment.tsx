@@ -244,6 +244,10 @@ function MultiSelect({ q, onSubmit, submitting }: any) {
 
 function TextAnswer({ q, onSubmit, submitting, multiline }: any) {
   const [v, setV] = useState("");
+  // Iter 84 (Task 1.2) — For questions like "any injuries?" the meta can
+  // include `explicit_none_label` so users tick "No injuries currently" as
+  // an affirmative answer instead of being forced to type something.
+  const explicitNoneLabel: string | undefined = q?.meta?.explicit_none_label;
   return (
     <View>
       <TextInput
@@ -256,6 +260,17 @@ function TextAnswer({ q, onSubmit, submitting, multiline }: any) {
         editable={!submitting}
       />
       <ContinueBtn onPress={() => onSubmit(v.trim())} disabled={submitting || !v.trim()} />
+      {explicitNoneLabel ? (
+        <Pressable
+          testID="assessment-explicit-none"
+          onPress={() => onSubmit({ __explicit_none: true, text: "" })}
+          disabled={submitting}
+          style={styles.noneBtn}
+        >
+          <Ionicons name="checkmark-circle" size={14} color={theme.color.brand} />
+          <Text style={styles.noneBtnT}>{explicitNoneLabel.toUpperCase()}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -669,6 +684,14 @@ const styles = StyleSheet.create({
   continueTxt: { color: "#fff", fontSize: 13, fontWeight: "900", letterSpacing: 2 },
   skipBtn: { alignItems: "center", paddingVertical: 12, marginTop: 6 },
   skipTxt: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 2 },
+  noneBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, paddingVertical: 12, marginTop: 8,
+    borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  noneBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
 
   finaliseWrap: { flex: 1, alignItems: "center", justifyContent: "center", padding: 40 },
   pulseCircle: {

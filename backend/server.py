@@ -1244,6 +1244,29 @@ async def _assessment_next_question(assessment: dict) -> dict:
             fast["progress"] = deterministic_progress
             return fast
 
+    # Iter 94f — STRICT LLM GATE. If ANY mandatory essential is still
+    # unanswered, we NEVER hand control to the LLM. Instead, serve whatever
+    # `_assessment_fallback_next` returned (it may be a non-mandatory q like
+    # `why` that sits between mandatory ones — that's fine, it's still
+    # deterministic). The LLM only gets to run bonus questions AFTER every
+    # mandatory ID is present. Without this, the LLM would hallucinate a
+    # rephrase of a mandatory question (e.g. `weekly_frequency` instead of
+    # `training_days`) and the fast path would ask the real mandatory q
+    # next round → user sees the topic twice.
+    still_missing_mandatory = set(_MANDATORY_DETERMINISTIC_IDS) - answered_ids
+    # Drop layover-only mandatory IDs if the client explicitly doesn't do layovers.
+    _answered_map = {a.get("question_id"): a.get("answer") for a in (assessment.get("answers") or [])}
+    _ft = str(_answered_map.get("flying_type") or "").lower()
+    if _ft in _NON_LAYOVER_FLYING_TYPES:
+        still_missing_mandatory -= {"time_layover", "hotel_gyms"}
+    if still_missing_mandatory:
+        # Serve fb.next deterministically. If fb has nothing → end.
+        if fast_q and fast_q.get("id") not in answered_ids:
+            fast["progress"] = deterministic_progress
+            return fast
+        return {"should_end": True, "progress": 100,
+                "section_context": "Building your Coaching DNA..."}
+
     prefill_note = ""
     if prefilled_ids:
         prefill_note = (
@@ -1280,9 +1303,27 @@ async def _assessment_next_question(assessment: dict) -> dict:
 
     # Sanitise: LLM sometimes re-asks a prefilled/answered question — swap to
     # deterministic fallback in that case so we always move forward.
+    # Iter 94f — expanded from a naive id-match to a full SEMANTIC-collision
+    # check so rephrased duplicates ("flying_pattern" for `flying_type`,
+    # "main_goal" for `primary_goal`) also get caught.
     q = parsed.get("next_question") if isinstance(parsed, dict) else None
-    if q and q.get("id") in answered_ids:
+    if q and _semantic_collision(q, answered_ids):
+        logger.warning(
+            "assessment_next: rejecting LLM question '%s' — collides with "
+            "already-answered topic (answered_ids=%s)",
+            q.get("id"), sorted(answered_ids),
+        )
         parsed = _assessment_fallback_next(assessment)
+        # If the fallback ALSO collides (shouldn't, but belt-and-braces),
+        # force end so we never get stuck in a loop.
+        q2 = parsed.get("next_question") if isinstance(parsed, dict) else None
+        if q2 and _semantic_collision(q2, answered_ids):
+            logger.error(
+                "assessment_next: fallback ALSO collided (id=%s). Forcing end.",
+                q2.get("id"),
+            )
+            parsed = {"should_end": True, "progress": 100,
+                      "section_context": "Building your Coaching DNA..."}
 
     # OVERRIDE progress with the deterministic value so the UI can't flap.
     if isinstance(parsed, dict):
@@ -1305,6 +1346,74 @@ _MANDATORY_DETERMINISTIC_IDS: frozenset[str] = frozenset({
 })
 
 _NON_LAYOVER_FLYING_TYPES: frozenset[str] = frozenset({"short_haul", "ground_only"})
+
+# Iter 94f — SEMANTIC-COLLISION guard. For any answered question_id, the LLM
+# must NEVER emit a NEW question whose id (or text) hits any of these
+# keywords. If it does, we reject and fall back to deterministic. This is
+# the fix for "the LLM asked me about my goals / flights again".
+#
+# Rule: substring match, case-insensitive. Add generously — false positives
+# just push us to fallback (safe); false negatives cause duplicates (unsafe).
+_TOPIC_KEYWORDS: dict[str, set[str]] = {
+    "biological_sex":   {"biological_sex", "sex_at_birth", "gender", "sex"},
+    "role":             {"aviation_role", "crew_role", "your_role", "role_in_aviation"},
+    "flying_type":      {"flying_type", "flying_pattern", "flight_type", "haul_type",
+                         "haul_mix", "route_focus", "route_type", "sector_mix",
+                         "flying_style", "type_of_flying", "kind_of_flying"},
+    "primary_goal":     {"primary_goal", "main_goal", "top_goal", "biggest_goal",
+                         "your_goal", "training_goal", "fitness_goal", "goal_priority"},
+    "secondary_goals":  {"secondary_goal", "other_goal", "additional_goal"},
+    "why":              {"why_it_matters", "your_why", "reason_why"},
+    "events":           {"upcoming_event", "event_builder", "event_timeline",
+                         "race_calendar", "target_event"},
+    "experience":       {"training_experience", "experience_level",
+                         "lifting_experience", "years_training"},
+    "training_days":    {"training_days", "days_per_week", "sessions_per_week",
+                         "weekly_frequency", "weekly_sessions", "weekly_training_days"},
+    "time_home":        {"time_home", "home_time", "session_length_home",
+                         "home_session_length", "home_minutes"},
+    "time_layover":     {"time_layover", "layover_time", "layover_length",
+                         "layover_minutes", "layover_duration",
+                         "session_length_layover"},
+    "equipment_home":   {"equipment_home", "home_equipment", "home_gear",
+                         "home_setup", "gym_setup", "training_equipment"},
+    "hotel_gyms":       {"hotel_gyms", "hotel_gym", "hotel_gym_reliability",
+                         "gym_in_hotel"},
+    "injuries":         {"injuries", "current_injury", "injury_history",
+                         "pain_history", "recent_injury"},
+    "no_go_movements":  {"no_go_movement", "movements_to_avoid",
+                         "avoid_movement", "avoid_pattern", "forbidden_movement",
+                         "restricted_movement"},
+    "sleep_quality":    {"sleep_quality", "sleep_score"},
+    "stress":           {"stress_level"},
+    "family":           {"family_commitments"},
+    "nutrition_habits": {"nutrition_habits", "eating_habits", "food_habits"},
+    "diet_style":       {"diet_style", "diet_type", "dietary_preference"},
+    "motivation":       {"motivation_style", "what_motivates"},
+    "blocker":          {"training_blocker", "what_stops_you", "obstacle_to_training"},
+    "coaching_style_pref": {"coaching_style", "coach_style_pref", "coach_preference"},
+}
+
+
+def _semantic_collision(candidate_q: dict, answered_ids: set[str]) -> bool:
+    """Return True iff a candidate LLM question re-asks an already-answered topic.
+
+    Checks the candidate's `id` AND `text` against `_TOPIC_KEYWORDS` for every
+    already-answered id. Substring match, case-insensitive. Cheap.
+    """
+    if not candidate_q or not isinstance(candidate_q, dict):
+        return False
+    cid = str(candidate_q.get("id") or "").lower().strip()
+    ctext = str(candidate_q.get("text") or "").lower().strip()
+    if cid in answered_ids:
+        return True
+    for aid in answered_ids:
+        kws = _TOPIC_KEYWORDS.get(aid, set())
+        for kw in kws:
+            kw_l = kw.lower()
+            if kw_l and (kw_l in cid or kw_l in ctext):
+                return True
+    return False
 
 
 def _assessment_fallback_next(assessment: dict) -> dict:
@@ -1734,14 +1843,31 @@ async def assessment_answer(body: AssessmentAnswerBody, user: dict = Depends(cur
 
     cq = a.get("current_question") or {}
     q_id = body.question_id or cq.get("id")
-    a["answers"].append({
+    # Iter 94f — Idempotency: if the same question_id is already answered,
+    # UPDATE it in-place instead of appending a duplicate row. This stops
+    # duplicated transcript entries when the frontend accidentally re-submits
+    # (e.g. double-tap or a stale replay). Without this dedup the answered_ids
+    # set still works but the assessment doc grows with noise.
+    existing_idx = next(
+        (i for i, ans in enumerate(a["answers"]) if ans.get("question_id") == q_id),
+        None,
+    )
+    new_answer_row = {
         "question_id": q_id,
         "section": cq.get("section"),
         "question_text": cq.get("text"),
         "question_type": cq.get("type"),
         "answer": body.answer,
         "answered_at": now_iso(),
-    })
+    }
+    if existing_idx is not None:
+        # Preserve the prefilled_from flag if it was set at signup.
+        prev = a["answers"][existing_idx]
+        if prev.get("prefilled_from"):
+            new_answer_row["prefilled_from"] = prev.get("prefilled_from")
+        a["answers"][existing_idx] = new_answer_row
+    else:
+        a["answers"].append(new_answer_row)
     await db.assessments.update_one({"id": a["id"]}, {"$set": {"answers": a["answers"]}})
 
     # Persist critical demographic answers straight onto user.profile so the

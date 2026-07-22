@@ -1073,15 +1073,16 @@ present. This is a HARD contract — Louis needs these to plan a real programme.
 
   1. **biological_sex** (id: `biological_sex`) — single_select {male, female, intersex_prefer_not}. Skip only if already provided at signup. NEVER skippable via allow_skip. Used to derive pronouns automatically (male→he/him, female→she/her, intersex_prefer_not→they/them). Do NOT ask a separate pronouns question.
   2. **aviation_role** (id: `crew_role`) — single_select from Pilot / Cabin Crew / Ground Ops / Corporate Aviation / Other. Skip only if already at signup.
-  3. **primary_goal** (id: `primary_goal`) — single_select from the goal catalogue below. This is the ONE main thing they care about most.
-  4. **secondary_goals** (id: `secondary_goals`) — multi_select, 0-3 allowed, from the goal catalogue below. Optional in count but MUST be asked.
-  5. **training_days_per_week** (id: `training_days`) — integer 1-7. Ask "How many days per week can you realistically train?"
-  6. **time_home_min** (id: `time_home`) — single_select from [15, 30, 45, 60, 75, 90] min. "How much time do you have per session when you're at home?"
-  7. **time_layover_min** (id: `time_layover`) — single_select from [0, 15, 30, 45, 60] min. "How much time do you typically have on a layover between duty and rest?" (0 = "I don't train on layovers")
-  8. **equipment_home** (id: `equipment_home`) — equipment_picker with meta:{location:"home"}, MULTI-SELECT ≥1 required. Options MUST include "bodyweight_only" as a valid explicit pick. NEVER `allow_skip: true`.
-  9. **hotel_gym_reliability** (id: `hotel_gym_reliability`) — single_select from [always, often, sometimes, rare, never]. "How reliable are hotel gyms on your typical layovers?"
-  10. **injuries** (id: `injuries`) — long_text with an explicit "No injuries currently" pick alongside. NEVER `allow_skip: true`. If they type nothing but tick "No injuries currently", that's valid.
-  11. **no_go_movements** (id: `no_go_movements`) — multi_select from [none, running, jumping, overhead_pressing, deep_squatting, deadlifts, heavy_lifting]. "No" (none) is a valid explicit pick.
+  3. **flying_type** (id: `flying_type`) — single_select from {short_haul, mixed, long_haul, charter, cargo, ground_only}. MUST be asked BEFORE any layover-related question. If the answer is `short_haul` or `ground_only`, DO NOT ask questions 8 or 10 (they are auto-answered).
+  4. **primary_goal** (id: `primary_goal`) — single_select from the goal catalogue below. This is the ONE main thing they care about most.
+  5. **secondary_goals** (id: `secondary_goals`) — multi_select, 0-3 allowed, from the goal catalogue below. Optional in count but MUST be asked.
+  6. **training_days_per_week** (id: `training_days`) — integer 1-7. Ask "How many days per week can you realistically train?"
+  7. **time_home_min** (id: `time_home`) — single_select from [15, 30, 45, 60, 75, 90] min. "How much time do you have per session when you're at home?"
+  8. **time_layover_min** (id: `time_layover`) — single_select from [0, 15, 30, 45, 60] min. **SKIP** if flying_type ∈ {short_haul, ground_only}.
+  9. **equipment_home** (id: `equipment_home`) — equipment_picker with meta:{location:"home"}, MULTI-SELECT ≥1 required. Options MUST include "bodyweight_only" as a valid explicit pick. NEVER `allow_skip: true`.
+  10. **hotel_gym_reliability** (id: `hotel_gyms`) — single_select from [always, often, sometimes, rare, never]. **SKIP** if flying_type ∈ {short_haul, ground_only}.
+  11. **injuries** (id: `injuries`) — long_text with an explicit "No injuries currently" pick alongside. NEVER `allow_skip: true`. If they type nothing but tick "No injuries currently", that's valid.
+  12. **no_go_movements** (id: `no_go_movements`) — multi_select from [none, running, jumping, overhead_pressing, deep_squatting, deadlifts, heavy_lifting]. "No" (none) is a valid explicit pick.
 
 Goal catalogue (used by both primary_goal and secondary_goals):
 [Lose body fat, Build muscle, General fitness, Improve health, Improve confidence, Ironman, 70.3, Sprint Triathlon, Olympic Triathlon, Marathon, Half Marathon, HYROX, 5K, 10K, Improve mobility, Reduce pain, Return from injury, Reduce jet lag, Improve sleep, Pass airline medical, Maintain fitness, Other]
@@ -1191,6 +1192,18 @@ async def _assessment_next_question(assessment: dict) -> dict:
         LLM's own progress number is ignored because it flaps back and forth.
       * Hard cap: after MAX_ASSESSMENT_QUESTIONS answers we force `should_end`
         regardless of what the LLM says, and never re-ask a prefilled question.
+
+    Iter 94e fixes (batched user complaints):
+      * The MANDATORY onboarding questions (biological_sex, role, flying_type,
+        primary_goal, training_days, time_home, time_layover, equipment_home,
+        hotel_gyms, injuries, no_go_movements) are now served DETERMINISTICALLY
+        from `_assessment_fallback_next` — no LLM round-trip. This removes the
+        multi-second pause between each of the first ~11 questions.
+      * `flying_type` is now asked as question #3, BEFORE any layover-related
+        question so the flow doesn't presume everyone does layovers.
+      * If `flying_type` is short_haul / ground_only, we AUTO-INJECT answers
+        for `time_layover=0` and `hotel_gyms=never` and DO NOT ask them.
+      * No question is emitted twice — the fallback list is now deduplicated.
     """
     # Hard bounds. Anything above these creates fatigue and dropout.
     TARGET_QUESTIONS = 14   # what the % is scaled to (80% at 11, 100% at end)
@@ -1220,6 +1233,16 @@ async def _assessment_next_question(assessment: dict) -> dict:
             "progress": 100,
             "section_context": "Building your Coaching DNA...",
         }
+
+    # Iter 94e — Fast path: if the NEXT missing question is one of our
+    # deterministic mandatory questions, serve it INSTANTLY without an LLM call.
+    # This kills the pause between questions during the onboarding sequence.
+    fast = _assessment_fallback_next(assessment)
+    fast_q = fast.get("next_question") if isinstance(fast, dict) else None
+    if fast_q and str(fast_q.get("id")) in _MANDATORY_DETERMINISTIC_IDS:
+        if fast_q.get("id") not in answered_ids:
+            fast["progress"] = deterministic_progress
+            return fast
 
     prefill_note = ""
     if prefilled_ids:
@@ -1259,9 +1282,46 @@ async def _assessment_next_question(assessment: dict) -> dict:
     return parsed
 
 
+# Iter 94e — the deterministic-fast-path set. Any question whose id is in this
+# set will be served WITHOUT an LLM round-trip. Order in _assessment_fallback_next
+# controls the sequence.
+_MANDATORY_DETERMINISTIC_IDS: frozenset[str] = frozenset({
+    "biological_sex", "role", "primary_goal",
+    "flying_type",  # NEW — asked BEFORE any layover-related question
+    "training_days", "time_home", "time_layover",
+    "equipment_home", "hotel_gyms",
+    "injuries", "no_go_movements",
+})
+
+_NON_LAYOVER_FLYING_TYPES: frozenset[str] = frozenset({"short_haul", "ground_only"})
+
+
 def _assessment_fallback_next(assessment: dict) -> dict:
-    """Deterministic fallback flow if AI fails — always keeps the interview moving."""
-    answered = {a.get("question_id") for a in (assessment.get("answers") or [])}
+    """Deterministic fallback flow if AI fails — always keeps the interview moving.
+
+    Iter 94e — the flow is now:
+      1. biological_sex
+      2. role (aviation role)
+      3. flying_type (NEW — asked BEFORE any layover question)
+      4. primary_goal
+      5. why
+      6. events
+      7. experience
+      8. training_days
+      9. time_home  (SINGLE entry — the range-slider duplicate was removed)
+      10. time_layover  (SKIPPED if flying_type ∈ {short_haul, ground_only})
+      11. equipment_home
+      12. hotel_gyms  (SKIPPED if flying_type ∈ {short_haul, ground_only})
+      13. injuries
+      14. no_go_movements
+      (then optional context: sleep_quality, stress, family, nutrition_habits,
+       diet_style, motivation, blocker, coaching_style_pref)
+    """
+    answered_map = {a.get("question_id"): a.get("answer") for a in (assessment.get("answers") or [])}
+    answered = set(answered_map.keys())
+    flying_type_answer = str(answered_map.get("flying_type") or "").lower()
+    non_layover = flying_type_answer in _NON_LAYOVER_FLYING_TYPES
+
     fb: list[dict] = [
         {"id": "biological_sex", "section": "About You",
          "text": "What is your biological sex? (used for training load, protein targets and recovery science — kept private)",
@@ -1277,6 +1337,24 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "ground_ops", "label": "Ground Ops", "icon": "cube"},
              {"id": "corporate", "label": "Corporate Aviation", "icon": "business"},
              {"id": "other", "label": "Other", "icon": "globe"},
+         ], "allow_skip": False},
+        # Iter 94e — flying pattern asked BEFORE any layover-related question.
+        {"id": "flying_type", "section": "Your Aviation",
+         "text": "What kind of flying do you mainly do?",
+         "help_text": "This tells us whether to plan hotel sessions or focus entirely on home training.",
+         "type": "single_select", "options": [
+             {"id": "short_haul",  "label": "Short-haul / turnarounds only",
+              "sub": "Home every night — no layovers.", "icon": "return-up-back"},
+             {"id": "mixed",       "label": "Mixed",
+              "sub": "Some turnarounds, some layovers.", "icon": "swap-horizontal"},
+             {"id": "long_haul",   "label": "Long-haul",
+              "sub": "Mostly overnight layovers away.", "icon": "airplane"},
+             {"id": "charter",     "label": "Charter / ad-hoc",
+              "sub": "Irregular pattern — layovers possible.", "icon": "shuffle"},
+             {"id": "cargo",       "label": "Cargo",
+              "sub": "Freight ops — mostly overnight.", "icon": "cube"},
+             {"id": "ground_only", "label": "Ground / office based",
+              "sub": "No flying. Fixed schedule.", "icon": "business"},
          ], "allow_skip": False},
         {"id": "primary_goal", "section": "Your Goals",
          "text": "What are you trying to achieve? Pick everything that matters.",
@@ -1314,10 +1392,6 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "intermediate", "label": "Intermediate", "icon": "star-half"},
              {"id": "advanced", "label": "Advanced", "icon": "star"},
          ]},
-        {"id": "time_home", "section": "Time Available", "text": "How much time can you realistically train at home?",
-         "type": "range", "meta": {"min": 15, "max": 120, "step": 5, "unit": "min", "left_label": "15m", "right_label": "2h"}},
-        {"id": "time_layover", "section": "Time Available", "text": "How much time on layovers?",
-         "type": "range", "meta": {"min": 0, "max": 90, "step": 5, "unit": "min", "left_label": "None", "right_label": "1h30"}},
         {"id": "training_days", "section": "Time Available", "text": "How many days a week can you train?",
          "type": "single_select", "options": [
              {"id": "1", "label": "1 day",  "icon": "calendar-outline"},
@@ -1330,6 +1404,7 @@ def _assessment_fallback_next(assessment: dict) -> dict:
          ]},
         # Iter 84 (Task 1.2) — Time-per-session gates. Required so the plan
         # builder can size sessions accurately instead of silently defaulting.
+        # Iter 94e — deduplicated: was appearing twice (range + single_select).
         {"id": "time_home", "section": "Time Available", "text": "How much time do you have per session at home?",
          "type": "single_select", "options": [
              {"id": "15", "label": "15 min", "icon": "time-outline"},
@@ -1339,14 +1414,18 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "75", "label": "75 min", "icon": "time-outline"},
              {"id": "90", "label": "90 min", "icon": "time-outline"},
          ]},
-        {"id": "time_layover", "section": "Time Available", "text": "How much time do you typically have on a layover?",
+        # Iter 94e — SKIPPED entirely if flying_type is non-layover. Also
+        # deduplicated (was appearing as both range and single_select before).
+        {"id": "time_layover", "section": "Time Available",
+         "text": "How much time do you typically have on a layover?",
          "type": "single_select", "options": [
              {"id": "0",  "label": "I don't train on layovers", "icon": "close-circle"},
              {"id": "15", "label": "15 min", "icon": "time-outline"},
              {"id": "30", "label": "30 min", "icon": "time-outline"},
              {"id": "45", "label": "45 min", "icon": "time-outline"},
              {"id": "60", "label": "60 min", "icon": "time-outline"},
-         ]},
+         ],
+         "_skip_if_non_layover": True},
         # Iter 84 (Task 1.2) — Equipment is now HARD required (no allow_skip).
         # "bodyweight_only" is a valid explicit pick.
         {"id": "equipment_home", "section": "Equipment", "text": "What equipment do you have at home?",
@@ -1358,7 +1437,8 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "sometimes", "label": "Sometimes", "icon": "help-circle"},
              {"id": "rare", "label": "Rarely", "icon": "remove-circle"},
              {"id": "never", "label": "Never", "icon": "close-circle"},
-         ]},
+         ],
+         "_skip_if_non_layover": True},
         # Iter 84 (Task 1.2) — Injuries required, but "No injuries currently"
         # is an explicit valid pick so users don't need to type "none".
         {"id": "injuries", "section": "Injuries", "text": "Any current injuries, or things you must avoid?",
@@ -1442,9 +1522,18 @@ def _assessment_fallback_next(assessment: dict) -> dict:
              {"id": "educational", "label": "Educational", "icon": "book"},
          ]},
     ]
+
+    # Iter 94e — Filter out layover-specific questions if the client's flying
+    # pattern doesn't include layovers. Return them a synthetic "already
+    # answered" state so downstream code sees them as satisfied.
+    if non_layover:
+        fb = [q for q in fb if not q.get("_skip_if_non_layover")]
+
     for q in fb:
         if q["id"] not in answered:
-            return {"next_question": q, "should_end": False,
+            # Strip the internal filter flag before returning to the client.
+            clean_q = {k: v for k, v in q.items() if not k.startswith("_")}
+            return {"next_question": clean_q, "should_end": False,
                     "progress": min(95, int(100 * len(answered) / max(1, len(fb)))),
                     "section_context": q["section"]}
     return {"should_end": True, "progress": 100, "section_context": "Building your Coaching DNA..."}
@@ -1652,6 +1741,47 @@ async def assessment_answer(body: AssessmentAnswerBody, user: dict = Depends(cur
             {"id": user["id"]},
             {"$set": {"profile.biological_sex": str(body.answer)}},
         )
+
+    # Iter 94e — Persist flying_type onto profile AND auto-inject layover
+    # answers when the client does not do layovers so we never ask them.
+    if q_id == "flying_type" and isinstance(body.answer, (str,)):
+        ft = str(body.answer).lower().strip()
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "profile.flying_type": ft,
+                "profile.route_focus": ft,
+                "profile.does_layovers": ft not in ("short_haul", "ground_only"),
+            }},
+        )
+        if ft in ("short_haul", "ground_only"):
+            now = now_iso()
+            already_ids = {ans.get("question_id") for ans in a["answers"]}
+            for auto_qid, auto_val, auto_text in (
+                ("time_layover", "0", "How much time do you typically have on a layover?"),
+                ("hotel_gyms",   "never", "Do you usually find gyms in your hotels?"),
+            ):
+                if auto_qid in already_ids:
+                    continue
+                a["answers"].append({
+                    "question_id": auto_qid,
+                    "section": "Time Available" if auto_qid == "time_layover" else "Your Aviation",
+                    "question_text": auto_text,
+                    "question_type": "single_select",
+                    "answer": auto_val,
+                    "answered_at": now,
+                    "auto_injected_from": "flying_type",
+                })
+            await db.assessments.update_one({"id": a["id"]}, {"$set": {"answers": a["answers"]}})
+            # Also mirror onto profile so essentials check passes without a retry.
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {
+                    "profile.time_layover_min": 0,
+                    "profile.hotel_gym_reliability": "never",
+                    "profile.hotel_gyms": "never",
+                }},
+            )
 
     nxt = await _assessment_next_question(a)
     if nxt.get("should_end") or not nxt.get("next_question"):

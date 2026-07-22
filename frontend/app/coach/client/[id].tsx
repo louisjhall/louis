@@ -94,11 +94,16 @@ export default function ClientDetail() {
   const [permDeleteOpen, setPermDeleteOpen] = useState(false);
   const [permDeleteText, setPermDeleteText] = useState("");
   const [adminBusy, setAdminBusy] = useState<string | null>(null);
+  // Iter 92 (Phase 2, Task 2.6) — LIVE SIGNALS
+  const [liveState, setLiveState] = useState<any | null>(null);
+  const [liveReceipt, setLiveReceipt] = useState<any | null>(null);
+  const [directiveText, setDirectiveText] = useState("");
+  const [directiveBusy, setDirectiveBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [detail, ctrl, log, habits, standby, prog, hist, audit, overview, timeline] = await Promise.all([
+      const [detail, ctrl, log, habits, standby, prog, hist, audit, overview, timeline, live] = await Promise.all([
         api<any>(`/coach/clients/${id}`),
         api<{ controls: Controls }>(`/coach/clients/${id}/controls`).catch(() => ({ controls: null as any })),
         api<{ entries: any[] }>(`/coach/clients/${id}/change-log`).catch(() => ({ entries: [] })),
@@ -110,6 +115,8 @@ export default function ClientDetail() {
         // Plan C3 — programme overview + timeline
         api<any>(`/coach/clients/${id}/programme-overview`).catch(() => null),
         api<any>(`/coach/clients/${id}/programme-timeline?limit=120`).catch(() => ({ timeline: [] })),
+        // Iter 92 (Phase 2) — Live signals
+        api<any>(`/coach/clients/${id}/live-state`).catch(() => null),
       ]);
       setData(detail);
       if (ctrl?.controls) setControls(ctrl.controls);
@@ -122,6 +129,8 @@ export default function ClientDetail() {
       setAuditLog(audit?.entries || []);
       setOverview(overview || null);
       setTimeline(timeline?.timeline || []);
+      setLiveState(live?.live_state || null);
+      setLiveReceipt(live?.receipt || null);
     } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -572,6 +581,111 @@ export default function ClientDetail() {
             {client.progression_pill.coach_note ? (
               <Text style={styles.progNote} numberOfLines={2}>{client.progression_pill.coach_note}</Text>
             ) : null}
+          </View>
+        ) : null}
+
+        {/* Iter 92 (Phase 2, Task 2.6) — LIVE SIGNALS card */}
+        {liveState ? (
+          <View style={styles.liveCard} testID="cd-live-signals">
+            <View style={styles.liveHead}>
+              <Ionicons name="pulse" size={13} color={theme.color.brand} />
+              <Text style={styles.liveTitle}>LIVE SIGNALS · LAST {liveState.window_days || 14}D</Text>
+              {liveState.auto_deload_trigger ? (
+                <View style={styles.liveDeloadPill} testID="cd-live-deload">
+                  <Text style={styles.liveDeloadT}>AUTO-DELOAD</Text>
+                </View>
+              ) : null}
+            </View>
+            <View style={styles.liveGrid}>
+              <View style={styles.liveCell}>
+                <Text style={styles.liveVal}>{liveState.energy_avg ?? "—"}</Text>
+                <Text style={styles.liveLabel}>ENERGY · {liveState.energy_trend || "—"}</Text>
+              </View>
+              <View style={styles.liveCell}>
+                <Text style={styles.liveVal}>{liveState.avg_rpe_last_7d ?? "—"}</Text>
+                <Text style={styles.liveLabel}>RPE 7D</Text>
+              </View>
+              <View style={styles.liveCell}>
+                <Text style={styles.liveVal}>{liveState.adherence_pct != null ? Math.round(liveState.adherence_pct * 100) + "%" : "—"}</Text>
+                <Text style={styles.liveLabel}>ADHERENCE</Text>
+              </View>
+              <View style={styles.liveCell}>
+                <Text style={styles.liveVal}>{liveState.missed_sessions_14d ?? 0}</Text>
+                <Text style={styles.liveLabel}>MISSED</Text>
+              </View>
+            </View>
+            {liveState.pain_flags?.length ? (
+              <View style={styles.liveChipRow}>
+                {liveState.pain_flags.map((p: any, i: number) => (
+                  <View key={i} style={styles.liveChipRed} testID={`cd-pain-flag-${p.key || i}`}>
+                    <Ionicons name="warning" size={10} color="#c85450" />
+                    <Text style={styles.liveChipRedT}>{(p.region || "pain").replace("_", " ").toUpperCase()}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {liveState.avoid_movement_patterns?.length ? (
+              <Text style={styles.liveHint}>Avoiding next week: {liveState.avoid_movement_patterns.slice(0, 4).join(", ")}</Text>
+            ) : null}
+            {liveState.focus_shift_request?.target ? (
+              <Text style={styles.liveHint}>Focus shift: {String(liveState.focus_shift_request.target).replace("_", " ")}</Text>
+            ) : null}
+            {liveState.coach_directives?.length ? (
+              <View style={{ marginTop: 8 }}>
+                <Text style={styles.liveSub}>COACH DIRECTIVES · PINNED</Text>
+                {liveState.coach_directives.slice(0, 3).map((d: any) => (
+                  <View key={d.id} style={styles.directiveRow} testID={`cd-directive-${d.id}`}>
+                    <Text style={styles.directiveT} numberOfLines={3}>· {d.text}</Text>
+                    <Pressable
+                      testID={`cd-directive-del-${d.id}`}
+                      hitSlop={8}
+                      onPress={async () => {
+                        try {
+                          await api(`/coach/clients/${id}/directives/${d.id}`, { method: "DELETE" });
+                          await load();
+                        } catch (e: any) {
+                          Alert.alert("Couldn't remove", e?.message || "Try again.");
+                        }
+                      }}
+                    >
+                      <Ionicons name="close-circle" size={16} color={theme.color.textMuted} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <View style={styles.directiveInputRow}>
+              <TextInput
+                testID="cd-directive-input"
+                value={directiveText}
+                onChangeText={setDirectiveText}
+                placeholder="Add a coaching directive for next plan..."
+                placeholderTextColor={theme.color.textDim}
+                style={styles.directiveInput}
+                multiline
+              />
+              <Pressable
+                testID="cd-directive-add"
+                disabled={directiveBusy || !directiveText.trim()}
+                onPress={async () => {
+                  setDirectiveBusy(true);
+                  try {
+                    await api(`/coach/clients/${id}/directives`, {
+                      method: "POST",
+                      body: { text: directiveText.trim(), ttl_days: 21 },
+                    });
+                    setDirectiveText("");
+                    await load();
+                  } catch (e: any) {
+                    Alert.alert("Couldn't save", e?.message || "Try again.");
+                  } finally { setDirectiveBusy(false); }
+                }}
+                style={[styles.directiveAddBtn, (!directiveText.trim() || directiveBusy) && { opacity: 0.4 }]}
+              >
+                <Ionicons name="add-circle" size={16} color={theme.color.brand} />
+                <Text style={styles.directiveAddT}>PIN</Text>
+              </Pressable>
+            </View>
           </View>
         ) : null}
 
@@ -1850,4 +1964,25 @@ const styles = StyleSheet.create({
   tlTitle: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
   tlDetail: { color: theme.color.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
   tlMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 3, letterSpacing: 0.6 },
+  // Iter 92 (Phase 2, Task 2.6) — LIVE SIGNALS
+  liveCard: { marginTop: 10, padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
+  liveHead: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  liveTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.4, flex: 1 },
+  liveDeloadPill: { backgroundColor: theme.color.amber || "#e5a337", paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill },
+  liveDeloadT: { color: "#111", fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+  liveGrid: { flexDirection: "row", gap: 8 },
+  liveCell: { flex: 1, alignItems: "center", padding: 8, borderRadius: theme.radius.sm, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.divider },
+  liveVal: { color: theme.color.text, fontSize: 16, fontWeight: "900" },
+  liveLabel: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 0.8, fontWeight: "700", marginTop: 2, textAlign: "center" },
+  liveChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 },
+  liveChipRed: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, backgroundColor: "rgba(200,84,80,0.14)", borderWidth: 1, borderColor: "rgba(200,84,80,0.45)" },
+  liveChipRedT: { color: "#c85450", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  liveHint: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", marginTop: 8, fontStyle: "italic" },
+  liveSub: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.2, marginBottom: 4 },
+  directiveRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, paddingVertical: 4 },
+  directiveT: { color: theme.color.text, fontSize: 12, flex: 1, lineHeight: 17 },
+  directiveInputRow: { flexDirection: "row", alignItems: "flex-end", gap: 8, marginTop: 10 },
+  directiveInput: { flex: 1, minHeight: 38, maxHeight: 100, backgroundColor: theme.color.surface, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, padding: 8, color: theme.color.text, fontSize: 12 },
+  directiveAddBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: theme.radius.sm, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.brand },
+  directiveAddT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
 });

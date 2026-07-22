@@ -410,6 +410,7 @@ class MessageBody(BaseModel):
     to_user_id: str
     text: str
     attachment_ids: Optional[list[str]] = None
+    include_in_next_plan: Optional[bool] = False   # Iter 92 (Phase 2, Task 2.4)
 
 # --- Coach message drafts ------------------------------------------------
 class MessageDraftGenerateBody(BaseModel):
@@ -6292,7 +6293,7 @@ async def _generate_month(
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
-            f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal, strength_overload): {json.dumps(programme_ctx)[:3200] if programme_ctx else 'None'}\n"
+            f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal, strength_overload, live_state): {json.dumps(programme_ctx)[:4200] if programme_ctx else 'None'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
             f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:7500]}\n"
             "Design exactly one workout per date in this chunk. Return JSON. "
@@ -6307,6 +6308,12 @@ async def _generate_month(
             "adjust sets by `sets_delta`, target the `reps_target` range, apply `load_delta_pct` on the primary compound "
             "(BW load stays), and coach cues at the given `rpe`. If `adherence_note` is 'hold — <50% completed last week', "
             "DO NOT progress load or sets — repeat last week. Otherwise follow the delta. "
+            "(5) LIVE STATE — if `programme_context.live_state` is present, obey it: "
+            "(a) If `auto_deload_trigger=true` — this IS a deload week: cut volume 30-40%, drop hard sessions, keep movement quality high, and mention 'we're pulling back this week' in the rationale. "
+            "(b) If `avoid_movement_patterns` is non-empty (e.g. ['overhead_press','deep_squat']) — DO NOT program any exercise matching those patterns. Substitute a safe alternative (e.g. floor press instead of overhead press, box squat instead of deep squat). "
+            "(c) If `focus_shift_request.target` is set — bias the week toward it (e.g. 'strength' → protect the strength slot; 'running' → add an easy run; 'recovery' → convert one session to mobility). "
+            "(d) If `coach_directives` has entries — TREAT THEM AS BINDING coaching instructions from the head coach; work them into the plan and reference them in the rationale for that day. "
+            "(e) If `motivation_flag=='low'` — favour shorter, more achievable sessions (60% duration or one fewer set). "
             "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available. "
             "Follow the Programme context strictly: match the weekly session target, keep the movement-mix hint balanced across the week, respect the current phase (Foundation/Build/Peak/Deload) — Deload weeks reduce volume by 30–40%. "
             "For EVERY workout, populate the `rationale` field with 1–2 short sentences answering 'Why this session?' — reference the phase, the roster context (e.g. long-haul day tomorrow, standby, layover in city X), and the client's goal. No client-facing 'AI' wording. "
@@ -7697,7 +7704,19 @@ async def checkin_adaptive(body: CheckinAdaptiveBody, user: dict = Depends(curre
         "weight_kg": body.weight_kg, "notes": body.notes,
         "answers": body.answers,
     }
+    # Iter 92 (Phase 2) — extract structured signals
+    try:
+        from feature_live_state import extract_signals_from_checkin
+        doc["signals"] = extract_signals_from_checkin(doc)
+    except Exception:
+        logger.exception("adaptive-checkin signal extract failed")
     await db.checkins.insert_one(doc)
+    # Refresh rolling live_state
+    try:
+        from feature_live_state import refresh_and_persist_live_state
+        await refresh_and_persist_live_state(db, user["id"])
+    except Exception:
+        logger.exception("adaptive-checkin live_state refresh failed")
     # Fire-and-forget: generate weekly script for the coach
     if user.get("coach_id"):
         try:
@@ -7999,12 +8018,104 @@ async def workout_set_player(wid: str, body: WorkoutPlayerOverrideBody, user: di
 @api.post("/checkins")
 async def checkin_create(body: CheckInBody, user: dict = Depends(current_user)):
     doc = {"id": new_id(), "user_id": user["id"], "created_at": now_iso(), **body.model_dump()}
+    # Iter 92 (Phase 2) — extract structured signals + refresh live_state
+    try:
+        from feature_live_state import extract_signals_from_checkin, refresh_and_persist_live_state
+        doc["signals"] = extract_signals_from_checkin(doc)
+    except Exception:
+        logger.exception("checkin signal extract failed — non-fatal")
     await db.checkins.insert_one(doc)
+    try:
+        from feature_live_state import refresh_and_persist_live_state
+        await refresh_and_persist_live_state(db, user["id"])
+    except Exception:
+        logger.exception("checkin live_state refresh failed — non-fatal")
     return clean_doc(doc)
 
 @api.get("/checkins")
 async def checkin_list(user: dict = Depends(current_user)):
     return await db.checkins.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(50)
+
+
+# ------------------------------------------------------------------
+# Iter 92 — Phase 2: Living Profile Wire-Back
+# ------------------------------------------------------------------
+
+@api.get("/profile/live-state")
+async def profile_live_state_get(user: dict = Depends(current_user)):
+    """Return the rolling 14-day live_state snapshot for THIS user."""
+    from feature_live_state import compute_live_state, receipt_for_client
+    state = await compute_live_state(db, user["id"])
+    # Merge in stored coach_directives
+    stored = ((user.get("profile") or {}).get("live_state") or {}).get("coach_directives")
+    if stored:
+        state["coach_directives"] = stored
+    return {
+        "live_state": state,
+        "receipt": receipt_for_client(state),
+    }
+
+
+@api.post("/profile/live-state/refresh")
+async def profile_live_state_refresh(user: dict = Depends(current_user)):
+    from feature_live_state import refresh_and_persist_live_state, receipt_for_client
+    state = await refresh_and_persist_live_state(db, user["id"])
+    return {"live_state": state, "receipt": receipt_for_client(state)}
+
+
+@api.get("/coach/clients/{client_id}/live-state")
+async def coach_live_state_for_client(client_id: str, coach: dict = Depends(require_role("coach"))):
+    from feature_live_state import compute_live_state, receipt_for_client
+    client = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    if not client:
+        raise HTTPException(404, "client not found")
+    state = await compute_live_state(db, client_id)
+    stored = ((client.get("profile") or {}).get("live_state") or {}).get("coach_directives")
+    if stored:
+        state["coach_directives"] = stored
+    return {
+        "client_id": client_id,
+        "live_state": state,
+        "receipt": receipt_for_client(state),
+    }
+
+
+class CoachDirectiveBody(BaseModel):
+    text: str
+    source_message_id: Optional[str] = None
+    ttl_days: Optional[int] = 21
+
+
+@api.post("/coach/clients/{client_id}/directives")
+async def coach_add_directive(
+    client_id: str, body: CoachDirectiveBody, coach: dict = Depends(require_role("coach"))
+):
+    """Pin a coaching directive so the next plan build honours it."""
+    from feature_live_state import add_coach_directive
+    if not (body.text or "").strip():
+        raise HTTPException(400, "text required")
+    doc = await add_coach_directive(db, client_id, {
+        "text": body.text.strip(),
+        "coach_id": coach["id"],
+        "source_message_id": body.source_message_id,
+        "ttl_days": body.ttl_days,
+    })
+    return {"directive": doc}
+
+
+@api.delete("/coach/clients/{client_id}/directives/{directive_id}")
+async def coach_remove_directive(
+    client_id: str, directive_id: str, coach: dict = Depends(require_role("coach"))
+):
+    u = await db.users.find_one({"id": client_id}, {"_id": 0}) or {}
+    live = ((u.get("profile") or {}).get("live_state") or {})
+    existing = live.get("coach_directives") or []
+    new_list = [d for d in existing if d.get("id") != directive_id]
+    await db.users.update_one(
+        {"id": client_id},
+        {"$set": {"profile.live_state.coach_directives": new_list}},
+    )
+    return {"removed": len(existing) - len(new_list), "remaining": len(new_list)}
 
 
 MEAL_SYSTEM = 'You are a nutrition coach for airline crew. Given a meal photo + description, output STRICT JSON: {"calories":Int,"protein_g":Int,"quality":Int (1-10),"tip":"...","summary":"..."}'
@@ -8092,9 +8203,24 @@ async def msg_send(body: MessageBody, user: dict = Depends(current_user)):
 
     doc = {"id": new_id(), "from_user_id": user["id"], "to_user_id": body.to_user_id,
            "text": body.text or "", "created_at": now_iso(), "read": False,
-           "attachment_ids": valid_ids}
+           "attachment_ids": valid_ids,
+           "include_in_next_plan": bool(body.include_in_next_plan)}
     await db.messages.insert_one(doc)
     clean_doc(doc)
+
+    # Iter 92 (Phase 2, Task 2.4) — If coach flagged this message as
+    # "include in next plan", pin it as a live_state coach_directive.
+    try:
+        if body.include_in_next_plan and user.get("role") == "coach":
+            from feature_live_state import add_coach_directive
+            await add_coach_directive(db, body.to_user_id, {
+                "text": (body.text or "").strip(),
+                "coach_id": user["id"],
+                "source_message_id": doc["id"],
+                "ttl_days": 21,
+            })
+    except Exception:
+        logger.exception("coach directive pin failed — non-fatal")
 
     # Bind attachments to this message now that it exists.
     if valid_ids:

@@ -622,6 +622,47 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
             sessions_completed_prev=len(prev_completed),
             sessions_planned_prev=len(prev_real),
         )
+
+    # Iter 92 (Phase 2, Task 2.3) — Living Profile Wire-Back.
+    # Attach live_state so the LLM & fallback engine see check-in-derived
+    # signals (energy trend, pain flags, auto-deload trigger, coach
+    # directives, focus shift request). If the auto-deload flag is set,
+    # OVERRIDE the phase to deload for this build.
+    try:
+        from feature_live_state import compute_live_state
+        live_state = await compute_live_state(db, user["id"])
+    except Exception:
+        live_state = None
+    if live_state:
+        ctx["live_state"] = live_state
+        # Merge stored coach_directives (persisted separately on user profile)
+        stored_directives = (profile.get("live_state") or {}).get("coach_directives")
+        if stored_directives:
+            ctx["live_state"]["coach_directives"] = stored_directives
+        # Auto-deload override
+        if live_state.get("auto_deload_trigger") and phase["key"] != "deload":
+            deload_phase = {"key": "deload", "label": "Deload (auto)",
+                            "note": f"Auto-deload triggered — {live_state.get('auto_deload_reason')}"}
+            ctx["phase"] = deload_phase
+            ctx["phase_progression_note"] = deload_phase["note"]
+            ctx["progression"]["phase"] = "deload"
+            ctx["progression"]["phase_label"] = deload_phase["label"]
+            ctx["progression"]["deload_status"] = "deload_week"
+            # Also re-derive strength_overload with deload phase for non-endurance
+            if goal_key != "event":
+                ctx["strength_overload"] = strength_overload_for(
+                    goal_key, "deload",
+                    sessions_completed_prev=ctx["progression"]["sessions_completed_this_week"],
+                    sessions_planned_prev=ctx["progression"]["sessions_planned_this_week"],
+                )
+        # If energy_trend is down and NOT already deload, dampen strength_overload
+        elif goal_key != "event" and live_state.get("energy_trend") == "down":
+            so = ctx.get("strength_overload") or {}
+            if isinstance(so.get("sets_delta"), int) and so["sets_delta"] > 0:
+                so["sets_delta"] = 0
+                so["load_delta_pct"] = 0
+                so["adherence_note"] = (so.get("adherence_note", "") + " · energy trending down — hold").strip(" ·")
+            ctx["strength_overload"] = so
     return ctx
 
 

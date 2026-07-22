@@ -135,13 +135,16 @@ export default function Home() {
   // Iter 84 (Task 1.7) — multi-event stack + priority editor state
   const [eventsAll, setEventsAll] = useState<any[]>([]);
   const [priorityEvent, setPriorityEvent] = useState<any | null>(null);
+  // Iter 92 (Phase 2, Task 2.5) — Living Profile receipt card
+  const [liveStateReceipt, setLiveStateReceipt] = useState<any | null>(null);
+  const [liveStateData, setLiveStateData] = useState<any | null>(null);
   // Long-press-to-correct roster day-picker sheet (iter 82).
   const [dayPickerTarget, setDayPickerTarget] = useState<RosterDayPickerTarget | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus] = await Promise.all([
+      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
@@ -152,6 +155,7 @@ export default function Home() {
         api<any>("/roster/jobs/active").catch(() => null),
         api<any>("/programme/current").catch(() => null),
         api<any>("/programme/focus").catch(() => null),
+        api<any>("/profile/live-state").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -164,6 +168,8 @@ export default function Home() {
       setRosterJob(rj && rj.id ? rj : null);
       setProgramme(prog && (prog as any).id ? prog : null);
       setProgrammeFocus(focus);
+      setLiveStateReceipt(live?.receipt || null);
+      setLiveStateData(live?.live_state || null);
     } finally { setLoading(false); }
   }, [user]);
 
@@ -572,6 +578,25 @@ export default function Home() {
               <Text style={styles.focusBannerT} numberOfLines={2}>{programmeFocus.banner_text}</Text>
             </View>
           ) : null}
+          {liveStateReceipt?.bullets?.length ? (
+            <View style={styles.receiptCard} testID="live-state-receipt">
+              <View style={styles.receiptHeader}>
+                <Ionicons name="sparkles" size={12} color={theme.color.brand} />
+                <Text style={styles.receiptTitle}>YOUR INPUT · NEXT WEEK</Text>
+              </View>
+              {liveStateReceipt.bullets.map((line: string, i: number) => (
+                <View key={i} style={styles.receiptRow}>
+                  <Text style={styles.receiptDot}>·</Text>
+                  <Text style={styles.receiptBody} numberOfLines={3}>{line}</Text>
+                </View>
+              ))}
+              {liveStateData?.auto_deload_trigger ? (
+                <View style={styles.receiptChip} testID="live-state-deload-chip">
+                  <Text style={styles.receiptChipT}>DELOAD · AUTO</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           {roster?.id ? (
             <Text style={styles.sectionHint} testID="week-longpress-hint">
               Tip: long-press any day to correct its duty type.
@@ -892,6 +917,20 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: theme.color.brand,
   },
   focusBannerT: { color: theme.color.brand, fontSize: 11, fontWeight: "700", flex: 1, lineHeight: 15 },
+  receiptCard: {
+    paddingHorizontal: 12, paddingVertical: 10,
+    marginBottom: theme.space.sm,
+    backgroundColor: "rgba(59,130,246,0.06)",
+    borderRadius: theme.radius.md,
+    borderLeftWidth: 3, borderLeftColor: theme.color.brand,
+  },
+  receiptHeader: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
+  receiptTitle: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.4, fontWeight: "800" },
+  receiptRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginTop: 3 },
+  receiptDot: { color: theme.color.brand, fontSize: 12, lineHeight: 15, fontWeight: "900", width: 8 },
+  receiptBody: { color: theme.color.text, fontSize: 12, lineHeight: 16, flex: 1 },
+  receiptChip: { alignSelf: "flex-start", marginTop: 6, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, backgroundColor: theme.color.amber || "#e5a337" },
+  receiptChipT: { color: "#111", fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
   wRow: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, marginBottom: theme.space.sm, overflow: "hidden", borderWidth: 1, borderColor: theme.color.border },
   wRowRest: { opacity: 0.75 },
   wRowSetup: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },

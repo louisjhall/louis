@@ -1923,3 +1923,139 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Iter 91: shipped remaining Phase 1 tasks. TEST BOTH backend and frontend. Focus on (1) Task 1.7 endpoints + UI, (2) Task 1.9 strength_overload matrix in programmes doc (endpoint /api/coach/clients/{id}/programme should include strength_overload for non-endurance clients), (3) Task 1.10 profile_incomplete_pill + amber UI pill, (4) Task 1.8 DEEP EDIT button navigates to /coach/workout/edit/{wid}. Credentials in /app/memory/test_credentials.md. Any test failures should be reported with testIDs / API responses so I can fix quickly."
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 92 — Phase 2 · Living Profile Wire-Back (Tasks 2.1 → 2.6)
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Task 2.1 — Signal extractor from check-ins"
+    implemented: true
+    working: true
+    file: "backend/feature_live_state.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            extract_signals_from_checkin() parses energy/sleep/soreness/stress,
+            plus regex-driven pain regions (shoulder/knee/hip/lower_back/etc.),
+            focus-shift ("more strength" | "less running" | "too hard"), life
+            change ("new roster/pregnant/surgery"), motivation flag. Signals
+            stored on checkins.signals AND rolled into users.profile.live_state
+            after every /checkins and /checkins/adaptive submission. Verified
+            via 4-variant pain regex test.
+
+  - task: "Task 2.2 — Live-state read-model endpoints"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            GET /api/profile/live-state — client rolling snapshot + receipt.
+            POST /api/profile/live-state/refresh — force recompute.
+            GET /api/coach/clients/{id}/live-state — coach read-model.
+            Payload: 14-day energy_avg/trend, sleep, soreness, stress,
+            adherence_pct, avg_rpe_last_7d, missed_sessions, pain_flags,
+            avoid_movement_patterns, focus_shift_request, life_change,
+            auto_deload_trigger + reason, motivation_flag.
+
+  - task: "Task 2.3 — Auto-deload override + energy dampening in plan build"
+    implemented: true
+    working: true
+    file: "backend/feature_programme_quality.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            programme_context_for_llm() now attaches live_state and:
+              (a) If auto_deload_trigger=True → override phase to
+                  {'key':'deload','label':'Deload (auto)'} and re-derive
+                  strength_overload with deload matrix.
+              (b) If energy_trend=='down' and phase != 'deload' →
+                  strength_overload.sets_delta forced to 0, load_delta_pct 0.
+            LLM prompt extended with 5-part live_state block instructing:
+            avoid pain-flagged patterns, honour focus_shift, treat
+            coach_directives as binding, favour shorter sessions when
+            motivation_flag=='low'. programme_ctx prompt cap 3200→4200.
+            Rule: adherence<50% AND avg RPE≥8 last 7d → auto-deload
+            (user-approved threshold).
+
+  - task: "Task 2.4 — Coach message → coach_directive wire-back"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/feature_live_state.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            MessageBody now accepts include_in_next_plan boolean.
+            POST /api/messages with include_in_next_plan=true (coach only)
+            auto-pins the message onto profile.live_state.coach_directives
+            with 21-day TTL. New coach endpoints:
+              POST /api/coach/clients/{id}/directives {text, ttl_days}
+              DELETE /api/coach/clients/{id}/directives/{directive_id}
+            Kept last 7 non-expired directives. Directives included in
+            programme_context_for_llm output so LLM honours them.
+
+frontend:
+  - task: "Task 2.5 — Client 'YOUR INPUT · NEXT WEEK' receipt card"
+    implemented: true
+    working: true
+    file: "frontend/app/(client)/home.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            After each check-in the home fetch to /api/profile/live-state
+            returns a receipt {headline, bullets, computed_at}. Home
+            renders a brand-tinted card above NEXT 7 DAYS with each bullet.
+            When auto_deload_trigger=true an amber DELOAD · AUTO chip is
+            appended. testID live-state-receipt.
+            VERIFIED LIVE (screenshot) — after seeding a check-in with
+            "left shoulder sore, please add more strength", the card
+            rendered exactly the two expected bullets.
+
+  - task: "Task 2.6 — Coach LIVE SIGNALS card + directive management"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/client/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Coach client detail now shows LIVE SIGNALS · LAST 14D card:
+              - 4-cell metric grid (ENERGY+trend, RPE 7D, ADHERENCE %, MISSED)
+              - Red chips per pain flag region (testID cd-pain-flag-{key})
+              - Hint lines: "Avoiding next week: …" and "Focus shift: …"
+              - Amber AUTO-DELOAD pill when trigger active
+              - COACH DIRECTIVES · PINNED list with delete X per item
+              - Inline TextInput + PIN button to add a new directive
+                (testID cd-directive-input, cd-directive-add)
+            VERIFIED LIVE (screenshot) — pinned a directive
+            ("Focus on posterior chain — deadlifts & Romanians.") and
+            observed it render below the pain / focus-shift hints.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 92 shipped: Phase 2 Living Profile Wire-Back. Backend 10/10 pytest scenarios PASSED (test_iter92_live_state.py) covering signal extractor, live-state endpoints, auto-deload flip, coach-message directive pin, coach POST/DELETE directive endpoints, and energy-trend dampening. Frontend: manually verified receipt card on client home and LIVE SIGNALS card on coach detail via screenshots (both render correctly with pain flag from seeded shoulder check-in, and coach directive PIN flow works end-to-end). Regression: Phase 1 tests still 13/13 passing."
+

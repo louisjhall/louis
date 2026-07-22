@@ -176,10 +176,22 @@ def _stub_for_session_type(session_type: str, date: str, ctx: dict[str, Any]) ->
         }
 
     if session_type == "long_run":
+        # Iter 84 (Task 1.6) — km curve override. If ctx supplies `long_run_km`
+        # (from the periodisation resolver), use it to size the session.
+        long_km = ctx.get("long_run_km") if isinstance(ctx, dict) else None
+        if isinstance(long_km, (int, float)) and long_km > 0:
+            reps = f"{long_km} km at conversational pace"
+            duration = max(30, int(long_km * 6))                     # ~6 min/km avg
+            week_note = ctx.get("weeks_to_race") if isinstance(ctx, dict) else None
+            notes = f"Weeks to race: {week_note}." if week_note is not None else ""
+            exercises = [dict(LONG_RUN_MAIN[0], reps=reps, notes=notes or LONG_RUN_MAIN[0].get("notes"))]
+        else:
+            duration = 75
+            exercises = LONG_RUN_MAIN
         return {
             "date": date, "day_load": day_load, "title": "Long Run",
-            "location": "Outdoor Run", "duration_min": 75, "focus": "long_run",
-            "warmup": WARMUP_RUN, "exercises": LONG_RUN_MAIN,
+            "location": "Outdoor Run", "duration_min": duration, "focus": "long_run",
+            "warmup": WARMUP_RUN, "exercises": exercises,
             "cooldown": COOLDOWN_RUN,
             "alternatives": {
                 "home": "Treadmill — split into 2 x 35min if needed.",
@@ -483,7 +495,8 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
 
     # Import lazily to avoid a cycle at module load
     from feature_programme_quality import (
-        _resolve_goal_key, _phase_for_week,
+        _resolve_goal_key, _phase_for_week, _phase_for_weeks_to_race,
+        _long_run_km_for_week, _is_cutback_week,
         event_weekly_shape, strength_weekly_shape,
     )
     # Iter 84 (Task 1.5) — Effective-goal reconciliation. If the caller pre-
@@ -495,32 +508,38 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
         goal_key = eff.get("goal_key") or _resolve_goal_key(profile)
         ev_type = eff.get("event_type") or profile.get("event_type_pref")
         volume_bias = eff.get("volume_bias") or "neutral"
+        weeks_to_race = eff.get("weeks_to_event")
     else:
         goal_key = _resolve_goal_key(profile)
         ev_type = profile.get("event_type_pref")
         volume_bias = "neutral"
+        weeks_to_race = None
     try:
         target_sessions = int(profile.get("training_days_per_week") or 4)
     except Exception:
         target_sessions = 4
     target_sessions = max(1, min(7, target_sessions))
 
-    # Phase — use week 1 by default; the roster worker will re-run
-    # `programme_context_for_llm` for real week_index after persistence.
-    phase = _phase_for_week(0)
+    # Iter 84 (Task 1.6) — Phase resolution:
+    #   Event mode → phase from weeks_to_race (base/build/peak/taper/race_week)
+    #   Non-event  → legacy 4-week modulo
+    if goal_key == "event" and ev_type:
+        phase = _phase_for_weeks_to_race(weeks_to_race)
+        long_km = _long_run_km_for_week(ev_type, weeks_to_race, cutback=_is_cutback_week(weeks_to_race))
+    else:
+        phase = _phase_for_week(0)
+        long_km = None
 
     if goal_key == "event" and ev_type:
-        shape = event_weekly_shape(ev_type, phase["key"], target_sessions)
+        shape = event_weekly_shape(ev_type, phase["key"], target_sessions, weeks_to_race=weeks_to_race)
         # Iter 84 (Task 1.5) — volume_bias overlay: replace or drop sessions to
         # honour the client's primary non-endurance goal alongside the event.
-        if volume_bias == "deficit" and target_sessions >= 4:
-            # Drop one Strength for Runners → replace with an extra Recovery Walk
+        if volume_bias == "deficit" and target_sessions >= 4 and phase["key"] != "race_week":
             for i, s in enumerate(shape):
                 if s == "strength_support":
                     shape[i] = "recovery_walk"
                     break
-        elif volume_bias == "surplus" and target_sessions >= 4:
-            # Keep both strength sessions; convert one Easy Run → Strength Support
+        elif volume_bias == "surplus" and target_sessions >= 4 and phase["key"] != "race_week":
             for i, s in enumerate(shape):
                 if s == "easy_run":
                     shape[i] = "strength_support"
@@ -536,7 +555,9 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
     days.sort(key=lambda d: str(d.get("date") or ""))
 
     out: list[dict[str, Any]] = []
-    ctx_stub = {"hotel_pref": equip_pref}
+    # Iter 84 (Task 1.6) — inject long-run km + weeks-to-race so the long_run
+    # stub can size the session accordingly (progressive volume curve).
+    ctx_stub = {"hotel_pref": equip_pref, "long_run_km": long_km, "weeks_to_race": weeks_to_race}
     hotel_lookup = hotel_lookup or {}
 
     for wk_start in range(0, len(days), 7):

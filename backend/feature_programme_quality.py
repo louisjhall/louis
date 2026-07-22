@@ -229,15 +229,27 @@ SESSION_TYPE_META: dict[str, dict[str, Any]] = {
 }
 
 
-def event_weekly_shape(event_type: Optional[str], phase_key: str, target_sessions: int) -> list[str]:
+def event_weekly_shape(event_type: Optional[str], phase_key: str, target_sessions: int,
+                       weeks_to_race: Optional[int] = None) -> list[str]:
     """Return the ideal ordered session-type list for an event type + phase.
 
     Consumes `target_sessions` slots off the front of the shape. Falls back
     to marathon shape if the specific event isn't mapped.
+
+    Iter 84 (Task 1.6) — When `phase_key == "race_week"`, returns a special
+    shape: shakeout + full rest + race day. Volume elsewhere collapses.
     """
+    # Race-week override — nothing normal happens this week.
+    if phase_key == "race_week":
+        shape = ["easy_run", "recovery_walk", "shakeout", "rest", "event_race", "rest", "rest"]
+        return shape[:max(target_sessions + 3, len(shape))]
     et = (event_type or "").lower()
     shapes = EVENT_WEEKLY_SHAPES.get(et) or EVENT_WEEKLY_SHAPES.get("marathon")
-    ordered = shapes.get(phase_key) or shapes.get("foundation") or []
+    # Map new base/taper phase keys to existing shape buckets.
+    lookup_phase = phase_key
+    if phase_key == "base":  lookup_phase = "foundation"
+    if phase_key == "taper": lookup_phase = "deload"
+    ordered = shapes.get(lookup_phase) or shapes.get("foundation") or []
     # Return the top-N slots; keep recovery/mobility tail for the remaining days.
     training = [s for s in ordered if s not in ("mobility", "recovery")][:target_sessions]
     padding = [s for s in ordered if s in ("mobility", "recovery")]
@@ -269,6 +281,85 @@ PHASES = [
 
 def _phase_for_week(week_index: int) -> dict[str, str]:
     return PHASES[week_index % 4]
+
+
+# ---------------------------------------------------------------------------
+# Iter 84 (Task 1.6) — Race-date-anchored periodisation.
+# Replaces modulo-based phase cycling for endurance events.
+# ---------------------------------------------------------------------------
+
+def _phase_for_weeks_to_race(weeks_to_race: Optional[int]) -> dict[str, str]:
+    """Anchor phase to how close the client is to their race, not week_index % 4."""
+    if weeks_to_race is None or weeks_to_race > 16:
+        return {"key": "base", "label": "Base", "note": "Building endurance base."}
+    if weeks_to_race > 8:
+        return {"key": "build", "label": "Build", "note": "Volume ramping, first tempos."}
+    if weeks_to_race > 4:
+        return {"key": "peak", "label": "Peak", "note": "Highest volume, race-specific work."}
+    if weeks_to_race > 2:
+        return {"key": "taper", "label": "Taper", "note": "Volume drops, intensity kept."}
+    return {"key": "race_week", "label": "Race week", "note": "Shakeout + race day only."}
+
+
+# Peak long-run km per event type (first-timer safe caps).
+_EVENT_PEAK_LONG_KM = {
+    "marathon":       32,
+    "half_marathon":  20,
+    "10k":            14,
+    "5k":             8,
+    "hyrox":          10,
+    "ironman":        30,   # long run leg only
+    "70.3":           18,
+    "olympic_tri":    12,
+    "sprint_tri":     8,
+    "ultra":          40,
+}
+
+
+def _long_run_km_for_week(event_type: Optional[str], weeks_to_race: Optional[int],
+                          cutback: bool = False) -> Optional[float]:
+    """
+    Iter 84 (Task 1.6) — deterministic long-run distance curve.
+    Returns km to prescribe this week; None if no endurance event context.
+    """
+    if event_type is None or weeks_to_race is None:
+        return None
+    peak = _EVENT_PEAK_LONG_KM.get(event_type.lower(), 32)
+    base = 6.0
+    if weeks_to_race >= 16:
+        km = base + max(0, (16 - weeks_to_race)) * 0.5     # ~6-8km
+    elif weeks_to_race >= 4:
+        # Linear ramp from base at week 16 to peak at week 4
+        progress = (16 - weeks_to_race) / 12.0             # 0.0 → 1.0
+        km = base + (peak - base) * progress
+    elif weeks_to_race >= 3:
+        km = peak * 0.75                                     # first taper
+    elif weeks_to_race >= 1:
+        km = peak * 0.5                                      # second taper
+    else:
+        return "RACE"                                        # sentinel for race day
+    if cutback:
+        km *= 0.7
+    return round(km, 1)
+
+
+def _weekly_km_for_race(event_type: Optional[str], weeks_to_race: Optional[int]) -> Optional[float]:
+    """Rough weekly total mileage target."""
+    long_km = _long_run_km_for_week(event_type, weeks_to_race)
+    if long_km is None or long_km == "RACE":
+        return None
+    # Weekly total is typically ~3.5-4x the long run in Build/Peak.
+    multiplier = 3.5 if (weeks_to_race and weeks_to_race < 8) else 3.0
+    return round(long_km * multiplier, 1)
+
+
+def _is_cutback_week(weeks_to_race: Optional[int]) -> bool:
+    """Every 4th week during Build/Peak is a cutback."""
+    if weeks_to_race is None or weeks_to_race > 16 or weeks_to_race <= 2:
+        return False
+    # Count weeks-elapsed-in-block; cutback every 4 weeks
+    weeks_elapsed = max(0, 16 - weeks_to_race)
+    return (weeks_elapsed > 0) and (weeks_elapsed % 4 == 0)
 
 
 def _resolve_goal_key(profile: dict) -> str:

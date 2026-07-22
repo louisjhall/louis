@@ -2497,6 +2497,18 @@ async def _resolve_effective_goal_and_event(user_id: str) -> dict:
             secondary_note = None
         pretty_event = event_type.replace("_", " ").title()
         explanation = f"{pretty_event} in {weeks_to_event} weeks"
+        # Iter 84 (Task 1.6) — enrich banner with phase + this-week's long run
+        try:
+            from feature_programme_quality import _phase_for_weeks_to_race, _long_run_km_for_week, _is_cutback_week
+            _phase = _phase_for_weeks_to_race(weeks_to_event)
+            explanation += f" · {_phase.get('label')}"
+            _lr = _long_run_km_for_week(event_type, weeks_to_event, cutback=_is_cutback_week(weeks_to_event))
+            if isinstance(_lr, (int, float)) and _lr > 0:
+                explanation += f" · long run {_lr}km"
+            elif _lr == "RACE":
+                explanation += f" · RACE DAY this week"
+        except Exception:
+            pass
         if secondary_note:
             explanation += f" · {secondary_note}"
     elif primary_norm in _ENDURANCE_GOAL_KEYS:
@@ -2522,7 +2534,32 @@ async def _resolve_effective_goal_and_event(user_id: str) -> dict:
         "primary_goal_key": primary_norm,
         "volume_bias": volume_bias,
         "explanation": explanation,
+        # Iter 84 (Task 1.6) — periodisation extras
+        "phase": _phase_for_periodisation_key(goal_key, weeks_to_event),
+        "this_weeks_long_run_km": _long_run_km_or_none(event_type, weeks_to_event),
     }
+
+
+def _phase_for_periodisation_key(goal_key: str, weeks_to_race: Optional[int]) -> Optional[str]:
+    """Thin wrapper — return the human phase label the frontend banner shows."""
+    if goal_key != "event":
+        return None
+    try:
+        from feature_programme_quality import _phase_for_weeks_to_race
+        return _phase_for_weeks_to_race(weeks_to_race).get("label")
+    except Exception:
+        return None
+
+
+def _long_run_km_or_none(event_type: Optional[str], weeks_to_race: Optional[int]) -> Optional[float]:
+    if not event_type:
+        return None
+    try:
+        from feature_programme_quality import _long_run_km_for_week, _is_cutback_week
+        v = _long_run_km_for_week(event_type, weeks_to_race, cutback=_is_cutback_week(weeks_to_race))
+        return v if isinstance(v, (int, float)) else None
+    except Exception:
+        return None
 
 
 @api.get("/programme/focus")

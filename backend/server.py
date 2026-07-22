@@ -3043,7 +3043,12 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
             continue
         healed = _ensure_workout_content(dict(w), user)
         after_ex = healed.get("exercises") or []
-        if not before_ex and after_ex:
+        # Iter 84 (Task 1.1) — persist when the healer added ANY exercises, not
+        # just when the doc was completely empty. Fixes the class where a
+        # workout persisted with 1-2 exercises (equipment resolver dropped
+        # everything but the bodyweight fallback) never reached the client
+        # because the old `not before_ex` check treated it as already-content.
+        if len(after_ex) > len(before_ex):
             # Persist the heal so it sticks — one document per touched row.
             to_persist.append(healed)
             healed_rows.append(healed)

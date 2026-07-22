@@ -2119,3 +2119,47 @@ agent_communication:
   - agent: "main"
     message: "Iter 93 (Phase 3) shipped. 15/15 new pytest scenarios green (test_iter93_guardrails.py). No regressions: Phase 1 13/13 and Phase 2 10/10 still pass individually. Feature summary: every workout now flows through validate_batch() before persistence to enforce (a) no exercises matching pain-avoid patterns, (b) sets/reps inside strength_overload deltas, (c) duration inside phase band, (d) weekly session mix matches weekly_shape_ideal. Auto-heal fixes what it can (substitutes banned exercises, clamps sets/reps/duration); unhealable violations (missing week-shape slots) flag the workout for coach review + surface a GUARDRAILS chip on the coach dashboard."
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 94c — Flying-day Gap 1 fix: recovery-first long-haul into layover
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Gap 1 — long-haul into 18h+ layover no longer forced to 15-min mobility"
+    implemented: true
+    working: true
+    file: "backend/feature_workout_fallback.py, backend/feature_programme_quality.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            When _classify_day() == flight_heavy AND (classify_stay==layover
+            OR the next roster day is a layover / rest-at-hotel) AND we know
+            the hotel — we now bypass the safety override and emit a normal
+            layover session flagged `recovery_first=True`.
+            Emission changes:
+              * day_load downgraded to 'amber' (was 'red')
+              * FLIGHT_RECOVERY_MOBILITY prepended to warmup (5-item mobility
+                + breathing block)
+              * RPE clamped ≤7 on main exercises
+              * long_run / tempo / intervals slots downshifted to easy_run
+              * hard strength slots downshifted to strength_support
+              * change_reason: "Long-haul into layover — recovery mobility
+                first, then a moderated session."
+            LLM prompt also updated: programme_context.roster_summary now
+            exposes `recovery_first_days: [ISO_DATE, ...]` and rule (6) tells
+            the LLM to open with 10 min mobility, cap the session at RPE 7,
+            ≤45 min total, and mention the layover-window rationale.
+            Safety-preserving fallback: if there is NO known hotel_id, the
+            legacy 15-min mobility (RED) still fires.
+            Tests: 7/7 pytest scenarios PASSED (test_iter94c_gap1_recovery_first.py).
+            Regressions clean: iter91 13/13, iter93 15/15, iter92 10/10 with
+            iter94c on top.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 94c shipped: closed Gap 1 from the flying-day audit. Long-haul crew who land in DXB/BKK/SYD with 22h in a known hotel now get a real training session (recovery-first: mobility + moderated strength or easy run) instead of the wasted 15-min safety override. Behaviour is provable via test_iter94c_gap1_recovery_first.py::test_recovery_first_session_replaces_15min_mobility. When there's no hotel_id on the roster row (unknown hotel), we still fall back to the 15-min RED safety override — that path is covered by test_no_hotel_still_forces_safety_override."
+

@@ -470,11 +470,44 @@ def _roster_summary(roster: dict) -> dict[str, Any]:
         types[t] = types.get(t, 0) + 1
     long_haul = sum(1 for d in days if float(d.get("duty_hours") or 0) >= 10 or "long" in (d.get("day_type") or "").lower())
     night_or_overnight = sum(1 for d in days if any(k in (d.get("day_type") or "").lower() for k in ("night", "overnight", "red_eye", "red-eye")))
+
+    # Iter 94c (Gap 1) — flag long-haul days that lead INTO a layover (≥18h),
+    # so the LLM knows to schedule a recovery-first session in the destination
+    # instead of a bare 15-min mobility.
+    try:
+        from feature_hotel_system import classify_stay
+    except Exception:
+        classify_stay = None  # type: ignore
+    recovery_first_days: list[str] = []
+    for i, d in enumerate(days):
+        dtype = str(d.get("day_type") or "").lower()
+        is_long = any(k in dtype for k in
+                      ("long_haul", "long-haul", "night_flight", "night-flight",
+                       "overnight", "red_eye", "red-eye"))
+        if not is_long:
+            continue
+        if not d.get("hotel_id"):
+            continue
+        nxt = days[i + 1] if (i + 1) < len(days) else None
+        next_type = str((nxt or {}).get("day_type") or "").lower()
+        stay = None
+        if classify_stay is not None:
+            try:
+                stay = classify_stay(d, nxt)
+            except Exception:
+                stay = None
+        # Recovery-first when the next day is a layover / rest-at-hotel OR the
+        # measured gap is a real ≥18h layover.
+        if (stay == "layover"
+                or "layover" in next_type
+                or next_type in ("rest", "off")):
+            recovery_first_days.append(d.get("date"))
     return {
         "total_days": len(days),
         "type_counts": types,
         "long_haul_days": long_haul,
         "night_or_overnight_days": night_or_overnight,
+        "recovery_first_days": recovery_first_days,
     }
 
 

@@ -644,6 +644,31 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
             next_d = days[global_idx + 1] if global_idx + 1 < len(days) else None
             stay = classify_stay(d, next_d)
             kind = _classify_day(d)  # legacy classifier for the safety overrides
+            # Iter 94c (Gap 1) — the legacy classifier will force a 15-min
+            # flight_heavy mobility even when the crew have 18h+ in the layover
+            # destination. That wastes the layover training window. When both
+            # classifiers agree it's a long-haul that leads INTO a real layover,
+            # skip the safety override and let the goal-aware planner run — but
+            # cap the session intensity, prepend the recovery mobility, and mark
+            # the workout as `recovery_first`.
+            recovery_first = False
+            if kind == "flight_heavy":
+                # Also true if the NEXT roster day is an explicit layover /
+                # rest-at-hotel day (i.e., the crew are sleeping in destination
+                # then flying home later). classify_stay's hour check is optional.
+                next_is_layover_day = False
+                if next_d:
+                    _next_type = str(next_d.get("day_type") or "").lower()
+                    if "layover" in _next_type or _next_type in ("rest", "off"):
+                        # rest/off after a long-haul at a station is effectively a layover
+                        # when the current day has a hotel_id.
+                        next_is_layover_day = True
+                _hid = d.get("hotel_id")
+                _hdoc = hotel_lookup.get(_hid) if _hid else None
+                if _hdoc and (stay == "layover" or next_is_layover_day):
+                    kind = "layover"   # downgrade so the override below is bypassed
+                    recovery_first = True
+                # If no hotel doc, we keep flight_heavy — safer to force mobility.
             override = _override_for_duty(kind, date)
             if override is not None:
                 out.append(override)
@@ -674,6 +699,15 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
             if not queue:
                 continue
             slot = queue.pop(0)
+            # Iter 94c (Gap 1) — recovery_first long-haul → layover: never pick
+            # a top-tier session for that slot. Down-shift to easy work.
+            if recovery_first:
+                if slot in ("long_run", "tempo", "intervals"):
+                    slot = "easy_run"
+                elif slot in ("push_strength", "pull_strength", "upper_strength",
+                              "lower_strength", "leg_strength", "full_body_strength",
+                              "hyrox_wod"):
+                    slot = "strength_support"
             local_ctx = dict(ctx_stub)
             hotel_doc = None
             change_reason = None
@@ -700,6 +734,23 @@ def build_template_plan(user: dict[str, Any], roster: dict[str, Any],
                         w["hotel_name"] = hotel_doc.get("name")
                     if change_reason:
                         w["change_reason"] = change_reason
+                # Iter 94c (Gap 1) — recovery-first layover: prepend the flight
+                # recovery mobility as warm-up, cap intensity, downgrade load.
+                if recovery_first:
+                    w["recovery_first"] = True
+                    w["day_load"] = "amber"
+                    existing_warm = list(w.get("warmup") or [])
+                    w["warmup"] = list(FLIGHT_RECOVERY_MOBILITY) + existing_warm
+                    # Cap RPE on the main lifts.
+                    for _ex in (w.get("exercises") or []):
+                        try:
+                            r = _ex.get("rpe")
+                            if isinstance(r, (int, float)) and r > 7:
+                                _ex["rpe"] = 7
+                        except Exception:
+                            pass
+                    w.setdefault("change_reason",
+                                 "Long-haul into layover — recovery mobility first, then a moderated session.")
                 # Phase 5 — scale endurance sessions by progression_status
                 if progression_status and slot in ("long_run", "tempo", "intervals", "easy_run"):
                     scale_endurance_session(w, progression_status, session_type=slot)

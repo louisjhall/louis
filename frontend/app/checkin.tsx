@@ -28,6 +28,8 @@ export default function CheckinScreen() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<any>(null);
+  const [goalLabel, setGoalLabel] = useState<string>("");
+  const [tailored, setTailored] = useState<boolean>(false);
 
   const [nutrQs, setNutrQs] = useState<Question[]>([]);
 
@@ -40,6 +42,8 @@ export default function CheckinScreen() {
       ]);
       setCore(q.core || []);
       setDynamic(q.dynamic || []);
+      setGoalLabel(q.goal_label || "");
+      setTailored(Boolean(q.tailored));
       setNutrQs((nq?.questions || []) as Question[]);
       if (cur?.check_in) setSubmitted(cur.check_in);
     } catch (e: any) {
@@ -114,9 +118,18 @@ export default function CheckinScreen() {
               <Text style={styles.introT}>
                 Answer honestly. Louis reads every one of these before recording your weekly video.
               </Text>
+              {goalLabel ? (
+                <View style={styles.goalPill} testID="checkin-goal-pill">
+                  <Ionicons name="flag" size={11} color={theme.color.brand} />
+                  <Text style={styles.goalPillT} numberOfLines={1}>
+                    Tailored for: {goalLabel}
+                  </Text>
+                </View>
+              ) : null}
               <Text style={styles.introHint}>
-                Flying today? You can complete this after your sector or when you&apos;re back at the hotel.
-                No rush if you&apos;re on duty — do this when it&apos;s safe and practical.
+                {tailored
+                  ? "You'll see a few questions tuned to your goal below the standard ones."
+                  : "Flying today? You can complete this after your sector or when you're back at the hotel. No rush — do this when it's safe and practical."}
               </Text>
             </View>
 
@@ -258,6 +271,13 @@ const styles = StyleSheet.create({
   introEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
   introT: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 8, lineHeight: 19 },
   introHint: { color: theme.color.textMuted, fontSize: 11, marginTop: 10, lineHeight: 15, fontStyle: "italic" },
+  goalPill: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    alignSelf: "flex-start", marginTop: 10, paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: theme.radius.pill, backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  goalPillT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   qCard: { padding: 14, marginBottom: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   qLbl: { color: theme.color.text, fontSize: 14, fontWeight: "800", marginBottom: 10, lineHeight: 19 },
   choiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },

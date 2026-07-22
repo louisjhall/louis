@@ -40,16 +40,32 @@ export function WeeklyCheckinCard() {
   const ci = current.check_in;
   const tz = current.time_zone || "Europe/London";
 
+  // Iter 83 — Sunday gating: hide the card entirely unless the backend says
+  // it's due today. Prevents brand-new signups from seeing "Ready when you
+  // are" the moment they land on home.
+  if (!ci && current.should_show_card === false) return null;
+
   // State 1: not submitted
   if (!ci) {
+    // Format the human-readable "next Sunday" string once, defensively.
+    const nextSunPretty = (() => {
+      const raw = current.next_sunday_local;
+      if (!raw) return "This Sunday";
+      try {
+        const d = new Date(raw);
+        return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" });
+      } catch { return "This Sunday"; }
+    })();
     return (
       <Pressable onPress={() => router.push("/checkin" as any)} style={styles.pending} testID="weekly-checkin-open">
         <View style={styles.icon}><Ionicons name="clipboard" size={22} color={theme.color.brand} /></View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.eyebrow}>WEEKLY CHECK-IN</Text>
+          <Text style={styles.eyebrow}>WEEKLY CHECK-IN · SUNDAY</Text>
           <Text style={styles.title}>Ready when you are</Text>
           <Text style={styles.sub}>
-            Atlas has prepared your weekly review. On duty today? Do this after your sector.
+            {current.is_sunday_local
+              ? "Sunday review — takes 90 seconds. On duty today? Do it after your sector."
+              : `Next scheduled: ${nextSunPretty}. Tap to fill it in early if you're flying that day.`}
           </Text>
         </View>
         <Ionicons name="arrow-forward" size={16} color={theme.color.brand} />

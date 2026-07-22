@@ -1660,6 +1660,10 @@ async def _send_louis_welcome_message_if_needed(user: dict) -> None:
         "Two ways to reach me:",
         "• Reply here anytime — this thread pings me directly.",
         "• Or email louis@crewfit.net for anything longer.",
+        "",
+        "📋 About your weekly check-in:",
+        "Every Sunday you'll get a short check-in (90 seconds) — how the week went, energy, sleep, any niggles, and anything else I need to know. I'll use it to plan your next week and record you a short video reply. If Sunday is a duty day, you can do it Monday morning — no stress.",
+        "You'll see the check-in card appear on your home screen on Sunday. Nothing to remember, it'll be there when it's due.",
     ]
     if not has_roster:
         lines += [
@@ -9000,81 +9004,201 @@ Return STRICT JSON only, no code fences, matching:
 
 @api.get("/checkins/current")
 async def checkin_current(user: dict = Depends(current_user)):
-    """Return this week's check-in for the client (may be null if not yet submitted)."""
+    """Return this week's check-in for the client (may be null if not yet submitted).
+
+    Iter 83 — Sunday gating: `should_show_card` tells the home surface whether
+    to render the Weekly Check-in card at all. Rule: only surface it once the
+    client has been through their first Sunday of training. Specifically:
+
+      * Never on the day they sign up (no data to reflect on).
+      * Only when `today` is Sunday OR Monday (grace day) in the client's TZ.
+      * AND account is at least 24h old.
+      * If they already submitted this week, we still return the doc so the
+        card can flip to "waiting for video" / "video ready" states.
+    """
     ws, we = _current_week_bounds(user)
     doc = await db.check_ins.find_one({"user_id": user["id"], "week_start": ws}, {"_id": 0})
     tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
-    # Is today Sunday in the client's local time zone?
     tz = _user_tz(user)
     now_local = _dt.datetime.now(tz)
-    is_sunday = now_local.weekday() == 6
+    weekday_local = now_local.weekday()   # Mon=0 … Sun=6
+    is_sunday = weekday_local == 6
+    is_monday_grace = weekday_local == 0
+    # Account age gate — never on day-zero.
+    account_old_enough = True
+    try:
+        created_at = user.get("created_at")
+        if created_at:
+            created_dt = _dt.datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            if created_dt.tzinfo is None:
+                created_dt = created_dt.replace(tzinfo=_dt.timezone.utc)
+            hours_since_signup = (_dt.datetime.now(_dt.timezone.utc) - created_dt).total_seconds() / 3600.0
+            account_old_enough = hours_since_signup >= 24
+            # Also — user's first Sunday hasn't passed yet? Only allow the card
+            # once at least one Sunday has occurred since signup.
+            days_since_signup = hours_since_signup / 24.0
+            if days_since_signup < 6 and weekday_local != 6:
+                # Less than a week old + not Sunday → definitely not yet.
+                account_old_enough = False
+    except Exception:
+        pass
+    # If they already submitted, always show (state 2/3 of the card).
+    already_submitted = bool(doc)
+    should_show_card = already_submitted or (
+        account_old_enough and (is_sunday or is_monday_grace)
+    )
+    # Next scheduled Sunday (in local TZ, 09:00) — displayed to the user.
+    days_until_sun = (6 - weekday_local) % 7 or 7   # if today is Sunday, next Sunday = 7d away
+    next_sun_local = (now_local + _dt.timedelta(days=days_until_sun)).replace(hour=9, minute=0, second=0, microsecond=0)
     return {
-        "check_in": doc, "week_start": ws, "week_end": we,
-        "time_zone": tz_name, "is_sunday_local": is_sunday,
+        "check_in": doc,
+        "week_start": ws,
+        "week_end": we,
+        "time_zone": tz_name,
+        "is_sunday_local": is_sunday,
+        "is_monday_grace": is_monday_grace,
+        "account_old_enough": account_old_enough,
+        "should_show_card": should_show_card,
         "next_scheduled": f"{ws} 09:00 {tz_name}",
+        "next_sunday_local": next_sun_local.isoformat(),
     }
 
 
 @api.get("/checkins/questions")
 async def sunday_checkin_questions(user: dict = Depends(current_user)):
-    """Return the check-in question set — core + dynamic based on Coaching DNA + roster."""
+    """Return the check-in question set — core + dynamic based on Coaching DNA + profile.
+
+    Iter 83 — questions are now tightly tailored to the client's goal. The
+    goal is resolved by falling back through multiple signals so it works
+    even before DNA is complete:
+      1. `coaching_dna.primary_goals`  (post-DNA)
+      2. `profile.primary_goal_id` / `main_goal_key` / `event_type_pref` (post-signup)
+      3. `profile.main_goal` free-text (legacy)
+    """
     dna = user.get("coaching_dna") or {}
-    goals = [str(g).lower() for g in (dna.get("primary_goals") or [])]
-    role = (dna.get("crew_role") or user.get("crew_role") or "").lower()
+    profile = user.get("profile") or {}
+    # Collect ALL goal signals — makes matching resilient to whichever field is populated.
+    goal_bits: list[str] = []
+    goal_bits += [str(g).lower() for g in (dna.get("primary_goals") or [])]
+    for k in ("primary_goal_id", "main_goal_key", "main_goal", "event_type_pref", "secondary_goal_ids"):
+        v = profile.get(k)
+        if isinstance(v, str):
+            goal_bits.append(v.lower())
+        elif isinstance(v, list):
+            goal_bits += [str(x).lower() for x in v]
+    goals_blob = " ".join(goal_bits)
+    role_hint = (dna.get("crew_role") or profile.get("role") or profile.get("job_title") or "").lower()
+
+    # Match helpers
+    def has(*keys: str) -> bool:
+        return any(k in goals_blob for k in keys)
+
+    is_marathon   = has("marathon", "half_marathon", "half-marathon", "10k", "5k", "run", "running")
+    is_fat_loss   = has("fat", "lose_fat", "cut", "loss", "leaner", "weight_loss")
+    is_muscle     = has("muscle", "gain", "hypertrophy", "strength", "size", "build")
+    is_tri        = has("iron", "tri", "triathlon")
+    is_health     = has("health", "wellbeing", "longevity", "energy", "stress")
+    is_pilot_crew = ("pilot" in role_hint) or ("cabin" in role_hint) or ("crew" in role_hint)
+
     dynamic: list[dict] = []
-    if any("marathon" in g or "run" in g for g in goals):
+    if is_marathon:
         dynamic += [
-            {"id": "run_long_done", "label": "Did you complete your long run?", "type": "choice", "options": ["Yes", "Partial", "No"]},
-            {"id": "run_niggles", "label": "Any running niggles?", "type": "text"},
-            {"id": "run_pacing", "label": "How did pacing feel?", "type": "choice", "options": ["On target", "Too fast", "Too slow", "Inconsistent"]},
-            {"id": "legs_ready", "label": "Do your legs feel ready for next week?", "type": "choice", "options": ["Yes", "Some fatigue", "No"]},
+            {"id": "run_long_done", "label": "Did you complete your long run this week?",
+             "type": "choice", "options": ["Yes — full distance", "Partial", "No"]},
+            {"id": "run_mileage_feel", "label": "How did the total weekly mileage feel?",
+             "type": "choice", "options": ["Comfortable", "About right", "A stretch", "Too much"]},
+            {"id": "run_pacing", "label": "How did pacing feel on your key runs?",
+             "type": "choice", "options": ["On target", "Faster than plan", "Slower than plan", "Inconsistent"]},
+            {"id": "legs_ready", "label": "Do your legs feel ready for next week's key session?",
+             "type": "choice", "options": ["Yes — fresh", "Mostly", "Some fatigue", "No — sore/heavy"]},
+            {"id": "run_niggles", "label": "Any running niggles (calves, shins, knees, hips)?", "type": "text"},
+            {"id": "shoe_check", "label": "How's the mileage on your current running shoes?",
+             "type": "choice", "options": ["Fresh (< 200km)", "Broken-in (200-500km)", "Nearing rotation (500-700km)", "Overdue (> 700km)"]},
         ]
-    if any("fat" in g or "loss" in g or "cut" in g for g in goals):
+    if is_fat_loss:
         dynamic += [
-            {"id": "hunger", "label": "How was hunger this week?", "type": "choice", "options": ["Manageable", "Occasional cravings", "High", "Very high"]},
-            {"id": "protein", "label": "How consistent was protein?", "type": "choice", "options": ["Very consistent", "Mostly", "Mixed", "Poor"]},
-            {"id": "food_env", "label": "Any difficult food environments?", "type": "text"},
-            {"id": "adjust_cals", "label": "Do calories need adjusting?", "type": "choice", "options": ["No", "Slightly lower", "Slightly higher", "Louis to review"]},
+            {"id": "weight_trend", "label": "How is your body-weight trending this week?",
+             "type": "choice", "options": ["Down", "Stable", "Up", "Not tracked"]},
+            {"id": "hunger", "label": "How was hunger this week?",
+             "type": "choice", "options": ["Manageable", "Occasional cravings", "High", "Very high"]},
+            {"id": "protein", "label": "How consistent was protein intake?",
+             "type": "choice", "options": ["Very consistent", "Mostly", "Mixed", "Poor"]},
+            {"id": "food_env", "label": "Any difficult food environments (layovers, hotels, family)?", "type": "text"},
+            {"id": "adjust_cals", "label": "Do calories need adjusting for next week?",
+             "type": "choice", "options": ["No", "Slightly lower", "Slightly higher", "Louis to review"]},
         ]
-    if any("muscle" in g or "gain" in g or "hypertrophy" in g for g in goals):
+    if is_muscle:
         dynamic += [
-            {"id": "strength_trend", "label": "Did strength feel stable, up or down?", "type": "choice", "options": ["Up", "Stable", "Down"]},
-            {"id": "exercise_difficulty", "label": "Any exercises too easy or too hard?", "type": "text"},
-            {"id": "appetite", "label": "Appetite this week?", "type": "choice", "options": ["High", "Normal", "Low"]},
+            {"id": "strength_trend", "label": "Did the main lifts feel stable, up or down?",
+             "type": "choice", "options": ["Up (added load/reps)", "Stable (matched last week)", "Down (dropped)"]},
+            {"id": "prs_hit", "label": "Any PRs, top sets, or breakthrough moments?", "type": "text"},
+            {"id": "exercise_difficulty", "label": "Any exercises that felt too easy or too hard?", "type": "text"},
+            {"id": "appetite", "label": "Appetite this week?",
+             "type": "choice", "options": ["High", "Normal", "Low"]},
+            {"id": "protein_hit", "label": "Hit your daily protein target?",
+             "type": "choice", "options": ["Every day", "Most days", "Half the week", "Rarely"]},
         ]
-    if any("iron" in g or "tri" in g for g in goals):
+    if is_tri:
         dynamic += [
-            {"id": "swim_consistency", "label": "Swim consistency", "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
-            {"id": "bike_consistency", "label": "Bike consistency", "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
-            {"id": "run_consistency", "label": "Run consistency", "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
-            {"id": "biggest_limiter", "label": "Biggest limiter this week", "type": "text"},
+            {"id": "swim_consistency", "label": "Swim consistency this week",
+             "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
+            {"id": "bike_consistency", "label": "Bike consistency this week",
+             "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
+            {"id": "run_consistency", "label": "Run consistency this week",
+             "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
+            {"id": "biggest_limiter", "label": "Biggest limiter this week (time, energy, one discipline)?", "type": "text"},
         ]
-    if "pilot" in role or "crew" in role or "cabin" in role:
+    if is_health and not (is_marathon or is_muscle or is_fat_loss or is_tri):
         dynamic += [
-            {"id": "flying_impact", "label": "How much did flying affect training this week?", "type": "choice", "options": ["Not much", "Somewhat", "A lot"]},
-            {"id": "jetlag", "label": "Any jet lag issues?", "type": "choice", "options": ["No", "Mild", "Significant"]},
-            {"id": "post_duty_sleep", "label": "Any poor sleep after duties?", "type": "choice", "options": ["No", "Some", "Bad"]},
-            {"id": "layover_gym", "label": "Any layover or hotel gym issues?", "type": "text"},
+            {"id": "activity_days", "label": "How many days were you active this week?",
+             "type": "choice", "options": ["0-1", "2-3", "4-5", "6-7"]},
+            {"id": "movement_notes", "label": "Anything that felt particularly good — or bad — this week?", "type": "text"},
+        ]
+    if is_pilot_crew:
+        dynamic += [
+            {"id": "flying_impact", "label": "How much did flying affect training this week?",
+             "type": "choice", "options": ["Not much", "Somewhat", "A lot"]},
+            {"id": "jetlag", "label": "Any jet-lag issues?",
+             "type": "choice", "options": ["No", "Mild", "Significant"]},
+            {"id": "post_duty_sleep", "label": "Sleep quality after duties this week?",
+             "type": "choice", "options": ["Good", "Some rough nights", "Bad"]},
+            {"id": "layover_gym", "label": "Any layover or hotel gym issues to flag?", "type": "text"},
         ]
 
+    # Core — always asked. Kept short (7 items) so total form + goal-specific
+    # section is manageable in ~90 seconds.
     core = [
         {"id": "overall", "label": "How was your overall training week?", "type": "choice",
          "options": ["Excellent", "Good", "Okay", "Difficult", "Poor"]},
         {"id": "energy", "label": "Energy this week", "type": "scale", "min": 1, "max": 5},
         {"id": "sleep", "label": "Sleep quality this week", "type": "scale", "min": 1, "max": 5},
         {"id": "stress", "label": "Stress level this week", "type": "scale", "min": 1, "max": 5},
-        {"id": "recovery", "label": "Recovery level this week", "type": "scale", "min": 1, "max": 5},
+        {"id": "recovery", "label": "Recovery / soreness this week", "type": "scale", "min": 1, "max": 5},
         {"id": "pain", "label": "Any pain, injury or discomfort?", "type": "choice",
          "options": ["No", "Yes, minor", "Yes, moderate", "Yes, severe"]},
         {"id": "pain_where", "label": "Where is the pain?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
-        {"id": "pain_worse", "label": "What movements make it worse?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
+        {"id": "pain_worse", "label": "What makes it worse?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
         {"id": "nutrition", "label": "Nutrition consistency this week", "type": "choice",
          "options": ["Very consistent", "Mostly consistent", "Mixed", "Poor", "Not focused on nutrition"]},
         {"id": "biggest_win", "label": "Biggest win this week", "type": "text"},
         {"id": "biggest_challenge", "label": "Biggest challenge this week", "type": "text"},
-        {"id": "for_louis", "label": "Anything Louis needs to know?", "type": "text"},
+        {"id": "for_louis", "label": "Anything else Louis needs to know?", "type": "text"},
     ]
-    return {"core": core, "dynamic": dynamic}
+    # Build a short human-readable header the frontend can show at the top of
+    # the form so the client knows why the questions look this way.
+    goal_label_parts: list[str] = []
+    if is_marathon:   goal_label_parts.append("Marathon / running")
+    if is_fat_loss:   goal_label_parts.append("Fat loss")
+    if is_muscle:     goal_label_parts.append("Muscle / strength")
+    if is_tri:        goal_label_parts.append("Triathlon")
+    if is_health:     goal_label_parts.append("Health / wellbeing")
+    goal_label = " · ".join(goal_label_parts) or "General fitness"
+    return {
+        "core": core,
+        "dynamic": dynamic,
+        "goal_label": goal_label,
+        "tailored": bool(dynamic),
+    }
 
 
 class CheckinSubmitBody(BaseModel):

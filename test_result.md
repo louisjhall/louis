@@ -2059,3 +2059,63 @@ agent_communication:
   - agent: "main"
     message: "Iter 92 shipped: Phase 2 Living Profile Wire-Back. Backend 10/10 pytest scenarios PASSED (test_iter92_live_state.py) covering signal extractor, live-state endpoints, auto-deload flip, coach-message directive pin, coach POST/DELETE directive endpoints, and energy-trend dampening. Frontend: manually verified receipt card on client home and LIVE SIGNALS card on coach detail via screenshots (both render correctly with pain flag from seeded shoulder check-in, and coach directive PIN flow works end-to-end). Regression: Phase 1 tests still 13/13 passing."
 
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 93 — Phase 3 · Strict post-LLM guardrails
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Phase 3 — Post-LLM guardrail validator + auto-heal"
+    implemented: true
+    working: true
+    file: "backend/feature_workout_guardrails.py, backend/server.py, backend/feature_programme_quality.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            NEW module feature_workout_guardrails.validate_batch runs after
+            every generation path (main worker line 4234, retry worker line
+            4544, generate-month line 6567) and BEFORE persistence. Enforces:
+              H_AVOID: exercises matching avoid_movement_patterns are
+                       substituted with safe alternatives (overhead_press →
+                       Landmine Press, deep_squat → Box Squat, etc.). 19
+                       patterns wired.
+              H_OVERLOAD: primary-lift sets clamped to phase-aware band
+                          (2-5 build; 2-4 deload). Reps rewritten to
+                          strength_overload.reps_target when >4 outside band.
+              H_DURATION: workout duration clamped to phase band (recovery
+                          8-25, deload 18-45, endurance 25-120, else 20-75).
+              H_SHAPE: batch-level check that weekly_shape_ideal is met;
+                       first real workout flagged for coach if missing.
+              H_MISSING_EX: delegates to _ensure_workout_content (iter 83).
+            Persisted workout gets `guardrail_violations` array. Persisted
+            programme record gets `guardrail_report {total, ok, healed,
+            flagged, violations}`.
+            Coach dashboard programme_pill exposes guardrail_healed +
+            guardrail_flagged counts. Client cards show new GUARDRAILS ·
+            N HEALED · N FLAGGED chip (testID guardrail-row-<clientId>).
+            Tests: 15/15 pytest scenarios pass (test_iter93_guardrails.py).
+
+frontend:
+  - task: "Phase 3 — Coach dashboard guardrail chip"
+    implemented: true
+    working: true
+    file: "frontend/app/(coach)/clients.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Client cards now render GUARDRAILS · N HEALED · N FLAGGED chip
+            beneath the programme pill whenever guardrail_healed +
+            guardrail_flagged > 0. testID guardrail-row-<clientId>.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 93 (Phase 3) shipped. 15/15 new pytest scenarios green (test_iter93_guardrails.py). No regressions: Phase 1 13/13 and Phase 2 10/10 still pass individually. Feature summary: every workout now flows through validate_batch() before persistence to enforce (a) no exercises matching pain-avoid patterns, (b) sets/reps inside strength_overload deltas, (c) duration inside phase band, (d) weekly session mix matches weekly_shape_ideal. Auto-heal fixes what it can (substitutes banned exercises, clamps sets/reps/duration); unhealable violations (missing week-shape slots) flag the workout for coach review + surface a GUARDRAILS chip on the coach dashboard."
+

@@ -908,6 +908,7 @@ async def persist_programme_record(
     workouts: list[dict],
     context: dict[str, Any],
     validation: dict[str, Any],
+    guardrail_report: Optional[dict[str, Any]] = None,
 ) -> str:
     """Store a versioned programme row so the coach dashboard can review it.
 
@@ -961,6 +962,7 @@ async def persist_programme_record(
         "event_type_pref": context.get("event_type_pref"),
         "progression": context.get("progression"),
         "strength_overload": context.get("strength_overload"),
+        "guardrail_report": guardrail_report,
         "start_date": start_iso,
         "end_date": end_iso,
         "roster_context_summary": context.get("roster_summary"),

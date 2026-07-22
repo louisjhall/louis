@@ -315,6 +315,16 @@ export default function Clients() {
                     ) : null}
                   </View>
                 ) : null}
+                {cl.programme_pill && ((cl.programme_pill.guardrail_healed || 0) + (cl.programme_pill.guardrail_flagged || 0) > 0) ? (
+                  <View style={styles.grRow} testID={`guardrail-row-${cl.id}`}>
+                    <Ionicons name="shield-checkmark" size={11} color={theme.color.brand} />
+                    <Text style={styles.grText} numberOfLines={1}>
+                      GUARDRAILS
+                      {cl.programme_pill.guardrail_healed ? ` · ${cl.programme_pill.guardrail_healed} HEALED` : ""}
+                      {cl.programme_pill.guardrail_flagged ? ` · ${cl.programme_pill.guardrail_flagged} FLAGGED` : ""}
+                    </Text>
+                  </View>
+                ) : null}
                 {cl.profile_incomplete_pill ? (
                   <View style={styles.incompleteRow} testID={`profile-incomplete-${cl.id}`}>
                     <Ionicons name="warning" size={12} color="#a06400" />
@@ -425,6 +435,10 @@ const styles = StyleSheet.create({
   metaSmall: { color: theme.color.amber, fontSize: 10, fontWeight: "700", letterSpacing: 1 },
   action: { color: theme.color.brand, letterSpacing: 2, fontWeight: "800", fontSize: 11 },
   progPillRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  grRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: theme.radius.sm,
+    backgroundColor: "rgba(59,130,246,0.08)", borderWidth: 1, borderColor: "rgba(59,130,246,0.35)" },
+  grText: { color: theme.color.brand, fontSize: 9, fontWeight: "800", letterSpacing: 0.8, flex: 1 },
   incompleteRow: {
     flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6,
     paddingHorizontal: 8, paddingVertical: 5, borderRadius: theme.radius.sm,

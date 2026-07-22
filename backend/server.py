@@ -4232,6 +4232,24 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 logger.warning("job %s was cancelled while generation was running — skipping persist", job_id)
                 return
 
+            # Iter 93 (Phase 3) — Post-LLM guardrail pass.
+            # Enforce avoid_movement_patterns, strength_overload deltas,
+            # duration bands, and weekly_shape_ideal BEFORE persistence.
+            guardrail_report = None
+            try:
+                from feature_workout_guardrails import validate_batch
+                gr = validate_batch(workouts, programme_ctx or {})
+                workouts = gr["workouts"]
+                guardrail_report = gr["report"]
+                logger.info(
+                    "guardrails: total=%d ok=%d healed=%d flagged=%d viol=%d",
+                    guardrail_report["total"], guardrail_report["ok"],
+                    guardrail_report["healed"], guardrail_report["flagged"],
+                    len(guardrail_report["violations"]),
+                )
+            except Exception:
+                logger.exception("guardrail validation failed — persisting raw workouts")
+
             existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
             for w in workouts:
                 d = w.get("date")
@@ -4259,6 +4277,8 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     "needs_coach_review": bool(used_template or w.get("needs_coach_review")),
                     "validation_status": w.get("validation_status") or ("ok" if not (used_template or w.get("needs_coach_review")) else "needs_review"),
                     "insufficient_content_reason": w.get("insufficient_content_reason"),
+                    # Iter 93 (Phase 3) — carry guardrail violations for coach visibility
+                    "guardrail_violations": w.get("guardrail_violations") or [],
                     # Plan A3 — optional-recovery flag from days-per-week cap
                     "optional": bool(w.get("optional", False)),
                     "source_reason": w.get("source_reason"),
@@ -4301,7 +4321,10 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                         {"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}
                     ).sort("date", 1).to_list(500)
                     validation = validate_programme(user, roster, persisted_workouts, programme_ctx)
-                    await persist_programme_record(user, roster, persisted_workouts, programme_ctx, validation)
+                    await persist_programme_record(
+                        user, roster, persisted_workouts, programme_ctx, validation,
+                        guardrail_report=guardrail_report,
+                    )
                     if not validation.get("ok"):
                         # Flag all non-completed, non-locked workouts as needing review.
                         await db.workouts.update_many(
@@ -4517,6 +4540,18 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
             logger.exception("retry template fallback failed unexpectedly")
 
         # Reuse the same upsert logic as the main worker.
+        # Iter 93 (Phase 3) — Post-LLM guardrail pass on retry path.
+        guardrail_report_retry = None
+        try:
+            from feature_workout_guardrails import validate_batch
+            gr = validate_batch(workouts, programme_ctx or {})
+            workouts = gr["workouts"]
+            guardrail_report_retry = gr["report"]
+            logger.info("retry guardrails: total=%d flagged=%d",
+                        guardrail_report_retry["total"], guardrail_report_retry["flagged"])
+        except Exception:
+            logger.exception("retry: guardrail validation failed")
+
         existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}).to_list(500)}
         for w in workouts:
             d = w.get("date")
@@ -4540,7 +4575,9 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
                 "key_session": bool(w.get("key_session", False)),
                 "event_phase": w.get("event_phase"),
                 "source": "template" if used_template else "coaching_system",
-                "needs_coach_review": bool(used_template),
+                "needs_coach_review": bool(used_template or w.get("needs_coach_review")),
+                "validation_status": w.get("validation_status") or ("ok" if not (used_template or w.get("needs_coach_review")) else "needs_review"),
+                "guardrail_violations": w.get("guardrail_violations") or [],
                 "variants": _merge_variants(w, prev),
                 "approved": prev.get("approved", False) if prev else False,
                 "completed": False,
@@ -4566,7 +4603,10 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
                     {"user_id": user["id"], "roster_id": roster["id"]}, {"_id": 0}
                 ).sort("date", 1).to_list(500)
                 validation = validate_programme(user, roster, persisted_workouts, programme_ctx)
-                await persist_programme_record(user, roster, persisted_workouts, programme_ctx, validation)
+                await persist_programme_record(
+                    user, roster, persisted_workouts, programme_ctx, validation,
+                    guardrail_report=guardrail_report_retry,
+                )
                 if not validation.get("ok"):
                     await db.workouts.update_many(
                         {"user_id": user["id"], "roster_id": roster["id"], "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
@@ -6523,6 +6563,15 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                 workouts, _gate_meta = await filter_new_client_workouts(user, r, workouts)
             except Exception:
                 logger.exception("setup-day gate skipped due to error")
+            # Iter 93 (Phase 3) — Post-LLM guardrail pass (generate-month path).
+            guardrail_report_month = None
+            try:
+                from feature_workout_guardrails import validate_batch
+                gr = validate_batch(workouts, programme_ctx or {})
+                workouts = gr["workouts"]
+                guardrail_report_month = gr["report"]
+            except Exception:
+                logger.exception("generate-month: guardrail validation failed")
             existing = {w["date"]: w for w in await db.workouts.find({"user_id": user["id"], "roster_id": body.roster_id}, {"_id": 0}).to_list(500)}
             for w in workouts:
                 d = w.get("date")
@@ -6546,7 +6595,9 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                     "key_session": bool(w.get("key_session", False)),
                     "event_phase": w.get("event_phase"),
                     "source": "coaching_system",
-                    "needs_coach_review": False,
+                    "needs_coach_review": bool(w.get("needs_coach_review", False)),
+                    "validation_status": w.get("validation_status") or ("ok" if not w.get("needs_coach_review") else "needs_review"),
+                    "guardrail_violations": w.get("guardrail_violations") or [],
                     "variants": _merge_variants(w, prev),
                     "approved": prev.get("approved", False) if prev else False,
                     "completed": False,
@@ -6579,7 +6630,10 @@ async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = D
                         {"user_id": user["id"], "roster_id": body.roster_id}, {"_id": 0}
                     ).sort("date", 1).to_list(500)
                     validation = validate_programme(user, r, persisted_workouts, programme_ctx)
-                    await persist_programme_record(user, r, persisted_workouts, programme_ctx, validation)
+                    await persist_programme_record(
+                        user, r, persisted_workouts, programme_ctx, validation,
+                        guardrail_report=guardrail_report_month,
+                    )
                     if not validation.get("ok"):
                         await db.workouts.update_many(
                             {"user_id": user["id"], "roster_id": body.roster_id, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
@@ -8355,6 +8409,7 @@ async def _client_summary(u: dict) -> dict:
     programme_pill = None
     if prog:
         phase = prog.get("phase") or {}
+        gr = prog.get("guardrail_report") or {}
         programme_pill = {
             "goal_key": prog.get("goal_key"),
             "goal_label": prog.get("goal_label"),
@@ -8365,6 +8420,9 @@ async def _client_summary(u: dict) -> dict:
             "validation_status": prog.get("validation_status"),
             "coach_approved": bool(prog.get("coach_approved")),
             "updated_at": prog.get("updated_at") or prog.get("created_at"),
+            # Iter 93 (Phase 3) — surface guardrail summary
+            "guardrail_healed": int(gr.get("healed") or 0),
+            "guardrail_flagged": int(gr.get("flagged") or 0),
         }
     # Iter 81 Phase 4: attach the latest weekly progression snapshot so the
     # coach can see 'PROGRESSING / STEADY / PULL BACK / DELOAD' at a glance.

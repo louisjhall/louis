@@ -1921,6 +1921,7 @@ async def _send_louis_welcome_message_if_needed(user: dict) -> None:
 _ESSENTIAL_DNA_FIELDS: list[str] = [
     "primary_goal",
     # secondary_goals is 0-3 — asked but empty list is OK
+    "flying_type",         # Iter 94e2 — gates layover / hotel_gyms
     "training_days",
     "time_home",
     "time_layover",
@@ -1931,6 +1932,7 @@ _ESSENTIAL_DNA_FIELDS: list[str] = [
 ]
 _FRIENDLY_ESSENTIAL_LABELS: dict[str, str] = {
     "primary_goal":     "Your primary goal",
+    "flying_type":      "The type of flying you do",
     "training_days":    "How many days per week you can train",
     "time_home":        "Time per session at home",
     "time_layover":     "Time per session on a layover",
@@ -1977,7 +1979,11 @@ def _missing_essential_fields(assessment: dict, user: dict) -> list[str]:
 
     for fid in _ESSENTIAL_DNA_FIELDS:
         v = answers_flat.get(fid)
-        if fid == "equipment_home":
+        if fid == "flying_type":
+            # Accept either answer OR profile.* (profile is source of truth).
+            if not (v or profile.get("flying_type") or profile.get("route_focus")):
+                missing.append(fid)
+        elif fid == "equipment_home":
             if not v or not isinstance(v, list) or len(v) == 0:
                 missing.append(fid)
         elif fid == "no_go_movements":
@@ -2570,6 +2576,8 @@ async def _user_essentials_present(user_id: str) -> tuple[bool, list[str]]:
             if profile.get("no_go_none") is True or profile.get("no_go_movements_answered") is True:
                 return True
             return False
+        if fid == "flying_type":
+            return bool(profile.get("flying_type") or profile.get("route_focus"))
         return False
     still_missing = sorted(fid for fid in missing_from_asmnt if not _prof_has(fid))
     # Iter 94b — If the client explicitly does NOT do layovers, drop layover-only

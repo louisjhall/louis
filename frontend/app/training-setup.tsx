@@ -127,10 +127,13 @@ export default function TrainingSetupScreen() {
   const [noGoMovements, setNoGoMovements] = useState<string[]>([]);
 
   // Whether the picked flying type actually implies layovers.
+  // Iter 94e2 — default to FALSE when unknown. If we haven't collected
+  // flying_type yet, hide layover-only questions (safer than asking and
+  // presuming layovers). Users who DO layovers will be routed through the
+  // "flying" page first (it activates because flying_type is now essential).
   const doesLayovers = useMemo(() => {
     const opt = FLYING_TYPE_OPTIONS.find((f) => f.id === flyingType);
-    // Default to TRUE (safer) so we still ask if they haven't picked yet.
-    return opt ? opt.hasLayovers : true;
+    return opt ? opt.hasLayovers : false;
   }, [flyingType]);
 
   // ── Load current setup status ─────────────────────────────────────────────

@@ -120,7 +120,8 @@ export default function Login() {
               {err && <Text style={styles.err} testID="login-error">{err}</Text>}
 
               <Pressable
-                testID="login-submit-button"
+                testID="signin-submit"
+                accessibilityLabel="SIGN IN"
                 onPress={submit}
                 disabled={loading}
                 style={({ pressed }) => [

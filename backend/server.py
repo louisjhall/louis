@@ -1823,7 +1823,15 @@ def _missing_essential_fields(assessment: dict, user: dict) -> list[str]:
             if not v or not isinstance(v, list) or len(v) == 0:
                 missing.append(fid)
         elif fid == "no_go_movements":
-            if not v or not isinstance(v, list) or len(v) == 0:
+            # Iter 91: accept explicit ["none"] or a `no_go_none` truthy flag as
+            # "answered with no restrictions" so genuinely healthy users can clear the pill.
+            if isinstance(v, list) and len(v) > 0:
+                pass  # answered
+            elif answers_flat.get("no_go_none") or answers_flat.get("no_no_go_movements"):
+                pass  # explicit-none flag
+            elif isinstance(v, list) and any(str(x).lower() == "none" for x in v):
+                pass  # ["none"] sentinel — belt & braces
+            else:
                 missing.append(fid)
         elif fid == "injuries":
             # Accept: non-empty text OR explicit-none dict OR a legacy boolean flag
@@ -2389,7 +2397,12 @@ async def _user_essentials_present(user_id: str) -> tuple[bool, list[str]]:
             return profile.get("injuries") not in (None, "")
         if fid == "no_go_movements":
             v = profile.get("no_go_movements")
-            return isinstance(v, list) and len(v) > 0
+            if isinstance(v, list) and len(v) > 0:
+                return True
+            # Explicit sentinel written by training-setup when user has none.
+            if profile.get("no_go_none") is True or profile.get("no_go_movements_answered") is True:
+                return True
+            return False
         return False
     still_missing = sorted(fid for fid in missing_from_asmnt if not _prof_has(fid))
     return (len(still_missing) == 0, still_missing)
@@ -2684,6 +2697,11 @@ async def profile_training_setup(body: TrainingSetupBody, user: dict = Depends(c
     """
     payload = body.model_dump(exclude_none=True)
     profile_updates: dict[str, Any] = {}
+    # Iter 91 — genuinely healthy users need a way to answer "no restrictions".
+    # If no_go_movements is submitted as [] we treat that as an explicit answer
+    # and set a companion flag so essentials-present sees it.
+    if "no_go_movements" in payload and isinstance(payload["no_go_movements"], list) and len(payload["no_go_movements"]) == 0:
+        profile_updates["profile.no_go_none"] = True
     for setup_key, val in payload.items():
         prof_keys = _PROFILE_KEY_MAP.get(setup_key)
         # Fields not in the map (biological_sex, crew_role) are written directly.

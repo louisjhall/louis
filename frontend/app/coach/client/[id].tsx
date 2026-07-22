@@ -424,8 +424,51 @@ export default function ClientDetail() {
       Alert.alert("Regenerated", "The workout has been rebuilt using the latest programme context.");
       await load();
     } catch (e: any) {
+      // Iter 84 (Task 1.4) — profile_incomplete 409 → offer to nudge the client.
+      const code = e?.detail?.code || e?.code;
+      if (code === "profile_incomplete" || e?.status === 409) {
+        const labels = (e?.detail?.friendly_labels || [])
+          .map((l: string) => `• ${l}`).join("\n");
+        const hint = e?.detail?.coach_hint || "";
+        setWRegenOpen(null);
+        Alert.alert(
+          "Client hasn't finished training setup",
+          `${hint}\n\nMissing:\n${labels}`,
+          [
+            { text: "OK", style: "cancel" },
+            {
+              text: "Nudge Client",
+              onPress: () => nudgeClientForSetup(),
+            },
+          ],
+        );
+        return;
+      }
       Alert.alert("Regenerate failed", e?.message || "Try again.");
     } finally { setWBusy(false); }
+  };
+
+  // Iter 84 (Task 1.4) — send a friendly message from Louis asking the client
+  // to complete their setup. Fires a coach→client message.
+  const nudgeClientForSetup = async () => {
+    if (!client) return;
+    const name = (client?.name || "").split(" ")[0] || "";
+    try {
+      await api(`/messages`, {
+        method: "POST",
+        body: {
+          to_user_id: client.id,
+          text: (
+            `Hey${name ? " " + name : ""}, just noticed you haven't finished your training setup. ` +
+            `It only takes 30 seconds and locks in your equipment, time and goals so I can build proper workouts for you. ` +
+            `Open the app and you'll see the setup screen automatically — thanks!`
+          ),
+        },
+      });
+      Alert.alert("Nudge sent", "Message from Louis queued to this client.");
+    } catch (e: any) {
+      Alert.alert("Nudge failed", e?.message || "Try again.");
+    }
   };
 
   const openRosterDayEdit = (day: any) => {

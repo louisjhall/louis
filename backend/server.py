@@ -2395,6 +2395,33 @@ async def _user_essentials_present(user_id: str) -> tuple[bool, list[str]]:
     return (len(still_missing) == 0, still_missing)
 
 
+async def _assert_profile_complete_or_409(user_id: str, coach_hint: bool = False) -> None:
+    """
+    Iter 84 (Task 1.4) — Defence-in-depth for plan builds. Raises HTTP 409
+    with a structured `profile_incomplete` payload if any essential field is
+    missing. Callers should NOT catch this — let it bubble to the client.
+
+    When `coach_hint=True` (called from a coach-scoped endpoint), we include
+    a hint the coach UI can display alongside the missing-fields list.
+    """
+    complete, missing = await _user_essentials_present(user_id)
+    if complete:
+        return
+    detail: dict[str, Any] = {
+        "code": "profile_incomplete",
+        "message": "Louis needs a few more details before he can plan.",
+        "missing_fields": missing,
+        "friendly_labels": [_FRIENDLY_ESSENTIAL_LABELS.get(f, f) for f in missing],
+    }
+    if coach_hint:
+        detail["coach_hint"] = (
+            "This client hasn't finished their training setup. Until they do, "
+            "we can't rebuild without silently guessing equipment / time / days."
+        )
+    raise HTTPException(status_code=409, detail=detail)
+
+
+
 @api.get("/profile/setup-status")
 async def profile_setup_status(user: dict = Depends(current_user)):
     """Return whether the user still needs to fill in essential setup fields."""
@@ -3703,6 +3730,10 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
     """One-shot background job: parse roster → detect overlap → save → generate month.
 
     Returns {job_id} immediately. Poll GET /roster/jobs/{job_id} for progress."""
+    # Iter 84 (Task 1.4) — defence-in-depth. Refuse to spin up a plan build
+    # if the client is missing essentials. The frontend routes them to
+    # /training-setup and re-tries.
+    await _assert_profile_complete_or_409(user["id"])
     import asyncio as _asyncio
     job_id = new_id()
     await db.roster_jobs.insert_one({
@@ -6200,6 +6231,8 @@ def _apply_days_cap_and_min_content(workouts: list[dict], profile: dict) -> None
 async def workouts_generate_month(body: WorkoutGenerateMonthBody, user: dict = Depends(current_user)):
     """Kick off month generation in the background and return a job id immediately.
     The client polls /workouts/job/{id} until status='done'."""
+    # Iter 84 (Task 1.4) — defence-in-depth for plan builds.
+    await _assert_profile_complete_or_409(user["id"])
     import asyncio as _asyncio
 
     r = await db.rosters.find_one({"id": body.roster_id, "user_id": user["id"]}, {"_id": 0})
@@ -6328,6 +6361,8 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
     """Background regeneration to avoid Cloudflare/ingress 504 timeouts.
 
     Returns {job_id} immediately. Poll GET /workouts/job/{job_id} for progress."""
+    # Iter 84 (Task 1.4) — defence-in-depth for plan builds.
+    await _assert_profile_complete_or_409(user["id"])
     import asyncio as _asyncio
 
     r = await db.rosters.find_one({"id": body.roster_id, "user_id": user["id"]}, {"_id": 0})

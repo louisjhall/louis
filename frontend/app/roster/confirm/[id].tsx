@@ -226,6 +226,26 @@ export default function RosterConfirm() {
       const res = await api<any>(`/roster/pending/${pending.id}/confirm`, { method: "POST" });
       router.replace({ pathname: "/roster-upload" as any, params: { resume: res.job_id } } as any);
     } catch (e: any) {
+      // Iter 84 (Task 1.4) — profile_incomplete 409 → route to /training-setup.
+      const detail = e?.detail || e?.body?.detail;
+      const code = detail?.code || e?.body?.code || e?.code;
+      if (code === "profile_incomplete" || e?.status === 409) {
+        const labels = (detail?.friendly_labels || [])
+          .map((l: string) => `• ${l}`)
+          .join("\n");
+        Alert.alert(
+          "One more step",
+          `Louis needs a few more details before he can build your plan:\n\n${labels}\n\nTakes about 30 seconds.`,
+          [
+            { text: "Later", style: "cancel", onPress: () => setSubmitting(false) },
+            {
+              text: "Complete Setup",
+              onPress: () => { setSubmitting(false); router.push("/training-setup" as any); },
+            },
+          ],
+        );
+        return;
+      }
       Alert.alert("Could not build your plan", e?.message || "Please try again.");
       setSubmitting(false);
     }

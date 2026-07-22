@@ -296,6 +296,19 @@ async def coach_workout_regenerate_single(
     if not client:
         raise HTTPException(404, "Client not found")
 
+    # Iter 84 (Task 1.4) — defence-in-depth: refuse to rebuild for an
+    # incomplete client. The coach UI catches the 409 and shows the client
+    # a "hasn't finished training setup" banner + Nudge button.
+    try:
+        from server import _assert_profile_complete_or_409
+        await _assert_profile_complete_or_409(client_id, coach_hint=True)
+    except HTTPException:
+        raise
+    except Exception:
+        # Never fail hard if the helper import breaks — regen still gates
+        # via the resolver's fallback logic downstream.
+        pass
+
     roster = None
     if roster_id:
         roster = await db.rosters.find_one({"id": roster_id, "user_id": client_id}, {"_id": 0})

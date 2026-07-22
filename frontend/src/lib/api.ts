@@ -34,6 +34,7 @@ export async function api<T = any>(
   });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
+    let structuredDetail: any = null;
     try {
       const j = await res.json();
       // Preview-mode friendly error: bubble up a clean toast, don't spam consoles.
@@ -42,11 +43,21 @@ export async function api<T = any>(
         err.preview_readonly = true;
         throw err;
       }
-      msg = j.detail || JSON.stringify(j);
+      // Iter 84 (Task 1.4) — preserve structured detail (e.g. profile_incomplete)
+      // so callers can branch on `err.detail.code` without re-parsing.
+      if (j?.detail && typeof j.detail === "object") {
+        structuredDetail = j.detail;
+        msg = j.detail.message || JSON.stringify(j.detail);
+      } else {
+        msg = j.detail || JSON.stringify(j);
+      }
     } catch (e: any) {
       if (e?.preview_readonly) throw e;
     }
-    throw new Error(msg);
+    const err: any = new Error(msg);
+    err.status = res.status;
+    if (structuredDetail) err.detail = structuredDetail;
+    throw err;
   }
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return (await res.json()) as T;

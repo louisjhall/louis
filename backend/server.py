@@ -2452,29 +2452,42 @@ async def _resolve_effective_goal_and_event(user_id: str) -> dict:
     )
     primary_norm = str(primary).strip().lower()
 
-    # Look for the soonest active endurance event within 24 weeks
+    # Look for the priority-A endurance event first (Iter 84 Task 1.7 gives
+    # the user explicit control). Fallback: soonest endurance within 24w.
     event = None
     weeks_to_event: Optional[int] = None
     try:
         today = _date.today()
-        cursor = db.events.find({
+        # First pass: priority=A endurance event
+        cursor_a = db.events.find({
+            "user_id": user_id,
+            "event_date": {"$gte": today.isoformat()},
+            "is_active": {"$ne": False},
+            "priority": "A",
+        }).sort([("event_date", 1)]).limit(3)
+        candidates_a = await cursor_a.to_list(3)
+        # Second pass: fallback = soonest endurance regardless of priority
+        cursor_b = db.events.find({
             "user_id": user_id,
             "event_date": {"$gte": today.isoformat()},
             "is_active": {"$ne": False},
         }).sort([("event_date", 1)]).limit(5)
-        candidates = await cursor.to_list(5)
-        for ev in candidates:
-            et = str(ev.get("event_type") or "").strip().lower().replace(" ", "_")
-            if et in _ENDURANCE_EVENT_TYPES:
-                try:
-                    ed = _date.fromisoformat(ev["event_date"][:10])
-                    wks = (ed - today).days // 7
-                    if 0 <= wks <= 24:
-                        event = ev
-                        weeks_to_event = wks
-                        break
-                except Exception:
-                    continue
+        candidates_b = await cursor_b.to_list(5)
+        for pool in (candidates_a, candidates_b):
+            for ev in pool:
+                et = str(ev.get("event_type") or "").strip().lower().replace(" ", "_")
+                if et in _ENDURANCE_EVENT_TYPES:
+                    try:
+                        ed = _date.fromisoformat(ev["event_date"][:10])
+                        wks = (ed - today).days // 7
+                        if 0 <= wks <= 24:
+                            event = ev
+                            weeks_to_event = wks
+                            break
+                    except Exception:
+                        continue
+            if event:
+                break
     except Exception:
         pass
 
@@ -2570,6 +2583,67 @@ async def programme_focus(user: dict = Depends(current_user)):
         **eff,
         "banner_text": eff["explanation"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Iter 84 (Task 1.7) — Multi-event dashboard + priority-aware periodisation.
+# ---------------------------------------------------------------------------
+
+@api.get("/events/active")
+async def events_active(user: dict = Depends(current_user)):
+    """List all currently-active events with priority + weeks-remaining."""
+    from datetime import date as _date
+    today = _date.today()
+    rows = await db.events.find({
+        "user_id": user["id"],
+        "event_date": {"$gte": today.isoformat()},
+        "is_active": {"$ne": False},
+    }, {"_id": 0}).sort([("event_date", 1)]).to_list(20)
+    out = []
+    for ev in rows:
+        et = str(ev.get("event_type") or "").strip().lower().replace(" ", "_")
+        try:
+            ed = _date.fromisoformat(ev["event_date"][:10])
+            weeks = max(0, (ed - today).days // 7)
+        except Exception:
+            weeks = None
+        out.append({
+            **ev,
+            "priority": ev.get("priority") or "C",
+            "weeks_to_event": weeks,
+            "is_endurance": et in _ENDURANCE_EVENT_TYPES,
+        })
+    # Auto-elect an implicit Priority A if none set: the soonest endurance event.
+    has_a = any(e.get("priority") == "A" for e in out)
+    if not has_a:
+        for e in out:
+            if e.get("is_endurance"):
+                e["priority"] = "A"
+                e["_implicit_priority_a"] = True
+                break
+    return {"events": out}
+
+
+class EventPriorityBody(BaseModel):
+    priority: str    # "A" | "B" | "C"
+
+
+@api.patch("/events/{eid}/priority")
+async def event_set_priority(eid: str, body: EventPriorityBody, user: dict = Depends(current_user)):
+    p = (body.priority or "").upper().strip()
+    if p not in ("A", "B", "C"):
+        raise HTTPException(400, "priority must be A, B or C")
+    ev = await db.events.find_one({"id": eid, "user_id": user["id"]})
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    # If promoting to A, demote current A → B (only one A allowed).
+    if p == "A":
+        await db.events.update_many(
+            {"user_id": user["id"], "priority": "A", "id": {"$ne": eid}},
+            {"$set": {"priority": "B", "updated_at": now_iso()}},
+        )
+    await db.events.update_one({"id": eid}, {"$set": {"priority": p, "updated_at": now_iso()}})
+    return {"id": eid, "priority": p, "success": True}
 
 
 
@@ -6200,7 +6274,7 @@ async def _generate_month(
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
-            f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal): {json.dumps(programme_ctx)[:2500] if programme_ctx else 'None'}\n"
+            f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal, strength_overload): {json.dumps(programme_ctx)[:3200] if programme_ctx else 'None'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
             f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:7500]}\n"
             "Design exactly one workout per date in this chunk. Return JSON. "
@@ -6211,6 +6285,10 @@ async def _generate_month(
             "order across the training days — DO NOT swap slots without a roster reason. "
             "(3) For endurance/event goals with `event_type_pref` set, the week MUST include at least one "
             "long_run and one easy_run (unless the roster is a hard duty week). "
+            "(4) For NON-endurance goals, if `programme_context.strength_overload` is present, APPLY IT to primary lifts: "
+            "adjust sets by `sets_delta`, target the `reps_target` range, apply `load_delta_pct` on the primary compound "
+            "(BW load stays), and coach cues at the given `rpe`. If `adherence_note` is 'hold — <50% completed last week', "
+            "DO NOT progress load or sets — repeat last week. Otherwise follow the delta. "
             "Ensure workouts respect the client's Coaching DNA (motivation_style, coaching_style, recovery_risk, training_availability, biggest_weakness/opportunity, next_event) when available. "
             "Follow the Programme context strictly: match the weekly session target, keep the movement-mix hint balanced across the week, respect the current phase (Foundation/Build/Peak/Deload) — Deload weeks reduce volume by 30–40%. "
             "For EVERY workout, populate the `rationale` field with 1–2 short sentences answering 'Why this session?' — reference the phase, the roster context (e.g. long-haul day tomorrow, standby, layover in city X), and the client's goal. No client-facing 'AI' wording. "
@@ -8164,6 +8242,19 @@ async def _client_summary(u: dict) -> dict:
             }
     except Exception:
         progression_pill = None
+    # Iter 91 (Task 1.10) — Profile completeness pill so the coach can see at
+    # a glance which clients haven't finished their training setup yet.
+    profile_incomplete_pill = None
+    try:
+        complete, missing = await _user_essentials_present(u["id"])
+        if not complete and missing:
+            profile_incomplete_pill = {
+                "missing_fields": missing,
+                "friendly_labels": [_FRIENDLY_ESSENTIAL_LABELS.get(f, f) for f in missing],
+                "missing_count": len(missing),
+            }
+    except Exception:
+        profile_incomplete_pill = None
     return {
         **u,
         "latest_roster": r or None,
@@ -8173,6 +8264,7 @@ async def _client_summary(u: dict) -> dict:
         "missed_workouts": missed,
         "programme_pill": programme_pill,
         "progression_pill": progression_pill,
+        "profile_incomplete_pill": profile_incomplete_pill,
     }
 
 
@@ -8227,6 +8319,8 @@ async def coach_dashboard(filter: Optional[str] = None, include_archived: bool =
         "needs_review": [s for s in summaries
                          if (s.get("programme_pill") or {}).get("validation_status") == "needs_review"
                          and not (s.get("programme_pill") or {}).get("coach_approved")],
+        # Iter 91 (Task 1.10) — clients who haven't finished training setup.
+        "profile_incomplete": [s for s in summaries if s.get("profile_incomplete_pill")],
         "all": summaries,
     }
     if filter and filter in buckets:

@@ -14,6 +14,7 @@ import { confirm as uxConfirm, toast as uxToast } from "@/src/lib/ux";
 const FILTERS = [
   { key: "all", label: "ALL" },
   { key: "needs_review", label: "NEEDS REVIEW" },
+  { key: "profile_incomplete", label: "PROFILE GAP" },
   { key: "expiring_soon", label: "EXPIRING" },
   { key: "expired", label: "EXPIRED" },
   { key: "no_roster", label: "NO ROSTER" },
@@ -314,6 +315,17 @@ export default function Clients() {
                     ) : null}
                   </View>
                 ) : null}
+                {cl.profile_incomplete_pill ? (
+                  <View style={styles.incompleteRow} testID={`profile-incomplete-${cl.id}`}>
+                    <Ionicons name="warning" size={12} color="#a06400" />
+                    <Text style={styles.incompleteText} numberOfLines={1}>
+                      PROFILE INCOMPLETE · {cl.profile_incomplete_pill.missing_count} MISSING
+                      {cl.profile_incomplete_pill.friendly_labels?.length
+                        ? ` · ${cl.profile_incomplete_pill.friendly_labels.slice(0, 2).join(", ")}${cl.profile_incomplete_pill.missing_count > 2 ? "…" : ""}`
+                        : ""}
+                    </Text>
+                  </View>
+                ) : null}
                 {days.length > 0 && (
                   <View style={styles.loadRow}>
                     {days.slice(0, 14).map((d: any, i: number) => (
@@ -413,6 +425,12 @@ const styles = StyleSheet.create({
   metaSmall: { color: theme.color.amber, fontSize: 10, fontWeight: "700", letterSpacing: 1 },
   action: { color: theme.color.brand, letterSpacing: 2, fontWeight: "800", fontSize: 11 },
   progPillRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
+  incompleteRow: {
+    flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: theme.radius.sm,
+    backgroundColor: "rgba(229,163,55,0.10)", borderWidth: 1, borderColor: "rgba(229,163,55,0.55)",
+  },
+  incompleteText: { color: "#a06400", fontSize: 10, fontWeight: "800", letterSpacing: 0.6, flex: 1 },
   progPill: {
     flex: 1, backgroundColor: theme.color.brandTint || "rgba(59,130,246,0.08)",
     borderWidth: 1, borderColor: theme.color.brand,

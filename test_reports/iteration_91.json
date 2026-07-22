@@ -1,0 +1,50 @@
+{
+  "summary": "Iter 91 Phase 1 Foundation Lock batch tested. BACKEND: 13/13 passed in /app/backend/tests/test_iter91_phase1_lock.py — Task 1.7 (GET /events/active ordered by date, PATCH /events/{id}/priority persists + promotion demotes previous A, invalid priority=400, cross-user=404), Task 1.9 (build_muscle → strength_overload block with all 8 required keys present in programme_context_for_llm output; endurance/event goal → NO strength_overload; adherence gating: <50% completion last week → sets_delta=0 + adherence_note='hold — <50% completed last week'), Task 1.10 (/coach/dashboard counts.profile_incomplete bucket exposed, per-client profile_incomplete_pill with missing_fields/friendly_labels/missing_count; filter=profile_incomplete narrows correctly; pill CLEARS after client submits /profile/training-setup with all essentials), Regression 1.4 (POST /roster/upload-and-generate → 409 profile_incomplete with friendly_labels+missing_fields when essentials wiped), Regression 1.6 (marathon: phase at 10wk=build vs 2wk=race_week, long-run km 13.3km→11.2km tapering confirmed). FRONTEND: code-reviewed only — the mobile-web SIGN IN button did not register clicks in headless Playwright at 390x844 after 3 attempts (loop prevention), so UI interaction was not exercised. Code review confirms all required testIDs are present: filter-profile_incomplete + PROFILE GAP label in FILTERS (clients.tsx:17); profile-incomplete-<clientId> pill (clients.tsx:319); w-deep-edit button with disabled+opacity 0.4 when coach_locked (client/[id].tsx:1442-1448) and routes to /coach/workout/edit/{wid}; events-secondary-stack + event-row-<id> in home.tsx renders only when eventsAll.length > 1; EventPrioritySheet exposes event-priority-A/B/C options with confirm dialog when promoting to A.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/profile/training-setup",
+        "issue": "Submitting no_go_movements=[] (empty list, meaning 'no restrictions') leaves the essentials as INCOMPLETE. _user_essentials_present.'no_go_movements' branch treats empty list as missing (returns isinstance(v, list) and len(v) > 0). A user with genuinely no movement restrictions can never finish setup via /profile/training-setup unless they invent a fake entry. Consider accepting an empty list as a valid 'answered' state, or exposing a separate no_restrictions:true flag."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Coach clients screen — full UI verification via Playwright",
+        "issue": "Login SIGN IN button did not register clicks in headless mobile web preview at 390x844 across 3 attempts (email + password filled correctly, page URL stayed at /login). Backend /api/auth/login returned 200 in tests directly. This is likely a Playwright/click-target mismatch on a Pressable, not a product bug — main agent may want to verify manually or add data-testid='signin-submit' on the SIGN IN Pressable to make it reliably tappable in tests.",
+        "affected_testIDs": ["filter-profile_incomplete", "profile-incomplete-<clientId>", "w-deep-edit", "events-secondary-stack", "event-priority-A"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter91_phase1_lock.py",
+    "/app/test_reports/pytest/iter91_phase1_lock.xml"
+  ],
+  "action_items": [
+    "Add testID='signin-submit' on the SIGN IN Pressable in /app/frontend/app/(auth)/login.tsx so mobile web e2e can reliably tap the button.",
+    "Decide product policy for no_go_movements=[]: either treat empty list as 'answered / no restrictions' in _user_essentials_present, or add a 'no restrictions' toggle in the training-setup form that writes a sentinel value.",
+    "(Optional) The eventsAll.length > 1 condition means the secondary events stack only renders when the user has 2+ events — spec says card appears 'when user has events' — verify this matches product intent (with 1 event only the primary hero appears, no stack).",
+    "Manual QA pass on mobile device (or E1 self-test) for the client home events stack tap → EventPrioritySheet flow, and the coach workout ⋯ modal → DEEP EDIT flow, since Playwright headless couldn't authenticate."
+  ],
+  "critical_code_review_comments": [
+    "Task 1.7 events/active auto-elects the soonest endurance event as implicit Priority A only if no explicit A is set — correct behavior, verified in test_events_active_returns_ordered_future_events.",
+    "Task 1.9 build_programme_context correctly gates on goal_key != 'event' before attaching strength_overload — verified endurance client has none.",
+    "Task 1.9 adherence gating uses PRIOR week (monday-7 to sunday-1) — logic looks correct and verified with seeded workouts. Note: focus filter (excludes recovery/mobility/rest) is applied both to planned and completed sets, which is correct so ratio doesn't get diluted by warm-up-only days.",
+    "Task 1.10 profile_incomplete_pill is nulled on error via try/except which is safe; missing_count is derived from missing_fields length. LGTM.",
+    "clients.tsx PROFILE GAP chip fires via `filter-profile_incomplete` testID and re-loads via useEffect on filter change (line 121) — good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter91_phase1_lock.py (new, 13 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (13/13 passed, 0 skipped)", "frontend": "Not exercised — code review only. testIDs and behavior verified via source inspection."},
+  "seed_data_creation": "Per-test: 2 TEST events + programme context stub users (build_muscle & event) + prior-week workouts for adherence gating + temporary wipe/restore of client@crewfit.com essentials (equipment, training_days_per_week, time_home_min). All cleaned up via fixture teardowns.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All Phase 1 Foundation Lock backend endpoints verified. To re-run backend: `cd /app/backend && python -m pytest tests/test_iter91_phase1_lock.py -v`. To verify frontend UI, the mobile-web SIGN IN Pressable needs a data-testid (or use client shortcut in demo logins panel). Once past login, all task 1.7 / 1.8 / 1.10 testIDs are in place (event-priority-A/B/C, w-deep-edit, filter-profile_incomplete, profile-incomplete-<clientId>). Empty-list edge case on no_go_movements caused one test authoring detour — see minor backend issue.",
+  "rca_of_issue": "N/A — no new bugs surfaced by testing. One pre-existing minor gap noted: /profile/training-setup considers no_go_movements=[] as still-missing (an empty list is a valid answer meaning 'no restrictions'), which forces the pill to persist even when the user has fully answered."
+}

@@ -23,6 +23,7 @@ import { AddActivityModal } from "@/src/components/AddActivityModal";
 import { HotelSetupCard } from "@/src/components/HotelSetupCard";
 import { ProgressCard } from "@/src/components/ProgressCard";
 import { RosterDayPickerSheet, type RosterDayPickerTarget } from "@/src/components/RosterDayPickerSheet";
+import { EventPrioritySheet } from "@/src/components/EventPrioritySheet";
 import { toast as uxToast } from "@/src/lib/ux";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
@@ -131,16 +132,20 @@ export default function Home() {
   const [programme, setProgramme] = useState<any>(null);
   // Iter 84 (Task 1.5) — Programme focus banner (event + primary goal reconciliation)
   const [programmeFocus, setProgrammeFocus] = useState<any>(null);
+  // Iter 84 (Task 1.7) — multi-event stack + priority editor state
+  const [eventsAll, setEventsAll] = useState<any[]>([]);
+  const [priorityEvent, setPriorityEvent] = useState<any | null>(null);
   // Long-press-to-correct roster day-picker sheet (iter 82).
   const [dayPickerTarget, setDayPickerTarget] = useState<RosterDayPickerTarget | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, pr, sb, sd, rj, prog, focus] = await Promise.all([
+      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
+        api<any>("/events/active").catch(() => ({ events: [] })),
         api<any>("/reassessment/prompts").catch(() => ({ prompts: [] })),
         api<any>("/standby/today").catch(() => null),
         api<any>("/setup-day/status").catch(() => null),
@@ -151,6 +156,7 @@ export default function Home() {
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
       setEvent(ev && ev.id ? ev : null);
+      setEventsAll((evAll?.events || []) as any[]);
       setPrompts(pr.prompts || []);
       setScheduleMode(user?.profile?.schedule_mode || "normal");
       setStandbyToday(sb);
@@ -324,7 +330,7 @@ export default function Home() {
           <ProgressCard />
 
           {event ? (
-            <Pressable testID="event-card" onPress={() => router.push("/event")}>
+            <Pressable testID="event-card" onPress={() => router.push("/event")} onLongPress={() => setPriorityEvent(eventsAll.find(e => e.id === event.id) || event)}>
               <AIHeroImage
                 ctx={{ context: "event", goal: (event.event_type || "").toLowerCase(), phase: event.phase_info?.phase || "peak" }}
                 style={styles.eventCardWrap}
@@ -349,6 +355,37 @@ export default function Home() {
               <Text style={styles.addEventText}>ADD EVENT (5K, marathon, tri, HYROX…)</Text>
             </Pressable>
           )}
+
+          {/* Iter 84 (Task 1.7) — additional registered events (beyond primary) */}
+          {eventsAll.length > 1 ? (
+            <View style={styles.otherEventsWrap} testID="events-secondary-stack">
+              <Text style={styles.otherEventsTitle}>ALSO ON YOUR CALENDAR</Text>
+              {eventsAll.filter((e) => e.id !== event?.id).slice(0, 3).map((e) => {
+                const p = e.priority || "C";
+                const color = p === "A" ? "#DC2626" : p === "B" ? "#F59E0B" : "#6B7280";
+                return (
+                  <Pressable
+                    key={e.id}
+                    testID={`event-row-${e.id}`}
+                    onPress={() => setPriorityEvent(e)}
+                    style={styles.otherEventRow}
+                  >
+                    <View style={[styles.priPill, { backgroundColor: color }]}>
+                      <Text style={styles.priPillT}>{p}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.otherEventName} numberOfLines={1}>{e.event_name}</Text>
+                      <Text style={styles.otherEventMeta} numberOfLines={1}>
+                        {(e.event_type || "").replace(/_/g, " ")} · {e.weeks_to_event ?? "?"} wk
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
+                  </Pressable>
+                );
+              })}
+              <Text style={styles.otherEventsHint}>Tap to change priority.</Text>
+            </View>
+          ) : null}
 
           {todaysWorkout ? (
             <>

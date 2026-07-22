@@ -1439,12 +1439,21 @@ export default function ClientDetail() {
                 <Text style={[styles.dEditBtnT, { color: theme.color.brand }]}>REGENERATE</Text>
               </Pressable>
               <Pressable
+                testID="w-deep-edit"
+                disabled={wBusy || wActionOpen?.coach_locked}
+                onPress={() => { const wid = wActionOpen.id; setWActionOpen(null); router.push(`/coach/workout/edit/${wid}`); }}
+                style={[styles.dEditBtn, { borderColor: theme.color.brand }, wActionOpen?.coach_locked && { opacity: 0.4 }]}
+              >
+                <Ionicons name="construct" size={14} color={theme.color.brand} />
+                <Text style={[styles.dEditBtnT, { color: theme.color.brand }]}>DEEP EDIT (SETS / EXERCISES)</Text>
+              </Pressable>
+              <Pressable
                 testID="w-open"
                 onPress={() => { setWActionOpen(null); router.push(`/workout/${wActionOpen.id}`); }}
                 style={styles.dEditBtn}
               >
                 <Ionicons name="open-outline" size={14} color={theme.color.text} />
-                <Text style={styles.dEditBtnT}>OPEN WORKOUT</Text>
+                <Text style={styles.dEditBtnT}>OPEN WORKOUT (CLIENT VIEW)</Text>
               </Pressable>
             </View>
             <Pressable testID="w-cancel" onPress={() => setWActionOpen(null)} style={[styles.modalBtnGhost, { marginTop: 12 }]}>

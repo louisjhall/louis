@@ -362,6 +362,71 @@ def _is_cutback_week(weeks_to_race: Optional[int]) -> bool:
     return (weeks_elapsed > 0) and (weeks_elapsed % 4 == 0)
 
 
+# ---------------------------------------------------------------------------
+# Iter 91 (Task 1.9) — Structured strength/hypertrophy overload directive.
+# ---------------------------------------------------------------------------
+
+# Per-goal overload matrices. Each entry is what should apply to THIS week's
+# primary lifts, expressed as concrete deltas the LLM & fallback can follow.
+_STRENGTH_OVERLOAD = {
+    "build_muscle": {
+        "foundation": {"sets_delta": 0,  "reps_target": "8-12", "load_delta_pct": 0,  "rpe": "7",  "note": "Groove technique. Stop 2–3 reps in reserve."},
+        "build":      {"sets_delta": +1, "reps_target": "8-10", "load_delta_pct": 2.5,"rpe": "7-8","note": "Add one working set to primary lift. Small load bump if last week hit target reps."},
+        "peak":       {"sets_delta": 0,  "reps_target": "6-8",  "load_delta_pct": 5,  "rpe": "8-9","note": "Heavier top set on primary lift. Cap accessories at 3 sets."},
+        "deload":     {"sets_delta": -1, "reps_target": "8",    "load_delta_pct": -10,"rpe": "6",  "note": "Reduce volume ~35%. Keep movement quality high."},
+    },
+    "get_stronger": {
+        "foundation": {"sets_delta": 0,  "reps_target": "5",    "load_delta_pct": 0,  "rpe": "7",  "note": "Technique focus. Long rests (2–3 min)."},
+        "build":      {"sets_delta": 0,  "reps_target": "5",    "load_delta_pct": 2.5,"rpe": "7-8","note": "Add ~2.5% load on primary compound. Keep sets steady."},
+        "peak":       {"sets_delta": 0,  "reps_target": "3",    "load_delta_pct": 5,  "rpe": "8-9","note": "Heavy triple on primary. Accessories kept moderate."},
+        "deload":     {"sets_delta": -1, "reps_target": "5",    "load_delta_pct": -15,"rpe": "6",  "note": "Reduce load 15% and drop a set."},
+    },
+    "lose_fat": {
+        "foundation": {"sets_delta": 0,  "reps_target": "10-12","load_delta_pct": 0,  "rpe": "7",  "note": "Full-body compounds + short conditioning finisher (6–8 min)."},
+        "build":      {"sets_delta": 0,  "reps_target": "8-12", "load_delta_pct": 2.5,"rpe": "7-8","note": "Small load bump if reps hit. Extend conditioning by 2 min."},
+        "peak":       {"sets_delta": +1, "reps_target": "8-10", "load_delta_pct": 2.5,"rpe": "8",  "note": "Add a metabolic finisher (EMOM/AMRAP 8–10 min)."},
+        "deload":     {"sets_delta": -1, "reps_target": "10",   "load_delta_pct": -10,"rpe": "6",  "note": "Volume down ~30%. Keep steps up."},
+    },
+    "general_fitness": {
+        "foundation": {"sets_delta": 0, "reps_target": "10-12", "load_delta_pct": 0,  "rpe": "6-7","note": "Balanced upper/lower push & pull. Learn the movements."},
+        "build":      {"sets_delta": 0, "reps_target": "8-12",  "load_delta_pct": 2.5,"rpe": "7",  "note": "Progress reps first, then load."},
+        "peak":       {"sets_delta": +1,"reps_target": "8-10",  "load_delta_pct": 2.5,"rpe": "7-8","note": "Add one set to a compound you enjoy."},
+        "deload":     {"sets_delta": -1,"reps_target": "10",    "load_delta_pct": -10,"rpe": "6",  "note": "Take it easy — refresh."},
+    },
+}
+
+
+def _adherence_multiplier(sessions_completed: int, sessions_planned: int) -> tuple[float, str]:
+    """Return (multiplier, note) — dampens progression if last week's adherence was poor."""
+    if sessions_planned <= 0:
+        return 1.0, "no prior data"
+    ratio = sessions_completed / sessions_planned
+    if ratio < 0.5:
+        return 0.0, "hold — <50% completed last week"
+    if ratio < 0.75:
+        return 0.5, "half progression — <75% completed"
+    return 1.0, "on target"
+
+
+def strength_overload_for(goal_key: str, phase_key: str,
+                          sessions_completed_prev: int = 0,
+                          sessions_planned_prev: int = 0) -> dict[str, Any]:
+    """Return the structured overload directive for THIS week."""
+    base = (_STRENGTH_OVERLOAD.get(goal_key) or _STRENGTH_OVERLOAD["general_fitness"]).get(
+        phase_key, _STRENGTH_OVERLOAD["general_fitness"]["build"]
+    )
+    mult, adh_note = _adherence_multiplier(sessions_completed_prev, sessions_planned_prev)
+    scaled = dict(base)
+    # Only dampen positive progression; deload stays as prescribed.
+    if phase_key != "deload":
+        scaled["sets_delta"]     = int(round((base.get("sets_delta") or 0) * mult))
+        scaled["load_delta_pct"] = round((base.get("load_delta_pct") or 0) * mult, 2)
+    scaled["adherence_note"] = adh_note
+    scaled["phase_key"] = phase_key
+    scaled["goal_key"] = goal_key
+    return scaled
+
+
 def _resolve_goal_key(profile: dict) -> str:
     """Best-effort map from onboarding/assessment fields to a goal key.
 
@@ -537,6 +602,26 @@ async def programme_context_for_llm(user: dict, roster: dict) -> dict[str, Any]:
         "next_progression": _next_progression_note(goal_key, phase["key"]),
         "deload_status": "deload_week" if phase["key"] == "deload" else "normal",
     }
+
+    # Iter 91 (Task 1.9) — structured strength overload directive for non-endurance goals.
+    # Uses PRIOR week adherence to decide whether to progress or hold.
+    if goal_key != "event":
+        prev_monday = monday - _dt.timedelta(days=7)
+        prev_sunday = monday - _dt.timedelta(days=1)
+        try:
+            last_week = await db.workouts.find({
+                "user_id": user["id"],
+                "date": {"$gte": prev_monday.isoformat(), "$lte": prev_sunday.isoformat()},
+            }, {"_id": 0, "focus": 1, "completed": 1}).to_list(50)
+        except Exception:
+            last_week = []
+        prev_real = [w for w in last_week if str(w.get("focus") or "").lower() not in ("recovery", "mobility", "rest")]
+        prev_completed = [w for w in prev_real if w.get("completed")]
+        ctx["strength_overload"] = strength_overload_for(
+            goal_key, phase["key"],
+            sessions_completed_prev=len(prev_completed),
+            sessions_planned_prev=len(prev_real),
+        )
     return ctx
 
 
@@ -834,6 +919,7 @@ async def persist_programme_record(
         "weekly_shape_ideal": context.get("weekly_shape_ideal"),
         "event_type_pref": context.get("event_type_pref"),
         "progression": context.get("progression"),
+        "strength_overload": context.get("strength_overload"),
         "start_date": start_iso,
         "end_date": end_iso,
         "roster_context_summary": context.get("roster_summary"),

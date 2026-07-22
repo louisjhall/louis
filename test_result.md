@@ -1800,3 +1800,126 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Iter 83 shipped: client-side roster day correction UI (long-press picker sheet). Verified locally via playwright: long-press opens the sheet correctly and the PATCH fires with the right payload (returns 404 on out-of-range test date, which is expected — added client-side guard + friendly toast). Please test: (1) log in as client, scroll to NEXT 7 DAYS, verify hint text visible only when a roster exists; (2) long-press any day within the roster window and confirm the sheet opens with the current day_type highlighted; (3) tap a chip and confirm the sheet closes with a success toast, home reloads, and the workout on that date is flagged needs_coach_review; (4) select 'Layover' and confirm a city input + SAVE LAYOVER button appear; (5) attempt long-press on a date NOT covered by the roster and confirm we see the 'not on your current roster' toast instead of an API error. Also confirm no regressions to the existing 'onPress' (single-tap = open workout detail) behaviour on workout rows."
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 91 — Phase 1 remaining tasks (1.7 verify, 1.8, 1.9, 1.10)
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Task 1.7 — Multi-event dashboard endpoints"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            Endpoints: GET /api/events/active (returns all future events with
+            priority A/B/C) and PATCH /api/events/{eid}/priority. Home dashboard
+            renders the event stack via EventPrioritySheet. Please verify:
+            (a) GET returns the list ordered by date; (b) PATCH persists priority
+            and reflects on next GET; (c) 403 for another user's event.
+
+  - task: "Task 1.9 — Structured strength overload directive"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_programme_quality.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            New helper strength_overload_for(goal_key, phase_key, prev_completed,
+            prev_planned) returns concrete deltas per phase. Wired into
+            programme_context_for_llm ONLY for non-event goals. Attached to
+            programmes.strength_overload and included in LLM prompt (bumped
+            programme_ctx cap from 2500 → 3200 chars). Adherence multiplier:
+            <50% completed last week = hold (mult 0.0); 50-75% = half; ≥75% =
+            full. Deload phase is never dampened. Please verify:
+            (i) build_muscle/build phase after full adherence => sets_delta=+1;
+            (ii) same phase with 0/3 adherence => sets_delta=0 and note
+            'hold — <50% completed last week';
+            (iii) event-goal users should NOT get strength_overload field (only
+            endurance periodisation applies).
+
+  - task: "Task 1.10 — Profile-completeness pill on coach dashboard"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            _client_summary now emits profile_incomplete_pill (missing_fields,
+            friendly_labels, missing_count) when _user_essentials_present is
+            False. New dashboard bucket 'profile_incomplete'. Please verify:
+            (a) freshly-seeded client with no training_setup has
+            profile_incomplete_pill populated; (b) after finishing
+            training-setup the field is null on next fetch; (c) filter
+            /coach/dashboard?filter=profile_incomplete returns only those.
+
+frontend:
+  - task: "Task 1.7 — Client home event stack UI"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(client)/home.tsx, frontend/src/components/EventPrioritySheet.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            Home renders active events with priority chips. Long-press event
+            card opens EventPrioritySheet which PATCHes priority. Verify: (a)
+            events show in chronological order; (b) A/B/C chip highlights
+            current priority; (c) tap chip → sheet closes + card reflects new
+            priority; (d) if no events, no card is rendered (silent).
+
+  - task: "Task 1.8 — Coach DEEP EDIT button"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/coach/client/[id].tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            New button 'DEEP EDIT (SETS / EXERCISES)' in the workout action
+            sheet. Routes to /coach/workout/edit/{wid}. Disabled when workout
+            is coach_locked. Verify: (a) button visible on unlocked workouts;
+            (b) tap → editor loads for that wid; (c) locked workout dims the
+            button and prevents navigation.
+
+  - task: "Task 1.10 — PROFILE INCOMPLETE amber pill"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(coach)/clients.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+            Client cards now render an amber row with 'PROFILE INCOMPLETE · N
+            MISSING · label1, label2…' when the backend sets
+            profile_incomplete_pill. New filter chip 'PROFILE GAP' at position
+            3 of the filter row. Verify: (a) freshly-seeded client card shows
+            the amber pill; (b) filter narrows list correctly; (c) after
+            client completes training-setup pull-to-refresh removes the pill.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 91: shipped remaining Phase 1 tasks. TEST BOTH backend and frontend. Focus on (1) Task 1.7 endpoints + UI, (2) Task 1.9 strength_overload matrix in programmes doc (endpoint /api/coach/clients/{id}/programme should include strength_overload for non-endurance clients), (3) Task 1.10 profile_incomplete_pill + amber UI pill, (4) Task 1.8 DEEP EDIT button navigates to /coach/workout/edit/{wid}. Credentials in /app/memory/test_credentials.md. Any test failures should be reported with testIDs / API responses so I can fix quickly."

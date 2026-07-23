@@ -175,7 +175,7 @@ export default function Signup() {
                 style={styles.input}
                 value={firstName}
                 onChangeText={setFirstName}
-                placeholder="Pietro"
+                placeholder="First name"
                 placeholderTextColor={theme.color.textDim}
                 autoCapitalize="words"
               />
@@ -187,7 +187,7 @@ export default function Signup() {
                 style={styles.input}
                 value={lastName}
                 onChangeText={setLastName}
-                placeholder="Sangermano"
+                placeholder="Last name"
                 placeholderTextColor={theme.color.textDim}
                 autoCapitalize="words"
               />

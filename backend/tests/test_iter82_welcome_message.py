@@ -85,14 +85,14 @@ def test_welcome_message_sends_once_and_is_idempotent():
     async def _inner():
         from server import _send_louis_welcome_message_if_needed, db
         louis = await _seed_louis_if_missing()
-        user = await _fresh_client(first_name="Pietro")
+        user = await _fresh_client(first_name="Alex")
         try:
             await _send_louis_welcome_message_if_needed(user)
             msg = await db.messages.find_one({"to_user_id": user["id"], "welcome_message": True})
             assert msg is not None, "Welcome message must be created"
             assert msg["from_user_id"] == louis["id"]
             assert msg["to_user_id"] == user["id"]
-            assert "Pietro" in msg["text"], "should personalise with first_name"
+            assert "Alex" in msg["text"], "should personalise with first_name"
             assert "BETA" in msg["text"], "should explain beta"
             assert "louis@crewfit.net" in msg["text"], "should include Louis's email"
             assert "roster" in msg["text"].lower(), "should prompt roster upload"

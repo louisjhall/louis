@@ -1735,12 +1735,187 @@ def _dna_fallback(transcript: list[dict], profile: dict) -> dict:
     }
 
 
+
+# Iter 94g — SIGN-UP + /training-setup + coach-edit answers must ALL be treated
+# as "already answered" by the DNA assessment. Otherwise the client sees the
+# same question ("How do you fly?" / "What are your goals?") on the training-
+# setup screen AND on the DNA screen. This helper merges every profile-derived
+# field into the assessment.answers list, deduping by question_id.
+_SEX_MAP = {
+    "male": "male", "female": "female",
+    "other": "intersex_prefer_not", "prefer_not_to_say": "intersex_prefer_not",
+    "intersex": "intersex_prefer_not", "intersex_prefer_not": "intersex_prefer_not",
+}
+_JOB_TO_ROLE_MAP = {
+    "cabin crew": "cabin_crew", "senior cabin crew": "cabin_crew", "purser": "cabin_crew",
+    "first officer": "pilot", "captain": "pilot", "pilot": "pilot",
+    "ground crew": "ground_ops", "ground ops": "ground_ops",
+    "corporate": "corporate", "corporate aviation": "corporate",
+    "other": "other",
+}
+
+
+async def _seed_assessment_from_profile(assessment: dict, user: dict) -> None:
+    """Merge every essential profile field into `assessment["answers"]`, deduped.
+
+    Runs at both /assessment/start (new assessment) and /assessment/start
+    (resumed) so a user who filled /training-setup FIRST never gets those
+    same questions re-asked by the DNA flow.
+
+    Mutates `assessment["answers"]` in place and persists to Mongo if any
+    new answers were added.
+    """
+    profile = (user or {}).get("profile") or {}
+    if not profile:
+        return
+    existing_ids = {
+        a.get("question_id") for a in (assessment.get("answers") or [])
+        if a.get("question_id")
+    }
+    added: list[dict] = []
+    now = now_iso()
+
+    def _add(qid: str, section: str, text: str, qtype: str, ans: Any,
+             src: str = "profile") -> None:
+        if qid in existing_ids or ans in (None, "", []):
+            return
+        added.append({
+            "question_id": qid,
+            "section": section,
+            "question_text": text,
+            "question_type": qtype,
+            "answer": ans,
+            "answered_at": now,
+            "prefilled_from": src,
+        })
+        existing_ids.add(qid)
+
+    # --- biological_sex (signup: profile.sex, or existing profile.biological_sex)
+    bio = profile.get("biological_sex")
+    if not bio and profile.get("sex"):
+        bio = _SEX_MAP.get(str(profile.get("sex")).lower().strip())
+    if bio:
+        _add("biological_sex", "About You",
+             "What is your biological sex?", "single_select", bio, src="signup")
+
+    # --- role / crew_role (signup: profile.job_title, /training-setup: crew_role)
+    role_val = profile.get("crew_role") or profile.get("role")
+    if not role_val and profile.get("job_title"):
+        role_val = _JOB_TO_ROLE_MAP.get(str(profile.get("job_title")).lower().strip())
+    if role_val:
+        _add("role", "Your Aviation",
+             "What is your role in aviation?", "single_select",
+             str(role_val).lower(), src="signup")
+
+    # --- flying_type (/training-setup writes profile.flying_type + route_focus)
+    ft = profile.get("flying_type") or profile.get("route_focus")
+    if ft:
+        _add("flying_type", "Your Aviation",
+             "What kind of flying do you mainly do?", "single_select",
+             str(ft).lower(), src="training_setup")
+        # If short-haul / ground-only, mirror the auto-injected layover answers
+        # so the DNA flow doesn't try to ask them either.
+        if str(ft).lower() in _NON_LAYOVER_FLYING_TYPES:
+            _add("time_layover", "Time Available",
+                 "How much time do you typically have on a layover?",
+                 "single_select", "0", src="training_setup_auto")
+            _add("hotel_gyms", "Your Aviation",
+                 "Do you usually find gyms in your hotels?",
+                 "single_select", "never", src="training_setup_auto")
+
+    # --- primary_goal (/training-setup writes primary_goal_id + main_goal_key)
+    pg = profile.get("primary_goal_id") or profile.get("main_goal_key") or profile.get("main_goal")
+    if pg:
+        _add("primary_goal", "Your Goals",
+             "What are you trying to achieve?", "multi_select",
+             [str(pg)], src="training_setup")
+
+    # --- secondary_goals (list) — training-setup writes secondary_goal_ids
+    sg = profile.get("secondary_goal_ids") or profile.get("secondary_goals")
+    if sg and isinstance(sg, list) and len(sg) > 0:
+        _add("secondary_goals", "Your Goals",
+             "Any other goals that matter to you?", "multi_select",
+             [str(x) for x in sg], src="training_setup")
+
+    # --- training_days
+    td = profile.get("training_days_per_week") or profile.get("training_days")
+    if isinstance(td, (int, float)) and 1 <= int(td) <= 7:
+        _add("training_days", "Time Available",
+             "How many days per week can you train?", "single_select",
+             str(int(td)), src="training_setup")
+
+    # --- time_home
+    th = profile.get("time_home_min")
+    if th is not None:
+        _add("time_home", "Time Available",
+             "How much time do you have per session at home?",
+             "single_select", str(int(th)), src="training_setup")
+
+    # --- time_layover (only if profile explicitly has it — else the flying_type
+    #     short-circuit above will have handled non-layover crews)
+    tl = profile.get("time_layover_min")
+    if tl is not None:
+        _add("time_layover", "Time Available",
+             "How much time do you typically have on a layover?",
+             "single_select", str(int(tl)), src="training_setup")
+
+    # --- equipment_home
+    eq = profile.get("equipment")
+    if isinstance(eq, list) and len(eq) > 0:
+        _add("equipment_home", "Equipment",
+             "What equipment do you have at home?", "equipment_picker",
+             {"location": "home", "equipment": list(eq)}, src="training_setup")
+
+    # --- hotel_gyms
+    hg = profile.get("hotel_gym_reliability") or profile.get("hotel_gyms")
+    if hg:
+        _add("hotel_gyms", "Your Aviation",
+             "Do you usually find gyms in your hotels?", "single_select",
+             str(hg).lower(), src="training_setup")
+
+    # --- injuries
+    inj = profile.get("injuries")
+    if isinstance(inj, str) and inj.strip():
+        _add("injuries", "Injuries",
+             "Any current injuries, or things to avoid?", "long_text",
+             inj.strip(), src="training_setup")
+    elif profile.get("no_injuries") or profile.get("injuries_none"):
+        _add("injuries", "Injuries",
+             "Any current injuries, or things to avoid?", "long_text",
+             {"__explicit_none": True}, src="training_setup")
+
+    # --- no_go_movements
+    ng = profile.get("no_go_movements")
+    if isinstance(ng, list) and len(ng) > 0:
+        _add("no_go_movements", "Injuries",
+             "Any movement patterns to avoid entirely?", "multi_select",
+             [str(x) for x in ng], src="training_setup")
+    elif profile.get("no_go_none") is True:
+        _add("no_go_movements", "Injuries",
+             "Any movement patterns to avoid entirely?", "multi_select",
+             ["none"], src="training_setup")
+
+    # Persist.
+    if added:
+        assessment.setdefault("answers", []).extend(added)
+        try:
+            await db.assessments.update_one(
+                {"id": assessment["id"]},
+                {"$set": {"answers": assessment["answers"]}},
+            )
+        except Exception:
+            logger.exception("seed_assessment_from_profile: persist failed")
+
+
+
 @api.post("/assessment/start")
 async def assessment_start(body: AssessmentStartBody = AssessmentStartBody(), user: dict = Depends(current_user)):
-    """Start a new assessment for the current user. Returns first question."""
     # If an in-progress assessment exists, resume it
     existing = await db.assessments.find_one({"user_id": user["id"], "status": "in_progress"}, {"_id": 0}, sort=[("created_at", -1)])
     if existing:
+        # Iter 94g — seed any profile-derived fields into the existing assessment
+        # too, so users who did /training-setup first don't get re-asked in DNA.
+        await _seed_assessment_from_profile(existing, user)
         nxt = await _assessment_next_question(existing)
         return {"assessment_id": existing["id"], "resumed": True, **nxt}
     doc = {
@@ -1757,61 +1932,11 @@ async def assessment_start(body: AssessmentStartBody = AssessmentStartBody(), us
     }
     # Iter 82 — Pre-seed answers from signup data so the DNA assessment doesn't
     # re-ask questions already answered during signup (sex, aviation role).
-    profile = user.get("profile") or {}
-
-    # Sex → biological_sex — normalise our signup values to DNA option ids.
-    sex_signup = profile.get("sex")
-    if sex_signup and not profile.get("biological_sex"):
-        sex_map = {
-            "male": "male",
-            "female": "female",
-            "other": "intersex_prefer_not",
-            "prefer_not_to_say": "intersex_prefer_not",
-        }
-        bio_sex = sex_map.get(str(sex_signup).lower().strip())
-        if bio_sex:
-            doc["answers"].append({
-                "question_id": "biological_sex",
-                "section": "About You",
-                "question_text": "What is your biological sex? (used for training load, protein targets and recovery science — kept private)",
-                "question_type": "single_select",
-                "answer": bio_sex,
-                "answered_at": now_iso(),
-                "prefilled_from": "signup",
-            })
-            # Mirror onto user.profile so the DNA writer sees it downstream
-            await db.users.update_one(
-                {"id": user["id"]},
-                {"$set": {"profile.biological_sex": bio_sex}},
-            )
-
-    # Job title → aviation role
-    job_title = profile.get("job_title")
-    if job_title and not profile.get("role"):
-        role_map = {
-            "cabin crew": "cabin_crew",
-            "senior cabin crew": "cabin_crew",
-            "purser": "cabin_crew",
-            "first officer": "pilot",
-            "captain": "pilot",
-            "ground crew": "ground_ops",
-            "other": "other",
-        }
-        role_val = role_map.get(str(job_title).lower().strip())
-        if role_val:
-            doc["answers"].append({
-                "question_id": "role",
-                "section": "Your Aviation",
-                "question_text": "What is your role in aviation?",
-                "question_type": "single_select",
-                "answer": role_val,
-                "answered_at": now_iso(),
-                "prefilled_from": "signup",
-            })
-            await db.users.update_one(
-                {"id": user["id"]},
-                {"$set": {"profile.role": role_val, "profile.job_title": job_title}},
-            )
+    # Iter 94g — Extended to seed from EVERY profile field that /training-setup
+    # or a previous coach edit has already written. This is the actual fix for
+    # the "asked flying_type twice" complaint — the training-setup screen and
+    # the DNA assessment used to ask the same questions independently.
+    await _seed_assessment_from_profile(doc, user)
 
     await db.assessments.insert_one(doc)
     nxt = await _assessment_next_question(doc)

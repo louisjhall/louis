@@ -33,7 +33,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT   = Path("/app/store_assets")
-HEROES = ROOT / "heroes"
+HEROES = ROOT / "heroes_v2"    # Iter 95d — branded heroes with real CrewFit logo on chest
 SCREENS = ROOT / "screens"
 OUT    = ROOT / "final"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -253,11 +253,11 @@ SCREENS_PLAN = [
          headline="Never train alone in a hotel again.",
          subhead="Timer, breathing cues and demo videos in every session."),
 
-    dict(idx=3, key="calendar", hero_key="hero_crew_concourse",
-         screen_key="screen_03_calendar",
+    dict(idx=3, key="roster_upload", hero_key="hero_crew_concourse",
+         screen_key="screen_06_roster",
          eyebrow="ROSTER-AWARE",
-         headline="Never train on the wrong day.",
-         subhead="Your calendar reads your roster — training moves with you."),
+         headline="Upload roster. We do the rest.",
+         subhead="Photo or PDF — your calendar and training plan build themselves."),
 
     dict(idx=4, key="nutrition", hero_key="hero_nutrition_crew",
          screen_key="screen_04_nutrition",
@@ -265,11 +265,11 @@ SCREENS_PLAN = [
          headline="Fuel across every timezone.",
          subhead="Protein, hydration and hotel-friendly meals — logged in seconds."),
 
-    dict(idx=5, key="weekly_review", hero_key="hero_duo_planning",
-         screen_key="screen_01_home",
+    dict(idx=5, key="real_coach", hero_key="hero_duo_planning",
+         screen_key="screen_07_messages",
          eyebrow="A REAL COACH",
-         headline="A weekly review from Louis.",
-         subhead="Every Sunday — training, nutrition and habits, side by side."),
+         headline="Built by crew. For crew.",
+         subhead="Message Louis directly. Human coaching — not a chatbot."),
 
     dict(idx=6, key="crew_hotel", hero_key="hero_crew_hotel",
          screen_key="screen_02_workout",

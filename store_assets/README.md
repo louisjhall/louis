@@ -21,10 +21,22 @@
 |---|--------------------|-----------------------------------------|---------------------------|-----------------------|
 | 1 | `home_briefing`    | Coaching that flies with you.           | Pilot warming up · hangar | Home dashboard        |
 | 2 | `guided_workout`   | Never train alone in a hotel again.     | Pilot · hotel gym         | Guided workout timer  |
-| 3 | `calendar`         | Never train on the wrong day.           | Crew · airport concourse  | Multi-month calendar  |
+| 3 | `roster_upload`    | Upload roster. We do the rest.          | Crew · airport concourse  | Roster upload screen  |
 | 4 | `nutrition`        | Fuel across every timezone.             | Crew · kitchen with meal  | Nutrition dashboard   |
-| 5 | `weekly_review`    | A weekly review from Louis.             | Pilot + Crew · studio     | Home w/ weekly review |
+| 5 | `real_coach`       | Built by crew. For crew.                | Pilot + Crew · studio     | Messages / Louis chat |
 | 6 | `crew_hotel`       | Hotel room. 20 minutes. Done.           | Crew · hotel squats       | Workout detail        |
+
+## Branding (Iter 95d)
+
+Each hero image has the **actual CrewFit winged logo** (red wings + white
+CREWFIT wordmark) printed on the chest of the t-shirt — placed by Nano
+Banana's image-edit mode using `/app/store_assets/brand/crewfit_logo_transparent.png`
+as the reference. Nano Banana renders the logo with correct fabric curvature,
+lighting and perspective per shot.
+
+- Branded heroes:    `/app/store_assets/heroes_v2/`
+- Original heroes:   `/app/store_assets/heroes/`  (kept for reference)
+- Transparent logo:  `/app/store_assets/brand/crewfit_logo_transparent.png`
 
 ## How to upload
 

@@ -142,15 +142,36 @@ export function TodayPersonalActivities() {
                 <Ionicons name="checkmark-circle" size={12} color={theme.color.green} /> {row.status.toUpperCase()}{row.perceived_effort ? ` · ${row.perceived_effort}` : ""}
               </Text>
             ) : (
-              <View style={styles.completeRow}>
-                <Pressable onPress={() => markComplete(row, "completed", "moderate")} style={styles.completeBtn} testID={`personal-activity-complete-${row.id}`}>
-                  <Ionicons name="checkmark" size={12} color={theme.color.green} />
-                  <Text style={styles.completeT}>MARK COMPLETE</Text>
+              <>
+                {/* Iter 94o — explicit "do this instead of today's workout" action.
+                    Always visible on today's card so the client doesn't have to
+                    hunt for it inside an Atlas suggestion that may or may not
+                    render. Calls the same `replace_workout` backend flow. */}
+                <Pressable
+                  onPress={() => doAction(row, "replace_workout")}
+                  disabled={applying === row.id}
+                  style={styles.swapBtn}
+                  testID={`personal-activity-swap-${row.id}`}
+                >
+                  {applying === row.id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="swap-horizontal" size={14} color="#fff" />
+                      <Text style={styles.swapBtnT}>DO THIS INSTEAD OF TODAY&apos;S WORKOUT</Text>
+                    </>
+                  )}
                 </Pressable>
-                <Pressable onPress={() => markComplete(row, "skipped")} style={styles.skipBtn} testID={`personal-activity-skip-${row.id}`}>
-                  <Text style={styles.skipT}>SKIP</Text>
-                </Pressable>
-              </View>
+                <View style={styles.completeRow}>
+                  <Pressable onPress={() => markComplete(row, "completed", "moderate")} style={styles.completeBtn} testID={`personal-activity-complete-${row.id}`}>
+                    <Ionicons name="checkmark" size={12} color={theme.color.green} />
+                    <Text style={styles.completeT}>MARK COMPLETE</Text>
+                  </Pressable>
+                  <Pressable onPress={() => markComplete(row, "skipped")} style={styles.skipBtn} testID={`personal-activity-skip-${row.id}`}>
+                    <Text style={styles.skipT}>SKIP</Text>
+                  </Pressable>
+                </View>
+              </>
             )}
           </View>
         );
@@ -204,5 +225,12 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
   skipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  // Iter 94o — prominent swap-workout CTA
+  swapBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 12, borderRadius: 10, marginTop: 2,
+    backgroundColor: theme.color.brand,
+  },
+  swapBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
   doneT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
 });

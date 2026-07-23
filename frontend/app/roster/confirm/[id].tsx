@@ -12,25 +12,34 @@ import { theme } from "@/src/lib/theme";
 // Duty types the client can pick from. Keys are what get persisted on
 // day.day_type; labels are what the user sees.
 const DUTY_TYPES: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: "Flight",        label: "Flight (turnaround)", icon: "airplane" },
-  { key: "Layover",       label: "Layover",             icon: "bed" },
-  { key: "Standby",       label: "Standby",             icon: "time" },
-  { key: "Off",           label: "Off duty",            icon: "sunny" },
-  { key: "Home",          label: "Home",                icon: "home" },
-  { key: "Sim / Training", label: "Sim / Training",     icon: "school" },
-  { key: "Sick",          label: "Sick",                icon: "medkit" },
-  { key: "Annual Leave",  label: "Annual leave",        icon: "leaf" },
+  { key: "Flight",        label: "Flight (turnaround)",  icon: "airplane" },
+  // Iter 94n — "Direct Flight" is a distinct duty type from a turnaround.
+  // Turnaround = out & back the same day. Direct flight = one-way sector
+  // that ends at a destination city (typically before a layover, or a
+  // positioning leg). Coach/roster generator differentiates load & recovery
+  // for these two.
+  { key: "Direct Flight", label: "Direct flight",        icon: "paper-plane" },
+  { key: "Layover",       label: "Layover",              icon: "bed" },
+  { key: "Standby",       label: "Standby",              icon: "time" },
+  { key: "Off",           label: "Off duty",             icon: "sunny" },
+  { key: "Home",          label: "Home",                 icon: "home" },
+  { key: "Sim / Training", label: "Sim / Training",      icon: "school" },
+  { key: "Sick",          label: "Sick",                 icon: "medkit" },
+  { key: "Annual Leave",  label: "Annual leave",         icon: "leaf" },
   { key: "Unknown/Needs Confirmation", label: "Not sure yet", icon: "help-circle" },
 ];
 
-// Iter 83 · Tool 3 — the 5 most-common duty types, shown inline on each card
+// Iter 83 · Tool 3 — the most-common duty types, shown inline on each card
 // for a single-tap change without opening the full editor.
+// Iter 94n — "Direct" added so a client can distinguish a one-way sector
+// (typically before a layover) from a full turnaround, one tap on the card.
 const QUICK_CHIPS: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { key: "Flight",  label: "Flight",  icon: "airplane" },
-  { key: "Layover", label: "Layover", icon: "bed" },
-  { key: "Standby", label: "Standby", icon: "time" },
-  { key: "Off",     label: "Off",     icon: "sunny" },
-  { key: "Home",    label: "Home",    icon: "home" },
+  { key: "Flight",        label: "Flight",  icon: "airplane" },
+  { key: "Direct Flight", label: "Direct",  icon: "paper-plane" },
+  { key: "Layover",       label: "Layover", icon: "bed" },
+  { key: "Standby",       label: "Standby", icon: "time" },
+  { key: "Off",           label: "Off",     icon: "sunny" },
+  { key: "Home",          label: "Home",    icon: "home" },
 ];
 
 type Day = {
@@ -560,13 +569,17 @@ function DayEditor({ day, onClose, onChange }: { day: Day | null; onClose: () =>
                 })}
               </View>
 
-              <Text style={styles.editorLabel}>LAYOVER CITY</Text>
+              <Text style={styles.editorLabel}>
+                {(day?.day_type || "").toLowerCase() === "direct flight"
+                  ? "DESTINATION CITY"
+                  : "LAYOVER / DESTINATION CITY"}
+              </Text>
               <TextInput
                 testID="rc-layover-city"
                 style={styles.input}
                 value={day?.layover_city || ""}
                 onChangeText={(v) => onChange({ layover_city: v })}
-                placeholder="e.g. Bangkok"
+                placeholder={(day?.day_type || "").toLowerCase() === "direct flight" ? "e.g. Dubai" : "e.g. Bangkok"}
                 placeholderTextColor={theme.color.textDim}
               />
               <View style={styles.row2}>

@@ -2126,29 +2126,25 @@ async def _send_louis_welcome_message_if_needed(user: dict) -> None:
     # Roster check — do they need to upload one?
     has_roster = await db.rosters.count_documents({"user_id": user["id"]}) > 0
     first_name = (user.get("first_name") or (user.get("name") or "").split(" ")[0] or "there").strip()
+    # Iter 94k — Welcome message rewritten per beta support spec + adds the
+    # WhatsApp support link. The frontend renders a "Message Louis on WhatsApp"
+    # button whenever `whatsapp_support_url` is present on a message.
     lines = [
-        f"Hey {first_name}, welcome to CrewFit 👋",
+        f"Hi {first_name}, welcome to CrewFit — it's Louis here.",
         "",
-        "I'm Louis — I built this platform for cabin crew and pilots after years of trying to train around bad rosters. Your assessment is done and I'll now review it and start dialling in your programme.",
+        "Thanks for joining the private beta.",
         "",
-        "One quick thing: we're in BETA right now. That means the coaching engine, the roster parser, and the workout logic are all live but still being polished with a small group of crew. If anything looks off, feels wrong, or just plain breaks — I actually want to know.",
+        "First thing I need you to do is upload the most detailed roster you have. The more detail you upload, the better CrewFit can understand your flying schedule and build your training around it.",
         "",
-        "Two ways to reach me:",
-        "• Reply here anytime — this thread pings me directly.",
-        "• Or email louis@crewfit.net for anything longer.",
+        "Please include as much as possible, such as duties, sectors, report times, finish times, layovers, standby, days off, nights, early starts and hotels if shown.",
         "",
-        "📋 About your weekly check-in:",
-        "Every Sunday you'll get a short check-in (90 seconds) — how the week went, energy, sleep, any niggles, and anything else I need to know. I'll use it to plan your next week and record you a short video reply. If Sunday is a duty day, you can do it Monday morning — no stress.",
-        "You'll see the check-in card appear on your home screen on Sunday. Nothing to remember, it'll be there when it's due.",
-    ]
-    if not has_roster:
-        lines += [
-            "",
-            "One more thing: upload your next roster when you have a moment (Home → Upload roster). Once I've got that, your programme will start planning around your layovers, standbys, and turnarounds automatically.",
-        ]
-    lines += [
+        "If your roster does not upload properly, if anything looks wrong, or if the app gets stuck, message me here straight away.",
         "",
-        "Talk soon — Louis",
+        "You can also message me directly on WhatsApp if you run into any problems during beta.",
+        "",
+        "Once your roster is in, CrewFit can start building your schedule properly.",
+        "",
+        "Louis",
     ]
     text = "\n".join(lines)
     now = now_iso()
@@ -2161,6 +2157,9 @@ async def _send_louis_welcome_message_if_needed(user: dict) -> None:
         "read": False,
         "attachment_ids": [],
         "welcome_message": True,
+        # Iter 94k — attach the WhatsApp button metadata to this message.
+        "whatsapp_support_url": "https://wa.link/k9x12s",
+        "whatsapp_support_context": "welcome",
     }
     await db.messages.insert_one(doc)
     # Also stamp the sentinel + assigned_coach if it wasn't already set
@@ -2169,6 +2168,77 @@ async def _send_louis_welcome_message_if_needed(user: dict) -> None:
         updates["assigned_coach_id"] = louis["id"]
         updates["assigned_coach_name"] = louis.get("name") or "Louis Hall"
     await db.users.update_one({"id": user["id"]}, {"$set": updates})
+
+
+# ---------------------------------------------------------------------------
+# Iter 94k — WhatsApp support click tracking
+# ---------------------------------------------------------------------------
+
+class WhatsAppSupportBody(BaseModel):
+    screen: str
+    context: Optional[str] = None
+    roster_id: Optional[str] = None
+    programme_id: Optional[str] = None
+    workout_id: Optional[str] = None
+
+
+@api.post("/support/whatsapp-clicked")
+async def support_whatsapp_clicked(body: WhatsAppSupportBody, user: dict = Depends(current_user)):
+    """Log a WhatsApp support click. Writes:
+
+      1. An audit row into `support_events` for analytics.
+      2. A timeline entry into `programme_timeline` (if we have a programme_id)
+         so Louis sees "Client opened WhatsApp support" in the client's
+         coach-side timeline.
+
+    We DO NOT store any WhatsApp message content — only the click event.
+    Idempotency is intentionally NOT enforced: repeat clicks are useful signal
+    (client is stuck / trying repeatedly).
+    """
+    now = now_iso()
+    ev = {
+        "id": new_id(),
+        "type": "support_whatsapp_clicked",
+        "user_id": user["id"],
+        "user_name": user.get("name"),
+        "screen": body.screen,
+        "context": body.context,
+        "roster_id": body.roster_id,
+        "programme_id": body.programme_id,
+        "workout_id": body.workout_id,
+        "created_at": now,
+    }
+    try:
+        await db.support_events.insert_one(ev)
+    except Exception:
+        logger.exception("support_whatsapp_clicked: audit write failed (non-fatal)")
+
+    # Add to programme timeline for coach visibility. Fall back to the
+    # currently-active programme when the client didn't pass one.
+    prog_id = body.programme_id
+    if not prog_id:
+        try:
+            p = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0, "id": 1}, sort=[("created_at", -1)])
+            prog_id = (p or {}).get("id")
+        except Exception:
+            prog_id = None
+    if prog_id:
+        try:
+            await db.programme_timeline.insert_one({
+                "id": new_id(),
+                "user_id": user["id"],
+                "programme_id": prog_id,
+                "type": "support_whatsapp_clicked",
+                "title": "Client opened WhatsApp support",
+                "screen": body.screen,
+                "context": body.context,
+                "roster_id": body.roster_id,
+                "workout_id": body.workout_id,
+                "created_at": now,
+            })
+        except Exception:
+            logger.exception("support_whatsapp_clicked: timeline write failed (non-fatal)")
+    return {"ok": True, "id": ev["id"]}
 
 
 
@@ -11126,6 +11196,7 @@ import feature_roster_lifecycle      # noqa: E402,F401  Plan D4-7: client roster
 import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reassessment forms (no full DNA rebuild)
 import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
+import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base + current timezone card + confirm endpoint
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

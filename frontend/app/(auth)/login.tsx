@@ -28,8 +28,8 @@ export default function Login() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === "web" && width >= 1024;
-  const [email, setEmail] = useState("client@crewfit.com");
-  const [password, setPassword] = useState("Client123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -146,16 +146,16 @@ export default function Login() {
                 <Text style={styles.link}> Create account</Text>
               </Pressable>
 
-              <View style={styles.seedBox}>
-                <Text style={styles.seedTitle}>DEMO LOGINS</Text>
-                <Text style={styles.seedText}>client@crewfit.com / Client123!</Text>
-                <Text style={styles.seedText}>louis@crewfit.net / Louis123!  (Admin)</Text>
-              </View>
+              <Text style={styles.betaLine} testID="login-beta-line">
+                Private beta access only.
+              </Text>
 
-              {/* Development-only quick coach login.
-                * Hidden in production builds via the `__DEV__` guard.
-                * Logs in as Louis (primary admin/coach) directly. */}
-              {__DEV__ && (
+              {/* Iter 94l — Louis's dev quick-login is now gated behind the
+                * EXPO_PUBLIC_SHOW_DEMO_LOGIN_SHORTCUTS flag (default OFF).
+                * Set it in the frontend .env only for local dev. Never leave
+                * it enabled in beta/TestFlight/production. Public login screen
+                * no longer displays any demo credentials or admin shortcuts. */}
+              {process.env.EXPO_PUBLIC_SHOW_DEMO_LOGIN_SHORTCUTS === "true" && __DEV__ && (
                 <Pressable
                   testID="dev-coach-login"
                   onPress={async () => {
@@ -179,7 +179,7 @@ export default function Login() {
                   }}
                   style={styles.devBtn}
                 >
-                  <Text style={styles.devBtnT}>◈ LOUIS · ADMIN DASHBOARD (DEV)</Text>
+                  <Text style={styles.devBtnT}>◈ LOUIS (DEV ONLY)</Text>
                 </Pressable>
               )}
             </View>
@@ -230,6 +230,10 @@ const styles = StyleSheet.create({
   linkRow: { flexDirection: "row", justifyContent: "center", marginTop: theme.space.lg },
   linkDim: { color: theme.color.textMuted },
   link: { color: theme.color.brand, fontWeight: "700" },
+  betaLine: {
+    marginTop: theme.space.xl, textAlign: "center",
+    color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
+  },
   seedBox: {
     marginTop: theme.space.xl,
     padding: theme.space.md,

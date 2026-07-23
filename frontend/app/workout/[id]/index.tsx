@@ -325,6 +325,22 @@ export default function WorkoutDetail() {
                   </Pressable>
                 </View>
               )}
+              {/* Iter 94k — WhatsApp support option for fallback/needs-review workouts */}
+              {!isCoach && (view.needs_coach_review || view.validation_status === "adjusted_fallback") && (
+                <View style={{ marginTop: 10 }} testID="workout-fallback-whatsapp">
+                  <WhatsAppSupportButton
+                    screen="workout_detail"
+                    context={
+                      view.validation_status === "adjusted_fallback"
+                        ? "workout_fallback_used"
+                        : "workout_needs_review"
+                    }
+                    workoutId={view.id}
+                    variant="outline"
+                    showCaption={false}
+                  />
+                </View>
+              )}
             </View>
           </View>
         )}

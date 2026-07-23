@@ -17,6 +17,7 @@ import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 import { LOUIS } from "@/src/lib/coachProfile";
 import { LouisAvatar } from "@/src/components/LouisAvatar";
+import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
 import { AttachmentPickerSheet, PickedFile } from "@/src/components/AttachmentPickerSheet";
 import { VoiceRecorderOverlay, RecordedVoiceNote } from "@/src/components/VoiceRecorderOverlay";
 import { MessageAttachmentBubble } from "@/src/components/MessageAttachmentBubble";
@@ -354,6 +355,18 @@ export default function Messages() {
                     {attachments.map((a) => (
                       <MessageAttachmentBubble key={a.id} att={a} mine={mine} />
                     ))}
+                    {/* Iter 94k — WhatsApp support button appears under any
+                        message tagged with `whatsapp_support_url` (Louis's
+                        welcome message + any future support-context replies). */}
+                    {item.whatsapp_support_url && !mine ? (
+                      <View style={{ marginTop: 8, alignSelf: "stretch" }}>
+                        <WhatsAppSupportButton
+                          screen="messages_thread"
+                          context={item.whatsapp_support_context || "welcome"}
+                          variant="filled"
+                        />
+                      </View>
+                    ) : null}
                   </View>
                 </View>
               );

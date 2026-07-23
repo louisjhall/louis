@@ -18,6 +18,7 @@ import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
+import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
 import { TodayPersonalActivities } from "@/src/components/PersonalActivityCard";
 import { AddActivityModal } from "@/src/components/AddActivityModal";
 import { HotelSetupCard } from "@/src/components/HotelSetupCard";
@@ -140,11 +141,14 @@ export default function Home() {
   const [liveStateData, setLiveStateData] = useState<any | null>(null);
   // Long-press-to-correct roster day-picker sheet (iter 82).
   const [dayPickerTarget, setDayPickerTarget] = useState<RosterDayPickerTarget | null>(null);
+  // Iter 94o — Personal activities (sport/hobby) must show on the home week
+  // list alongside workouts. Loaded on refresh; merged into next7.
+  const [activities, setActivities] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live] = await Promise.all([
+      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live, acts] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
@@ -156,6 +160,7 @@ export default function Home() {
         api<any>("/programme/current").catch(() => null),
         api<any>("/programme/focus").catch(() => null),
         api<any>("/profile/live-state").catch(() => null),
+        api<any>("/personal-activities").catch(() => ({ activities: [] })),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -170,6 +175,7 @@ export default function Home() {
       setProgrammeFocus(focus);
       setLiveStateReceipt(live?.receipt || null);
       setLiveStateData(live?.live_state || null);
+      setActivities((acts?.activities || []) as any[]);
       // Iter 94j — after a fresh load, if this brand-new client hasn't yet
       // answered the first-day-choice question, route them to the choice
       // screen. Only fires on Day 1 (needs_choice comes from the backend
@@ -267,6 +273,16 @@ export default function Home() {
     (workouts || []).forEach((w: any) => { if (w?.date) byDate.set(w.date, w); });
     const rosterByDate = new Map<string, any>();
     (roster?.days || []).forEach((d: any) => { if (d?.date) rosterByDate.set(d.date, d); });
+    // Iter 94o — merge personal activities (sport/hobby) by date so the
+    // week list can render a small chip next to each day's workout/rest card.
+    const actsByDate = new Map<string, any[]>();
+    (activities || []).forEach((a: any) => {
+      const d = a?.date_local;
+      if (!d) return;
+      const arr = actsByDate.get(d) || [];
+      arr.push(a);
+      actsByDate.set(d, arr);
+    });
     const base = new Date();
     base.setHours(0, 0, 0, 0);
     const out: any[] = [];
@@ -275,14 +291,16 @@ export default function Home() {
       d.setDate(base.getDate() + i);
       const key = localDateStr(d);
       const w = byDate.get(key);
+      const activitiesForDay = actsByDate.get(key) || [];
       if (w) {
-        out.push({ ...w, __key: key, __rest: false });
+        out.push({ ...w, __key: key, __rest: false, __activities: activitiesForDay });
       } else {
         const rd = rosterByDate.get(key);
         const isFlight = rd?.day_type === "flight" || (rd?.flights?.length || 0) > 0;
         out.push({
           __key: key,
           __rest: true,
+          __activities: activitiesForDay,
           id: `rest-${key}`,
           date: key,
           title: isFlight ? "FLIGHT · RECOVERY" : "REST DAY",
@@ -294,7 +312,7 @@ export default function Home() {
       }
     }
     return out;
-  }, [workouts, roster]);
+  }, [workouts, roster, activities]);
 
   const expiry = roster?.expiry;
   const rDays = expiry?.days_remaining;
@@ -346,40 +364,60 @@ export default function Home() {
           {/* Iter 94h — TOP-OF-PAGE roster-job status banner. Impossible to miss
               when an upload has failed, is stuck, or is still processing. */}
           {rosterJob && rosterJob.status === "failed" ? (
-            <Pressable
-              testID="home-roster-job-failed"
-              onPress={() => router.push("/roster-upload")}
-              style={styles.jobFailedBanner}
-            >
-              <View style={styles.jobFailedIconWrap}>
-                <Ionicons name="alert-circle" size={28} color="#fff" />
+            <View style={styles.jobFailedBanner} testID="home-roster-job-failed">
+              <Pressable
+                onPress={() => router.push("/roster-upload")}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
+              >
+                <View style={styles.jobFailedIconWrap}>
+                  <Ionicons name="alert-circle" size={28} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.jobFailedTitle}>ROSTER UPLOAD FAILED</Text>
+                  <Text style={styles.jobFailedSub}>
+                    {rosterJob.error || "We couldn't finish processing your last roster. Tap here to try again."}
+                  </Text>
+                  <Text style={styles.jobFailedCta}>TAP TO RETRY →</Text>
+                </View>
+              </Pressable>
+              <View style={{ marginTop: 10 }}>
+                <WhatsAppSupportButton
+                  screen="home_roster_upload_failed"
+                  context="roster_upload_failed"
+                  rosterId={rosterJob.roster_id}
+                  variant="outline"
+                  showCaption={false}
+                />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.jobFailedTitle}>ROSTER UPLOAD FAILED</Text>
-                <Text style={styles.jobFailedSub}>
-                  {rosterJob.error || "We couldn't finish processing your last roster. Tap here to try again."}
-                </Text>
-                <Text style={styles.jobFailedCta}>TAP TO RETRY →</Text>
-              </View>
-            </Pressable>
+            </View>
           ) : null}
           {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial") ? (
-            <Pressable
-              testID="home-roster-job-review"
-              onPress={() => router.push("/roster-upload")}
-              style={styles.jobReviewBanner}
-            >
-              <View style={styles.jobReviewIconWrap}>
-                <Ionicons name="warning" size={26} color="#fff" />
+            <View style={styles.jobReviewBanner} testID="home-roster-job-review">
+              <Pressable
+                onPress={() => router.push("/roster-upload")}
+                style={{ flexDirection: "row", alignItems: "center", gap: 12 }}
+              >
+                <View style={styles.jobReviewIconWrap}>
+                  <Ionicons name="warning" size={26} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.jobReviewTitle}>ROSTER SAVED · PLAN NEEDS REVIEW</Text>
+                  <Text style={styles.jobReviewSub}>
+                    {rosterJob.error || "Your roster was saved but the training plan needs a retry. Louis has been notified."}
+                  </Text>
+                  <Text style={styles.jobReviewCta}>OPEN ROSTER UPLOAD →</Text>
+                </View>
+              </Pressable>
+              <View style={{ marginTop: 10 }}>
+                <WhatsAppSupportButton
+                  screen="home_plan_needs_review"
+                  context="plan_needs_review"
+                  rosterId={rosterJob.roster_id}
+                  variant="outline"
+                  showCaption={false}
+                />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.jobReviewTitle}>ROSTER SAVED · PLAN NEEDS REVIEW</Text>
-                <Text style={styles.jobReviewSub}>
-                  {rosterJob.error || "Your roster was saved but the training plan needs a retry. Louis has been notified."}
-                </Text>
-                <Text style={styles.jobReviewCta}>OPEN ROSTER UPLOAD →</Text>
-              </View>
-            </Pressable>
+            </View>
           ) : null}
           {rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing") ? (
             <Pressable
@@ -787,6 +825,7 @@ export default function Home() {
                 }
                 if (w.__rest) {
                   const dl = dayLabel(w.__key, today, tomorrowStr);
+                  const acts = (w.__activities || []) as any[];
                   return (
                     <Pressable
                       key={w.__key}
@@ -800,13 +839,25 @@ export default function Home() {
                         <Text style={styles.wDate}>{dl.primary}</Text>
                         {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                         <Text style={[styles.wTitle, styles.wTitleRest]} numberOfLines={1}>{w.title}</Text>
-                        <Text style={styles.wMeta} numberOfLines={1}>{w.location ? `${w.location} · ` : ""}No session scheduled</Text>
+                        <Text style={styles.wMeta} numberOfLines={1}>
+                          {w.location ? `${w.location} · ` : ""}
+                          {acts.length > 0 ? `${acts.length} activity` : "No session scheduled"}
+                        </Text>
+                        {acts.map((a: any) => (
+                          <View key={a.id} style={styles.activityChip} testID={`home-activity-${a.id}`}>
+                            <Ionicons name="tennisball" size={11} color={theme.color.brand} />
+                            <Text style={styles.activityChipT} numberOfLines={1}>
+                              {a.activity_name}{a.duration_minutes ? ` · ${a.duration_minutes}m` : ""}{a.start_time ? ` · ${a.start_time}` : ""}
+                            </Text>
+                          </View>
+                        ))}
                       </View>
-                      <Ionicons name="moon" size={16} color={theme.color.textMuted} style={{ marginRight: theme.space.md }} />
+                      <Ionicons name={acts.length > 0 ? "tennisball" : "moon"} size={16} color={acts.length > 0 ? theme.color.brand : theme.color.textMuted} style={{ marginRight: theme.space.md }} />
                     </Pressable>
                   );
                 }
                 const dl = dayLabel(w.__key, today, tomorrowStr);
+                const acts = (w.__activities || []) as any[];
                 return (
                   <Pressable
                     key={w.id}
@@ -822,6 +873,14 @@ export default function Home() {
                       {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                       <Text style={styles.wTitle} numberOfLines={1}>{w.title}</Text>
                       <Text style={styles.wMeta} numberOfLines={1}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
+                      {acts.map((a: any) => (
+                        <View key={a.id} style={styles.activityChip} testID={`home-activity-${a.id}`}>
+                          <Ionicons name="tennisball" size={11} color={theme.color.brand} />
+                          <Text style={styles.activityChipT} numberOfLines={1}>
+                            + {a.activity_name}{a.duration_minutes ? ` · ${a.duration_minutes}m` : ""}
+                          </Text>
+                        </View>
+                      ))}
                       {w.change_reason ? (
                         <View style={styles.reasonPill} testID={`workout-reason-${w.id}`}>
                           <Ionicons name="information-circle" size={11} color={theme.color.brand} />
@@ -1175,6 +1234,18 @@ const styles = StyleSheet.create({
   },
   reasonText: {
     fontSize: 10.5, color: theme.color.textMuted, flex: 1, lineHeight: 14,
+  },
+  // Iter 94o — personal-activity chip shown on the week list
+  activityChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    marginTop: 6, paddingHorizontal: 6, paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: theme.color.brandTint,
+    borderLeftWidth: 2, borderLeftColor: theme.color.brand,
+    alignSelf: "flex-start", maxWidth: "100%",
+  },
+  activityChipT: {
+    color: theme.color.brand, fontSize: 10.5, fontWeight: "700",
   },
   // Plan C2 — Programme Overview card
   progCard: { backgroundColor: theme.color.cardBg, borderWidth: 1, borderColor: theme.color.line, borderRadius: theme.radius.md, padding: theme.space.md, marginTop: theme.space.md, marginBottom: theme.space.sm },

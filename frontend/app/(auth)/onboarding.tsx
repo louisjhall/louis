@@ -20,7 +20,7 @@ const CARDIO = ["treadmill", "bike/turbo trainer", "rowing machine", "assault bi
 const LOC_OPTS = ["home gym", "commercial gym", "garage gym", "living room", "outdoors"];
 const LEVEL = ["beginner", "intermediate", "advanced"];
 const POS = ["Pilot", "Cabin Crew", "Ground Ops"];
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]; void DAYS;
 
 // Aviation context — powers roster-aware coaching so the plan adapts
 // to your actual flying pattern. Keys mirror `feature_programme_quality`.
@@ -173,7 +173,7 @@ export default function Onboarding() {
           <Section label="PREFERENCES">
             <Field label="TRAINING SESSIONS / WEEK"><TextInput testID="ob-days" style={styles.input} value={days} onChangeText={setDays} keyboardType="number-pad" /></Field>
             <Text style={styles.helperNote}>
-              Fixed weekdays don't work for crew — CrewFit maps sessions to your actual roster days.
+              Fixed weekdays don&apos;t work for crew — CrewFit maps sessions to your actual roster days.
             </Text>
             <Field label="EXPERIENCE"><ChipRow opts={LEVEL} val={level} onChange={setLevel} prefix="ob-lvl" /></Field>
             <Field label="MAIN GOAL">

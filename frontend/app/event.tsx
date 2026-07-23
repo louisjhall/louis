@@ -9,7 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAYS: string[] = []; void DAYS;
 
 type CatalogItem = { slug: string; label: string; category: string; icon: string };
 type Category = { key: string; label: string; short_label: string; days_label: string; icon: string; colour: string; safety_note?: string };
@@ -104,7 +104,7 @@ export default function EventScreen() {
     setType(first.label);
   }, [category, eventsInCat, existing]);
 
-  const toggleDay = (d: string) => setPrefDays((p) => p.includes(d) ? p.filter((x) => x !== d) : [...p, d]);
+  const toggleDay = (d: string) => setPrefDays((p) => p.includes(d) ? p.filter((x) => x !== d) : [...p, d]); void toggleDay;
 
   const save = async () => {
     if (!name || !dateIso) { setErr("Event name and date are required"); return; }
@@ -258,14 +258,9 @@ export default function EventScreen() {
               )}
 
               <Sect label="PREFERENCES">
-                <Text style={styles.miniLabel}>PREFERRED DAYS</Text>
-                <View style={styles.chipsWrap}>
-                  {DAYS.map((d) => (
-                    <Pressable key={d} testID={`ev-day-${d}`} onPress={() => toggleDay(d)} style={[styles.chip, prefDays.includes(d) && styles.chipActive]}>
-                      <Text style={[styles.chipText, prefDays.includes(d) && { color: "#fff" }]}>{d}</Text>
-                    </Pressable>
-                  ))}
-                </View>
+                <Text style={styles.helperNote}>
+                  Sessions map to your actual roster days — CrewFit doesn&apos;t lock training to fixed weekdays.
+                </Text>
                 <Field label={category === "medical" ? "CLINICIAN ADVICE / RESTRICTIONS" : "INJURY HISTORY"}>
                   <TextInput
                     testID="ev-inj" style={[styles.input, { minHeight: 60 }]} multiline value={injuries} onChangeText={setInjuries}
@@ -330,6 +325,7 @@ const styles = StyleSheet.create({
   sectLabel: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "800", marginBottom: 4 },
   sectBody: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, padding: theme.space.md },
   miniLabel: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "700", marginBottom: 4, marginTop: 8 },
+  helperNote: { color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", lineHeight: 15, marginBottom: 8 },
   input: { backgroundColor: theme.color.surface3, borderRadius: theme.radius.md, color: theme.color.text, padding: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 14 },
   chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },

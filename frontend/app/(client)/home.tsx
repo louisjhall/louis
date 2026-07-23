@@ -15,6 +15,8 @@ import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 import { TimezoneCard } from "@/src/components/TimezoneCard";
+import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
+import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
@@ -145,6 +147,14 @@ export default function Home() {
   // Iter 94o — Personal activities (sport/hobby) must show on the home week
   // list alongside workouts. Loaded on refresh; merged into next7.
   const [activities, setActivities] = useState<any[]>([]);
+  // Iter 94s — scroll handling for calendar "Jump to Today"
+  const scrollRef = useRef<ScrollView | null>(null);
+  const calendarTopYRef = useRef<number>(0);
+  const todayLocalYRef = useRef<number>(0);
+  const jumpToToday = useCallback(() => {
+    const y = Math.max(0, (calendarTopYRef.current || 0) + (todayLocalYRef.current || 0) - 40);
+    scrollRef.current?.scrollTo({ y, animated: true });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -323,6 +333,7 @@ export default function Home() {
   return (
     <View style={styles.root}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
       >
@@ -365,6 +376,9 @@ export default function Home() {
           {/* Iter 94r — Timezone card. Always at top so crew immediately see
               which timezone their day / workouts are being scheduled in. */}
           <TimezoneCard />
+          {/* Iter 94s — Missed sessions banner (only renders if there are any
+              recoverable missed sessions). Sits above the roster banners. */}
+          <MissedSessionsCard refreshKey={activityRefreshKey} />
           {/* Iter 94h — TOP-OF-PAGE roster-job status banner. Impossible to miss
               when an upload has failed, is stuck, or is still processing. */}
           {rosterJob && rosterJob.status === "failed" ? (
@@ -769,7 +783,7 @@ export default function Home() {
             })()
           ) : null}
 
-          <Text style={styles.sectionTitle}>NEXT 7 DAYS</Text>
+          <Text style={styles.sectionTitle}>YOUR SCHEDULE</Text>
           {programmeFocus?.banner_text ? (
             <View style={styles.focusBanner} testID="programme-focus-banner">
               <Ionicons name="flag" size={12} color={theme.color.brand} />
@@ -797,159 +811,20 @@ export default function Home() {
           ) : null}
           {roster?.id ? (
             <Text style={styles.sectionHint} testID="week-longpress-hint">
-              Tip: long-press any day to change its duty type. Your workout will be re-placed to fit.
+              Tip: scroll up or down to see past and future days. Long-press any day to change its duty type.
             </Text>
           ) : null}
-          {/* Iter 94h — Old plan-preparing / plan-needs-review banners moved to
-              the TOP of the page (above hero content) so failures are impossible
-              to miss. Keep only the passive "preparing" hint here as a redundancy
-              in case a slow render lands here first — no destructive fallback. */}
-          {loading && !workouts.length ? (
-            <ActivityIndicator color={theme.color.brand} />
-          ) : (
-            (() => {
-              const tomorrow = new Date();
-              tomorrow.setDate(tomorrow.getDate() + 1);
-              const tomorrowStr = localDateStr(tomorrow);
-              return next7.map((w) => {
-                const isTodayRow = w.__key === today;
-                if (isTodayRow && setupDay?.is_setup_day) {
-                  return (
-                    <View key={w.__key} style={[styles.wRow, styles.wRowSetup]} testID="week-setup-today">
-                      <View style={[styles.loadBar, { backgroundColor: theme.color.brand }]} />
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.wDate}>Today</Text>
-                        <Text style={styles.wDateSub}>{dayLabel(w.__key, today, tomorrowStr).secondary || w.__key}</Text>
-                        <Text style={[styles.wTitle, { color: theme.color.brand }]} numberOfLines={1}>SETUP DAY</Text>
-                        <Text style={styles.wMeta} numberOfLines={1}>Your first workout starts tomorrow</Text>
-                      </View>
-                      <Ionicons name="rocket" size={16} color={theme.color.brand} style={{ marginRight: theme.space.md }} />
-                    </View>
-                  );
-                }
-                if (w.__rest) {
-                  const dl = dayLabel(w.__key, today, tomorrowStr);
-                  const acts = (w.__activities || []) as any[];
-                  // Iter 94p — richer duty summary on the week list. Show day
-                  // type + flight number + layover city when the roster
-                  // knows them.
-                  const rd = (roster?.days || []).find((rr: any) => rr?.date === w.__key);
-                  const flightNo = (rd?.flights || rd?.flight_numbers || [])[0]?.number
-                    || rd?.flight_number || rd?.flight_no || null;
-                  const dutyBits = [
-                    rd?.day_type || w.day_type || null,
-                    flightNo ? `Flight ${flightNo}` : null,
-                    rd?.layover_city || null,
-                    rd?.home_or_away === "home" ? "At home" : null,
-                  ].filter(Boolean);
-                  const dutySummary = dutyBits.join(" · ");
-                  return (
-                    <Pressable
-                      key={w.__key}
-                      onLongPress={() => openDayPicker(w.__key)}
-                      delayLongPress={350}
-                      style={[styles.wRow, styles.wRowRest]}
-                      testID={`week-rest-${w.__key}`}
-                    >
-                      <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.wDate}>{dl.primary}</Text>
-                        {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
-                        <Text style={[styles.wTitle, styles.wTitleRest]} numberOfLines={1}>{w.title}</Text>
-                        {dutySummary ? (
-                          <Text style={styles.wDutyLine} numberOfLines={1}>{dutySummary}</Text>
-                        ) : null}
-                        <Text style={styles.wMeta} numberOfLines={1}>
-                          {w.location ? `${w.location} · ` : ""}
-                          {acts.length > 0 ? `${acts.length} activity` : "No session scheduled"}
-                        </Text>
-                        {acts.map((a: any) => (
-                          <View key={a.id} style={styles.activityChip} testID={`home-activity-${a.id}`}>
-                            <Ionicons name="tennisball" size={11} color={theme.color.brand} />
-                            <Text style={styles.activityChipT} numberOfLines={1}>
-                              {a.activity_name}{a.duration_minutes ? ` · ${a.duration_minutes}m` : ""}{a.start_time ? ` · ${a.start_time}` : ""}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
-                      <Ionicons name={acts.length > 0 ? "tennisball" : "moon"} size={16} color={acts.length > 0 ? theme.color.brand : theme.color.textMuted} style={{ marginRight: theme.space.md }} />
-                    </Pressable>
-                  );
-                }
-                const dl = dayLabel(w.__key, today, tomorrowStr);
-                const acts = (w.__activities || []) as any[];
-                // Duty summary for workout days too
-                const rd = (roster?.days || []).find((rr: any) => rr?.date === w.__key);
-                const flightNo = (rd?.flights || rd?.flight_numbers || [])[0]?.number
-                  || rd?.flight_number || rd?.flight_no || null;
-                const dutyBits = [
-                  rd?.day_type || w.day_type || null,
-                  flightNo ? `Flight ${flightNo}` : null,
-                  rd?.layover_city || null,
-                  rd?.home_or_away === "home" ? "At home" : null,
-                ].filter(Boolean);
-                const dutySummary = dutyBits.join(" · ");
-                return (
-                  <Pressable
-                    key={w.id}
-                    onPress={() => router.push(`/workout/${w.id}`)}
-                    onLongPress={() => openDayPicker(w.__key)}
-                    delayLongPress={350}
-                    style={styles.wRow}
-                    testID={`week-workout-${w.id}`}
-                  >
-                    <View style={[styles.loadBar, { backgroundColor: loadColor(w.day_load) }]} />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.wDate}>{dl.primary}</Text>
-                      {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
-                      <Text style={styles.wTitle} numberOfLines={1}>{w.title}</Text>
-                      {dutySummary ? (
-                        <Text style={styles.wDutyLine} numberOfLines={1}>{dutySummary}</Text>
-                      ) : null}
-                      <Text style={styles.wMeta} numberOfLines={1}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
-                      {acts.map((a: any) => (
-                        <View key={a.id} style={styles.activityChip} testID={`home-activity-${a.id}`}>
-                          <Ionicons name="tennisball" size={11} color={theme.color.brand} />
-                          <Text style={styles.activityChipT} numberOfLines={1}>
-                            + {a.activity_name}{a.duration_minutes ? ` · ${a.duration_minutes}m` : ""}
-                          </Text>
-                        </View>
-                      ))}
-                      {w.change_reason ? (
-                        <View style={styles.reasonPill} testID={`workout-reason-${w.id}`}>
-                          <Ionicons name="information-circle" size={11} color={theme.color.brand} />
-                          <Text style={styles.reasonText} numberOfLines={2}>{w.change_reason}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                    {w.completed && <Ionicons name="checkmark-circle" size={22} color={theme.color.green} style={{ marginRight: 10 }} />}
-                    {!w.completed && w.coach_locked && (
-                      <View style={[styles.statusPill, styles.statusLocked]}>
-                        <Ionicons name="lock-closed" size={11} color={theme.color.amber} />
-                        <Text style={[styles.statusPillText, { color: theme.color.amber }]} numberOfLines={1}>LOCKED</Text>
-                      </View>
-                    )}
-                    {!w.completed && !w.coach_locked && w.needs_coach_review && (
-                      <View style={[styles.statusPill, styles.statusReview]}>
-                        <Text style={[styles.statusPillText, { color: theme.color.red }]} numberOfLines={1}>REVIEW</Text>
-                      </View>
-                    )}
-                    {!w.completed && !w.coach_locked && !w.needs_coach_review && !w.approved && (
-                      <View style={[styles.statusPill, styles.statusPlanned]}>
-                        <Text style={[styles.statusPillText, { color: theme.color.textMuted }]} numberOfLines={1}>{w.optional ? "OPTIONAL" : "PLANNED"}</Text>
-                      </View>
-                    )}
-                    {!w.completed && w.approved && !w.coach_locked && (
-                      <View style={[styles.statusPill, styles.statusApproved]}>
-                        <Ionicons name="checkmark" size={11} color={theme.color.green} />
-                        <Text style={[styles.statusPillText, { color: theme.color.green }]} numberOfLines={1}>READY</Text>
-                      </View>
-                    )}
-                  </Pressable>
-                );
-              });
-            })()
-          )}
+          {/* Iter 94s — Scrollable calendar (±30 days initially, up to ±60). */}
+          <View
+            onLayout={(e) => { calendarTopYRef.current = e.nativeEvent.layout.y; }}
+          >
+            <ClientCalendarPanel
+              refreshKey={activityRefreshKey}
+              onLongPressDay={(d) => openDayPicker(d)}
+              onTodayLayoutY={(y) => { todayLocalYRef.current = y; }}
+              onJumpToToday={jumpToToday}
+            />
+          </View>
         </View>
       </ScrollView>
 

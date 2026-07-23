@@ -11261,6 +11261,7 @@ import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reas
 import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
 import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base + current timezone card + confirm endpoint
+import feature_calendar_recovery          # noqa: E402,F401  Iter 94s: calendar range + missed workout recovery
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

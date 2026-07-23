@@ -12,7 +12,9 @@ import { usePreview } from "@/src/lib/preview";
 import { theme } from "@/src/lib/theme";
 import { CrewFitLogo } from "@/src/components/Logo";
 
-const HERO = "https://images.unsplash.com/photo-1687992176093-6417a93fa3d0?crop=entropy&cs=srgb&fm=jpg&q=85";
+// Iter 94t — Login hero shows airline crew in uniform (pilot walking through
+// airport with roller bag) to match the "crew, not civilian" brand feel.
+const HERO = "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200";
 
 function errMsg(e: any): string {
   if (!e) return "Login failed";

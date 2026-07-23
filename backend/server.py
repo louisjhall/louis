@@ -1132,7 +1132,7 @@ RULES:
 - **PRONOUNS**: derive from the client's `biological_sex` answer — male → he/him, female → she/her, intersex_prefer_not → they/them. If no sex was recorded, use they/them. NEVER default to she/her or he/him based on job or role. NEVER assume gender from job (cabin crew ≠ female, pilot ≠ male).
 - If information is missing, say "Unknown — will learn over time".
 - Assign a realistic `ai_confidence_score` (30-95). New clients rarely hit 90+.
-- `recommended_weekly_training` should be a concrete outline (e.g. "4 days: Mon strength, Tue Z2 run, Thu mobility, Sat long run").
+- `recommended_weekly_training` should be a day-agnostic outline anchored to a session count, NEVER weekday names. Crew rosters change every week, so fixed days (Mon/Wed/Fri) never apply. Use the form: `<N> sessions/week: Training Day 1 <focus>, Training Day 2 <focus>, ...`. Example: "4 sessions/week: Training Day 1 strength, Training Day 2 Z2 run, Training Day 3 mobility, Training Day 4 long run — dates assigned when the roster is uploaded."
 - The `summary` field should be written in Atlas voice ("I've analysed...", "I've identified..."). Never claim to coach — reference Louis' methodology.
 
 RESPOND WITH STRICT JSON only:
@@ -1727,7 +1727,7 @@ def _dna_fallback(transcript: list[dict], profile: dict) -> dict:
         "biggest_weakness": "Unpredictable schedule",
         "biggest_opportunity": "Layover training",
         "ai_confidence_score": 45,
-        "recommended_weekly_training": "4 days: 2× strength, 1× conditioning, 1× mobility",
+        "recommended_weekly_training": "4 sessions/week: Training Day 1 strength, Training Day 2 conditioning, Training Day 3 mobility, Training Day 4 optional — mapped to roster after upload.",
         "recommended_recovery_strategy": "Prioritise sleep windows; light mobility on jet-lag days.",
         "recommended_nutrition_strategy": "Consistent protein at each meal; hydrate on flights.",
         "recommended_coaching_style": "Supportive, empathetic, with clear structure.",

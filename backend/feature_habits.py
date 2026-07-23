@@ -196,6 +196,35 @@ async def _compute_streak(habit_id: str, user_id: str, tz_name: str) -> int:
 
 # ---- Atlas seeding ---------------------------------------------------------
 
+# Iter 94q — Reject anything that isn't a small daily action. Weekly workout
+# targets ("one run per week", "complete long run", "hit weekly mileage") are
+# programme targets, NOT habits.
+_HABIT_BAD_TITLE_TERMS = (
+    "per week", "weekly mileage", "per-week",
+    "one run", "one strength", "long run", "hit mileage",
+    "complete workout", "complete your workout", "do your workout",
+    "train times", "train 3 times", "train 4 times", "train 5 times",
+    "lose 1kg", "lose 2kg", "burn 500", "burn calories",
+    "no carbs", "no sugar", "extreme", "eliminate", "cut out",
+    "eat perfectly", "no cheat",
+)
+
+
+def _is_bad_habit(h: dict) -> tuple[bool, str]:
+    """Return (True, reason) if the habit should NOT be published."""
+    title = str(h.get("title") or "").lower().strip()
+    freq = str(h.get("frequency") or "").lower().strip()
+    htype = str(h.get("habit_type") or "").lower().strip()
+    if not title:
+        return True, "empty_title"
+    if freq == "weekly" or htype == "weekly":
+        return True, "weekly_frequency"
+    for term in _HABIT_BAD_TITLE_TERMS:
+        if term in title:
+            return True, f"bad_term:{term}"
+    return False, ""
+
+
 def _default_habit_pack(dna: dict) -> list[dict]:
     """Deterministic fallback pack if the LLM call fails — always shippable."""
     goals = [str(g).lower() for g in (dna.get("primary_goals") or [])]
@@ -205,10 +234,9 @@ def _default_habit_pack(dna: dict) -> list[dict]:
     else:
         packs.append({"title": "Protein with first meal", "reason": "Sets recovery + energy up early in your day.", "linked_goal": (goals[0] if goals else "general"), "habit_type": "daily", "day_type_rules": [], "frequency": "daily", "target": "1 palm of protein", "unit": "portion", "difficulty_level": "starter"})
     packs.append({"title": "8,000 steps on home days", "reason": "Keeps daily movement up without adding gym time.", "linked_goal": (goals[0] if goals else "general_health"), "habit_type": "home-day", "day_type_rules": ["home_day","rest","annual leave"], "frequency": "daily", "target": "8000", "unit": "steps", "difficulty_level": "starter"})
-    packs.append({"title": "Hydrate after landing", "reason": "Supports recovery after flying.", "linked_goal": "recovery", "habit_type": "post-flight", "day_type_rules": ["layover","flight","layover_arrival"], "frequency": "per_flight", "target": "500ml", "unit": "ml", "difficulty_level": "starter"})
-    packs.append({"title": "5-minute mobility after duty", "reason": "Reduces stiffness after flights and layovers.", "linked_goal": "mobility", "habit_type": "post-flight", "day_type_rules": ["layover","flight","standby"], "frequency": "per_flight", "target": "5", "unit": "minutes", "difficulty_level": "starter"})
-    packs.append({"title": "Sunday weekly check-in", "reason": "Keeps Atlas + Louis honest about your week.", "linked_goal": "coaching", "habit_type": "weekly", "day_type_rules": [], "frequency": "weekly", "target": "1", "unit": "check-in", "difficulty_level": "starter"})
-    return packs[:5]
+    packs.append({"title": "5-minute mobility reset", "reason": "Keeps you moving well between duties without adding pressure.", "linked_goal": "recovery", "habit_type": "daily", "day_type_rules": [], "frequency": "daily", "target": "5", "unit": "minutes", "difficulty_level": "starter"})
+    packs.append({"title": "Review today's plan", "reason": "Keeps you clear on what is planned around your roster.", "linked_goal": "coaching", "habit_type": "daily", "day_type_rules": [], "frequency": "daily", "target": "1", "unit": "check", "difficulty_level": "starter"})
+    return packs[:3]
 
 
 async def _atlas_seed_habits(user: dict) -> list[dict]:
@@ -234,7 +262,21 @@ async def _atlas_seed_habits(user: dict) -> list[dict]:
     habits = parsed.get("habits") if isinstance(parsed, dict) else None
     if not isinstance(habits, list) or not habits:
         habits = _default_habit_pack(dna or {})
-    return habits[:MAX_ACTIVE_HABITS_DEFAULT]
+    # Iter 94q — filter LLM output. Drop weekly / workout-target habits;
+    # force daily frequency on anything else that slips through.
+    cleaned: list[dict] = []
+    for h in habits:
+        bad, why = _is_bad_habit(h)
+        if bad:
+            logger.warning("habits_seed: dropped bad habit — %s (title=%r)", why, h.get("title"))
+            continue
+        h["frequency"] = "daily"
+        if str(h.get("habit_type") or "").lower() == "weekly":
+            h["habit_type"] = "daily"
+        cleaned.append(h)
+    if not cleaned:
+        cleaned = _default_habit_pack(dna or {})
+    return cleaned[:MAX_ACTIVE_HABITS_DEFAULT]
 
 
 async def _seed_habits_for_user_by_id(user_id: str) -> int:
@@ -507,8 +549,20 @@ async def habits_today(user: dict = Depends(current_user)):
                     day_type = d.get("type") or d.get("day_type")
                     break
     is_flight = _is_flight_day(day_type)
-    habits = await db.habits.find({"user_id": user["id"], "status": "active"}, {"_id": 0}).to_list(50)
+    habits = await db.habits.find(
+        {
+            "user_id": user["id"], "status": "active",
+            # Iter 94q — hard exclude any weekly-frequency habit from the
+            # today endpoint. Weekly workout targets belong on the programme
+            # card, not on the daily habit dashboard.
+            "frequency": {"$ne": "weekly"},
+            "habit_type": {"$ne": "weekly"},
+        },
+        {"_id": 0},
+    ).to_list(50)
     habits = [h for h in habits if _habit_relevant_today(h, day_type, bool(todays_wk), is_flight)]
+    # Iter 94q — cap habits shown to the client at 3 to avoid overwhelm.
+    habits = habits[:3]
     # Load today's logs
     logs = await db.habit_logs.find(
         {"user_id": user["id"], "habit_id": {"$in": [h["id"] for h in habits]}, "date_local": today}, {"_id": 0}

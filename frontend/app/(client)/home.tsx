@@ -14,6 +14,7 @@ import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
+import { TimezoneCard } from "@/src/components/TimezoneCard";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
@@ -361,6 +362,9 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg }}>
+          {/* Iter 94r — Timezone card. Always at top so crew immediately see
+              which timezone their day / workouts are being scheduled in. */}
+          <TimezoneCard />
           {/* Iter 94h — TOP-OF-PAGE roster-job status banner. Impossible to miss
               when an upload has failed, is stuck, or is still processing. */}
           {rosterJob && rosterJob.status === "failed" ? (

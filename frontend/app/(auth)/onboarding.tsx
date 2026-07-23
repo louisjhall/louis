@@ -61,7 +61,10 @@ export default function Onboarding() {
   const [trainLoc, setTrainLoc] = useState(p.training_location || LOC_OPTS[0]);
   const [maxMin, setMaxMin] = useState(String(p.max_home_minutes || 60));
   const [days, setDays] = useState(String(p.training_days_per_week || 4));
-  const [prefDays, setPrefDays] = useState<string[]>(p.preferred_days || []);
+  // Preferred weekdays removed — crew rosters change constantly, so we no
+  // longer ask (Iter 94r). We still send an empty list so the profile field
+  // stays clean.
+  const prefDays: string[] = [];
   const [level, setLevel] = useState(p.experience_level || LEVEL[1]);
   const [goal, setGoal] = useState(p.goal || "");
   const [injuries, setInjuries] = useState(p.injuries || "");
@@ -168,16 +171,10 @@ export default function Onboarding() {
           </Section>
 
           <Section label="PREFERENCES">
-            <Field label="TRAINING DAYS / WEEK"><TextInput testID="ob-days" style={styles.input} value={days} onChangeText={setDays} keyboardType="number-pad" /></Field>
-            <Field label="PREFERRED TRAINING DAYS">
-              <View style={styles.chipsWrap}>
-                {DAYS.map((d) => (
-                  <Pressable key={d} testID={`ob-day-${d}`} onPress={() => toggle(prefDays, setPrefDays, d)} style={[styles.chip, prefDays.includes(d) && styles.chipActive]}>
-                    <Text style={[styles.chipText, prefDays.includes(d) && { color: "#fff" }]}>{d}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </Field>
+            <Field label="TRAINING SESSIONS / WEEK"><TextInput testID="ob-days" style={styles.input} value={days} onChangeText={setDays} keyboardType="number-pad" /></Field>
+            <Text style={styles.helperNote}>
+              Fixed weekdays don't work for crew — CrewFit maps sessions to your actual roster days.
+            </Text>
             <Field label="EXPERIENCE"><ChipRow opts={LEVEL} val={level} onChange={setLevel} prefix="ob-lvl" /></Field>
             <Field label="MAIN GOAL">
               <View style={styles.chipsWrap}>
@@ -258,6 +255,7 @@ const styles = StyleSheet.create({
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   chipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
+  helperNote: { color: theme.color.textMuted, fontSize: 11, marginTop: -4, marginBottom: 6, fontStyle: "italic", lineHeight: 15 },
   row2: { flexDirection: "row", gap: theme.space.md },
   sticky: { position: "absolute", bottom: 0, left: 0, right: 0, padding: theme.space.lg, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.border },
   cta: { backgroundColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },

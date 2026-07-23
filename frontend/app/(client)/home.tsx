@@ -440,19 +440,19 @@ export default function Home() {
               AND today == programme_start_date_local. Replaces the empty
               "no workout today" feeling with a clear checklist + CTAs. */}
           {programme?.is_setup_day_today && !programme?.first_day_choice_needed ? (
-            <View style={styles.setupCard} testID="home-setup-day-card">
-              <View style={styles.setupHeader}>
-                <View style={styles.setupIconWrap}>
+            <View style={styles.fdSetupCard} testID="home-setup-day-card">
+              <View style={styles.fdSetupHeader}>
+                <View style={styles.fdSetupIconWrap}>
                   <Ionicons name="clipboard" size={22} color={theme.color.brand} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.setupTitle}>SETUP DAY</Text>
-                  <Text style={styles.setupSub}>
+                  <Text style={styles.fdSetupTitle}>SETUP DAY</Text>
+                  <Text style={styles.fdSetupSub}>
                     Today is for getting ready, not rushing into training.
                   </Text>
                 </View>
               </View>
-              <View style={styles.setupChecklist}>
+              <View style={styles.fdSetupChecklist}>
                 {[
                   "Review your programme",
                   "Check your first workout",
@@ -461,29 +461,29 @@ export default function Home() {
                   "Add hotel setup if needed",
                   "Message Louis with anything that looks wrong",
                 ].map((t, i) => (
-                  <View key={i} style={styles.setupRow}>
+                  <View key={i} style={styles.fdSetupRow}>
                     <Ionicons name="ellipse-outline" size={14} color={theme.color.textMuted} />
-                    <Text style={styles.setupRowT}>{t}</Text>
+                    <Text style={styles.fdSetupRowT}>{t}</Text>
                   </View>
                 ))}
               </View>
               {programme.first_real_workout_date_local ? (
-                <Text style={styles.setupFirstReal}>
+                <Text style={styles.fdSetupFirstReal}>
                   First proper session: <Text style={{ fontWeight: "800", color: theme.color.text }}>{programme.first_real_workout_date_local}</Text>
                 </Text>
               ) : null}
-              <View style={styles.setupActions}>
-                <Pressable style={styles.setupBtn} onPress={() => {}} testID="setup-view-plan">
+              <View style={styles.fdSetupActions}>
+                <Pressable style={styles.fdSetupBtn} onPress={() => {}} testID="setup-view-plan">
                   <Ionicons name="calendar" size={14} color={theme.color.brand} />
-                  <Text style={styles.setupBtnT}>VIEW MY PLAN</Text>
+                  <Text style={styles.fdSetupBtnT}>VIEW MY PLAN</Text>
                 </Pressable>
-                <Pressable style={styles.setupBtn} onPress={() => router.push("/(client)/profile" as any)} testID="setup-check-equipment">
+                <Pressable style={styles.fdSetupBtn} onPress={() => router.push("/(client)/profile" as any)} testID="setup-check-equipment">
                   <Ionicons name="barbell" size={14} color={theme.color.brand} />
-                  <Text style={styles.setupBtnT}>CHECK EQUIPMENT</Text>
+                  <Text style={styles.fdSetupBtnT}>CHECK EQUIPMENT</Text>
                 </Pressable>
-                <Pressable style={styles.setupBtn} onPress={() => router.push("/(client)/messages" as any)} testID="setup-message-louis">
+                <Pressable style={styles.fdSetupBtn} onPress={() => router.push("/(client)/messages" as any)} testID="setup-message-louis">
                   <Ionicons name="chatbubble-ellipses" size={14} color={theme.color.brand} />
-                  <Text style={styles.setupBtnT}>MESSAGE LOUIS</Text>
+                  <Text style={styles.fdSetupBtnT}>MESSAGE LOUIS</Text>
                 </Pressable>
               </View>
             </View>
@@ -793,7 +793,7 @@ export default function Home() {
           ) : null}
           {roster?.id ? (
             <Text style={styles.sectionHint} testID="week-longpress-hint">
-              Tip: long-press any day to correct its duty type.
+              Tip: long-press any day to change its duty type. Your workout will be re-placed to fit.
             </Text>
           ) : null}
           {/* Iter 94h — Old plan-preparing / plan-needs-review banners moved to
@@ -826,6 +826,19 @@ export default function Home() {
                 if (w.__rest) {
                   const dl = dayLabel(w.__key, today, tomorrowStr);
                   const acts = (w.__activities || []) as any[];
+                  // Iter 94p — richer duty summary on the week list. Show day
+                  // type + flight number + layover city when the roster
+                  // knows them.
+                  const rd = (roster?.days || []).find((rr: any) => rr?.date === w.__key);
+                  const flightNo = (rd?.flights || rd?.flight_numbers || [])[0]?.number
+                    || rd?.flight_number || rd?.flight_no || null;
+                  const dutyBits = [
+                    rd?.day_type || w.day_type || null,
+                    flightNo ? `Flight ${flightNo}` : null,
+                    rd?.layover_city || null,
+                    rd?.home_or_away === "home" ? "At home" : null,
+                  ].filter(Boolean);
+                  const dutySummary = dutyBits.join(" · ");
                   return (
                     <Pressable
                       key={w.__key}
@@ -839,6 +852,9 @@ export default function Home() {
                         <Text style={styles.wDate}>{dl.primary}</Text>
                         {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                         <Text style={[styles.wTitle, styles.wTitleRest]} numberOfLines={1}>{w.title}</Text>
+                        {dutySummary ? (
+                          <Text style={styles.wDutyLine} numberOfLines={1}>{dutySummary}</Text>
+                        ) : null}
                         <Text style={styles.wMeta} numberOfLines={1}>
                           {w.location ? `${w.location} · ` : ""}
                           {acts.length > 0 ? `${acts.length} activity` : "No session scheduled"}
@@ -858,6 +874,17 @@ export default function Home() {
                 }
                 const dl = dayLabel(w.__key, today, tomorrowStr);
                 const acts = (w.__activities || []) as any[];
+                // Duty summary for workout days too
+                const rd = (roster?.days || []).find((rr: any) => rr?.date === w.__key);
+                const flightNo = (rd?.flights || rd?.flight_numbers || [])[0]?.number
+                  || rd?.flight_number || rd?.flight_no || null;
+                const dutyBits = [
+                  rd?.day_type || w.day_type || null,
+                  flightNo ? `Flight ${flightNo}` : null,
+                  rd?.layover_city || null,
+                  rd?.home_or_away === "home" ? "At home" : null,
+                ].filter(Boolean);
+                const dutySummary = dutyBits.join(" · ");
                 return (
                   <Pressable
                     key={w.id}
@@ -872,6 +899,9 @@ export default function Home() {
                       <Text style={styles.wDate}>{dl.primary}</Text>
                       {dl.secondary ? <Text style={styles.wDateSub}>{dl.secondary}</Text> : null}
                       <Text style={styles.wTitle} numberOfLines={1}>{w.title}</Text>
+                      {dutySummary ? (
+                        <Text style={styles.wDutyLine} numberOfLines={1}>{dutySummary}</Text>
+                      ) : null}
                       <Text style={styles.wMeta} numberOfLines={1}>{w.location || "Home Workout"} · {w.duration_min}min</Text>
                       {acts.map((a: any) => (
                         <View key={a.id} style={styles.activityChip} testID={`home-activity-${a.id}`}>
@@ -1100,32 +1130,33 @@ const styles = StyleSheet.create({
   jobProcessingTitle: { color: theme.color.brand, fontSize: 13, fontWeight: "900", letterSpacing: 1.5 },
   jobProcessingSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
   jobProcessingCta:   { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 8 },
-  // Iter 94j — Setup Day card styles. Calm, uncluttered — signals "planning day"
-  // not "broken app".
-  setupCard: {
+  // Iter 94j — Setup Day card styles (top-of-home mini card for the
+  // first-day-choice=setup_day state). Distinct from the fuller `setupCard`
+  // used lower down by the /setup-day/status flow.
+  fdSetupCard: {
     padding: 16, borderRadius: 14, marginBottom: theme.space.md,
     backgroundColor: theme.color.brandTint,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  setupHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 },
-  setupIconWrap: {
+  fdSetupHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 },
+  fdSetupIconWrap: {
     width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center",
     backgroundColor: theme.color.surfaceElev,
   },
-  setupTitle: { color: theme.color.brand, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
-  setupSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
-  setupChecklist: { gap: 6, marginBottom: 10 },
-  setupRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  setupRowT: { color: theme.color.text, fontSize: 12 },
-  setupFirstReal: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, marginBottom: 10 },
-  setupActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  setupBtn: {
+  fdSetupTitle: { color: theme.color.brand, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
+  fdSetupSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  fdSetupChecklist: { gap: 6, marginBottom: 10 },
+  fdSetupRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  fdSetupRowT: { color: theme.color.text, fontSize: 12 },
+  fdSetupFirstReal: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, marginBottom: 10 },
+  fdSetupActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  fdSetupBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8,
     borderWidth: 1, borderColor: theme.color.brand,
     backgroundColor: theme.color.surface,
   },
-  setupBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
+  fdSetupBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   setupCard: {
     padding: theme.space.lg, borderRadius: theme.radius.md,
     borderWidth: 1, borderColor: theme.color.brand,
@@ -1246,6 +1277,11 @@ const styles = StyleSheet.create({
   },
   activityChipT: {
     color: theme.color.brand, fontSize: 10.5, fontWeight: "700",
+  },
+  // Iter 94p — duty summary line under each workout/rest card
+  wDutyLine: {
+    color: theme.color.textMuted, fontSize: 11, marginTop: 2,
+    fontWeight: "600", letterSpacing: 0.2,
   },
   // Plan C2 — Programme Overview card
   progCard: { backgroundColor: theme.color.cardBg, borderWidth: 1, borderColor: theme.color.line, borderRadius: theme.radius.md, padding: theme.space.md, marginTop: theme.space.md, marginBottom: theme.space.sm },

@@ -6499,14 +6499,78 @@ async def roster_day_correct(rid: str, body: RosterDayCorrectionBody, user: dict
         pass
     days[target] = day
     await db.rosters.update_one({"id": rid}, {"$set": {"days": days, "updated_at": now_iso()}})
-    # Flag downstream workout for coach re-review
-    await db.workouts.update_many(
-        {"user_id": user["id"], "date": body.date},
-        {"$set": {
-            "needs_coach_review": True,
-            "change_reason": "You corrected the roster day type — Louis will rebuild this session to match.",
-        }},
-    )
+    # Iter 94p — Client-driven day corrections DO NOT need coach approval.
+    # Re-place the workout for that date immediately based on the new day_type.
+    # Louis still gets a timeline entry so he can see what the client changed,
+    # but the workout is NOT gated behind `needs_coach_review`.
+    new_dtype = str(body.day_type or "").lower()
+    # If the new day type is a heavy duty and there IS a workout, soft-cancel
+    # it so the client sees an honest picture. If it's a home/off day and
+    # there's no workout, that's the coach's job to re-plan — we don't invent
+    # one out of thin air.
+    heavy_terms = ("long", "night", "red_eye", "red-eye", "overnight", "heavy",
+                   "direct flight", "flight", "layover")
+    is_heavy = any(k in new_dtype for k in heavy_terms)
+    rest_terms = ("off", "home")
+    is_rest = any(k in new_dtype for k in rest_terms)
+    if is_heavy:
+        await db.workouts.update_many(
+            {"user_id": user["id"], "date": body.date, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+            {"$set": {
+                "day_type": body.day_type,
+                "optional": True,
+                "role": "roster_correction_soft",
+                "change_reason": (
+                    f"You changed today's duty to {body.day_type}. This session "
+                    "is now optional — it will be re-placed automatically to a "
+                    "more suitable day."
+                ),
+                "updated_at": now_iso(),
+            }},
+        )
+    elif is_rest:
+        # Client says today is home/off — clear any load restrictions on the
+        # workout so it renders as normal.
+        await db.workouts.update_many(
+            {"user_id": user["id"], "date": body.date, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+            {"$set": {
+                "day_type": body.day_type,
+                "optional": False,
+                "role": None,
+                "change_reason": (
+                    f"You changed today's duty to {body.day_type}. Your session is "
+                    "ready to train."
+                ),
+                "updated_at": now_iso(),
+            }},
+        )
+    else:
+        # Other duty types: keep the workout intact, just mirror the day_type so
+        # the UI shows the correct chip. Don't gate on coach review.
+        await db.workouts.update_many(
+            {"user_id": user["id"], "date": body.date, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+            {"$set": {
+                "day_type": body.day_type,
+                "change_reason": (
+                    f"You updated today's duty to {body.day_type}."
+                ),
+                "updated_at": now_iso(),
+            }},
+        )
+    # Timeline entry for Louis (audit, not a gate).
+    try:
+        await db.programme_timeline.insert_one({
+            "id": new_id(),
+            "user_id": user["id"],
+            "roster_id": rid,
+            "type": "client_roster_day_correction",
+            "date": body.date,
+            "new_day_type": body.day_type,
+            "layover_city": body.layover_city,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
     return {"day": day}
 
 

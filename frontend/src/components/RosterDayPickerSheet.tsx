@@ -30,6 +30,7 @@ import { toast } from "@/src/lib/ux";
 // vocabulary in both places.
 const DUTY_TYPES: { key: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: "Flight",         label: "Flight (turnaround)", icon: "airplane" },
+  { key: "Direct Flight",  label: "Direct flight",       icon: "paper-plane" },
   { key: "Layover",        label: "Layover",             icon: "bed" },
   { key: "Standby",        label: "Standby",             icon: "time" },
   { key: "Off",            label: "Off duty",            icon: "sunny" },
@@ -89,7 +90,10 @@ export function RosterDayPickerSheet({ target, onClose, onSaved }: Props) {
         },
       });
       try { await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-      toast(`${fmtDate(target.date)} updated · Louis will re-check this session.`, "success");
+      // Iter 94p — Reworded from "Louis will re-check" so the client sees this
+      // as their own control, not a coach-review deferral. Workout is re-placed
+      // immediately based on the new duty type.
+      toast(`${fmtDate(target.date)} updated — your workout has been adjusted to fit.`, "success");
       onSaved?.();
       onClose();
     } catch (e: any) {
@@ -130,8 +134,8 @@ export function RosterDayPickerSheet({ target, onClose, onSaved }: Props) {
               </View>
 
               <Text style={styles.helpText}>
-                Tap the correct duty type for this day. Louis is notified, and any workout on this date will
-                be re-planned so it fits.
+                Tap the correct duty type for this day. Your workout will be
+                re-placed to fit — no coach approval needed.
               </Text>
 
               <ScrollView

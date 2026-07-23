@@ -309,6 +309,16 @@ async def _build_briefing(user: dict) -> dict:
 
     roster_type = str((roster_day or {}).get("day_type") or "")
     layover_city = (roster_day or {}).get("layover_city")
+    # Iter 94u.1 — Context signature. Whenever the resolved timezone, city,
+    # roster type, or today's workout id changes we treat it as a new
+    # "location detected" and force a fresh briefing (see _get_or_build_today).
+    context_signature = "|".join([
+        str(tz or ""),
+        str(profile.get("current_timezone_city") or layover_city or ""),
+        str(roster_type or ""),
+        str((wo or {}).get("id") or ""),
+        str((roster_day or {}).get("airport") or ""),
+    ])
 
     workout_focus = _workout_focus(wo)
     nutrition_focus = _nutrition_focus(totals, target, goal, tod)
@@ -345,7 +355,9 @@ async def _build_briefing(user: dict) -> dict:
         "date_local": today.isoformat(),
         "timezone": tz,
         "timezone_source": tz_source,
-        "city": layover_city,
+        "context_signature": context_signature,
+        "city": layover_city or profile.get("current_timezone_city"),
+        "airport": (roster_day or {}).get("airport"),
         "roster_day_type": roster_type or None,
         "goal_class": goal,
         "time_of_day": tod,
@@ -366,21 +378,40 @@ async def _build_briefing(user: dict) -> dict:
 
 
 async def _get_or_build_today(user: dict) -> dict:
+    """Idempotent per (user_id, date_local, context_signature).
+
+    When the client's context changes mid-day (e.g. they land somewhere new
+    and the roster / timezone / current_timezone_city updates), the previous
+    briefing is archived and a fresh one is built. The client-side modal
+    re-appears because both the doc id AND the context_signature change.
+    """
     tz, _ = await _user_timezone(user["id"])
     date_local = _local_today(tz).isoformat()
+    # Build the new briefing candidate first (cheap — pure reads).
+    candidate = await _build_briefing(user)
     existing = await db.daily_briefings.find_one(
-        {"user_id": user["id"], "date_local": date_local}, {"_id": 0},
+        {"user_id": user["id"], "date_local": date_local, "archived": {"$ne": True}}, {"_id": 0},
     )
-    if existing:
+    if existing and existing.get("context_signature") == candidate.get("context_signature"):
         return existing
-    doc = await _build_briefing(user)
-    doc["id"] = new_id()
-    doc["created_at"] = now_iso()
-    doc["shown_at"] = None
-    doc["dismissed_at"] = None
-    await db.daily_briefings.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    # Context changed (or first time today) — archive the previous briefing
+    # so history is preserved for the coach dashboard, and insert a fresh one
+    # that will re-show even if the client already dismissed the old one.
+    if existing:
+        await db.daily_briefings.update_one(
+            {"user_id": user["id"], "date_local": date_local, "id": existing.get("id")},
+            {"$set": {"archived": True, "archived_at": now_iso(), "archived_reason": "context_changed"}},
+        )
+    candidate["id"] = new_id()
+    candidate["created_at"] = now_iso()
+    candidate["shown_at"] = None
+    candidate["dismissed_at"] = None
+    candidate["archived"] = False
+    candidate["trigger"] = "context_change" if existing else "first_of_day"
+    candidate["previous_signature"] = (existing or {}).get("context_signature")
+    await db.daily_briefings.insert_one(candidate)
+    candidate.pop("_id", None)
+    return candidate
 
 
 @api.get("/daily-briefing/today")

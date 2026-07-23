@@ -16,7 +16,7 @@ import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
-const LOUIS_IMG = require("../../assets/louis/louis_ref.png");
+const LOUIS_IMG = require("../../assets/louis/louis_avatar.png");
 
 type Habit = { title: string; done?: boolean };
 type Briefing = {
@@ -38,32 +38,45 @@ type Briefing = {
   dismissed_at?: string | null;
 };
 
-const STORAGE_KEY = "briefing_dismissed_local_date";
+const STORAGE_KEY = "briefing_dismissed_id";
 
 export function DailyBriefingModal() {
   const router = useRouter();
   const [b, setB] = useState<Briefing | null>(null);
   const [visible, setVisible] = useState(false);
 
+  // Iter 94u.1 — Poll for a fresh briefing every time the app comes into
+  // focus + every 2 minutes while open. This is what makes the notification
+  // dynamic: when the client's roster / timezone / current city changes
+  // (e.g. they've landed somewhere new), the backend re-issues the briefing
+  // with a new id + trigger=context_change; we re-open the modal.
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    let pollId: any = null;
+
+    async function check() {
       try {
         const r = await api<any>("/daily-briefing/today");
+        if (cancelled) return;
         if (!r?.briefing || !r?.enabled) return;
+        const dismissedId = await AsyncStorage.getItem(STORAGE_KEY);
+        // Skip if this exact briefing id was already dismissed on this device.
+        if (dismissedId === r.briefing.id) return;
         if (r.briefing.dismissed_at) return;
-        // Client-side idempotency — if we already showed it today, don't reopen.
-        const last = await AsyncStorage.getItem(STORAGE_KEY);
-        if (last === r.briefing.date_local) return;
         setB(r.briefing as Briefing);
         setVisible(true);
       } catch { /* silent */ }
-    })();
+    }
+    check();
+    // Every 2 min while mounted — catches roster syncs / TZ changes.
+    pollId = setInterval(check, 120_000);
+    return () => { cancelled = true; if (pollId) clearInterval(pollId); };
   }, []);
 
   const dismiss = async () => {
     setVisible(false);
-    if (b?.date_local) {
-      try { await AsyncStorage.setItem(STORAGE_KEY, b.date_local); } catch {}
+    if (b?.id) {
+      try { await AsyncStorage.setItem(STORAGE_KEY, b.id); } catch {}
     }
     try { await api("/daily-briefing/dismiss", { method: "POST", body: {} }); } catch {}
   };

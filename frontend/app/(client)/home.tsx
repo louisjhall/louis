@@ -170,8 +170,15 @@ export default function Home() {
       setProgrammeFocus(focus);
       setLiveStateReceipt(live?.receipt || null);
       setLiveStateData(live?.live_state || null);
+      // Iter 94j — after a fresh load, if this brand-new client hasn't yet
+      // answered the first-day-choice question, route them to the choice
+      // screen. Only fires on Day 1 (needs_choice comes from the backend
+      // which anchors on programme_start_date_local).
+      if (prog && (prog as any).first_day_choice_needed && !(prog as any).first_day_choice) {
+        try { router.replace("/first-day-choice" as any); } catch { /* ignore */ }
+      }
     } finally { setLoading(false); }
-  }, [user]);
+  }, [user, router]);
 
   const dismissPrompt = async (p: any) => {
     setPrompts((s) => s.filter((x) => x.id !== p.id));
@@ -389,6 +396,59 @@ export default function Home() {
                 <Text style={styles.jobProcessingCta}>TAP TO SEE PROGRESS →</Text>
               </View>
             </Pressable>
+          ) : null}
+
+          {/* Iter 94j — Setup Day card. Appears when programme.first_day_choice=="setup_day"
+              AND today == programme_start_date_local. Replaces the empty
+              "no workout today" feeling with a clear checklist + CTAs. */}
+          {programme?.is_setup_day_today && !programme?.first_day_choice_needed ? (
+            <View style={styles.setupCard} testID="home-setup-day-card">
+              <View style={styles.setupHeader}>
+                <View style={styles.setupIconWrap}>
+                  <Ionicons name="clipboard" size={22} color={theme.color.brand} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.setupTitle}>SETUP DAY</Text>
+                  <Text style={styles.setupSub}>
+                    Today is for getting ready, not rushing into training.
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.setupChecklist}>
+                {[
+                  "Review your programme",
+                  "Check your first workout",
+                  "Confirm your equipment",
+                  "Review your roster",
+                  "Add hotel setup if needed",
+                  "Message Louis with anything that looks wrong",
+                ].map((t, i) => (
+                  <View key={i} style={styles.setupRow}>
+                    <Ionicons name="ellipse-outline" size={14} color={theme.color.textMuted} />
+                    <Text style={styles.setupRowT}>{t}</Text>
+                  </View>
+                ))}
+              </View>
+              {programme.first_real_workout_date_local ? (
+                <Text style={styles.setupFirstReal}>
+                  First proper session: <Text style={{ fontWeight: "800", color: theme.color.text }}>{programme.first_real_workout_date_local}</Text>
+                </Text>
+              ) : null}
+              <View style={styles.setupActions}>
+                <Pressable style={styles.setupBtn} onPress={() => {}} testID="setup-view-plan">
+                  <Ionicons name="calendar" size={14} color={theme.color.brand} />
+                  <Text style={styles.setupBtnT}>VIEW MY PLAN</Text>
+                </Pressable>
+                <Pressable style={styles.setupBtn} onPress={() => router.push("/(client)/profile" as any)} testID="setup-check-equipment">
+                  <Ionicons name="barbell" size={14} color={theme.color.brand} />
+                  <Text style={styles.setupBtnT}>CHECK EQUIPMENT</Text>
+                </Pressable>
+                <Pressable style={styles.setupBtn} onPress={() => router.push("/(client)/messages" as any)} testID="setup-message-louis">
+                  <Ionicons name="chatbubble-ellipses" size={14} color={theme.color.brand} />
+                  <Text style={styles.setupBtnT}>MESSAGE LOUIS</Text>
+                </Pressable>
+              </View>
+            </View>
           ) : null}
 
           {showBanner && (
@@ -609,8 +669,15 @@ export default function Home() {
           {programme ? (
             (() => {
               const goal = programme.goal_label || programme.goal_key || "Your Plan";
-              const phaseLbl = (programme.phase && (programme.phase.label || programme.phase.key)) || "Current Phase";
-              const wkIdx = (programme.week_index ?? 0) + 1;
+              const phaseLbl = (programme.phase && (programme.phase.label || programme.phase.key)) || "Foundation Phase";
+              // Iter 94j — Use `display_week` computed server-side from
+              // `programme_start_date_local`. Fall back to the raw
+              // `week_index` (already 1-indexed) for old programmes that
+              // haven't been re-enriched. NEVER add +1 here — that was the
+              // Day-1 shows-Week-2 bug.
+              const wkIdx = programme.display_week
+                ?? programme.week_index
+                ?? 1;
               const target = programme.target_sessions_per_week || programme.progression?.target_sessions_per_week;
               const planned = programme.progression?.sessions_planned_this_week;
               const done = programme.progression?.sessions_completed_this_week;
@@ -974,6 +1041,32 @@ const styles = StyleSheet.create({
   jobProcessingTitle: { color: theme.color.brand, fontSize: 13, fontWeight: "900", letterSpacing: 1.5 },
   jobProcessingSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
   jobProcessingCta:   { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 8 },
+  // Iter 94j — Setup Day card styles. Calm, uncluttered — signals "planning day"
+  // not "broken app".
+  setupCard: {
+    padding: 16, borderRadius: 14, marginBottom: theme.space.md,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  setupHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 },
+  setupIconWrap: {
+    width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.surfaceElev,
+  },
+  setupTitle: { color: theme.color.brand, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
+  setupSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  setupChecklist: { gap: 6, marginBottom: 10 },
+  setupRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  setupRowT: { color: theme.color.text, fontSize: 12 },
+  setupFirstReal: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, marginBottom: 10 },
+  setupActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  setupBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: theme.color.surface,
+  },
+  setupBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   setupCard: {
     padding: theme.space.lg, borderRadius: theme.radius.md,
     borderWidth: 1, borderColor: theme.color.brand,

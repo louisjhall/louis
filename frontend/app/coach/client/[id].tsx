@@ -762,7 +762,7 @@ export default function ClientDetail() {
               {data?.profile?.home_base ? ` · Base ${data.profile.home_base}` : ""}
               {data?.profile?.route_focus ? ` · ${data.profile.route_focus}` : ""}
               {"\n"}
-              {programme?.goal_label ? `Goal: ${programme.goal_label} · ${programme?.phase?.label || ""} · Week ${programme?.week_index || "—"}` : "No programme yet."}
+              {programme?.goal_label ? `Goal: ${programme.goal_label} · ${programme?.phase?.label || ""} · Week ${programme?.display_week || programme?.week_index || "—"}` : "No programme yet."}
             </Text>
           </View>
         )}
@@ -908,7 +908,7 @@ export default function ClientDetail() {
               <View style={styles.progRow}>
                 <View style={styles.progCell}>
                   <Text style={styles.progLabel}>WEEK</Text>
-                  <Text style={styles.progValue}>{programme.week_index || "—"}</Text>
+                  <Text style={styles.progValue}>{programme.display_week || programme.week_index || "—"}</Text>
                 </View>
                 <View style={styles.progCell}>
                   <Text style={styles.progLabel}>TARGET</Text>
@@ -951,7 +951,7 @@ export default function ClientDetail() {
                           h.id === programme.id && { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
                         ]}
                       >
-                        <Text style={styles.histChipTop}>V{h.version_number} · WK {h.week_index || "—"}</Text>
+                          <Text style={styles.histChipTop}>V{h.version_number} · WK {h.display_week || h.week_index || "—"}</Text>
                         <Text style={styles.histChipMid}>{h.phase?.label || "—"}</Text>
                         <Text style={styles.histChipSub}>
                           {h.validation_status === "needs_review" ? "REVIEW" : h.coach_approved ? "APPROVED" : "OK"}

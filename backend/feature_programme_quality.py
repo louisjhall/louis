@@ -1011,6 +1011,20 @@ async def persist_programme_record(
         "guardrail_report": guardrail_report,
         "start_date": start_iso,
         "end_date": end_iso,
+        # Iter 94j — Authoritative day-1 anchor for week-display maths. Set
+        # once when the programme is first created and NEVER rewritten by
+        # regenerations (unless coach explicitly resets it via
+        # POST /programme/first-day-choice with mode=restart). This kills the
+        # off-by-one week-display bug: display_week is computed on the fly
+        # from `days_since(programme_start_date_local) / 7 + 1`.
+        "programme_start_date_local": (existing or {}).get("programme_start_date_local") or start_iso,
+        # Iter 94j — first-day choice (setup_day / light_mobility_today /
+        # train_today). None until the client answers. Carried across
+        # regens so we don't nag once answered.
+        "first_day_choice": (existing or {}).get("first_day_choice"),
+        "first_day_choice_made_at": (existing or {}).get("first_day_choice_made_at"),
+        "first_real_workout_date_local": (existing or {}).get("first_real_workout_date_local"),
+        "first_day_block_reason": (existing or {}).get("first_day_block_reason"),
         "roster_context_summary": context.get("roster_summary"),
         "generated_reasoning": validation.get("summary"),
         "validation_status": "ok" if validation.get("ok") else "needs_review",
@@ -1031,10 +1045,81 @@ async def persist_programme_record(
 # Read endpoints
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Iter 94j — Display enrichment: `display_week` computed from
+# `programme_start_date_local` so a Day-1 client NEVER sees Week 2.
+# Also carries the `first_day_choice` so the client home + coach view can
+# render the correct copy.
+# ---------------------------------------------------------------------------
+
+def _display_week_for(prog: dict) -> int:
+    """Return the 1-indexed week number to show the client, based on the
+    authoritative `programme_start_date_local`. Rules per Part 2:
+
+      * 0-6 days since start  → Week 1
+      * 7-13 days              → Week 2
+      * 14-20 days             → Week 3
+      * capped at week_index if set (never regresses past prior periodisation)
+    """
+    if not prog:
+        return 1
+    start_iso = (
+        prog.get("programme_start_date_local")
+        or prog.get("start_date")
+        or prog.get("created_at")
+        or ""
+    )
+    try:
+        # Accept ISO date or ISO datetime.
+        start = _dt.date.fromisoformat(str(start_iso)[:10])
+    except Exception:
+        start = _dt.date.today()
+    today = _dt.date.today()
+    days = max(0, (today - start).days)
+    dw = days // 7 + 1  # 1-indexed
+    # For a brand-new programme we DO NOT trust week_index if it disagrees —
+    # Louis may have regenerated with a stale week_index. The start date is
+    # authoritative for the client-facing display.
+    return int(dw)
+
+
+def enrich_programme_for_display(prog: Optional[dict]) -> Optional[dict]:
+    """Attach `display_week` and setup-day metadata to a programme doc without
+    mutating the source. Callers who send the programme to a client should run
+    this first so the UI receives a single source of truth.
+    """
+    if not prog:
+        return prog
+    out = dict(prog)
+    dw = _display_week_for(prog)
+    out["display_week"] = dw
+    out["programme_start_date_local"] = prog.get("programme_start_date_local") or prog.get("start_date")
+    # For the client-facing home banner ("Foundation Phase — Week 1")
+    phase = prog.get("phase") or {}
+    phase_label = (phase.get("label") if isinstance(phase, dict) else None) or "Foundation"
+    out["phase_display_label"] = f"{phase_label} — Week {dw}"
+    # Setup-day telemetry — used by the client home Setup Day card & the coach
+    # programme card.
+    fdc = prog.get("first_day_choice")
+    out["first_day_choice"] = fdc
+    out["first_day_choice_made_at"] = prog.get("first_day_choice_made_at")
+    out["first_day_choice_needed"] = (
+        fdc is None
+        and dw == 1
+        and prog.get("validation_status") in (None, "ok", "needs_review")
+    )
+    out["first_real_workout_date_local"] = prog.get("first_real_workout_date_local")
+    out["is_setup_day_today"] = (
+        fdc == "setup_day"
+        and _dt.date.today().isoformat() == str(prog.get("programme_start_date_local") or "")[:10]
+    )
+    return out
+
+
 @api.get("/programme/current")
 async def programme_current(user: dict = Depends(current_user)):
     p = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
-    return p or {}
+    return enrich_programme_for_display(p) or {}
 
 
 @api.get("/coach/clients/{client_id}/programme")
@@ -1053,13 +1138,221 @@ async def coach_programme_for_client(client_id: str, coach: dict = Depends(requi
         {"user_id": client_id, "date": {"$gte": today, "$lte": horizon}},
         {"_id": 0, "id": 1, "date": 1, "title": 1, "focus": 1, "day_load": 1, "duration_min": 1, "rationale": 1},
     ).sort("date", 1).to_list(20)
-    return {"programme": p, "next_7_days": preview}
+    return {"programme": enrich_programme_for_display(p), "next_7_days": preview}
 
 
 @api.get("/coach/clients/{client_id}/programme/history")
 async def coach_programme_history(client_id: str, coach: dict = Depends(require_role("coach"))):
     rows = await db.programmes.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(20)
-    return {"programmes": rows, "count": len(rows)}
+    return {"programmes": [enrich_programme_for_display(r) for r in rows], "count": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# Iter 94j — First-day choice endpoint (Parts 4, 5, 7 of the spec)
+# ---------------------------------------------------------------------------
+
+class FirstDayChoiceBody(__import__("pydantic").BaseModel):
+    choice: str  # "setup_day" | "light_mobility_today" | "train_today"
+
+
+@api.get("/programme/first-day-status")
+async def programme_first_day_status(user: dict = Depends(current_user)):
+    """Tell the frontend whether it should show the first-day choice screen."""
+    p = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    if not p:
+        return {"needs_choice": False, "reason": "no_programme"}
+    enriched = enrich_programme_for_display(p)
+    return {
+        "needs_choice": bool(enriched.get("first_day_choice_needed")),
+        "current_choice": enriched.get("first_day_choice"),
+        "display_week": enriched.get("display_week"),
+        "programme_start_date_local": enriched.get("programme_start_date_local"),
+        "first_real_workout_date_local": enriched.get("first_real_workout_date_local"),
+        "is_setup_day_today": enriched.get("is_setup_day_today"),
+    }
+
+
+@api.post("/programme/first-day-choice")
+async def programme_first_day_choice(body: FirstDayChoiceBody, user: dict = Depends(current_user)):
+    """Client records their first-day choice. Rules per Parts 5 + 7:
+
+      * setup_day → today is a Setup Day. First workout = tomorrow or the next
+        suitable roster day. Today's workout (if the generator scheduled one)
+        gets marked `optional=True + role='setup_day_soft'` so it doesn't
+        show as a required session.
+      * light_mobility_today → today is optional 10-15 min mobility. Today's
+        workout gets replaced with a 15-min mobility stub if empty.
+      * train_today → today's workout runs as planned unless the roster day
+        is unsuitable (long-haul / night / heavy duty) — in which case we
+        move first real workout to the next suitable day and stash a
+        block_reason for the coach.
+    """
+    choice = str(body.choice or "").strip().lower()
+    if choice not in ("setup_day", "light_mobility_today", "train_today"):
+        raise HTTPException(400, "choice must be one of: setup_day, light_mobility_today, train_today")
+
+    prog = await db.programmes.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+    if not prog:
+        raise HTTPException(404, "No programme yet — cannot set first-day choice")
+
+    today_iso = _dt.date.today().isoformat()
+    tomorrow_iso = (_dt.date.today() + _dt.timedelta(days=1)).isoformat()
+    updates: dict = {
+        "first_day_choice": choice,
+        "first_day_choice_made_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    block_reason: Optional[str] = None
+
+    if choice == "setup_day":
+        updates["first_real_workout_date_local"] = tomorrow_iso
+        # Soft-cancel any workout scheduled for today so it doesn't demand
+        # completion. We DON'T delete it — coach can revive if the client
+        # changes their mind.
+        try:
+            await db.workouts.update_many(
+                {"user_id": user["id"], "date": today_iso, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                {"$set": {
+                    "optional": True,
+                    "role": "setup_day_soft",
+                    "change_reason": (
+                        "Today is your setup day — review your plan, check equipment "
+                        "and prepare. Your first proper session is scheduled for "
+                        f"{tomorrow_iso}."
+                    ),
+                    "updated_at": now_iso(),
+                }},
+            )
+        except Exception:
+            logger.exception("first_day_choice=setup_day: workout soft-cancel failed")
+
+    elif choice == "light_mobility_today":
+        updates["first_real_workout_date_local"] = tomorrow_iso
+        # Replace today's workout with a 15-min mobility stub if it's not
+        # already an active workout the client has started.
+        try:
+            await db.workouts.update_many(
+                {"user_id": user["id"], "date": today_iso, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                {"$set": {
+                    "optional": True,
+                    "role": "first_day_mobility",
+                    "title": "Optional Mobility",
+                    "focus": "mobility",
+                    "duration_min": 15,
+                    "change_reason": (
+                        "Optional short mobility session today. Your first proper "
+                        f"training session is scheduled for {tomorrow_iso}."
+                    ),
+                    "updated_at": now_iso(),
+                }},
+            )
+        except Exception:
+            logger.exception("first_day_choice=light_mobility_today: patch failed")
+
+    elif choice == "train_today":
+        # Suitability check: look at today's roster day; block if long-haul /
+        # night duty / red-eye is present.
+        today_row = None
+        roster_id = prog.get("roster_id")
+        if roster_id:
+            roster = await db.rosters.find_one({"id": roster_id}, {"_id": 0}) or {}
+            for d in (roster.get("days") or []):
+                if str(d.get("date"))[:10] == today_iso:
+                    today_row = d
+                    break
+        blocked_terms = ("long_haul", "long-haul", "night_flight", "night-flight",
+                         "overnight", "red_eye", "red-eye", "heavy_duty")
+        dtype = str((today_row or {}).get("day_type") or "").lower()
+        if any(k in dtype for k in blocked_terms):
+            block_reason = (
+                f"Roster shows '{today_row.get('day_type')}' today — "
+                "too demanding for a real session. First workout moved to "
+                "the next suitable day."
+            )
+            updates["first_day_block_reason"] = block_reason
+            updates["first_real_workout_date_local"] = tomorrow_iso
+            # Also soft-cancel today's workout so it doesn't demand completion.
+            try:
+                await db.workouts.update_many(
+                    {"user_id": user["id"], "date": today_iso, "completed": {"$ne": True}, "coach_locked": {"$ne": True}},
+                    {"$set": {
+                        "optional": True,
+                        "role": "first_day_blocked",
+                        "change_reason": block_reason,
+                        "updated_at": now_iso(),
+                    }},
+                )
+            except Exception:
+                logger.exception("first_day_choice=train_today+blocked: workout patch failed")
+            # Coach task so Louis sees this decision & the block.
+            try:
+                await _create_first_day_coach_task(
+                    user=user, choice=choice, block_reason=block_reason,
+                    programme_id=prog["id"],
+                )
+            except Exception:
+                logger.exception("first_day_coach_task failed (non-fatal)")
+        else:
+            updates["first_real_workout_date_local"] = today_iso
+
+    # Persist to the programme doc.
+    await db.programmes.update_one({"id": prog["id"]}, {"$set": updates})
+
+    # Timeline audit entry so the coach dashboard shows the choice.
+    try:
+        await db.programme_timeline.insert_one({
+            "id": new_id(),
+            "user_id": user["id"],
+            "programme_id": prog["id"],
+            "type": "first_day_choice",
+            "choice": choice,
+            "block_reason": block_reason,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
+
+    updated = await db.programmes.find_one({"id": prog["id"]}, {"_id": 0})
+    return {
+        "ok": True,
+        "programme": enrich_programme_for_display(updated),
+        "block_reason": block_reason,
+    }
+
+
+async def _create_first_day_coach_task(
+    *, user: dict, choice: str, block_reason: Optional[str], programme_id: str,
+) -> None:
+    """Coach task for `train_today blocked` per Part 11 of spec."""
+    try:
+        coach = await db.users.find_one(
+            {"role": "coach", "status": {"$ne": "archived"}},
+            {"id": 1, "_id": 0}, sort=[("created_at", 1)],
+        )
+        coach_id = (coach or {}).get("id")
+    except Exception:
+        coach_id = None
+    if not coach_id:
+        return
+    await db.coach_tasks.insert_one({
+        "id": new_id(),
+        "type": "first_day_blocked",
+        "title": f"Client wanted to train today but roster made it unsuitable: {user.get('name')}",
+        "description": block_reason or "Blocked by roster suitability check.",
+        "client_id": user["id"],
+        "coach_id": coach_id,
+        "status": "open",
+        "priority": "medium",
+        "payload": {
+            "client_id": user["id"],
+            "client_name": user.get("name"),
+            "programme_id": programme_id,
+            "choice": choice,
+            "block_reason": block_reason,
+        },
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    })
 
 
 # ---------------------------------------------------------------------------

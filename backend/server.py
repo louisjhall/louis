@@ -8955,12 +8955,20 @@ async def _client_summary(u: dict) -> dict:
     if prog:
         phase = prog.get("phase") or {}
         gr = prog.get("guardrail_report") or {}
+        # Iter 94j — compute display_week from programme_start_date_local (or
+        # start_date fallback) so a Day-1 client's coach card also shows Week 1.
+        try:
+            from feature_programme_quality import _display_week_for as _dw
+            _display_week = _dw(prog)
+        except Exception:
+            _display_week = prog.get("week_index") or 1
         programme_pill = {
             "goal_key": prog.get("goal_key"),
             "goal_label": prog.get("goal_label"),
             "phase_key": phase.get("key") if isinstance(phase, dict) else None,
             "phase_label": phase.get("label") if isinstance(phase, dict) else None,
             "week_index": prog.get("week_index"),
+            "display_week": _display_week,
             "target_sessions_per_week": prog.get("target_sessions_per_week"),
             "validation_status": prog.get("validation_status"),
             "coach_approved": bool(prog.get("coach_approved")),
@@ -8968,6 +8976,9 @@ async def _client_summary(u: dict) -> dict:
             # Iter 93 (Phase 3) — surface guardrail summary
             "guardrail_healed": int(gr.get("healed") or 0),
             "guardrail_flagged": int(gr.get("flagged") or 0),
+            # Iter 94j — first-day choice visible on coach clients list
+            "first_day_choice": prog.get("first_day_choice"),
+            "first_day_block_reason": prog.get("first_day_block_reason"),
         }
     # Iter 81 Phase 4: attach the latest weekly progression snapshot so the
     # coach can see 'PROGRESSING / STEADY / PULL BACK / DELOAD' at a glance.

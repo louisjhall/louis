@@ -304,7 +304,7 @@ export default function Clients() {
                       <Text style={styles.progPillText} numberOfLines={1}>
                         {(cl.programme_pill.goal_label || "Programme").toUpperCase()}
                         {cl.programme_pill.phase_label ? ` · ${cl.programme_pill.phase_label}` : ""}
-                        {cl.programme_pill.week_index ? ` · WK ${cl.programme_pill.week_index}` : ""}
+                        {cl.programme_pill.display_week || cl.programme_pill.week_index ? ` · WK ${cl.programme_pill.display_week || cl.programme_pill.week_index}` : ""}
                         {cl.programme_pill.target_sessions_per_week ? ` · ${cl.programme_pill.target_sessions_per_week}×/WK` : ""}
                       </Text>
                     </View>

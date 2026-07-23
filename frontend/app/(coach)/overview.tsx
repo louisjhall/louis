@@ -27,6 +27,31 @@ export default function CoachOverview() {
     total_workouts?: number; clients_affected?: number;
     by_user?: { user_email?: string; count: number; example_workout?: string }[];
   } | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
+
+  const runVerifyScan = useCallback(async () => {
+    setScanning(true);
+    setScanResult(null);
+    try {
+      const r = await api<{ scanned: number; flagged: number }>(
+        "/coach/equipment-mismatches/scan-now",
+        { method: "POST" },
+      );
+      setScanResult(
+        r.flagged === 0
+          ? `✓ Clean — scanned ${r.scanned} future workouts, no mismatches`
+          : `⚠ ${r.flagged} of ${r.scanned} workouts flagged`,
+      );
+      // Refresh the tile
+      const eq = await api<any>("/coach/equipment-mismatches?window_days=14").catch(() => null);
+      setEquipMismatch(eq);
+    } catch (e: any) {
+      setScanResult(`Scan failed: ${e?.message || "unknown"}`);
+    } finally {
+      setScanning(false);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     // Don't fire authenticated calls until the auth bootstrap has finished
@@ -155,7 +180,28 @@ export default function CoachOverview() {
 
           {alerts.length > 0 && (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>ATTENTION REQUIRED</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                <Text style={styles.sectionTitle}>ATTENTION REQUIRED</Text>
+                <Pressable
+                  onPress={runVerifyScan}
+                  disabled={scanning}
+                  testID="verify-scan-btn"
+                  style={{
+                    flexDirection: "row", alignItems: "center", gap: 6,
+                    paddingHorizontal: 10, paddingVertical: 6,
+                    borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
+                    opacity: scanning ? 0.5 : 1,
+                  }}
+                >
+                  <Ionicons name="scan" size={12} color={theme.color.textMuted} />
+                  <Text style={{ color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 }}>
+                    {scanning ? "SCANNING..." : "VERIFY NOW"}
+                  </Text>
+                </Pressable>
+              </View>
+              {scanResult ? (
+                <Text style={{ color: theme.color.textMuted, fontSize: 12, marginTop: 6, marginBottom: 6 }}>{scanResult}</Text>
+              ) : null}
               <View style={{ gap: 8 }}>
                 {alerts.map((a, i) => {
                   const RowInner = (

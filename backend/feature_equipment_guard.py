@@ -240,3 +240,120 @@ async def coach_equipment_mismatch_resolve(
         {"$set": {"resolved": True, "resolved_at": now, "resolved_by": user.get("id")}},
     )
     return {"ok": True, "workout_id": workout_id}
+
+
+# ---------------------------------------------------------------------------
+# Verify-now scan (Iter 95h — safety-net #3)
+# ---------------------------------------------------------------------------
+
+@api.post("/coach/equipment-mismatches/scan-now")
+async def coach_equipment_scan_now(user: dict = Depends(current_user)):
+    """Runs the guard across every FUTURE workout in the DB right now.
+    Returns a per-user summary. Coach-only. Idempotent (safe to spam)."""
+    if user.get("role") != "coach":
+        raise HTTPException(status_code=403, detail="Coach only")
+    today = _dt.date.today().isoformat()
+
+    # Preload users once, index by id.
+    users = {u["id"]: u async for u in _db.users.find({}, {"_id": 0})}
+
+    scanned = 0
+    flagged = 0
+    per_user: dict[str, int] = {}
+
+    async for w in _db.workouts.find(
+        {"date": {"$gte": today}, "completed": {"$ne": True}},
+        {"_id": 0},
+    ):
+        uid = w.get("user_id")
+        u = users.get(uid)
+        if not u:
+            continue
+        scanned += 1
+        res = await enforce_and_notify(_db, u, w, reason_source="scan_now")
+        if not res.get("ok"):
+            flagged += 1
+            per_user[u.get("email") or uid] = per_user.get(u.get("email") or uid, 0) + 1
+
+    return {
+        "ok": True,
+        "scanned": scanned,
+        "flagged": flagged,
+        "per_user": per_user,
+        "run_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# On-write guard (Iter 95h — safety-net #2)
+# ---------------------------------------------------------------------------
+
+async def guard_after_workout_write(user_id: Optional[str], workout_id: str) -> Optional[dict]:
+    """Call this after ANY code writes a workout doc. Idempotent + safe.
+
+    Any future code path that inserts/updates a workout should call this
+    once with (user_id, workout.id). If they forget, the scan-now endpoint
+    picks it up as a safety net.
+    """
+    if not user_id or not workout_id:
+        return None
+    try:
+        u = await _db.users.find_one({"id": user_id}, {"_id": 0})
+        w = await _db.workouts.find_one({"id": workout_id}, {"_id": 0})
+        if not u or not w:
+            return None
+        # Skip completed / already-flagged workouts.
+        if w.get("completed") or w.get("equipment_mismatch"):
+            return None
+        return await enforce_and_notify(_db, u, w, reason_source="on_write")
+    except Exception:
+        logger.exception("guard_after_workout_write failed (non-fatal)")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Global on-write hook (Iter 95h — safety-net #2, module init)
+# ---------------------------------------------------------------------------
+# Monkey-patches db.workouts.insert_one and .replace_one so ANY code path
+# that writes a workout gets guarded automatically — even future code
+# added by someone else who doesn't know this guard exists.
+
+import asyncio as _asyncio  # noqa: E402
+
+
+def _install_workout_write_hook():
+    coll = _db.workouts
+    if getattr(coll, "_crewfit_guard_installed", False):
+        return
+    original_insert = coll.insert_one
+    original_replace = coll.replace_one
+
+    async def _guarded_insert(doc, *args, **kwargs):
+        result = await original_insert(doc, *args, **kwargs)
+        try:
+            uid = doc.get("user_id"); wid = doc.get("id")
+            if uid and wid:
+                # Fire-and-forget so we never block the write.
+                _asyncio.create_task(guard_after_workout_write(uid, wid))
+        except Exception:
+            logger.exception("on-write hook (insert) failed non-fatally")
+        return result
+
+    async def _guarded_replace(filter_, replacement, *args, **kwargs):
+        result = await original_replace(filter_, replacement, *args, **kwargs)
+        try:
+            uid = (replacement or {}).get("user_id") or (filter_ or {}).get("user_id")
+            wid = (replacement or {}).get("id") or (filter_ or {}).get("id")
+            if uid and wid:
+                _asyncio.create_task(guard_after_workout_write(uid, wid))
+        except Exception:
+            logger.exception("on-write hook (replace) failed non-fatally")
+        return result
+
+    coll.insert_one = _guarded_insert       # type: ignore[assignment]
+    coll.replace_one = _guarded_replace     # type: ignore[assignment]
+    coll._crewfit_guard_installed = True    # type: ignore[attr-defined]
+    logger.info("Iter 95h — workout on-write guard installed")
+
+
+_install_workout_write_hook()

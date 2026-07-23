@@ -11,6 +11,7 @@ import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBa
 import { RealityModal } from "@/src/components/RealityModal";
 import { ModePickerModal } from "@/src/components/ModePickerModal";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
+import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
 import { getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
 
 const PREFERRED_CHANNELS = [

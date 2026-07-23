@@ -40,12 +40,19 @@ CrewFit is a personal wellbeing tool — not a medical device. Speak to your AME
 
 ## 2. Screenshots to produce (6.7" iPhone + 6.9" iPhone required)
 
-Suggested set (5 shots):
-1. **Home / Roster-aware dashboard** — Louis briefing card + today's training + nutrition.
-2. **Guided workout** — big timer, video demo, "pause to learn".
-3. **Calendar with airport-aware plan** — 14-day scroll with hotel + duty pills.
-4. **Progress charts** — goal-adaptive chart tab.
-5. **Weekly review from Louis** — Sunday check-in card.
+**Done (Iter 95c).** Six store-ready screenshots at 1290×2796 (iOS) and 1080×1920 (Play) live at:
+- `/app/store_assets/final/`      — iOS 6.7" iPhone (satisfies 6.9" too)
+- `/app/store_assets/final_play/` — Google Play phone (9:16)
+
+Full set + regeneration instructions in `/app/store_assets/README.md`.
+
+The set (in order):
+1. **`01_home_briefing.png`** — *Coaching that flies with you.* Hero: pilot warming up in hangar. Screen: home dashboard.
+2. **`02_guided_workout.png`** — *Never train alone in a hotel again.* Hero: pilot in hotel gym. Screen: guided timer.
+3. **`03_calendar.png`** — *Never train on the wrong day.* Hero: crew at airport concourse. Screen: multi-month calendar.
+4. **`04_nutrition.png`** — *Fuel across every timezone.* Hero: crew preparing high-protein meal. Screen: nutrition dashboard.
+5. **`05_weekly_review.png`** — *A weekly review from Louis.* Hero: pilot + crew reviewing plan. Screen: home w/ weekly review card.
+6. **`06_crew_hotel.png`** — *Hotel room. 20 minutes. Done.* Hero: crew doing hotel squats. Screen: workout detail.
 
 ## 3. In-app content quality gates
 

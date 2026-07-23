@@ -62,6 +62,19 @@ export default function GuidedFlow() {
   const [soundOn, setSoundOn] = useState(true);
   const [previousLabel, setPreviousLabel] = useState<string>("");
   const [howToOpen, setHowToOpen] = useState(false);
+  // Iter 94t (Phase 2) — When the client opens the demo/how-to sheet during
+  // a work set, we auto-pause the workout so they can actually study the
+  // video. On close we restore whatever paused state they were in before.
+  const pausedBeforeHowTo = useRef<boolean>(false);
+  const openHowTo = useCallback(() => {
+    pausedBeforeHowTo.current = paused;
+    setPaused(true);
+    setHowToOpen(true);
+  }, [paused]);
+  const closeHowTo = useCallback(() => {
+    setHowToOpen(false);
+    setPaused(pausedBeforeHowTo.current);
+  }, []);
   const [swapOpen, setSwapOpen] = useState(false);
   const [content, setContent] = useState<any>(null);
   const [prev, setPrev] = useState<any>(null);
@@ -389,8 +402,10 @@ export default function GuidedFlow() {
             logRpe={logRpe} setLogRpe={setLogRpe}
             logNote={logNote} setLogNote={setLogNote}
             saving={saving}
+            paused={paused}
+            onTogglePause={() => setPaused((v) => !v)}
             onComplete={completeSet}
-            onHowTo={() => setHowToOpen(true)}
+            onHowTo={openHowTo}
             onSwap={() => setSwapOpen(true)}
           />
         )}
@@ -410,8 +425,8 @@ export default function GuidedFlow() {
         visible={howToOpen}
         exercise={currentEx}
         content={content}
-        onClose={() => setHowToOpen(false)}
-        onSwap={() => { setHowToOpen(false); setSwapOpen(true); }}
+        onClose={closeHowTo}
+        onSwap={() => { closeHowTo(); setSwapOpen(true); }}
       />
 
       {/* Swap sheet */}
@@ -515,7 +530,7 @@ function WarmupPanel({
 function WorkPanel({
   ex, setIdx, targetSets, targetReps, cue, media, prev, isCardio,
   logWeight, setLogWeight, logReps, setLogReps, logRpe, setLogRpe, logNote, setLogNote,
-  saving, onComplete, onHowTo, onSwap,
+  saving, paused, onTogglePause, onComplete, onHowTo, onSwap,
 }: any) {
   const suggested = prev?.suggested_load;
   const suggestedT = suggested ? `${suggested}kg × ${targetReps}` : null;
@@ -523,6 +538,16 @@ function WorkPanel({
 
   return (
     <View>
+      {paused ? (
+        <Pressable onPress={onTogglePause} style={styles.pausedBanner} testID="gf-paused-banner">
+          <Ionicons name="pause-circle" size={18} color={theme.color.amber} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.pausedBannerT}>WORKOUT PAUSED</Text>
+            <Text style={styles.pausedBannerS}>Tap here or press play to resume</Text>
+          </View>
+          <Ionicons name="play" size={18} color={theme.color.amber} />
+        </Pressable>
+      ) : null}
       <Text style={styles.phaseLabel}>WORK</Text>
       <Text style={styles.exName}>{ex?.name}</Text>
       <Text style={styles.exMeta}>Set {setIdx} of {targetSets} · {targetReps} reps</Text>
@@ -595,9 +620,9 @@ function WorkPanel({
       </Pressable>
 
       <View style={styles.rowActions}>
-        <Pressable onPress={onHowTo} style={styles.secondaryBtn} testID="gf-howto">
-          <Ionicons name="book" size={14} color={theme.color.brand} />
-          <Text style={styles.secondaryBtnT}>HOW TO</Text>
+        <Pressable onPress={onHowTo} style={[styles.secondaryBtn, styles.secondaryBtnPrimary]} testID="gf-howto">
+          <Ionicons name="play-circle" size={16} color="#fff" />
+          <Text style={[styles.secondaryBtnT, { color: "#fff" }]}>PAUSE & WATCH DEMO</Text>
         </Pressable>
         <Pressable onPress={onSwap} style={styles.secondaryBtn} testID="gf-swap">
           <Ionicons name="swap-horizontal" size={14} color={theme.color.brand} />
@@ -644,14 +669,27 @@ function HowToSheet({
         <Pressable style={sheetStyles.backdrop} onPress={onClose} />
         <View style={sheetStyles.sheet}>
           <View style={sheetStyles.head}>
-            <Text style={sheetStyles.eyebrow}>HOW TO</Text>
-            <Pressable onPress={onClose} hitSlop={12}><Ionicons name="close" size={22} color={theme.color.text} /></Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={sheetStyles.eyebrow}>PAUSED · LEARN THIS EXERCISE</Text>
+              <Text style={sheetStyles.pausedNote}>
+                Your workout is paused. Tap RESUME when you&apos;re ready.
+              </Text>
+            </View>
+            <Pressable onPress={onClose} hitSlop={12} testID="gf-howto-close"><Ionicons name="close" size={22} color={theme.color.text} /></Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
             <Text style={sheetStyles.title}>{exercise?.name}</Text>
-            {hasVideo && (
+            {hasVideo ? (
               <View style={{ marginTop: 12, borderRadius: 12, overflow: "hidden" }}>
                 <ExerciseVideoPlayer exerciseName={exercise?.name || ""} />
+              </View>
+            ) : (
+              <View style={sheetStyles.noVideoCard}>
+                <Ionicons name="videocam-off" size={20} color={theme.color.textMuted} />
+                <View style={{ flex: 1 }}>
+                  <Text style={sheetStyles.noVideoT}>Video coming soon</Text>
+                  <Text style={sheetStyles.noVideoS}>Louis is preparing a demo for this exercise. Follow the coaching cues below for now.</Text>
+                </View>
               </View>
             )}
             {instr.length > 0 && (
@@ -697,6 +735,12 @@ function HowToSheet({
               <Text style={sheetStyles.swapBtnT}>SUGGEST ALTERNATIVES</Text>
             </Pressable>
           </ScrollView>
+          <View style={sheetStyles.footer}>
+            <Pressable onPress={onClose} style={sheetStyles.resumeBtn} testID="gf-howto-resume">
+              <Ionicons name="play" size={16} color="#fff" />
+              <Text style={sheetStyles.resumeBtnT}>RESUME WORKOUT</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -935,6 +979,15 @@ const styles = StyleSheet.create({
   checkOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
 
   pausedHint: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 2, textAlign: "center", marginTop: 12, fontWeight: "800" },
+  pausedBanner: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    padding: 12, borderRadius: 10, marginBottom: 12,
+    backgroundColor: "rgba(245,158,11,0.10)",
+    borderWidth: 1, borderColor: "rgba(245,158,11,0.55)",
+  },
+  pausedBannerT: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  pausedBannerS: { color: theme.color.textMuted, fontSize: 12, marginTop: 2 },
+  secondaryBtnPrimary: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
 
   nextUpCard: {
     marginTop: 20, padding: 14, borderRadius: 12,
@@ -982,6 +1035,14 @@ const sheetStyles = StyleSheet.create({
     padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  pausedNote: { color: theme.color.textMuted, fontSize: 11, marginTop: 4 },
+  noVideoCard: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    padding: 12, marginTop: 12, borderRadius: 10,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+  },
+  noVideoT: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
+  noVideoS: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "800" },
   subtle: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, lineHeight: 17 },
   h: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 8 },
@@ -1003,4 +1064,15 @@ const sheetStyles = StyleSheet.create({
   },
   altName: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
   altReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, lineHeight: 15 },
+  footer: {
+    position: "absolute", bottom: 0, left: 0, right: 0,
+    padding: 16, paddingBottom: 24,
+    backgroundColor: theme.color.surface,
+    borderTopWidth: 1, borderTopColor: theme.color.divider,
+  },
+  resumeBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    padding: 14, borderRadius: 12, backgroundColor: theme.color.brand,
+  },
+  resumeBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
 });

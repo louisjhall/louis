@@ -450,13 +450,6 @@ export default function WorkoutDetail() {
             <TextInput style={styles.exNameInput} value={rpe} onChangeText={setRpe} keyboardType="number-pad" placeholder="7" placeholderTextColor={theme.color.textDim} testID="rpe-input" />
           </View>
         )}
-
-        {!isCoach && !w.completed && (
-          <Pressable testID="open-timer" onPress={() => router.push(`/workout/${w.id}/timer`)} style={styles.timerBtn}>
-            <Ionicons name="timer" size={16} color={theme.color.brand} />
-            <Text style={styles.timerText}>OR RUN AS GUIDED TIMER (recommended for layovers/HIIT)</Text>
-          </Pressable>
-        )}
       </ScrollView>
 
       <View style={styles.sticky}>

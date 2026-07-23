@@ -14,7 +14,13 @@ import { theme } from "@/src/lib/theme";
 
 type Totals = { calories: number; protein_g: number; carbs_g?: number; fats_g?: number; count?: number };
 type Target  = { calories?: number; protein_g?: number };
-type Payload = { totals?: Totals; target?: Target; date_local?: string };
+type Payload = {
+  totals?: Totals;
+  target?: Target;
+  date_local?: string;
+  hydration_ml?: number;
+  remaining?: { calories?: number; protein_g?: number; hydration_ml?: number };
+};
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -44,10 +50,30 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
 
   const totals = data?.totals || { calories: 0, protein_g: 0 };
   const target = data?.target || {};
+  const remaining = data?.remaining || {};
   const nothingLogged = (totals.count ?? 0) === 0 && (totals.calories ?? 0) === 0;
 
-  const openFood = () => router.push("/nutrition/log" as any);
+  // Iter 94t (Phase 2) — Open the full Nutrition Centre (photo scan,
+  // barcode, food search, favourites, manual) instead of jumping straight
+  // into manual entry. The centre is where clients see targets + insights.
+  const openNutritionHub = () => router.push("/nutrition" as any);
+  const openLog = () => router.push("/nutrition" as any);
   const openSummary = () => router.push("/nutrition" as any);
+
+  // Compute the "you're short on X" hint so clients see a concrete next
+  // action instead of just numbers.
+  const shortOn: { label: string; remaining: number; unit: string } | null = (() => {
+    if (!target.protein_g && !target.calories) return null;
+    // Prefer protein if the client is significantly under (>20g remaining) —
+    // protein is the harder target for crew.
+    if (target.protein_g && (remaining as any).protein_g > 20) {
+      return { label: "PROTEIN", remaining: Math.round((remaining as any).protein_g), unit: "g" };
+    }
+    if (target.calories && (remaining as any).calories > 200) {
+      return { label: "CALORIES", remaining: Math.round((remaining as any).calories), unit: "kcal" };
+    }
+    return null;
+  })();
 
   if (loading && !data) {
     return (
@@ -70,7 +96,17 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
       {nothingLogged ? (
         <>
           <Text style={styles.empty}>No meals logged yet today.</Text>
-          <Pressable onPress={openFood} style={styles.primaryBtn} testID="nutrition-log-first">
+          {(target.calories || target.protein_g) ? (
+            <View style={styles.targetRow}>
+              {target.calories ? (
+                <Text style={styles.targetPill}>Target: {fmt(target.calories)} kcal</Text>
+              ) : null}
+              {target.protein_g ? (
+                <Text style={styles.targetPill}>{fmt(target.protein_g)}g protein</Text>
+              ) : null}
+            </View>
+          ) : null}
+          <Pressable onPress={openLog} style={styles.primaryBtn} testID="nutrition-log-first">
             <Ionicons name="add-circle" size={14} color="#fff" />
             <Text style={styles.primaryBtnT}>LOG FIRST MEAL</Text>
           </Pressable>
@@ -100,8 +136,17 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
             </View>
           </View>
 
+          {shortOn ? (
+            <View style={styles.shortRow} testID="nutrition-short-on">
+              <Ionicons name="alert-circle" size={14} color={theme.color.amber} />
+              <Text style={styles.shortT}>
+                <Text style={{ fontWeight: "900" }}>{shortOn.remaining}{shortOn.unit}</Text> {shortOn.label.toLowerCase()} left to hit today&apos;s target.
+              </Text>
+            </View>
+          ) : null}
+
           <View style={styles.actions}>
-            <Pressable onPress={openFood} style={[styles.btn, styles.primaryBtn]} testID="nutrition-log">
+            <Pressable onPress={openNutritionHub} style={[styles.btn, styles.primaryBtn]} testID="nutrition-log">
               <Ionicons name="add" size={14} color="#fff" />
               <Text style={styles.primaryBtnT}>LOG FOOD</Text>
             </Pressable>
@@ -138,6 +183,18 @@ const styles = StyleSheet.create({
   barFill: { height: 4, backgroundColor: theme.color.green, borderRadius: 2 },
 
   actions: { flexDirection: "row", gap: 8, marginTop: 6 },
+  targetRow: { flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" },
+  targetPill: {
+    color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+    backgroundColor: theme.color.surface3,
+  },
+  shortRow: {
+    flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+    backgroundColor: "rgba(245,158,11,0.08)", borderWidth: 1, borderColor: "rgba(245,158,11,0.35)",
+  },
+  shortT: { color: theme.color.text, fontSize: 12, flex: 1 },
   btn: { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4, padding: 10, borderRadius: 8 },
   primaryBtn: { backgroundColor: theme.color.brand },
   primaryBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },

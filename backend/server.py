@@ -4078,15 +4078,19 @@ def _ensure_workout_content(doc: dict, user: dict) -> dict:
     except Exception:
         logger.exception("workout content fallback failed")
     doc["needs_coach_review"] = True
-    doc["validation_status"] = "needs_review"
+    # Iter 94i — clearer validation status. "adjusted_fallback" tells the client
+    # UI (and Louis) that this workout was healed from empty, not just flagged.
+    doc["validation_status"] = "adjusted_fallback"
     existing_reason = doc.get("change_reason")
-    fill_reason = (
-        "Content was missing when this session was generated — CrewFit filled it "
-        "with a safe bodyweight session. Louis will review and swap in the right "
-        "training block."
-    )
+    # Iter 94i — friendly wording per user directive: no more "content was
+    # missing" scare copy. The coach task carries the full technical reason
+    # for Louis.
+    from feature_workout_fallback_v2 import CLIENT_FRIENDLY_FALLBACK_REASON
+    fill_reason = CLIENT_FRIENDLY_FALLBACK_REASON
     doc["change_reason"] = f"{existing_reason}  · {fill_reason}" if existing_reason else fill_reason
     doc["insufficient_content_reason"] = doc.get("insufficient_content_reason") or "llm_returned_empty_exercises"
+    doc["fallback_used"] = True
+    doc["fallback_type"] = "safe_bodyweight_stub"
     return doc
 
 
@@ -4140,8 +4144,28 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
                     "validation_status": h.get("validation_status"),
                     "change_reason": h.get("change_reason"),
                     "insufficient_content_reason": h.get("insufficient_content_reason"),
+                    "fallback_used": h.get("fallback_used", True),
+                    "fallback_type": h.get("fallback_type", "safe_bodyweight_stub"),
                     "auto_healed_at": now_iso(),
                 }})
+                # Iter 94i — emit a coach task for every heal so Louis sees exactly
+                # which workout got healed, when, and why. Dedup'd by workout_id.
+                try:
+                    from feature_workout_fallback_v2 import create_workout_fallback_task
+                    prof = (user or {}).get("profile") or {}
+                    await create_workout_fallback_task(
+                        user=user,
+                        workout=h,
+                        reason=(
+                            h.get("insufficient_content_reason")
+                            or "Workout generator returned empty content. "
+                               "Healed with safe bodyweight stub."
+                        ),
+                        equipment_available=prof.get("equipment") or [],
+                        validation_errors=["empty_exercises_after_generation"],
+                    )
+                except Exception:
+                    logger.exception("workout heal: coach task creation failed (non-fatal)")
             except Exception:
                 logger.exception("heal-persist failed for workout %s", h.get("id"))
         logger.info("workout heal-on-read: healed %d workouts for user=%s",

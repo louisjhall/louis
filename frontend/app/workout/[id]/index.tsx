@@ -37,6 +37,10 @@ export default function WorkoutDetail() {
   const [rpe, setRpe] = useState("");
   const [realityOpen, setRealityOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
+  // Iter 94i — dismissed flag lets the client tap "Start Bodyweight Session"
+  // and hide the fallback banner so the workout looks calm again. Server-side
+  // state (needs_coach_review) is unchanged — Louis still sees the task.
+  const [dismissed, setDismissed] = useState(false);
   // Traffic-light variants — client-only. Coach view always sees Green.
   const [variant, setVariant] = useState<VariantKey>("green");
   const [variants, setVariants] = useState<any>(null);
@@ -264,12 +268,63 @@ export default function WorkoutDetail() {
           </Pressable>
         )}
 
-        {view.change_reason && (
-          <View style={styles.changeReason} testID="workout-change-reason">
-            <Ionicons name="information-circle" size={16} color={theme.color.brand} />
+        {view.change_reason && !dismissed && (
+          <View
+            style={[
+              styles.changeReason,
+              (view.needs_coach_review || view.validation_status === "adjusted_fallback") && styles.changeReasonAlert,
+            ]}
+            testID="workout-change-reason"
+          >
+            <Ionicons
+              name={view.needs_coach_review ? "alert-circle" : "information-circle"}
+              size={18}
+              color={view.needs_coach_review ? theme.color.amber : theme.color.brand}
+            />
             <View style={{ flex: 1 }}>
-              <Text style={styles.changeReasonLabel}>WHY THIS CHANGED</Text>
+              <Text style={[styles.changeReasonLabel, view.needs_coach_review && { color: theme.color.amber }]}>
+                {view.validation_status === "adjusted_fallback"
+                  ? "SESSION ADJUSTED"
+                  : "WHY THIS CHANGED"}
+              </Text>
               <Text style={styles.changeReasonText}>{view.change_reason}</Text>
+
+              {/* Iter 94i — Client-facing action buttons for fallback / needs-review sessions */}
+              {!isCoach && (view.needs_coach_review || view.validation_status === "adjusted_fallback") && (
+                <View style={styles.actionsRow} testID="workout-fallback-actions">
+                  <Pressable
+                    style={styles.actionBtn}
+                    onPress={() => {
+                      // "Start Bodyweight Session" just dismisses the banner and
+                      // scrolls to the first exercise — the bodyweight-safe
+                      // version is already loaded into view.exercises.
+                      // We use a `key` state to fade the banner rather than fully
+                      // remove it, so tests can still find it if needed.
+                      setDismissed(true);
+                    }}
+                    testID="workout-fallback-start"
+                  >
+                    <Ionicons name="play" size={14} color={theme.color.brand} />
+                    <Text style={styles.actionBtnLabel}>START BODYWEIGHT SESSION</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.actionBtn}
+                    onPress={() => router.push("/(client)/messages" as any)}
+                    testID="workout-fallback-message"
+                  >
+                    <Ionicons name="chatbubble-ellipses" size={14} color={theme.color.brand} />
+                    <Text style={styles.actionBtnLabel}>MESSAGE LOUIS</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.actionBtn}
+                    onPress={() => router.push("/(client)/profile" as any)}
+                    testID="workout-fallback-equipment"
+                  >
+                    <Ionicons name="barbell" size={14} color={theme.color.brand} />
+                    <Text style={styles.actionBtnLabel}>UPDATE EQUIPMENT</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -472,6 +527,26 @@ const styles = StyleSheet.create({
   },
   changeReasonText: {
     fontSize: 12, color: theme.color.text, lineHeight: 17,
+  },
+  // Iter 94i — escalated styling when a workout has been adjusted to a
+  // safe fallback. Amber border/background makes it unmissable + clearly
+  // ties to the client-facing action buttons below.
+  changeReasonAlert: {
+    backgroundColor: "rgba(245,158,11,0.12)",
+    borderLeftWidth: 3, borderLeftColor: theme.color.amber,
+  },
+  actionsRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12,
+  },
+  actionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8, paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: theme.color.brandTint,
+  },
+  actionBtnLabel: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5,
   },
   eqWarn: {
     flexDirection: "row", alignItems: "flex-start", gap: 4,

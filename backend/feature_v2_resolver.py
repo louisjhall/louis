@@ -487,8 +487,20 @@ async def apply_resolver_to_workouts(
                     except Exception:
                         logger.exception("apply_resolver: request creation raised (non-fatal)")
             else:
-                # Unresolved — drop from the client workout (user directive).
+                # Iter 94i — NO MORE SILENT DROPS. Instead of removing the
+                # exercise, swap in a movement-pattern-matched bodyweight
+                # substitute so the workout stays intact and the client can
+                # still train. We still log the exercise-request task so
+                # Louis is notified.
+                from feature_workout_fallback_v2 import bodyweight_substitute_for
+                sub = bodyweight_substitute_for(item)
+                sub["exercise_id"] = None  # no library id — synthesized
+                sub["resolver_status"] = "unresolved_bodyweight_fallback"
+                exs_out.append(sub)
                 stats["dropped"] += 1
+                # Ensure the workout ships with a coach-review flag on it — Louis
+                # sees exactly why it happened via the coach task created below.
+                w["needs_coach_review"] = True
                 if requests_this_run < MAX_REQUESTS_PER_PROGRAMME:
                     try:
                         rid = await create_exercise_request_if_missing(
@@ -497,7 +509,7 @@ async def apply_resolver_to_workouts(
                             programme_id=programme_id,
                             workout_id=w.get("id"),
                             substitute_used=None,
-                            reason=f"LLM asked for '{item.get('name')}' — no approved substitute exists yet.",
+                            reason=f"LLM asked for '{item.get('name')}' — no approved substitute exists yet. A bodyweight version was used in the meantime.",
                         )
                         if rid:
                             requests_this_run += 1

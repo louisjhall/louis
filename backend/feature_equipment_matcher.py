@@ -334,12 +334,27 @@ def enforce_equipment_gate(
     needs_review = fails > 0
     if needs_review:
         workout["needs_coach_review"] = True
+        # Iter 94i — mark this precisely so the client UI can render the
+        # right banner + action buttons and Louis knows it was an equipment gate.
+        workout["validation_status"] = workout.get("validation_status") or "adjusted_fallback"
+        workout["fallback_used"] = True
+        workout["fallback_type"] = "equipment_gate"
         prefix = "Hotel gym is limited" if hotel_context else "Your setup is missing kit"
         names_line = ", ".join(failed_names[:3]) + ("..." if len(failed_names) > 3 else "")
         loc_suffix = f" at {hotel_name}" if hotel_context and hotel_name else ""
+        # Iter 94i — friendly client message. The technical detail (specific
+        # exercises + missing equipment) still lives on each exercise's
+        # `equipment_reason` for the coach task; the client just sees the
+        # calm summary.
         workout["change_reason"] = (
-            f"{prefix}{loc_suffix} — {fails} exercise(s) need coach review: {names_line}. "
-            f"Louis will review before you train."
+            "Session adjusted — one or more exercises needed kit you don't have "
+            f"{f'at {hotel_name}' if hotel_context and hotel_name else ''}. "
+            "Louis has been notified. You can still train safely with the "
+            "bodyweight-safe version below."
+        ).strip()
+        # Keep the technical summary for coach / debug logs.
+        workout["change_reason_technical"] = (
+            f"{prefix}{loc_suffix} — {fails} exercise(s) need coach review: {names_line}."
         )
     return {
         "checked": len(exs),

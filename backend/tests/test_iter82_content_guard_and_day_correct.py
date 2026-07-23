@@ -29,9 +29,16 @@ def test_content_guard_fills_empty_workout():
     fixed = _ensure_workout_content(copy.deepcopy(doc), _fake_user())
     assert len(fixed.get("exercises") or []) > 0, "Content guard MUST fill empty exercises"
     assert fixed.get("needs_coach_review") is True
-    assert fixed.get("validation_status") == "needs_review"
-    assert "Content was missing" in (fixed.get("change_reason") or "")
+    # Iter 94i — validation_status is now `adjusted_fallback` (more informative
+    # than the old generic `needs_review`).
+    assert fixed.get("validation_status") == "adjusted_fallback"
+    # Iter 94i — friendly client-facing wording replaces the "content was
+    # missing" scare copy. Louis sees the technical reason via the coach task.
+    assert "session adjusted" in (fixed.get("change_reason") or "").lower()
+    assert "content was missing" not in (fixed.get("change_reason") or "").lower()
     assert fixed.get("insufficient_content_reason") == "llm_returned_empty_exercises"
+    assert fixed.get("fallback_used") is True
+    assert fixed.get("fallback_type") == "safe_bodyweight_stub"
 
 
 def test_content_guard_leaves_populated_workout_alone():
@@ -75,7 +82,8 @@ def test_content_guard_appends_reason_when_one_exists():
     }
     fixed = _ensure_workout_content(copy.deepcopy(doc), _fake_user())
     assert "Hotel gym unknown" in fixed["change_reason"]
-    assert "Content was missing" in fixed["change_reason"]
+    # Iter 94i — new friendly wording (was: "Content was missing").
+    assert "session adjusted" in fixed["change_reason"].lower()
     # Both reasons joined with the "  · " separator
     assert "  · " in fixed["change_reason"]
 

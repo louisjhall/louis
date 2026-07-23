@@ -408,12 +408,12 @@ class DismissBody(BaseModel):
 
 @api.post("/daily-briefing/dismiss")
 async def dismiss_briefing(body: DismissBody, user: dict = Depends(current_user)):
-    tz, _ = await _user_timezone(user["id"])
-    date_local = _local_today(tz).isoformat()
+    # Ensure today's briefing exists before recording dismissal so we never
+    # write a stub row missing content.
+    doc = await _get_or_build_today(user)
     await db.daily_briefings.update_one(
-        {"user_id": user["id"], "date_local": date_local},
+        {"user_id": user["id"], "date_local": doc["date_local"]},
         {"$set": {"dismissed_at": now_iso(), "dismiss_reason": body.reason}},
-        upsert=True,
     )
     return {"ok": True}
 

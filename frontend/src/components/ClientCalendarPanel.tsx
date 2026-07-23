@@ -63,8 +63,7 @@ type RangePayload = {
   counts: Record<string, number>;
 };
 
-const INITIAL_FWD = 6;      // Today + next 6 = 7 days visible by default
-const CHUNK_DAYS = 14;      // Each "load more" reveals two more weeks
+const PAGE_DAYS = 6;        // 7 visible days = today + 6 (initial), or a 7-day page
 const MAX_BACK = 60;
 const MAX_FWD  = 60;
 
@@ -125,14 +124,15 @@ export function ClientCalendarPanel({
 }) {
   const router = useRouter();
   const today = useMemo(localToday, []);
-  // Default view = today + next 7 days. Past & further future are hidden
-  // behind explicit "Show past" / "Load more upcoming" buttons so crew
-  // aren't distracted by older sessions by default.
+  // Iter 95e — REGRESSION FIX
+  // Default view = today + next 6 days = a strict 7-day WINDOW.
+  // Prev/Next 7 Days buttons *page* by 7 (jump), they do not append.
+  // "Today" button resets to today + 6.
   const [fromDate, setFromDate] = useState<string>(() => today);
-  const [toDate, setToDate] = useState<string>(() => addDays(today, INITIAL_FWD));
+  const [toDate, setToDate] = useState<string>(() => addDays(today, PAGE_DAYS));
   const [days, setDays] = useState<DayCard[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState<"none" | "back" | "fwd">("none");
+  const [paging, setPaging] = useState<"none" | "back" | "fwd" | "today">("none");
   const [activeRecovery, setActiveRecovery] = useState<DayCard | null>(null);
 
   const load = useCallback(async (from: string, to: string) => {
@@ -153,90 +153,117 @@ export function ClientCalendarPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
-  const loadMoreBack = useCallback(async () => {
-    if (loadingMore !== "none") return;
-    const days_back = daysBetween(fromDate, today);
-    if (days_back >= MAX_BACK) return;
-    setLoadingMore("back");
-    const nextFrom = addDays(fromDate, -CHUNK_DAYS);
-    const capped = daysBetween(nextFrom, today) > MAX_BACK ? addDays(today, -MAX_BACK) : nextFrom;
-    await load(capped, toDate);
-    setFromDate(capped);
-    setLoadingMore("none");
-  }, [fromDate, toDate, today, load, loadingMore]);
+  const goPrev7 = useCallback(async () => {
+    if (paging !== "none") return;
+    const newFrom = addDays(fromDate, -7);
+    // Cap at MAX_BACK days before today.
+    const cappedFrom = daysBetween(newFrom, today) > MAX_BACK ? addDays(today, -MAX_BACK) : newFrom;
+    const newTo = addDays(cappedFrom, PAGE_DAYS);
+    setPaging("back");
+    await load(cappedFrom, newTo);
+    setFromDate(cappedFrom);
+    setToDate(newTo);
+    setPaging("none");
+  }, [fromDate, today, load, paging]);
 
-  const loadMoreFwd = useCallback(async () => {
-    if (loadingMore !== "none") return;
-    const days_fwd = daysBetween(today, toDate);
-    if (days_fwd >= MAX_FWD) return;
-    setLoadingMore("fwd");
-    const nextTo = addDays(toDate, CHUNK_DAYS);
-    const capped = daysBetween(today, nextTo) > MAX_FWD ? addDays(today, MAX_FWD) : nextTo;
-    await load(fromDate, capped);
-    setToDate(capped);
-    setLoadingMore("none");
-  }, [fromDate, toDate, today, load, loadingMore]);
+  const goNext7 = useCallback(async () => {
+    if (paging !== "none") return;
+    const newFrom = addDays(fromDate, 7);
+    // Cap at MAX_FWD days ahead of today.
+    const cappedFrom = daysBetween(today, newFrom) > MAX_FWD - PAGE_DAYS
+      ? addDays(today, MAX_FWD - PAGE_DAYS)
+      : newFrom;
+    const newTo = addDays(cappedFrom, PAGE_DAYS);
+    setPaging("fwd");
+    await load(cappedFrom, newTo);
+    setFromDate(cappedFrom);
+    setToDate(newTo);
+    setPaging("none");
+  }, [fromDate, today, load, paging]);
+
+  const goToday = useCallback(async () => {
+    if (paging !== "none") return;
+    setPaging("today");
+    await load(today, addDays(today, PAGE_DAYS));
+    setFromDate(today);
+    setToDate(addDays(today, PAGE_DAYS));
+    setPaging("none");
+    onJumpToToday?.();
+  }, [today, load, paging, onJumpToToday]);
 
   const goDetail = useCallback((c: DayCard) => {
     if (c.workout?.id) router.push(`/workout/${c.workout.id}` as any);
   }, [router]);
 
-  const hasPastLoaded = daysBetween(fromDate, today) > 0;
+  const isViewingToday = fromDate === today;
+  const canGoBack = daysBetween(addDays(fromDate, -7), today) <= MAX_BACK;
+  const canGoFwd  = daysBetween(today, fromDate) < MAX_FWD - PAGE_DAYS;
 
   return (
     <View>
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>YOUR CALENDAR</Text>
-        {hasPastLoaded ? (
-          <Pressable
-            style={styles.todayBtn}
-            onPress={onJumpToToday}
-            testID="cal-today-btn"
-          >
-            <Ionicons name="today" size={13} color={theme.color.brand} />
-            <Text style={styles.todayBtnT}>TODAY</Text>
-          </Pressable>
-        ) : null}
+        <Text style={styles.rangeT}>{niceDate(fromDate)}  →  {niceDate(toDate)}</Text>
       </View>
 
       {loading && days.length === 0 ? (
         <ActivityIndicator color={theme.color.brand} style={{ marginTop: 20 }} />
       ) : (
         <>
-          {hasPastLoaded ? (
+          {/* Iter 95e — paged navigation (Prev 7 / Today / Next 7) */}
+          <View style={styles.pagerRow}>
             <Pressable
-              onPress={loadMoreBack}
-              disabled={loadingMore !== "none" || daysBetween(fromDate, today) >= MAX_BACK}
-              style={styles.loadMoreBtn}
-              testID="cal-load-more-back"
+              onPress={goPrev7}
+              disabled={paging !== "none" || !canGoBack}
+              style={[styles.pagerBtn, (!canGoBack || paging !== "none") && styles.pagerBtnDisabled]}
+              testID="cal-prev-7"
             >
-              {loadingMore === "back" ? (
-                <ActivityIndicator color={theme.color.brand} />
-              ) : (
-                <Text style={styles.loadMoreT}>
-                  {daysBetween(fromDate, today) >= MAX_BACK
-                    ? "REACHED START (60 DAYS BACK)"
-                    : "LOAD OLDER DAYS ↑"}
-                </Text>
-              )}
-            </Pressable>
-          ) : (
-            <Pressable
-              onPress={loadMoreBack}
-              disabled={loadingMore !== "none"}
-              style={[styles.loadMoreBtn, styles.pastBtn]}
-              testID="cal-show-past"
-            >
-              {loadingMore === "back" ? (
-                <ActivityIndicator color={theme.color.brand} />
+              {paging === "back" ? (
+                <ActivityIndicator color={theme.color.text} size="small" />
               ) : (
                 <>
-                  <Ionicons name="time-outline" size={13} color={theme.color.textMuted} />
-                  <Text style={styles.loadMoreT}>SHOW PAST SESSIONS ↑</Text>
+                  <Ionicons name="chevron-back" size={14} color={theme.color.text} />
+                  <Text style={styles.pagerT}>PREV 7</Text>
                 </>
               )}
             </Pressable>
-          )}
+
+            <Pressable
+              onPress={goToday}
+              disabled={paging !== "none" || isViewingToday}
+              style={[
+                styles.pagerBtn,
+                styles.pagerBtnToday,
+                (isViewingToday || paging !== "none") && styles.pagerBtnDisabled,
+              ]}
+              testID="cal-today"
+            >
+              {paging === "today" ? (
+                <ActivityIndicator color={theme.color.brand} size="small" />
+              ) : (
+                <>
+                  <Ionicons name="today" size={14} color={theme.color.brand} />
+                  <Text style={[styles.pagerT, { color: theme.color.brand }]}>TODAY</Text>
+                </>
+              )}
+            </Pressable>
+
+            <Pressable
+              onPress={goNext7}
+              disabled={paging !== "none" || !canGoFwd}
+              style={[styles.pagerBtn, (!canGoFwd || paging !== "none") && styles.pagerBtnDisabled]}
+              testID="cal-next-7"
+            >
+              {paging === "fwd" ? (
+                <ActivityIndicator color={theme.color.text} size="small" />
+              ) : (
+                <>
+                  <Text style={styles.pagerT}>NEXT 7</Text>
+                  <Ionicons name="chevron-forward" size={14} color={theme.color.text} />
+                </>
+              )}
+            </Pressable>
+          </View>
 
           {days.map((c) => (
             <View
@@ -253,26 +280,6 @@ export function ClientCalendarPanel({
               />
             </View>
           ))}
-
-          <Pressable
-            onPress={loadMoreFwd}
-            disabled={loadingMore !== "none" || daysBetween(today, toDate) >= MAX_FWD}
-            style={[styles.loadMoreBtn, styles.pastBtn]}
-            testID="cal-load-more-fwd"
-          >
-            {loadingMore === "fwd" ? (
-              <ActivityIndicator color={theme.color.brand} />
-            ) : (
-              <>
-                <Ionicons name="chevron-down" size={13} color={theme.color.textMuted} />
-                <Text style={styles.loadMoreT}>
-                  {daysBetween(today, toDate) >= MAX_FWD
-                    ? "REACHED END (60 DAYS AHEAD)"
-                    : "SHOW MORE UPCOMING"}
-                </Text>
-              </>
-            )}
-          </Pressable>
         </>
       )}
 
@@ -413,6 +420,46 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  rangeT: {
+    color: theme.color.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  // Iter 95e — paged 7-day navigation
+  pagerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 12,
+  },
+  pagerBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+  },
+  pagerBtnToday: {
+    borderColor: theme.color.brand,
+    backgroundColor: theme.color.brandTint,
+  },
+  pagerBtnDisabled: {
+    opacity: 0.4,
+  },
+  pagerT: {
+    color: theme.color.text,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+  },
   todayBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,

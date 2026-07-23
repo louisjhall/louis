@@ -56,8 +56,10 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
   // Iter 94t (Phase 2) — Open the full Nutrition Centre (photo scan,
   // barcode, food search, favourites, manual) instead of jumping straight
   // into manual entry. The centre is where clients see targets + insights.
+  // Iter 95e — route to the modality picker instead of the nutrition hub
+  // so "LOG FIRST MEAL" opens Photo / Barcode / Search / Manual choices.
   const openNutritionHub = () => router.push("/nutrition" as any);
-  const openLog = () => router.push("/nutrition" as any);
+  const openLog = () => router.push("/nutrition/pick" as any);
   const openSummary = () => router.push("/nutrition" as any);
 
   // Compute the "you're short on X" hint so clients see a concrete next
@@ -146,7 +148,7 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
           ) : null}
 
           <View style={styles.actions}>
-            <Pressable onPress={openNutritionHub} style={[styles.btn, styles.primaryBtn]} testID="nutrition-log">
+            <Pressable onPress={openLog} style={[styles.btn, styles.primaryBtn]} testID="nutrition-log">
               <Ionicons name="add" size={14} color="#fff" />
               <Text style={styles.primaryBtnT}>LOG FOOD</Text>
             </Pressable>

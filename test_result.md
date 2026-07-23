@@ -2458,3 +2458,44 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Phase 1 beta blockers cleared. All required public URLs (privacy, support) wired via a single-source-of-truth constants file plus backend app_config. Health disclaimer added to signup with exact required copy. Store-review risk audit: clean. Login demo shortcut confirmed gated (hidden in beta builds). Both public URLs verified opening on mobile."
+
+
+# Iter 95e — REGRESSION-FIX PASS (correction only, no rebuild)
+# Fixed 5 items that were previously reported as complete but failed in real Expo/mobile testing.
+
+backend: []
+
+frontend:
+  - task: "Calendar — page-by-7 instead of append (PREV 7 / TODAY / NEXT 7)"
+    working: true
+    file: "frontend/src/components/ClientCalendarPanel.tsx"
+    verified_on: "Expo web mobile preview 390×844 — screenshots /tmp/i1_calendar_initial.png + /tmp/i1_calendar_next7.png"
+    change: "Replaced load-more append flow with strict 7-day paging. Initial view = today + 6 days. Prev7 / Today / Next7 buttons jump the window by 7."
+
+  - task: "Roster upload — native-safe base64 (was crashing on file:// / content:// URIs)"
+    working: true
+    file: "frontend/app/roster-upload.tsx"
+    verified_on: "Expo web preview loads all 3 pick buttons and no crash. Native path uses `expo-file-system/legacy` readAsStringAsync + cache fallback for Android content:// URIs. Also added WhatsApp escape hatch on upload failure."
+    change: "Rewrote uriToBase64 to branch web vs native. Added error card with Try Again / Choose Different File / Message Louis on WhatsApp buttons."
+
+  - task: "Log First Meal — full modality picker instead of manual-only"
+    working: true
+    file: "frontend/app/nutrition/pick.tsx (new), frontend/src/components/NutritionTodayCard.tsx"
+    verified_on: "Expo /nutrition/pick shows all 4 options (Photo / Barcode / Search / Manual)."
+    change: "New picker route. LOG FIRST MEAL and LOG FOOD buttons now route to /nutrition/pick, which offers all four modalities with feature-flag gating for photo/barcode."
+
+  - task: "Progress — adaptive with goal-class aliases + universal fallback"
+    working: true
+    file: "frontend/src/components/ProgressDashboard.tsx"
+    verified_on: "Expo /progress renders YOUR GOAL FAT LOSS + Adherence + Body Weight chart (-1.7kg) + Body Waist chart."
+    change: "Mapped body_composition → fat_loss panel, marathon → running, muscle → strength, others → health panel fallback. No goal_class now falls through empty."
+
+  - task: "Habits — auto-seed on first-run empty state"
+    working: true
+    file: "frontend/src/components/HabitTodayCard.tsx"
+    verified_on: "Expo home screen shows 'Drink 2L water minimum' habit with DONE/SKIPPED/NOT POSSIBLE controls."
+    change: "If /habits/today returns empty on first load, silently POST /habits/seed and refetch. One-shot per component mount."
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 95e regression-fix pass. No rebuilds, no new features, no LLM/image spend. 5 issues fixed and verified live in the Expo web mobile preview at 390×844. All lint clean. Habits and Progress now populate immediately for a first-run user (auto-seed + goal-class fallback). Roster upload native path fixed by switching to expo-file-system/legacy — was failing silently because the code was using fetch+FileReader which does not support file:// / content:// URIs on native RN."

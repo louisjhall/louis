@@ -108,10 +108,15 @@ export function ProgressDashboard() {
         <SummaryCard d={d} />
         <AdherenceCard d={d} />
 
-        {d.goal_class === "fat_loss" ? <FatLossPanel d={d} onReload={load} /> : null}
-        {d.goal_class === "running" ? <RunningPanel d={d} /> : null}
-        {d.goal_class === "strength" ? <StrengthPanel d={d} /> : null}
-        {d.goal_class === "health" ? <HealthPanel d={d} /> : null}
+        {/* Iter 95e — goal-class aliases + universal fallback so no client sees a blank middle. */}
+        {(() => {
+          const gc = String(d.goal_class || "").toLowerCase();
+          if (gc === "fat_loss" || gc === "body_composition" || gc === "weight_loss") return <FatLossPanel d={d} onReload={load} />;
+          if (gc === "running" || gc === "marathon" || gc === "half_marathon" || gc === "5k" || gc === "10k") return <RunningPanel d={d} />;
+          if (gc === "strength" || gc === "muscle" || gc === "hypertrophy" || gc === "powerlifting") return <StrengthPanel d={d} />;
+          // general_fitness, energy_recovery, return_to_training, health, foundation, unknown → health panel
+          return <HealthPanel d={d} />;
+        })()}
 
         {/* Progress photos always available */}
         <PhotosCard photos={d.photos} onReload={load} />

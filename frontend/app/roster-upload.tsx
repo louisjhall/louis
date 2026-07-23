@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert,
+  Platform, Linking,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
+// Iter 95e — use the legacy File System API (readAsStringAsync + EncodingType
+// live under `expo-file-system/legacy` in v19+; still fully supported).
+import * as FileSystem from "expo-file-system/legacy";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { PUBLIC_URLS } from "@/src/lib/publicUrls";
 
 const STAGES = [
   { key: "uploading", label: "Uploading roster", copy: "Uploading your roster..." },
@@ -27,19 +32,53 @@ const SLOW_MS = 90_000;
 // If we see no movement for this many milliseconds, offer recovery actions.
 const STUCK_MS = 210_000;
 
+/**
+ * Cross-platform "URI → base64" — Iter 95e regression fix.
+ *
+ * Previous version used `fetch(uri) → blob → FileReader.readAsDataURL()`,
+ * which works on the web preview but fails on native RN with `file://` and
+ * `content://` URIs — the exact scheme `expo-document-picker` returns on
+ * device. That's why roster upload silently died in Expo mobile testing.
+ *
+ * We now branch:
+ *   - web  → keep the fetch/FileReader flow (blob:/data: URIs are supported).
+ *   - native → use `expo-file-system`, which reads any file URI reliably.
+ */
 async function uriToBase64(uri: string): Promise<string> {
-  const res = await fetch(uri);
-  const blob = await res.blob();
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const s = String(reader.result || "");
-      const comma = s.indexOf(",");
-      resolve(comma >= 0 ? s.slice(comma + 1) : s);
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+  // Data URIs — already base64.
+  if (uri.startsWith("data:")) {
+    const comma = uri.indexOf(",");
+    if (comma >= 0) return uri.slice(comma + 1);
+  }
+
+  if (Platform.OS === "web") {
+    const res = await fetch(uri);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const s = String(reader.result || "");
+        const comma = s.indexOf(",");
+        resolve(comma >= 0 ? s.slice(comma + 1) : s);
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Native (iOS/Android) — expo-file-system reliably handles file:// and content://.
+  try {
+    return await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  } catch {
+    // Some Android content:// URIs need copying to cache first.
+    const tmp = `${FileSystem.cacheDirectory}roster_${Date.now()}`;
+    await FileSystem.copyAsync({ from: uri, to: tmp });
+    return await FileSystem.readAsStringAsync(tmp, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  }
 }
 
 export default function RosterUpload() {
@@ -280,7 +319,40 @@ export default function RosterUpload() {
                 <Text style={styles.helper}>Starting upload...</Text>
               </View>
             ) : null}
-            {error ? <Text style={styles.err}>{error}</Text> : null}
+            {error ? (
+              <View style={styles.errCardBox} testID="ru-upload-error">
+                <Text style={styles.errCardT}>Roster upload did not complete.</Text>
+                <Text style={styles.errCardB}>{error}</Text>
+                <View style={{ height: 8 }} />
+                <Text style={styles.errCardHint}>
+                  Please try again or send the roster to Louis on WhatsApp.
+                </Text>
+                <View style={styles.errActionsRow}>
+                  <Pressable
+                    testID="ru-err-try-again"
+                    onPress={() => { setError(null); pickPdf(); }}
+                    style={[styles.actBtn, { backgroundColor: theme.color.brand, flex: 1 }]}
+                  >
+                    <Text style={styles.actBtnText}>TRY AGAIN</Text>
+                  </Pressable>
+                  <Pressable
+                    testID="ru-err-choose-different"
+                    onPress={() => { setError(null); pickAnyFile(); }}
+                    style={[styles.actBtn, styles.actBtnGhost, { flex: 1 }]}
+                  >
+                    <Text style={styles.actBtnGhostT}>CHOOSE DIFFERENT FILE</Text>
+                  </Pressable>
+                </View>
+                <Pressable
+                  testID="ru-err-whatsapp"
+                  onPress={() => Linking.openURL(PUBLIC_URLS.whatsapp)}
+                  style={[styles.actBtn, styles.actBtnWa, { marginTop: 8 }]}
+                >
+                  <Ionicons name="logo-whatsapp" size={16} color="#fff" />
+                  <Text style={styles.actBtnText}>MESSAGE LOUIS ON WHATSAPP</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </>
         ) : (
           <>
@@ -424,6 +496,27 @@ const styles = StyleSheet.create({
   pickBtnTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800", letterSpacing: 1.5 },
   pickBtnSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
   err: { color: theme.color.red, marginTop: 20 },
+  // Iter 95e — upload error card with escape hatches (new key to avoid clash with existing `errCard`).
+  errCardBox: {
+    marginTop: 20,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.color.red,
+    backgroundColor: theme.color.surface2,
+  },
+  errCardT: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginBottom: 4 },
+  errCardB: { color: theme.color.textMuted, fontSize: 13, lineHeight: 18 },
+  errCardHint: { color: theme.color.textMuted, fontSize: 12, fontStyle: "italic", marginTop: 8, marginBottom: 6 },
+  errActionsRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  actBtnGhostT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
+  actBtnWa: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#25D366",
+  },
 
   progressCard: { padding: 20, backgroundColor: theme.color.surface2, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border },
   progressHeader: { alignItems: "center", gap: 10, marginBottom: 16 },

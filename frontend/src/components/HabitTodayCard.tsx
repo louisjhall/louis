@@ -42,14 +42,29 @@ export function HabitTodayCard() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [reasonFor, setReasonFor] = useState<{ habit: Habit; status: "skipped" | "not_possible" } | null>(null);
+  const [seedTried, setSeedTried] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const r = await api<{ habits: Habit[] }>("/habits/today");
-      setHabits(r.habits || []);
+      const list = r.habits || [];
+      // Iter 95e regression fix — auto-seed on first-run empty state.
+      // Onboarding used to leave clients with zero habits until Louis
+      // ran `/habits/seed` manually. We now trigger it once from the
+      // client if their list is empty, then re-fetch.
+      if (list.length === 0 && !seedTried) {
+        setSeedTried(true);
+        try {
+          await api("/habits/seed", { method: "POST" });
+          const r2 = await api<{ habits: Habit[] }>("/habits/today");
+          setHabits(r2.habits || []);
+          return;
+        } catch { /* seed is best-effort */ }
+      }
+      setHabits(list);
     } catch { /* silent — habits are optional on the home screen */ } finally { setLoading(false); }
-  }, []);
+  }, [seedTried]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 

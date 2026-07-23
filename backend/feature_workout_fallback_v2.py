@@ -66,10 +66,11 @@ def _infer_pattern(item: dict) -> str:
     if mp and mp in _PATTERN_SUBS:
         return mp
     name = str(item.get("name") or item.get("exercise_name") or "").lower()
+    # Iter 95h — check vertical push FIRST (overhead / shoulder press / OHP).
+    if any(k in name for k in ("overhead press", "shoulder press", "pike", "military press", "strict press", " ohp")):
+        return "vertical_push"
     # word-by-word rules
     if any(k in name for k in ("push-up", "push up", "pushup", "bench press", "chest press", "push")):
-        if "overhead" in name or "shoulder press" in name or "pike" in name:
-            return "vertical_push"
         return "push"
     if any(k in name for k in ("pull-up", "pull up", "chin-up", "chin up", "lat pull")):
         return "vertical_pull"
@@ -94,6 +95,132 @@ def _infer_pattern(item: dict) -> str:
     if any(k in name for k in ("run", "sprint", "bike", "row erg", "erg", "assault")):
         return "cardio"
     return "squat"  # last-ditch safe default
+
+
+# Iter 95h — equipment-tiered substitutes. When the resolver can't find a
+# library match, we substitute using the BEST tier available to the client.
+# Order: barbell > cable > dumbbell > kettlebell > band > bodyweight.
+# This is the fix for "client owns a full gym but gets Bodyweight Squat".
+_TIER_ORDER: tuple[str, ...] = ("barbell", "cable", "dumbbell", "kettlebell", "band", "bodyweight")
+
+# Alias table — normalises whatever the client selected in onboarding to
+# the tier keys we use here.
+_EQUIPMENT_ALIASES: dict[str, str] = {
+    "barbell": "barbell", "olympic bar": "barbell",
+    "bench": "barbell",  # a bench alone unlocks pressing patterns we treat as barbell tier
+    "cable": "cable", "cables": "cable", "cable machine": "cable", "functional trainer": "cable",
+    "dumbbell": "dumbbell", "dumbbells": "dumbbell", "db": "dumbbell", "adjustable dumbbells": "dumbbell",
+    "kettlebell": "kettlebell", "kettlebells": "kettlebell", "kb": "kettlebell",
+    "band": "band", "bands": "band", "resistance band": "band", "resistance bands": "band", "resistance_bands": "band",
+    "bodyweight": "bodyweight", "bodyweight_only": "bodyweight",
+    "yoga mat": "bodyweight", "foam roller": "bodyweight",
+    "pullup_bar": "bodyweight", "pull-up bar": "bodyweight", "trx": "bodyweight",  # accessory only
+    "rower": "cardio", "rowing machine": "cardio", "treadmill": "cardio", "assault bike": "cardio", "bike": "cardio",
+}
+
+
+def _client_best_tier(equipment: Optional[list[str]]) -> str:
+    """Return the best resistance tier the client owns (barbell > ... > bodyweight)."""
+    if not equipment:
+        return "bodyweight"
+    have = set()
+    for e in equipment:
+        key = _EQUIPMENT_ALIASES.get(str(e).strip().lower())
+        if key:
+            have.add(key)
+    for tier in _TIER_ORDER:
+        if tier in have:
+            return tier
+    return "bodyweight"
+
+
+# Iter 95h — tiered substitutes. Each pattern has variants keyed by tier.
+# Falls back down the tier list if the client doesn't have the top choice.
+_TIERED_SUBS: dict[str, dict[str, dict[str, Any]]] = {
+    "squat": {
+        "barbell":    {"name": "Barbell Back Squat",     "sets": 4, "reps": "6-8",    "rest_sec": 120, "equipment": ["barbell"]},
+        "dumbbell":   {"name": "Dumbbell Goblet Squat",  "sets": 3, "reps": "8-12",   "rest_sec": 75,  "equipment": ["dumbbell"]},
+        "kettlebell": {"name": "Kettlebell Goblet Squat","sets": 3, "reps": "8-12",   "rest_sec": 75,  "equipment": ["kettlebell"]},
+        "band":       {"name": "Banded Squat",           "sets": 3, "reps": "12-15",  "rest_sec": 60,  "equipment": ["band"]},
+        "bodyweight": {"name": "Bodyweight Squat",       "sets": 3, "reps": "12-15",  "rest_sec": 60,  "equipment": ["bodyweight"]},
+    },
+    "hinge": {
+        "barbell":    {"name": "Barbell Romanian Deadlift",   "sets": 4, "reps": "6-8",   "rest_sec": 120, "equipment": ["barbell"]},
+        "dumbbell":   {"name": "Dumbbell Romanian Deadlift",  "sets": 3, "reps": "8-12",  "rest_sec": 75,  "equipment": ["dumbbell"]},
+        "kettlebell": {"name": "Kettlebell Swing",            "sets": 4, "reps": "12-15", "rest_sec": 60,  "equipment": ["kettlebell"]},
+        "cable":      {"name": "Cable Pull-Through",          "sets": 3, "reps": "10-12", "rest_sec": 60,  "equipment": ["cable"]},
+        "band":       {"name": "Banded Good Morning",         "sets": 3, "reps": "12-15", "rest_sec": 45,  "equipment": ["band"]},
+        "bodyweight": {"name": "Bodyweight Good Morning",     "sets": 3, "reps": "12-15", "rest_sec": 60,  "equipment": ["bodyweight"]},
+    },
+    "push": {
+        "barbell":    {"name": "Barbell Bench Press",       "sets": 4, "reps": "6-8",  "rest_sec": 120, "equipment": ["barbell", "bench"]},
+        "dumbbell":   {"name": "Dumbbell Bench Press",      "sets": 3, "reps": "8-12", "rest_sec": 75,  "equipment": ["dumbbell", "bench"]},
+        "cable":      {"name": "Cable Chest Press",         "sets": 3, "reps": "10-12","rest_sec": 60,  "equipment": ["cable"]},
+        "kettlebell": {"name": "Kettlebell Floor Press",    "sets": 3, "reps": "8-10", "rest_sec": 60,  "equipment": ["kettlebell"]},
+        "band":       {"name": "Banded Chest Press",        "sets": 3, "reps": "12-15","rest_sec": 45,  "equipment": ["band"]},
+        "bodyweight": {"name": "Push-up (or Incline Push-up)", "sets": 3, "reps": "8-12", "rest_sec": 60, "equipment": ["bodyweight"]},
+    },
+    "vertical_push": {
+        "barbell":    {"name": "Barbell Overhead Press",    "sets": 4, "reps": "5-8",  "rest_sec": 120, "equipment": ["barbell"]},
+        "dumbbell":   {"name": "Dumbbell Shoulder Press",   "sets": 3, "reps": "8-12", "rest_sec": 75,  "equipment": ["dumbbell"]},
+        "kettlebell": {"name": "Kettlebell Strict Press",   "sets": 3, "reps": "6-10", "rest_sec": 75,  "equipment": ["kettlebell"]},
+        "cable":      {"name": "Cable Overhead Press",      "sets": 3, "reps": "10-12","rest_sec": 60,  "equipment": ["cable"]},
+        "band":       {"name": "Banded Overhead Press",     "sets": 3, "reps": "12-15","rest_sec": 45,  "equipment": ["band"]},
+        "bodyweight": {"name": "Pike Push-up",              "sets": 3, "reps": "6-10", "rest_sec": 60,  "equipment": ["bodyweight"]},
+    },
+    "pull": {
+        "barbell":    {"name": "Barbell Bent-Over Row",     "sets": 4, "reps": "6-10", "rest_sec": 90,  "equipment": ["barbell"]},
+        "dumbbell":   {"name": "Single-Arm Dumbbell Row",   "sets": 3, "reps": "10-12 ea. side", "rest_sec": 60, "equipment": ["dumbbell"]},
+        "cable":      {"name": "Cable Row (Seated or Standing)", "sets": 3, "reps": "10-12","rest_sec": 60, "equipment": ["cable"]},
+        "kettlebell": {"name": "Kettlebell Row",            "sets": 3, "reps": "8-12 ea. side", "rest_sec": 60, "equipment": ["kettlebell"]},
+        "band":       {"name": "Banded Row",                "sets": 3, "reps": "12-15","rest_sec": 45,  "equipment": ["band"]},
+        "bodyweight": {"name": "Inverted Row (or Doorway Row)", "sets": 3, "reps": "8-12", "rest_sec": 60, "equipment": ["bodyweight"]},
+    },
+    "vertical_pull": {
+        "cable":      {"name": "Cable Lat Pulldown",        "sets": 3, "reps": "10-12","rest_sec": 60,  "equipment": ["cable"]},
+        "band":       {"name": "Banded Lat Pulldown",       "sets": 3, "reps": "12-15","rest_sec": 45,  "equipment": ["band"]},
+        "bodyweight": {"name": "Doorway Pull-in Iso Hold",  "sets": 3, "reps": "20-30s","rest_sec": 60, "equipment": ["bodyweight"]},
+    },
+    "lunge": {
+        "barbell":    {"name": "Barbell Reverse Lunge",     "sets": 3, "reps": "8 ea. side", "rest_sec": 75, "equipment": ["barbell"]},
+        "dumbbell":   {"name": "Dumbbell Reverse Lunge",    "sets": 3, "reps": "10 ea. side","rest_sec": 60, "equipment": ["dumbbell"]},
+        "kettlebell": {"name": "Kettlebell Reverse Lunge",  "sets": 3, "reps": "10 ea. side","rest_sec": 60, "equipment": ["kettlebell"]},
+        "bodyweight": {"name": "Reverse Lunge",             "sets": 3, "reps": "10 ea. side","rest_sec": 60, "equipment": ["bodyweight"]},
+    },
+    "single_leg": {
+        "dumbbell":   {"name": "Dumbbell Bulgarian Split Squat", "sets": 3, "reps": "8-10 ea. side", "rest_sec": 75, "equipment": ["dumbbell"]},
+        "kettlebell": {"name": "Kettlebell Bulgarian Split Squat", "sets": 3, "reps": "8-10 ea. side", "rest_sec": 75, "equipment": ["kettlebell"]},
+        "bodyweight": {"name": "Split Squat",               "sets": 3, "reps": "10 ea. side","rest_sec": 60, "equipment": ["bodyweight"]},
+    },
+    "conditioning": {
+        "cardio":     {"name": "Rower Intervals",           "sets": 6, "reps": "500m",  "rest_sec": 90,  "equipment": ["rower"]},
+        "kettlebell": {"name": "Kettlebell Swing Intervals","sets": 5, "reps": "15",    "rest_sec": 45,  "equipment": ["kettlebell"]},
+        "bodyweight": {"name": "Jumping Jacks",             "sets": 3, "reps": "45s",   "rest_sec": 30,  "equipment": ["bodyweight"]},
+    },
+    "core":         {"bodyweight": {"name": "Dead Bug", "sets": 3, "reps": "8 ea. side", "rest_sec": 45, "equipment": ["bodyweight"]}},
+    "anti_rotation":{"bodyweight": {"name": "Bird Dog", "sets": 3, "reps": "8 ea. side", "rest_sec": 45, "equipment": ["bodyweight"]}},
+    "carry":        {"dumbbell":   {"name": "Dumbbell Farmer's Carry", "sets": 3, "reps": "30 steps", "rest_sec": 60, "equipment": ["dumbbell"]},
+                     "kettlebell": {"name": "Kettlebell Farmer's Carry", "sets": 3, "reps": "30 steps", "rest_sec": 60, "equipment": ["kettlebell"]},
+                     "bodyweight": {"name": "Bear Crawl", "sets": 3, "reps": "20 steps", "rest_sec": 60, "equipment": ["bodyweight"]}},
+    "cardio":       {"cardio":     {"name": "Rower Steady",             "sets": 1, "reps": "10 min",  "rest_sec": 0, "equipment": ["rower"]},
+                     "bodyweight": {"name": "High-Knee March",          "sets": 3, "reps": "60s",     "rest_sec": 30,"equipment": ["bodyweight"]}},
+}
+
+
+def _pick_tiered_sub(pattern: str, best_tier: str, client_has_cardio: bool) -> dict[str, Any]:
+    """Walk the tier list from `best_tier` downward until we find a variant
+    for this pattern. Guarantees a return value."""
+    variants = _TIERED_SUBS.get(pattern) or _TIERED_SUBS["squat"]
+    # Cardio equipment (rower/bike/treadmill) unlocks conditioning/cardio patterns
+    # but is otherwise unused for resistance patterns.
+    tier_walk = [best_tier] + [t for t in _TIER_ORDER if t != best_tier]
+    if client_has_cardio and pattern in ("conditioning", "cardio"):
+        tier_walk = ["cardio"] + tier_walk
+    for tier in tier_walk:
+        if tier in variants:
+            return dict(variants[tier])
+    # Ultimate safety net.
+    return dict(variants.get("bodyweight") or list(variants.values())[0])
 
 
 # Iter 95g — endurance/run exercises must NEVER be substituted with a
@@ -153,17 +280,16 @@ def _is_mobility_item(item: dict) -> bool:
     return False
 
 
-def bodyweight_substitute_for(item: dict) -> dict:
-    """Return a fully-formed bodyweight substitute dict that mirrors the original
-    item's set/rep/rest scheme when present, so the workout duration stays sane.
-    The returned dict includes `substitute_for` + `substitution_reason` so the
-    client-facing WHY-THIS-CHANGED text still lists the original ask.
+def bodyweight_substitute_for(item: dict, client_equipment: Optional[list[str]] = None) -> dict:
+    """Return an equipment-appropriate substitute mirroring the original item's
+    set/rep/rest scheme when present, so the workout duration stays sane.
 
-    Iter 95g — endurance and mobility items pass through unchanged, and the
-    caller can bias the pattern via `_pattern_hint` to avoid producing five
-    identical Bodyweight Squats.
+    Iter 95h — accepts `client_equipment` (client's actual owned equipment list)
+    and returns the BEST-tier substitute the client can actually perform,
+    walking barbell → cable → dumbbell → kettlebell → band → bodyweight.
+
+    Iter 95g — endurance and mobility items pass through unchanged.
     """
-    # Iter 95g — never sub out the run itself.
     if _is_endurance_item(item) or _is_mobility_item(item):
         passthrough = dict(item)
         passthrough.setdefault("equipment_required", ["bodyweight"])
@@ -172,7 +298,13 @@ def bodyweight_substitute_for(item: dict) -> dict:
         return passthrough
 
     pattern = str(item.get("_pattern_hint") or "").lower() or _infer_pattern(item)
-    tmpl = dict(_PATTERN_SUBS.get(pattern) or _PATTERN_SUBS["squat"])
+    best_tier = _client_best_tier(client_equipment)
+    has_cardio = any(
+        _EQUIPMENT_ALIASES.get(str(e).strip().lower()) == "cardio"
+        for e in (client_equipment or [])
+    )
+    tmpl = _pick_tiered_sub(pattern, best_tier, has_cardio)
+    tmpl["movement_pattern"] = pattern
     # Preserve original sets/reps/rest/RPE if the LLM specified them.
     for k in ("sets", "reps", "rest_sec", "tempo", "rpe", "intensity_note", "duration_sec"):
         if item.get(k):

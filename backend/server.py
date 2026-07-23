@@ -4123,9 +4123,26 @@ def _ensure_workout_content(doc: dict, user: dict) -> dict:
                 session_type = "conditioning"
             else:
                 session_type = "strength_support"
-        stub = _stub_for_session_type(session_type, doc.get("date"), {"hotel_pref": "bodyweight"})
+        # Iter 95h — honour the client's actual equipment. Previously the
+        # heal forced `hotel_pref="bodyweight"` which stripped dumbbells /
+        # kettlebells / barbells even if the client owned them at home.
+        _profile = (user or {}).get("profile") or {}
+        _equip = (
+            (user or {}).get("equipment")
+            or (user or {}).get("home_equipment")
+            or _profile.get("equipment")
+            or _profile.get("home_equipment")
+            or []
+        )
+        _hotel_pref = (
+            (user or {}).get("hotel_pref")
+            or _profile.get("hotel_pref")
+            or ("home" if any(e in {"dumbbells", "dumbbell", "kettlebells", "kettlebell", "barbell", "cable", "rower", "bench"} for e in _equip) else "bodyweight")
+        )
+        _ctx = {"hotel_pref": _hotel_pref, "equipment": _equip}
+        stub = _stub_for_session_type(session_type, doc.get("date"), _ctx)
         if not stub:
-            stub = _stub_for_session_type("strength_support", doc.get("date"), {"hotel_pref": "bodyweight"})
+            stub = _stub_for_session_type("strength_support", doc.get("date"), _ctx)
         if stub:
             # Preserve existing warmup if the plan already had one; only fill
             # gaps so we never overwrite legitimate warmup content.
@@ -4238,6 +4255,15 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
                     logger.exception("workout heal: coach task creation failed (non-fatal)")
             except Exception:
                 logger.exception("heal-persist failed for workout %s", h.get("id"))
+        # Iter 95h — after healing, sanity-check equipment alignment.
+        # Notifies Louis + flags the doc if a client with real gear ended up
+        # with a bodyweight-only workout.
+        try:
+            from feature_equipment_guard import enforce_and_notify
+            for h in healed_rows:
+                await enforce_and_notify(db, user, h, reason_source="heal")
+        except Exception:
+            logger.exception("equipment-guard sweep failed (non-fatal)")
         logger.info("workout heal-on-read: healed %d workouts for user=%s",
                     len(to_persist), user.get("id"))
     return healed_rows
@@ -11268,6 +11294,7 @@ import feature_progress_dynamic           # noqa: E402,F401  Iter 94t Phase 3: g
 import feature_daily_briefing             # noqa: E402,F401  Iter 94u: Daily briefing from Louis + coach profile
 import feature_weekly_review              # noqa: E402,F401  Iter 94w: Sunday weekly review from Louis
 import feature_dual_session               # noqa: E402,F401  Iter 95a: Short-haul dual-session (airport activation) suggestions
+import feature_equipment_guard            # noqa: E402,F401  Iter 95h: Prevents equipment-mismatch workouts (client owns gear, gets bodyweight)
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

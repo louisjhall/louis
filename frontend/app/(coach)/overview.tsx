@@ -23,6 +23,10 @@ export default function CoachOverview() {
   const [data, setData] = useState<{ clients: Client[]; counts: any; total: number }>({ clients: [], counts: {}, total: 0 });
   const [pending, setPending] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any | null>(null);
+  const [equipMismatch, setEquipMismatch] = useState<{
+    total_workouts?: number; clients_affected?: number;
+    by_user?: { user_email?: string; count: number; example_workout?: string }[];
+  } | null>(null);
 
   const load = useCallback(async () => {
     // Don't fire authenticated calls until the auth bootstrap has finished
@@ -32,14 +36,16 @@ export default function CoachOverview() {
     if (authLoading || !user) return;
     setLoading(true);
     try {
-      const [dash, pend, an] = await Promise.all([
+      const [dash, pend, an, eq] = await Promise.all([
         api<any>(`/coach/dashboard`),
         api<any[]>(`/coach/pending-approvals`),
         api<any>(`/coach/analytics?days=30`),
+        api<any>(`/coach/equipment-mismatches?window_days=14`).catch(() => null),
       ]);
       setData(dash);
       setPending(pend);
       setAnalytics(an);
+      setEquipMismatch(eq);
     } catch (e: any) {
       // 401 (Missing token / expired session) → send to login instead of
       // dumping the raw error onto the screen.
@@ -69,6 +75,11 @@ export default function CoachOverview() {
     ...(pending.length ? [{ tone: "info", label: `${pending.length} workout${pending.length > 1 ? "s" : ""} awaiting approval` }] : []),
     ...(counts.needs_confirmation ? [{ tone: "info", label: `${counts.needs_confirmation} roster${counts.needs_confirmation > 1 ? "s" : ""} awaiting client confirmation` }] : []),
     ...(counts.hotels_pending_review ? [{ tone: "amber", label: `${counts.hotels_pending_review} hotel${counts.hotels_pending_review > 1 ? "s" : ""} awaiting your verification`, action: "/coach/hotels" }] : []),
+    // Iter 95h — surface equipment-mismatch bugs directly in the alert bar.
+    ...((equipMismatch?.total_workouts || 0) > 0 ? [{
+      tone: "red",
+      label: `${equipMismatch!.total_workouts} client workout${equipMismatch!.total_workouts! > 1 ? "s" : ""} fell back to bodyweight despite equipment · ${equipMismatch!.clients_affected} client${(equipMismatch!.clients_affected || 0) > 1 ? "s" : ""} affected`,
+    }] : []),
   ];
 
   return (

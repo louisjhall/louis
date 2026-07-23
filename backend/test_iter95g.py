@@ -67,11 +67,85 @@ def test_endurance_and_mobility_detectors():
 
 def test_squat_still_gets_bodyweight_squat():
     """Sanity check: a real squat request that fails to resolve should
-    still fall back to Bodyweight Squat, we only guard the endurance
-    and mobility classes."""
+    still fall back to Bodyweight Squat if the client has NO equipment."""
     item = {"name": "Barbell back squat"}
-    out = bodyweight_substitute_for(item)
+    out = bodyweight_substitute_for(item, client_equipment=[])
     assert "Bodyweight Squat" == out["name"]
+
+
+# ------------------- Iter 95h — equipment-aware fallback ------------------
+
+def test_dumbbell_owner_gets_dumbbell_sub():
+    item = {"name": "Barbell back squat"}
+    out = bodyweight_substitute_for(item, client_equipment=["dumbbells"])
+    assert "Dumbbell" in out["name"]
+
+
+def test_kettlebell_owner_hinge():
+    item = {"name": "Deadlift"}
+    out = bodyweight_substitute_for(item, client_equipment=["kettlebells"])
+    assert any(k in out["name"] for k in ("Kettlebell", "Swing"))
+
+
+def test_full_gym_owner_barbell_top_tier():
+    item = {"name": "Chest press"}
+    out = bodyweight_substitute_for(
+        item, client_equipment=["dumbbells", "kettlebells", "barbell", "bench", "rower", "cable"],
+    )
+    assert "Barbell" in out["name"]
+
+
+def test_cable_owner_pull():
+    item = {"name": "Bent over row"}
+    out = bodyweight_substitute_for(item, client_equipment=["cable", "dumbbells"])
+    # Should prefer barbell tier which isn't owned, then cable — cable outranks dumbbell here.
+    assert any(k in out["name"] for k in ("Barbell", "Cable"))
+
+
+def test_full_workout_no_duplicate_squats():
+    """Prove the class of bug that produced 5 identical 'Bodyweight Squat'
+    rows is fixed: with equipment context, each pattern gets a distinct
+    equipment-appropriate exercise."""
+    items = [
+        {"name": "Squat"}, {"name": "Deadlift"},
+        {"name": "Bench Press"}, {"name": "Overhead Press"},
+        {"name": "Row"},
+    ]
+    equip = ["dumbbells", "kettlebells", "barbell", "bench"]
+    names = [bodyweight_substitute_for(i, client_equipment=equip)["name"] for i in items]
+    # All 5 exercises must be distinct.
+    assert len(set(names)) == 5, f"expected 5 unique subs, got {names}"
+    # And none should be Bodyweight-anything (client has full kit).
+    assert not any("Bodyweight" in n for n in names), f"unexpected bodyweight in {names}"
+
+
+# ------------------- Iter 95h — equipment-guard integration --------------
+
+def test_equipment_guard_flags_bw_only_when_client_has_gear():
+    from feature_equipment_guard import check_alignment
+    workout = {
+        "focus": "strength", "session_type": "strength",
+        "exercises": [
+            {"name": "Bodyweight Squat"}, {"name": "Push-up"}, {"name": "Reverse Lunge"},
+        ],
+    }
+    r = check_alignment(workout, ["dumbbells", "kettlebells", "barbell"])
+    assert r["ok"] is False
+    assert "dumbbell" in " ".join(r["missing_tiers"]).lower()
+
+
+def test_equipment_guard_passes_when_client_has_no_gear():
+    from feature_equipment_guard import check_alignment
+    workout = {"focus": "strength", "exercises": [{"name": "Bodyweight Squat"}]}
+    r = check_alignment(workout, [])
+    assert r["ok"] is True
+
+
+def test_equipment_guard_passes_endurance_bw_ok():
+    from feature_equipment_guard import check_alignment
+    workout = {"focus": "easy_run", "exercises": [{"name": "Easy Run"}]}
+    r = check_alignment(workout, ["dumbbells", "barbell"])
+    assert r["ok"] is True
 
 
 if __name__ == "__main__":

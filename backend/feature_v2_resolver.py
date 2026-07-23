@@ -409,13 +409,22 @@ async def apply_resolver_to_workouts(
     from feature_hotel_system import classify_stay, resolve_gym_equipment
     pool = await get_approved_pool()
     profile = (user or {}).get("profile") or {}
+    # Iter 95h — equipment can live at either user.equipment (top-level) or
+    # profile.equipment depending on the codepath that saved it. Read both.
+    client_equipment = (
+        (user or {}).get("equipment")
+        or (user or {}).get("home_equipment")
+        or profile.get("equipment")
+        or profile.get("home_equipment")
+        or []
+    )
     client_ctx = {
-        "equipment": profile.get("equipment") or [],
+        "equipment": client_equipment,
         "injuries": profile.get("injuries"),
         "goal": profile.get("main_goal_key"),
     }
     # Pre-normalise home equipment once
-    home_available = normalise_available(profile.get("equipment") or [])
+    home_available = normalise_available(client_equipment)
 
     # Pre-load hotel lookup if we have a roster (for layover-aware gating)
     hotel_lookup: dict[str, dict] = {}
@@ -522,7 +531,10 @@ async def apply_resolver_to_workouts(
                                 break
                     _used_patterns_this_workout.add(chosen)
                     item_for_sub["_pattern_hint"] = chosen
-                sub = bodyweight_substitute_for(item_for_sub)
+                sub = bodyweight_substitute_for(
+                    item_for_sub,
+                    client_equipment=(client_ctx or {}).get("equipment"),
+                )
                 sub["exercise_id"] = None  # no library id — synthesized
                 sub["resolver_status"] = "unresolved_bodyweight_fallback"
                 exs_out.append(sub)

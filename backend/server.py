@@ -11266,6 +11266,7 @@ import feature_app_config                 # noqa: E402,F401  Iter 94t Phase 1: r
 import feature_media_reconciliation       # noqa: E402,F401  Iter 94t Phase 1: exercise media reconciliation + coach tasks
 import feature_progress_dynamic           # noqa: E402,F401  Iter 94t Phase 3: goal-adaptive progress + charts
 import feature_daily_briefing             # noqa: E402,F401  Iter 94u: Daily briefing from Louis + coach profile
+import feature_weekly_review              # noqa: E402,F401  Iter 94w: Sunday weekly review from Louis
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

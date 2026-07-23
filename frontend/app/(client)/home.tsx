@@ -18,6 +18,7 @@ import { TimezoneCard } from "@/src/components/TimezoneCard";
 import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
 import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
+import { WeeklyReviewCard } from "@/src/components/WeeklyReviewCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
@@ -385,6 +386,8 @@ export default function Home() {
           {/* Iter 94r — Timezone card. Always at top so crew immediately see
               which timezone their day / workouts are being scheduled in. */}
           {tzFlag ? <TimezoneCard /> : null}
+          {/* Iter 94w — Sunday weekly review card (Thu-Sun only). */}
+          <WeeklyReviewCard refreshKey={activityRefreshKey} />
           {/* Iter 94t Phase 1 — Nutrition (calories + protein) near top. */}
           {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
           {/* Iter 94s — Missed sessions banner (only renders if there are any

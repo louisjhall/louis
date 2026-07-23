@@ -1,0 +1,32 @@
+{
+  "summary": "Iter 94w — Sunday Weekly Review from Louis: backend fully verified. 12/12 pytest tests passed. Validated GET /weekly-review/current field shape (week_start Mon / week_end Sun, goal_class, training/nutrition/habits blocks with all required keys, roster_summary, has_progress, message_lines, checkin_status, progress_status, review_ready_for_louis); Louis-voiced message opens with 'Hi {first_name}, here's your CrewFit weekly review so far.' and ends with 'Louis'; contains both the check-in/progress prompt and the 'short video for you' line; no AI/generated/automated wording. Idempotent: repeat GETs return same week_start and preserve id/created_at. POST /weekly-review/checkin-complete flips checkin_status + sets checkin_completed_at; POST /weekly-review/progress-complete flips progress_status + sets progress_updated_at. When BOTH complete, exactly ONE coach_tasks row with task_type='weekly_video_review' & category='weekly_review' is created (idempotent: repeated calls do NOT duplicate) and review_ready_for_louis flips true + video_review_status='ready'. POST /weekly-review/regenerate preserves the client's already-earned checkin/progress statuses and the ready flag. GET /admin/weekly-reviews returns 403 for client role, and 200 for coach with client_name + client_email stitched in. Low-data brand-new signup receives the friendly 'I don't have enough data logged yet' message rather than empty stats, and still opens with 'Hi' / closes with 'Louis'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter94w_weekly_review.py",
+    "/app/test_reports/pytest/iter94w_weekly_review.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_weekly_review.py is well-structured and readable. Minor: _maybe_create_video_task guards on review.get('video_task_id') truthiness but sets it to boolean True (not the actual task id). This is intentional for the dedupe gate, but consider storing the real task id so the coach dashboard can deep-link.",
+    "_get_or_build overwrites checkin_status/progress_status keys only if not already in existing (merged spreads existing first then cand keys). Verified: because cand keys 'checkin_status'/'progress_status' are NOT included in the merge subset, existing statuses are preserved — good.",
+    "'has_progress' derived progress_status is only set on fresh doc build; on subsequent get_or_build the statuses are preserved even if a client later logged progress data. Consider: when progress_status is 'incomplete' but has_progress becomes true on refresh, auto-flip to 'complete'? Not required by spec but user-friendly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter94w_weekly_review.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "N/A (backend-only)"},
+  "seed_data_creation": "Created a temporary fresh signup 'TEST_lowdata_<uuid>@example.com' for the low-data assertion and cleaned it up in fixture teardown. Also cleared testcal2's weekly_reviews & weekly_video_review coach_tasks for the current ISO week before the run to ensure a deterministic starting state; re-cleaned on teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file is /app/backend/tests/test_iter94w_weekly_review.py. Uses MongoClient (MONGO_URL) to clean weekly_reviews + coach_tasks(task_type=weekly_video_review) for testcal2 for this ISO week at module setup/teardown so it is safely re-runnable. Uses live login for testcal2@crewfit.com (client) and louis@crewfit.net (coach). Fresh low-data client is signed up per class and deleted on teardown.",
+  "rca_of_issue": "N/A — no defects found."
+}

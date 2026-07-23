@@ -18,6 +18,7 @@ import { TimezoneCard } from "@/src/components/TimezoneCard";
 import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
 import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
+import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
@@ -883,6 +884,8 @@ export default function Home() {
         onApplied={() => { setRealityOpen(false); load(); }}
       />
       <TimeZoneConfirmModal user={user} />
+      {/* Iter 94u — Louis's Daily Briefing (once per local day). */}
+      <DailyBriefingModal />
       <AddActivityModal
         visible={addActivityOpen}
         onClose={() => setAddActivityOpen(false)}

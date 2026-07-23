@@ -31,11 +31,27 @@ import {
 const { width: SCREEN_W } = Dimensions.get("window");
 
 type Phase = "loading" | "warmup" | "work" | "rest" | "complete";
+type LogMode = "asking" | "log" | "autopilot";
 
 function fmtMMSS(sec: number): string {
   const m = Math.max(0, Math.floor(sec / 60));
   const s = Math.max(0, sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Autopilot / Flow Mode — compute how long each work interval should run for.
+ * - Cardio / timed exercises: honour explicit `duration_sec` / `work_sec` on
+ *   the exercise (or fall back to 60s).
+ * - Weighted / bodyweight sets: rough tempo of ~3s per rep, clamped 20-90s
+ *   so a 5-rep heavy set doesn't fly by and a 20-rep set doesn't drag on.
+ */
+function autopilotWorkSeconds(ex: any, targetReps: number, isCardio: boolean): number {
+  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+  if (explicit && explicit > 0) return Math.max(10, Math.min(600, explicit));
+  if (isCardio) return 60;
+  const est = Math.round((targetReps || 10) * 3);
+  return Math.max(20, Math.min(90, est));
 }
 
 function isCardioExercise(ex: any): boolean {
@@ -75,6 +91,11 @@ export default function GuidedFlow() {
   const [autoRest, setAutoRest] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
   const [voiceOn, setVoiceOnState] = useState(true);
+  // Iter 95i — Flow / Autopilot mode. Client picks at workout start:
+  //   log       → track lifts, tap COMPLETE SET each time (legacy behaviour)
+  //   autopilot → hands-free class experience, work timer + auto-rest, no tapping
+  const [logMode, setLogMode] = useState<LogMode>("asking");
+  const [workTimer, setWorkTimer] = useState(0);
   const [previousLabel, setPreviousLabel] = useState<string>("");
   const [howToOpen, setHowToOpen] = useState(false);
   // Iter 94t (Phase 2) — When the client opens the demo/how-to sheet during
@@ -105,6 +126,7 @@ export default function GuidedFlow() {
 
   const restTick = useRef<any>(null);
   const warmupTick = useRef<any>(null);
+  const workTick = useRef<any>(null);
   const restSeconds = useRef<number>(0);
 
   // Load workout + settings
@@ -123,17 +145,15 @@ export default function GuidedFlow() {
       setAutoRest(ar);
       setSoundOn(so);
       setVoiceOnState(vo);
-      // Start with warmup if any, else jump to first exercise
-      if (Array.isArray(w.warmup) && w.warmup.length > 0) {
-        setPhase("warmup");
-        setWarmupIdx(0);
-      } else {
-        setPhase("work");
-      }
-    })().catch(() => setPhase("work"));
+      // Iter 95i — hold on the mode picker until the client chooses.
+      // We still keep phase="loading" so the body doesn't flash the
+      // warmup / work UI behind the modal.
+      setLogMode("asking");
+    })().catch(() => setLogMode("asking"));
     return () => {
       if (restTick.current) clearInterval(restTick.current);
       if (warmupTick.current) clearInterval(warmupTick.current);
+      if (workTick.current) clearInterval(workTick.current);
       stopNarration();
     };
   }, [id]);
@@ -146,6 +166,8 @@ export default function GuidedFlow() {
   const restSec = Math.max(15, parseInt(String(currentEx?.rest_sec || 90), 10));
   const isLastSet = setIdx >= targetSets;
   const isLastExercise = exIdx >= totalExercises - 1;
+  const workSec = autopilotWorkSeconds(currentEx, targetReps, isCardio);
+  const isAutopilot = logMode === "autopilot";
 
   // Fetch content + previous performance whenever exercise changes
   useEffect(() => {
@@ -205,6 +227,53 @@ export default function GuidedFlow() {
     setPhase("rest");
   }, []);
 
+  // Iter 95i — Flow / Autopilot mode. Runs the strength work interval as a
+  // timer so the client never has to tap anything. On zero we auto-log the
+  // set (target reps) and slide straight into the RestTimer, which is
+  // already wired to auto-continue when we pass autopilot=true below.
+  useEffect(() => {
+    if (!isAutopilot) return;
+    if (phase !== "work") return;
+    if (paused) return;
+    if (!currentEx) return;
+    if (saving) return;
+    setWorkTimer(workSec);
+    if (workTick.current) clearInterval(workTick.current);
+    workTick.current = setInterval(() => {
+      setWorkTimer((s) => {
+        if (s === 4) playCountdownTick();
+        else if (s === 3) playCountdownTick();
+        else if (s === 2) playCountdownTick();
+        if (s <= 1) {
+          clearInterval(workTick.current);
+          workTick.current = null;
+          // Fire outside the setState updater so we don't double-schedule.
+          setTimeout(() => { completeSet({ autopilot: true }); }, 250);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => { if (workTick.current) { clearInterval(workTick.current); workTick.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAutopilot, phase, exIdx, setIdx, paused, currentEx?.name, workSec, saving]);
+
+  const beginWorkout = useCallback((mode: "log" | "autopilot") => {
+    setLogMode(mode);
+    // Force auto-continue after rest ON when the client picks autopilot so
+    // the workout truly flows without any tapping needed.
+    if (mode === "autopilot") {
+      setAutoCont(true);
+      setAutoRest(true);
+    }
+    if (Array.isArray(workout?.warmup) && workout.warmup.length > 0) {
+      setPhase("warmup");
+      setWarmupIdx(0);
+    } else {
+      setPhase("work");
+    }
+  }, [workout]);
+
   const advanceAfterRest = () => {
     goToNextSetOrExercise();
   };
@@ -225,9 +294,10 @@ export default function GuidedFlow() {
   };
 
   // Complete a set: log to backend, then rest
-  const completeSet = async () => {
+  const completeSet = async (opts?: { autopilot?: boolean }) => {
     if (saving) return;
     setSaving(true);
+    const ap = !!opts?.autopilot;
     try {
       const body: any = {
         workout_id: String(id),
@@ -238,40 +308,60 @@ export default function GuidedFlow() {
       };
       if (isCardio) {
         // For cardio, treat weight box as time (mm:ss), reps box as distance km
-        const t = logWeight.split(":").map((n) => parseInt(n, 10));
-        const timeSec = t.length === 2 ? t[0] * 60 + (t[1] || 0) : (parseFloat(logWeight) * 60 || null);
-        const distKm = parseFloat(logReps);
+        if (!ap) {
+          const t = logWeight.split(":").map((n) => parseInt(n, 10));
+          const timeSec = t.length === 2 ? t[0] * 60 + (t[1] || 0) : (parseFloat(logWeight) * 60 || null);
+          const distKm = parseFloat(logReps);
+          if (timeSec) body.duration_sec = timeSec;
+          if (!isNaN(distKm)) body.distance_m = Math.round(distKm * 1000);
+          if (logRpe) body.rpe = parseFloat(logRpe);
+        } else {
+          // Autopilot: log the planned interval so history has *something*.
+          body.duration_sec = workSec;
+        }
         body.logging_type = "cardio";
-        if (timeSec) body.duration_sec = timeSec;
-        if (!isNaN(distKm)) body.distance_m = Math.round(distKm * 1000);
-        if (logRpe) body.rpe = parseFloat(logRpe);
-      } else {
+      } else if (!ap) {
         body.actual_weight = parseFloat(logWeight) || null;
         body.actual_reps = parseInt(logReps, 10) || null;
         body.rpe = parseFloat(logRpe) || null;
+      } else {
+        // Autopilot for strength: no weight / no RPE, target reps assumed.
+        body.actual_reps = targetReps || null;
+        body.autopilot = true;
       }
-      if (logNote.trim()) body.notes = logNote.trim();
+      if (!ap && logNote.trim()) body.notes = logNote.trim();
       const r = await api<any>(`/workouts/${id}/sets`, { method: "POST", body });
       setLogs((all) => [...all, r.set]);
 
       // Reset log inputs for next set
-      setLogNote("");
-      // Keep weight, reset RPE
-      setLogRpe("");
+      if (!ap) {
+        setLogNote("");
+        setLogRpe("");
+      }
 
       if (isLastSet && isLastExercise) {
         hapticSuccess();
         playWorkoutComplete();
         narrateWorkoutComplete();
         setPhase("complete");
-      } else if (autoRest) {
+      } else if (ap || autoRest) {
         startRest(restSec, `${currentEx.name} Set ${setIdx} complete`);
       } else {
         // Skip rest — advance immediately
         goToNextSetOrExercise();
       }
     } catch (e: any) {
-      // Non-blocking — user can retry
+      // Non-blocking — in autopilot we still advance so the flow keeps moving.
+      if (ap) {
+        if (isLastSet && isLastExercise) {
+          hapticSuccess();
+          playWorkoutComplete();
+          narrateWorkoutComplete();
+          setPhase("complete");
+        } else {
+          startRest(restSec, `${currentEx.name} Set ${setIdx} complete`);
+        }
+      }
     } finally { setSaving(false); }
   };
 
@@ -354,6 +444,17 @@ export default function GuidedFlow() {
           <ActivityIndicator color={theme.color.brand} size="large" />
           <Text style={{ color: theme.color.textMuted, marginTop: 12, fontSize: 12, letterSpacing: 2 }}>PREPARING GUIDED FLOW</Text>
         </View>
+        {/* Iter 95i — Once the workout has loaded, ask the client whether
+            they want to track lifts or just flow. We keep phase="loading"
+            behind the sheet so the UI doesn't flash the warmup / work UI
+            before they've chosen. */}
+        <StartModeSheet
+          visible={!!workout && logMode === "asking"}
+          workoutTitle={workout?.title || "Session"}
+          hasWarmup={Array.isArray(workout?.warmup) && workout.warmup.length > 0}
+          exerciseCount={workout?.exercises?.length || 0}
+          onPick={beginWorkout}
+        />
       </SafeAreaView>
     );
   }
@@ -411,15 +512,19 @@ export default function GuidedFlow() {
               nextLabel={nextUpLabel}
               onComplete={advanceAfterRest}
               onSkip={skipRest}
-              autoContinueOverride={autoCont}
+              autoContinueOverride={isAutopilot ? true : autoCont}
               size={260}
             />
-            <Pressable onPress={toggleAutoCont} style={styles.autoContRow} testID="gf-auto-toggle">
-              <View style={[styles.check, autoCont && styles.checkOn]}>
-                {autoCont && <Ionicons name="checkmark" size={14} color="#fff" />}
-              </View>
-              <Text style={styles.autoContT}>Auto-continue after rest</Text>
-            </Pressable>
+            {isAutopilot ? (
+              <Text style={styles.autopilotHint}>FLOW MODE · REST WILL AUTO-CONTINUE</Text>
+            ) : (
+              <Pressable onPress={toggleAutoCont} style={styles.autoContRow} testID="gf-auto-toggle">
+                <View style={[styles.check, autoCont && styles.checkOn]}>
+                  {autoCont && <Ionicons name="checkmark" size={14} color="#fff" />}
+                </View>
+                <Text style={styles.autoContT}>Auto-continue after rest</Text>
+              </Pressable>
+            )}
           </View>
         ) : phase === "warmup" ? (
           <WarmupPanel
@@ -448,8 +553,11 @@ export default function GuidedFlow() {
             logNote={logNote} setLogNote={setLogNote}
             saving={saving}
             paused={paused}
+            autopilot={isAutopilot}
+            workTimer={workTimer}
+            workSec={workSec}
             onTogglePause={() => setPaused((v) => !v)}
-            onComplete={completeSet}
+            onComplete={() => completeSet()}
             onHowTo={openHowTo}
             onSwap={() => setSwapOpen(true)}
           />
@@ -580,11 +688,13 @@ function WarmupPanel({
 function WorkPanel({
   ex, setIdx, targetSets, targetReps, cue, media, prev, isCardio,
   logWeight, setLogWeight, logReps, setLogReps, logRpe, setLogRpe, logNote, setLogNote,
-  saving, paused, onTogglePause, onComplete, onHowTo, onSwap,
+  saving, paused, autopilot, workTimer, workSec,
+  onTogglePause, onComplete, onHowTo, onSwap,
 }: any) {
   const suggested = prev?.suggested_load;
   const suggestedT = suggested ? `${suggested}kg × ${targetReps}` : null;
   const progReason = prev?.progression_hint?.reason;
+  const workPct = workSec ? Math.max(0, Math.min(100, Math.round(((workSec - workTimer) / workSec) * 100))) : 0;
 
   return (
     <View>
@@ -598,15 +708,18 @@ function WorkPanel({
           <Ionicons name="play" size={18} color={theme.color.amber} />
         </Pressable>
       ) : null}
-      <Text style={styles.phaseLabel}>WORK</Text>
+      <Text style={styles.phaseLabel}>{autopilot ? "WORK · FLOW" : "WORK"}</Text>
       <Text style={styles.exName}>{ex?.name}</Text>
-      <Text style={styles.exMeta}>Set {setIdx} of {targetSets} · {targetReps} reps</Text>
+      <Text style={styles.exMeta}>
+        Set {setIdx} of {targetSets}
+        {isCardio ? "" : ` · ${targetReps} reps`}
+      </Text>
 
       <View style={styles.mediaBox}>
         <WorkoutMediaCarousel
           exerciseName={ex?.name || ""}
           height={200}
-          autoScroll={!paused && (isCardio || isMobilityLike(ex))}
+          autoScroll={!paused && (isCardio || isMobilityLike(ex) || autopilot)}
           autoScrollIntervalMs={isMobilityLike(ex) ? 6000 : 4000}
         />
       </View>
@@ -616,63 +729,78 @@ function WorkPanel({
         <Text style={styles.cueT}>{cue}</Text>
       </View>
 
-      {/* Last time / Today's target */}
-      {prev?.last_session?.length > 0 && (
-        <View style={styles.prevRow}>
-          <View style={styles.prevCol}>
-            <Text style={styles.prevHead}>LAST TIME</Text>
-            <Text style={styles.prevBig}>
-              {prev.last_session[0]?.actual_weight
-                ? `${prev.last_session[0].actual_weight}kg × ${prev.last_session[0].actual_reps || "?"}`
-                : `${prev.last_session[0]?.actual_reps || "?"} reps`}
-            </Text>
-            {prev.last_session[0]?.rpe != null && (
-              <Text style={styles.prevSub}>RPE {prev.last_session[0].rpe}</Text>
-            )}
+      {/* Autopilot: big work-timer numeral in place of log inputs. */}
+      {autopilot ? (
+        <View style={styles.timerBox}>
+          <Text style={styles.timerBig}>{fmtMMSS(workTimer)}</Text>
+          <View style={styles.timerBarTrack}>
+            <View style={[styles.timerBarFill, { width: `${workPct}%` }]} />
           </View>
-          {suggestedT && (
-            <View style={styles.prevCol}>
-              <Text style={[styles.prevHead, { color: theme.color.brand }]}>TODAY&apos;S TARGET</Text>
-              <Text style={[styles.prevBig, { color: theme.color.brand }]}>{suggestedT}</Text>
-              {progReason && <Text style={styles.prevSub} numberOfLines={2}>{progReason}</Text>}
-            </View>
-          )}
-        </View>
-      )}
-
-      {/* Log inputs */}
-      {isCardio ? (
-        <View style={styles.logGrid}>
-          <LogInput label="TIME (mm:ss)" value={logWeight} onChangeText={setLogWeight} placeholder="30:00" />
-          <LogInput label="DIST (km)" value={logReps} onChangeText={setLogReps} placeholder="5.0" />
-          <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
+          <Text style={styles.autopilotHint}>
+            FLOW MODE · SET WILL AUTO-LOG · REST WILL AUTO-CONTINUE
+          </Text>
         </View>
       ) : (
-        <View style={styles.logGrid}>
-          <LogInput label="WEIGHT (kg)" value={logWeight} onChangeText={setLogWeight} placeholder={suggested ? String(suggested) : "0"} />
-          <LogInput label="REPS" value={logReps} onChangeText={setLogReps} placeholder={String(targetReps)} />
-          <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
-        </View>
+        <>
+          {/* Last time / Today's target */}
+          {prev?.last_session?.length > 0 && (
+            <View style={styles.prevRow}>
+              <View style={styles.prevCol}>
+                <Text style={styles.prevHead}>LAST TIME</Text>
+                <Text style={styles.prevBig}>
+                  {prev.last_session[0]?.actual_weight
+                    ? `${prev.last_session[0].actual_weight}kg × ${prev.last_session[0].actual_reps || "?"}`
+                    : `${prev.last_session[0]?.actual_reps || "?"} reps`}
+                </Text>
+                {prev.last_session[0]?.rpe != null && (
+                  <Text style={styles.prevSub}>RPE {prev.last_session[0].rpe}</Text>
+                )}
+              </View>
+              {suggestedT && (
+                <View style={styles.prevCol}>
+                  <Text style={[styles.prevHead, { color: theme.color.brand }]}>TODAY&apos;S TARGET</Text>
+                  <Text style={[styles.prevBig, { color: theme.color.brand }]}>{suggestedT}</Text>
+                  {progReason && <Text style={styles.prevSub} numberOfLines={2}>{progReason}</Text>}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Log inputs */}
+          {isCardio ? (
+            <View style={styles.logGrid}>
+              <LogInput label="TIME (mm:ss)" value={logWeight} onChangeText={setLogWeight} placeholder="30:00" />
+              <LogInput label="DIST (km)" value={logReps} onChangeText={setLogReps} placeholder="5.0" />
+              <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
+            </View>
+          ) : (
+            <View style={styles.logGrid}>
+              <LogInput label="WEIGHT (kg)" value={logWeight} onChangeText={setLogWeight} placeholder={suggested ? String(suggested) : "0"} />
+              <LogInput label="REPS" value={logReps} onChangeText={setLogReps} placeholder={String(targetReps)} />
+              <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
+            </View>
+          )}
+
+          <TextInput
+            value={logNote}
+            onChangeText={setLogNote}
+            placeholder="Notes (optional)"
+            placeholderTextColor={theme.color.textDim}
+            style={styles.noteInput}
+            testID="gf-log-note"
+          />
+
+          <Pressable
+            onPress={onComplete}
+            disabled={saving}
+            style={[styles.completeBtn, saving && { opacity: 0.4 }]}
+            testID="gf-complete-set"
+          >
+            {saving ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark" size={18} color="#fff" />}
+            <Text style={styles.completeBtnT}>{saving ? "LOGGING..." : "COMPLETE SET"}</Text>
+          </Pressable>
+        </>
       )}
-
-      <TextInput
-        value={logNote}
-        onChangeText={setLogNote}
-        placeholder="Notes (optional)"
-        placeholderTextColor={theme.color.textDim}
-        style={styles.noteInput}
-        testID="gf-log-note"
-      />
-
-      <Pressable
-        onPress={onComplete}
-        disabled={saving}
-        style={[styles.completeBtn, saving && { opacity: 0.4 }]}
-        testID="gf-complete-set"
-      >
-        {saving ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark" size={18} color="#fff" />}
-        <Text style={styles.completeBtnT}>{saving ? "LOGGING..." : "COMPLETE SET"}</Text>
-      </Pressable>
 
       <View style={styles.rowActions}>
         <Pressable onPress={onHowTo} style={[styles.secondaryBtn, styles.secondaryBtnPrimary]} testID="gf-howto">
@@ -939,6 +1067,111 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Start-of-Workout Mode Picker  (Iter 95i)                                  */
+/*  Asked once at the top of the Guided Flow — client picks between           */
+/*  tracking lifts (tap COMPLETE SET) or hands-free flow mode.                */
+/* -------------------------------------------------------------------------- */
+function StartModeSheet({
+  visible, workoutTitle, hasWarmup, exerciseCount, onPick,
+}: {
+  visible: boolean;
+  workoutTitle: string;
+  hasWarmup: boolean;
+  exerciseCount: number;
+  onPick: (mode: "log" | "autopilot") => void;
+}) {
+  if (!visible) return null;
+  return (
+    <Modal visible transparent animationType="fade">
+      <View style={startStyles.root}>
+        <View style={startStyles.card}>
+          <Text style={startStyles.eyebrow}>GUIDED FLOW</Text>
+          <Text style={startStyles.title}>{workoutTitle}</Text>
+          <Text style={startStyles.sub}>
+            {hasWarmup ? "Warm-up first · " : ""}{exerciseCount} exercises
+          </Text>
+          <Text style={startStyles.q}>How do you want to run today&apos;s session?</Text>
+
+          <Pressable
+            onPress={() => onPick("log")}
+            style={[startStyles.opt, startStyles.optSecondary]}
+            testID="gf-mode-log"
+          >
+            <View style={startStyles.optIconWrapSecondary}>
+              <Ionicons name="barbell" size={20} color={theme.color.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={startStyles.optT}>Track my lifts</Text>
+              <Text style={startStyles.optS}>
+                Tap COMPLETE SET after each set so weight and reps are saved for progression.
+              </Text>
+            </View>
+          </Pressable>
+
+          <Pressable
+            onPress={() => onPick("autopilot")}
+            style={[startStyles.opt, startStyles.optPrimary]}
+            testID="gf-mode-autopilot"
+          >
+            <View style={startStyles.optIconWrapPrimary}>
+              <Ionicons name="infinite" size={20} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[startStyles.optT, { color: "#fff" }]}>Just flow</Text>
+              <Text style={[startStyles.optS, { color: "rgba(255,255,255,0.85)" }]}>
+                Hands-free class experience. Louis calls out every set, a work timer runs, then straight into rest. Nothing to tap.
+              </Text>
+            </View>
+          </Pressable>
+
+          <Text style={startStyles.foot}>You can pause any time with the play/pause button up top.</Text>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const startStyles = StyleSheet.create({
+  root: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.75)",
+    alignItems: "center", justifyContent: "center", padding: 24,
+  },
+  card: {
+    width: "100%", maxWidth: 420,
+    backgroundColor: theme.color.surface,
+    borderRadius: 20, padding: 24,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2.5 },
+  title: { color: theme.color.text, fontSize: 22, fontWeight: "900", marginTop: 6, letterSpacing: -0.3 },
+  sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, fontWeight: "700", letterSpacing: 1 },
+  q: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 22, marginBottom: 14, lineHeight: 21 },
+  opt: {
+    flexDirection: "row", alignItems: "center", gap: 14,
+    padding: 16, borderRadius: 14, marginBottom: 10,
+    borderWidth: 1,
+  },
+  optSecondary: { backgroundColor: theme.color.surface2, borderColor: theme.color.border },
+  optPrimary: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  optIconWrapSecondary: {
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
+  },
+  optIconWrapPrimary: {
+    width: 42, height: 42, borderRadius: 21,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.15)", borderWidth: 1, borderColor: "rgba(255,255,255,0.5)",
+  },
+  optT: { color: theme.color.text, fontSize: 15, fontWeight: "900", letterSpacing: -0.2 },
+  optS: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  foot: {
+    color: theme.color.textMuted, fontSize: 11, textAlign: "center",
+    marginTop: 8, lineHeight: 15,
+  },
+});
+
+/* -------------------------------------------------------------------------- */
 /*  Styles                                                                     */
 /* -------------------------------------------------------------------------- */
 const styles = StyleSheet.create({
@@ -1026,6 +1259,10 @@ const styles = StyleSheet.create({
 
   autoContRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 20, justifyContent: "center" },
   autoContT: { color: theme.color.text, fontSize: 12, fontWeight: "600" },
+  autopilotHint: {
+    color: theme.color.brand, fontSize: 10, fontWeight: "900",
+    letterSpacing: 2, textAlign: "center", marginTop: 14,
+  },
   check: {
     width: 22, height: 22, borderRadius: 6,
     borderWidth: 1.5, borderColor: theme.color.border,

@@ -213,6 +213,18 @@ backend:
         comment: "New endpoint returning per-client compliance %, avg RPE, key_sessions completed vs scheduled, load distribution, and global aggregates for last N days (default 30). Verified manually via curl - returns 15 clients + load_distribution. Requires role=coach."
 
 frontend:
+  - task: "Guided Flow — Autopilot / Flow Mode (hands-free class experience)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/workout/[id]/guided.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New Iter 95i. At the top of Guided Flow, a StartModeSheet asks the client 'How do you want to run today's session?' with two options: (a) Track my lifts (existing tap-COMPLETE-SET flow) or (b) Just flow (autopilot). In autopilot: each work set becomes a timer (~3s/rep, clamped 20-90s for strength; explicit duration_sec/work_sec honoured for cardio/timed), 3-2-1 beeps at the tail, then auto-log with target reps and auto-slide into RestTimer with autoContinueOverride forced true. The work UI hides the log inputs & COMPLETE SET button and shows a big MM:SS numeral + progress bar. Warm-up flow untouched. autoRest and autoCont are both forced true in autopilot. Set logs still POST to /workouts/{id}/sets so history stays intact (autopilot flag + actual_reps=target). Voice narration + beeps carry through every phase; mic toggle in top bar still works to mute mid-workout. Manual pause via top-bar pause button remains available. If the autopilot log POST fails, the flow still advances so the client isn't stranded mid-workout. Legacy 'log' mode is unchanged."
+
   - task: "Guided Flow audio: countdown beeps + Louis coach voice narration"
     implemented: true
     working: "NA"

@@ -63,7 +63,8 @@ type RangePayload = {
   counts: Record<string, number>;
 };
 
-const CHUNK_DAYS = 30;
+const INITIAL_FWD = 6;      // Today + next 6 = 7 days visible by default
+const CHUNK_DAYS = 14;      // Each "load more" reveals two more weeks
 const MAX_BACK = 60;
 const MAX_FWD  = 60;
 
@@ -124,8 +125,11 @@ export function ClientCalendarPanel({
 }) {
   const router = useRouter();
   const today = useMemo(localToday, []);
-  const [fromDate, setFromDate] = useState<string>(() => addDays(today, -CHUNK_DAYS));
-  const [toDate, setToDate] = useState<string>(() => addDays(today, CHUNK_DAYS));
+  // Default view = today + next 7 days. Past & further future are hidden
+  // behind explicit "Show past" / "Load more upcoming" buttons so crew
+  // aren't distracted by older sessions by default.
+  const [fromDate, setFromDate] = useState<string>(() => today);
+  const [toDate, setToDate] = useState<string>(() => addDays(today, INITIAL_FWD));
   const [days, setDays] = useState<DayCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState<"none" | "back" | "fwd">("none");
@@ -177,40 +181,62 @@ export function ClientCalendarPanel({
     if (c.workout?.id) router.push(`/workout/${c.workout.id}` as any);
   }, [router]);
 
+  const hasPastLoaded = daysBetween(fromDate, today) > 0;
+
   return (
     <View>
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>YOUR CALENDAR</Text>
-        <Pressable
-          style={styles.todayBtn}
-          onPress={onJumpToToday}
-          testID="cal-today-btn"
-        >
-          <Ionicons name="today" size={13} color={theme.color.brand} />
-          <Text style={styles.todayBtnT}>TODAY</Text>
-        </Pressable>
+        {hasPastLoaded ? (
+          <Pressable
+            style={styles.todayBtn}
+            onPress={onJumpToToday}
+            testID="cal-today-btn"
+          >
+            <Ionicons name="today" size={13} color={theme.color.brand} />
+            <Text style={styles.todayBtnT}>TODAY</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {loading && days.length === 0 ? (
         <ActivityIndicator color={theme.color.brand} style={{ marginTop: 20 }} />
       ) : (
         <>
-          <Pressable
-            onPress={loadMoreBack}
-            disabled={loadingMore !== "none" || daysBetween(fromDate, today) >= MAX_BACK}
-            style={styles.loadMoreBtn}
-            testID="cal-load-more-back"
-          >
-            {loadingMore === "back" ? (
-              <ActivityIndicator color={theme.color.brand} />
-            ) : (
-              <Text style={styles.loadMoreT}>
-                {daysBetween(fromDate, today) >= MAX_BACK
-                  ? "REACHED START (60 DAYS BACK)"
-                  : "LOAD OLDER DAYS ↑"}
-              </Text>
-            )}
-          </Pressable>
+          {hasPastLoaded ? (
+            <Pressable
+              onPress={loadMoreBack}
+              disabled={loadingMore !== "none" || daysBetween(fromDate, today) >= MAX_BACK}
+              style={styles.loadMoreBtn}
+              testID="cal-load-more-back"
+            >
+              {loadingMore === "back" ? (
+                <ActivityIndicator color={theme.color.brand} />
+              ) : (
+                <Text style={styles.loadMoreT}>
+                  {daysBetween(fromDate, today) >= MAX_BACK
+                    ? "REACHED START (60 DAYS BACK)"
+                    : "LOAD OLDER DAYS ↑"}
+                </Text>
+              )}
+            </Pressable>
+          ) : (
+            <Pressable
+              onPress={loadMoreBack}
+              disabled={loadingMore !== "none"}
+              style={[styles.loadMoreBtn, styles.pastBtn]}
+              testID="cal-show-past"
+            >
+              {loadingMore === "back" ? (
+                <ActivityIndicator color={theme.color.brand} />
+              ) : (
+                <>
+                  <Ionicons name="time-outline" size={13} color={theme.color.textMuted} />
+                  <Text style={styles.loadMoreT}>SHOW PAST SESSIONS ↑</Text>
+                </>
+              )}
+            </Pressable>
+          )}
 
           {days.map((c) => (
             <View
@@ -231,17 +257,20 @@ export function ClientCalendarPanel({
           <Pressable
             onPress={loadMoreFwd}
             disabled={loadingMore !== "none" || daysBetween(today, toDate) >= MAX_FWD}
-            style={styles.loadMoreBtn}
+            style={[styles.loadMoreBtn, styles.pastBtn]}
             testID="cal-load-more-fwd"
           >
             {loadingMore === "fwd" ? (
               <ActivityIndicator color={theme.color.brand} />
             ) : (
-              <Text style={styles.loadMoreT}>
-                {daysBetween(today, toDate) >= MAX_FWD
-                  ? "REACHED END (60 DAYS AHEAD)"
-                  : "LOAD FUTURE DAYS ↓"}
-              </Text>
+              <>
+                <Ionicons name="chevron-down" size={13} color={theme.color.textMuted} />
+                <Text style={styles.loadMoreT}>
+                  {daysBetween(today, toDate) >= MAX_FWD
+                    ? "REACHED END (60 DAYS AHEAD)"
+                    : "SHOW MORE UPCOMING"}
+                </Text>
+              </>
             )}
           </Pressable>
         </>
@@ -394,7 +423,9 @@ const styles = StyleSheet.create({
   loadMoreBtn: {
     padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border,
     alignItems: "center", marginBottom: 8, backgroundColor: theme.color.surface2,
+    flexDirection: "row", justifyContent: "center", gap: 6,
   },
+  pastBtn: { backgroundColor: theme.color.surface },
   loadMoreT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
 
   row: {

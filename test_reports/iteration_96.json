@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 94v Phase 4 (Master Fix) + full pre-beta backend regression sweep — 29/29 pytest cases PASSED against the public preview URL. Verified Admin Live App Controls (GET/POST/DELETE /api/admin/app-config incl. safe_content_keys allowlist enforcement + audit trail with actor identity), Coach Recovery Timeline (both /api/admin/recovery/timeline and /api/admin/client/{uid}/recovery/timeline with role gating + resolvable client_name/client_email), Milestone B (skip flow writes workout_skipped timeline_event that resolves to client email in coach view), and full regression across Phases 1–3 + Iter 94u (app-config public, calendar/range, recovery/missed + suggestions + skip routes, profile/timezone-status, nutrition/today, progress/dashboard|body|running|strength, progress/photo full lifecycle upload→list→signed-URL GET→delete, coach-profile, daily-briefing today idempotent + context_signature + regenerate + preferences, and the dismiss-first fix confirms /daily-briefing/dismiss builds first and never stubs).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter94v_phase4.py",
+    "/app/test_reports/pytest/iter94v_phase4.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_app_config.py: SAFE_CONTENT_KEYS allowlist enforced on kind='content' — good. Flag toggles include actor_id + actor_name in audit rows.",
+    "feature_calendar_recovery.py: /admin/recovery/timeline correctly batch-loads users via {id: {$in: [...]}} and stitches client_name/email — no N+1. Uses _id: 0 projection consistently.",
+    "feature_daily_briefing.py:441 — dismiss now calls _get_or_build_today FIRST so the row always has full content before dismissed_at is set. Confirmed by TestDismissDoesNotStub — the returned briefing after a cold dismiss has all fields populated (title/greeting/workout_focus/nutrition_focus/recovery_focus/main_action). The Iter 95 stub-row concern is resolved.",
+    "feature_calendar_recovery.py imports `require_role` twice (line 44 + line 769) — cosmetic, not a bug. Consider a single top-of-file import."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter94v_phase4.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (29/29)",
+    "frontend": "not tested (backend-only sweep)"
+  },
+  "seed_data_creation": "TestMilestoneB inserts one workout with a random 400–700-day-old date under id 'TEST_iter94v_ms_b_<ts>' for testcal2, skips it, then deletes the workout + its timeline_events in a finally block. TestLiveAppConfig creates and soft-disables several TEST_iter94v_* flags (still present but disabled — do not surface in public config). TestRegressionSweep.test_progress_photo_lifecycle uploads and deletes a 1x1 PNG. All test docs cleaned up post-run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Suite is fully self-cleaning and idempotent — safe to re-run. Uses testcal2@crewfit.com (Asia/Dubai, fat_loss) and louis@crewfit.net (coach). If you seed additional recovery events, /api/admin/recovery/timeline surfaces the last 100 by default (limit query param bumps to 500). MilestoneB test uses a random 400–700-day-old date to avoid workouts.uniq_user_date collisions — retain that pattern.",
+  "rca_of_issue": "N/A — no bugs found. All Iter 94v Phase 4 acceptance criteria and pre-beta regression endpoints are green."
+}

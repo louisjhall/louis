@@ -712,10 +712,6 @@ async def workout_recover(wid: str, body: RecoverBody, user: dict = Depends(curr
     }
 
 
-# ---------------------------------------------------------------------------
-# POST /workouts/{wid}/skip
-# ---------------------------------------------------------------------------
-
 class SkipBody(BaseModel):
     reason: Optional[str] = None
 
@@ -764,3 +760,42 @@ async def workout_skip(wid: str, body: SkipBody, user: dict = Depends(current_us
         except Exception:
             logger.exception("failed to create coach task for key skip")
     return {"ok": True, "workout_id": wid}
+
+
+# ---------------------------------------------------------------------------
+# Iter 94v (Phase 4) — Coach recovery timeline
+# ---------------------------------------------------------------------------
+
+from server import require_role  # noqa: E402
+
+
+@api.get("/admin/recovery/timeline")
+async def admin_recovery_timeline(user: dict = Depends(require_role("coach")), limit: int = 100):
+    """Coach view — recent recovery / skip events across all clients.
+
+    Reads the timeline_events collection the recovery flow writes to. Adds
+    the client's email/name so the coach dashboard can render a proper
+    "who did what" list without a second lookup.
+    """
+    rows = await db.timeline_events.find(
+        {"kind": {"$in": ["workout_recovered", "workout_skipped"]}}, {"_id": 0},
+    ).sort("created_at", -1).to_list(min(500, max(10, int(limit)))) if hasattr(db, "timeline_events") else []
+    # Batch-load users for the payload.
+    user_ids = list({r.get("user_id") for r in rows if r.get("user_id")})
+    users = {}
+    if user_ids:
+        async for u in db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "email": 1}):
+            users[u["id"]] = u
+    for r in rows:
+        c = users.get(r.get("user_id")) or {}
+        r["client_name"] = c.get("name")
+        r["client_email"] = c.get("email")
+    return {"events": rows, "count": len(rows)}
+
+
+@api.get("/admin/client/{uid}/recovery/timeline")
+async def admin_client_recovery_timeline(uid: str, user: dict = Depends(require_role("coach")), limit: int = 100):
+    rows = await db.timeline_events.find(
+        {"user_id": uid, "kind": {"$in": ["workout_recovered", "workout_skipped"]}}, {"_id": 0},
+    ).sort("created_at", -1).to_list(min(500, max(10, int(limit)))) if hasattr(db, "timeline_events") else []
+    return {"events": rows or [], "count": len(rows or [])}

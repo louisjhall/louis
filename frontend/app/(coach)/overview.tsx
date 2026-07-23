@@ -113,10 +113,16 @@ export default function CoachOverview() {
             <Text style={styles.headerBtnText}>HOTELS</Text>
           </Pressable>
           {(user?.is_admin || (user as any)?.is_primary_coach || (user as any)?.coach_tier === "admin" || (user?.email || "").toLowerCase().endsWith("@crewfit.net")) ? (
-            <Pressable testID="ov-goto-coaches" onPress={() => router.push("/coach/admin/coaches" as any)} style={[styles.headerBtn, { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint }]}>
-              <Ionicons name="people-circle-outline" size={16} color={theme.color.brand} />
-              <Text style={styles.headerBtnText}>COACHES</Text>
-            </Pressable>
+            <>
+              <Pressable testID="ov-goto-live-controls" onPress={() => router.push("/coach/admin/live-controls" as any)} style={[styles.headerBtn, { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint }]}>
+                <Ionicons name="options" size={16} color={theme.color.brand} />
+                <Text style={styles.headerBtnText}>LIVE CONTROLS</Text>
+              </Pressable>
+              <Pressable testID="ov-goto-coaches" onPress={() => router.push("/coach/admin/coaches" as any)} style={[styles.headerBtn, { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint }]}>
+                <Ionicons name="people-circle-outline" size={16} color={theme.color.brand} />
+                <Text style={styles.headerBtnText}>COACHES</Text>
+              </Pressable>
+            </>
           ) : null}
           <NotificationBell testID="coach-notif-bell" />
         </View>

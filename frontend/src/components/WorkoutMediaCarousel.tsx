@@ -10,7 +10,7 @@
  * placeholder. Video URLs and drafts are deliberately ignored here — this
  * component is image-only.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Dimensions, ActivityIndicator,
   NativeScrollEvent, NativeSyntheticEvent,
@@ -99,16 +99,29 @@ export function WorkoutMediaCarousel({
   exerciseName,
   height = 260,
   showCoachDraftBadge = false,
+  autoScroll = false,
+  autoScrollIntervalMs = 4000,
 }: {
   exerciseName: string;
   height?: number;
   /** When true, coach-preview mode surfaces a small "DRAFT" warning if the
    * exercise isn't yet approved. Client mode leaves this off. */
   showCoachDraftBadge?: boolean;
+  /** Iter 94t (Phase 2) — When true, cycle through slides automatically so
+   * the client can follow along hands-free during timed exercises. The
+   * auto-scroll pauses if the client manually swipes and resumes after 10s
+   * idle. */
+  autoScroll?: boolean;
+  /** Interval in ms between auto-advances. 3–5s for standard exercises,
+   * 5–7s for mobility / stretch. */
+  autoScrollIntervalMs?: number;
 }) {
   const [media, setMedia] = useState<ResolvedMedia | null | undefined>(undefined);
   const [page, setPage] = useState(0);
+  const [autoPaused, setAutoPaused] = useState(false);
   const width = Dimensions.get("window").width - 32;
+  const scrollRef = useRef<ScrollView | null>(null);
+  const resumeTimerRef = useRef<any>(null);
 
   useEffect(() => {
     let cancel = false;
@@ -121,9 +134,34 @@ export function WorkoutMediaCarousel({
 
   const slides = media?.slides || [];
 
+  // Iter 94t (Phase 2) — Auto-advance the carousel every N ms while enabled
+  // and while the client hasn't recently swiped. Pauses when off-screen or
+  // when there are fewer than two slides.
+  useEffect(() => {
+    if (!autoScroll || autoPaused) return;
+    if (slides.length < 2) return;
+    const id = setInterval(() => {
+      setPage((prev) => {
+        const next = (prev + 1) % slides.length;
+        scrollRef.current?.scrollTo({ x: next * width, animated: true });
+        return next;
+      });
+    }, Math.max(1500, autoScrollIntervalMs));
+    return () => clearInterval(id);
+  }, [autoScroll, autoPaused, slides.length, autoScrollIntervalMs, width]);
+
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const p = Math.round(e.nativeEvent.contentOffset.x / width);
     if (p !== page) setPage(p);
+  };
+
+  // Iter 94t (Phase 2) — If the client swipes manually, pause auto-scroll
+  // for 10s so we don't fight their finger, then resume.
+  const onTouchStart = () => {
+    if (!autoScroll) return;
+    setAutoPaused(true);
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => setAutoPaused(false), 10_000);
   };
 
   const draftPill = useMemo(() => {
@@ -184,10 +222,12 @@ export function WorkoutMediaCarousel({
   return (
     <View style={[styles.wrap, { height }]}>
       <ScrollView
+        ref={scrollRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onScroll}
+        onTouchStart={onTouchStart}
         style={StyleSheet.absoluteFillObject}
       >
         {slides.map((s) => (

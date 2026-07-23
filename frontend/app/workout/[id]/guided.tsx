@@ -40,6 +40,14 @@ function isCardioExercise(ex: any): boolean {
   return /\b(run|running|jog|zone\s?[235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
 }
 
+// Iter 94t (Phase 2) — Mobility / stretch exercises deserve slower image
+// auto-scroll (5–7s) so clients can actually study each position.
+function isMobilityLike(ex: any): boolean {
+  if (!ex) return false;
+  const hay = `${ex.name || ""} ${ex.category || ""} ${ex.section || ""}`.toLowerCase();
+  return /\b(mobility|stretch|flow|breath|activation|cool.?down|warm.?up|rock|rotation|open.?book|hip.?flex|thoracic|foam|glute.?bridge|cat.?cow)\b/.test(hay);
+}
+
 function parseTargetReps(ex: any): number {
   const r = String(ex?.reps || "").trim();
   const first = r.split(/[-\s]/)[0];
@@ -492,7 +500,12 @@ function WarmupPanel({
       <Text style={styles.exMeta}>Move {index} of {total}</Text>
 
       <View style={styles.mediaBox}>
-        <WorkoutMediaCarousel exerciseName={item?.name || ""} height={180} />
+        <WorkoutMediaCarousel
+          exerciseName={item?.name || ""}
+          height={180}
+          autoScroll={!paused}
+          autoScrollIntervalMs={6000}
+        />
       </View>
 
       <View style={styles.timerBox}>
@@ -553,7 +566,12 @@ function WorkPanel({
       <Text style={styles.exMeta}>Set {setIdx} of {targetSets} · {targetReps} reps</Text>
 
       <View style={styles.mediaBox}>
-        <WorkoutMediaCarousel exerciseName={ex?.name || ""} height={200} />
+        <WorkoutMediaCarousel
+          exerciseName={ex?.name || ""}
+          height={200}
+          autoScroll={!paused && (isCardio || isMobilityLike(ex))}
+          autoScrollIntervalMs={isMobilityLike(ex) ? 6000 : 4000}
+        />
       </View>
 
       <View style={styles.cueBox}>

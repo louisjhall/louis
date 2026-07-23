@@ -1,0 +1,42 @@
+{
+  "summary": "Iter 93 / Master Fix Phase 2 backend regression sweep — 18/18 tests passed. Phase 2 is a frontend-only rework (NutritionTodayCard opens full /nutrition centre, Guided flow pause-to-learn, WorkoutMediaCarousel autoScroll) so this sweep only verifies that the endpoints the reworked UI leans on still return their expected shapes and Phase 1 endpoints have not regressed. File: /app/backend/tests/test_iter93_phase2_master_fix.py. Coverage: (1) NUTRITION CENTRE: /nutrition/today returns {date_local, target, totals(calories/protein_g/carbs_g/fats_g/count), hydration_ml, remaining(calories/protein_g/hydration_ml)} exactly as NutritionTodayCard expects — auth required (401 unauth). /nutrition/summary returns date/calories/protein_g/calorie_target/protein_target/meals. /nutrition/week-summary returns days_logged/days_total=7/avg_calories/avg_protein_g/per_day[7]. /nutrition/targets/mine returns {target:{calories,protein_g,...}, guardrails:{min_calories,min_protein_g,max_calories,max_protein_g,min_hydration_ml}}. /nutrition/atlas-tip returned 200 with a tip. /nutrition/insights/latest reachable. POST /nutrition/logs → GET /nutrition/today totals reflect the new calories (+123) and protein (+11.5g) — confirms the ‘X g protein left to hit target’ hint has correct data. POST /nutrition/meals + GET /nutrition/meals round-trip works. (2) GUIDED FLOW: GET /workouts/{id} returns exercises/blocks/sections (regression). GET /exercises/content?name=Push-up returns 200. GET /exercise-content?q=push returns list (library search). (3) PHASE 1 REGRESSION: /app-config public 200, /admin/media/reconcile returns clients_scanned int, /calendar/range returns days[], /recovery/missed 200, /recovery/{wid}/suggestions <500, /profile/timezone-status returns all required source keys.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/nutrition/meals vs GET /api/nutrition/today",
+        "issue": "The two live in DIFFERENT collections — /nutrition/meals writes to db.meals (server.py:8856) while /nutrition/today totals are computed from db.nutrition_logs (feature_nutrition.py:230). A meal created via the meal-scan flow (POST /nutrition/meals) will therefore NOT appear in the NutritionTodayCard totals. If the new /nutrition centre’s photo-scan / barcode / manual-add flows all still POST to /nutrition/meals, the hero card will still show 0 for today. Confirm the frontend photo-scan writes to /nutrition/logs (or the backend needs to unify the two collections). Verified in test: POST /nutrition/logs DOES sync into /nutrition/today; POST /nutrition/meals does not because /nutrition/summary reads db.meals while /nutrition/today reads db.nutrition_logs. This is not a Phase-2 regression — it’s pre-existing — but the review request explicitly claimed the two are wired together."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter93_phase2_master_fix.py",
+    "/app/test_reports/pytest/iter93_phase2_master_fix.xml"
+  ],
+  "action_items": [
+    "Confirm the reworked /nutrition centre’s photo-scan / barcode / manual-add write to /api/nutrition/logs (which feeds /nutrition/today totals and hence the NutritionTodayCard hero). If any of them still POST to /api/nutrition/meals (db.meals), the client will see 0 kcal in the hero card even after logging a meal.",
+    "(Optional cleanup, not Phase-2 scope) Consider consolidating db.meals and db.nutrition_logs — two nutrition collections with divergent shapes is a foot-gun for future regressions."
+  ],
+  "critical_code_review_comments": [
+    "feature_nutrition.py /nutrition/today (line 347-363) correctly composes target/totals/remaining with clamped max(0, …) so the UI never has to defend against negative remaining values. Good.",
+    "feature_nutrition.py /nutrition/week-summary (line 366-388) always emits 7 per_day rows including zero-log days — matches the empty-state pill requirement in NutritionTodayCard.",
+    "server.py POST /nutrition/meals (line 8856) inserts into db.meals with its own shape (photo_base64, ai_feedback). This is the meal-scan path. It intentionally does NOT touch db.nutrition_logs, which means /nutrition/today totals do not reflect meals unless the frontend also POSTs a matching /nutrition/logs row. Please confirm the Phase-2 photo-scan flow writes to /nutrition/logs.",
+    "feature_nutrition.py POST /nutrition/logs requires `food_name` field — the frontend must pass this or it 422s (verified in test — I had to include food_name to log successfully). If any NutritionTodayCard entry point calls POST /nutrition/logs, ensure food_name is always populated (even if from the meal description)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter93_phase2_master_fix.py (new, 18 tests, 18 passing)",
+    "/app/test_reports/pytest/iter93_phase2_master_fix.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (18/18 passed, 0 skipped)", "frontend": "not tested (backend-only request per review notes)"},
+  "seed_data_creation": "Test-scoped only: one TEST_iter93 nutrition log (cleaned up in teardown) + one TEST_iter93 apple meal (kept, small). No production data modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Re-run: cd /app/backend && python -m pytest tests/test_iter93_phase2_master_fix.py -v. All Phase-2 backend surfaces are green. The one live-fire follow-up to consider: verify the frontend /nutrition centre (photo scan / barcode / manual / favourites) writes to /nutrition/logs (so hero totals update) — a UI-only exercise. If the main agent hasn’t already wired photo-scan → /nutrition/logs, the NutritionTodayCard 'X g protein left' hint will always show the target as remaining (i.e. no progress).",
+  "rca_of_issue": "N/A — no bugs surfaced by the sweep. The single flagged minor is a pre-existing product/data-model issue (db.meals vs db.nutrition_logs) not introduced by Phase 2; it may or may not be a real issue depending on how the reworked UI routes its writes."
+}

@@ -2210,3 +2210,104 @@ agent_communication:
   - agent: "main"
     message: "Iter 94d shipped: closed Gap 3 from the flying-day audit. Flight recovery is now aviation-appropriate — a 3h EDI turnaround gets 8 min of concourse mobility, a 14h SYD ULR gets 25 min with thoracic decompression + 4-7-8 breathing + hydration cues. ULR sessions are marked mandatory (optional=False) because sleep prep is critical. Backend 45/45 pytest across all iterations. Iter 94b flying-type training-setup UI was ALSO built earlier this session — awaiting a fresh test-user smoke check on device (the seeded client is already through setup so training-setup redirects to home, expected)."
 
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 95a — Weekly Review dedupe + Dual-Session + OTA + App Store metadata
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Weekly Review — real coach-task id on dedupe (was 'existing')"
+    implemented: true
+    working: true
+    file: "backend/feature_weekly_review.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            `_maybe_create_video_task` now returns Optional[str] and stores the
+            REAL MongoDB coach-task id on `weekly_reviews.video_task_id` so the
+            coach dashboard can deep-link straight into the video review task.
+            Three code paths:
+              1) stored task id still exists → reuse it.
+              2) live task exists for same user+week → adopt + persist its id.
+              3) no live task → create a new one and persist its id.
+            Idempotent under repeated /weekly-review/checkin-complete +
+            /progress-complete calls (verified: back-to-back calls return the
+            SAME UUID, no duplicates in coach_tasks).
+        -working: true
+        -agent: "testing"
+        -comment: "11/11 pytest PASS (tests/test_iter95a_endpoints.py) — video_task_id is a real UUID, no duplicate weekly_video_review docs for same week_start."
+
+  - task: "Dual-Session — short-haul airport activation eligibility + endpoints"
+    implemented: true
+    working: true
+    file: "backend/feature_dual_session.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            New feature module. Pure eligibility evaluator:
+              evaluate_day(day, next_day, profile) → {eligible, reason, gap_hours,
+                                                       duty_hours, flight_count, pattern}
+            Rules:
+              • flying_type must be short_haul/mixed/charter (long_haul → not eligible)
+              • off/home/annual/sick day types → not eligible
+              • duty_hours > 11.5 → not eligible (safety cap)
+              • Path A: airport gap ≥ 3h between consecutive legs AND day ends
+                        at a hotel (or next day rest/off)
+              • Path B: 3+ legs AND day ends at a hotel → eligible
+            Endpoints (all gated by dual_session_enabled flag):
+              GET  /api/dual-session/today
+              GET  /api/dual-session/upcoming?days=N (max 21)
+              GET  /api/dual-session/debug/{user_id}   (coach-only)
+            Session template = 8-min "Airport Activation" — mobility + calf
+            raises + bodyweight hinge + brisk walk + breathing. All copy is
+            Louis-voiced. Feature flag `dual_session_enabled` seeded ENABLED.
+            Unit tests: 9/9 PASS (test_iter95a.py). Endpoint tests: 11/11 PASS.
+
+  - task: "OTA (expo-updates) config + hook — silent JS-only updates"
+    implemented: true
+    working: true
+    file: "frontend/app.json, frontend/src/hooks/use-ota-updates.ts, frontend/app/_layout.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Installed expo-updates@29.0.19 (SDK 54 compatible). Added to app.json:
+              runtimeVersion: { policy: "appVersion" }
+              updates: { enabled: true, checkAutomatically: ON_LOAD, fallbackToCacheTimeout: 0 }
+            New hook useOtaUpdates() wired into RootLayout — silently no-ops
+            on web / Expo Go / dev. Reloads only after a fetched update, and
+            waits 2.5s so the initial paint isn't hijacked.
+            Wire-up for the URL is via `eas update:configure` (owner action).
+
+  - task: "App Store / Beta readiness reference doc"
+    implemented: true
+    working: true
+    file: "APP_STORE_METADATA.md"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            New /app/APP_STORE_METADATA.md — living checklist: metadata (name,
+            keywords, categories), screenshots plan, in-app quality gates,
+            compliance disclaimers, TestFlight setup, OTA workflow, review
+            pre-flight checks, and known-parked items. Ready for Louis to
+            paste directly into App Store Connect.
+
+agent_communication:
+  - agent: "main"
+    message: "Iter 95a shipped four items in one pass: (1) Weekly Review dedupe returns the real coach-task id so the coach app can deep-link. (2) Dual-Session (short-haul airport activation) — feature-flagged endpoints + Home card that renders only on eligible days, never touches the planned session doc. (3) expo-updates wired for OTA (silent, safe fallback). (4) App Store metadata doc committed to /app. 20/20 backend tests green (11 endpoint + 9 unit). Frontend restarted. Ready for user verification of the Home-screen card on a device with an eligible short-haul roster day."

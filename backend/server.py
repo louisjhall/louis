@@ -2216,6 +2216,12 @@ def _missing_essential_fields(assessment: dict, user: dict) -> list[str]:
     it into a dict for O(1) lookups. If the same question was answered twice,
     the LATER answer wins (users can revise).
 
+    Iter 94g — Profile is now checked for EVERY essential (not just flying_type),
+    because `/training-setup` writes these fields DIRECTLY to profile. Without
+    this, a user who filled `/training-setup` and then reached the end of DNA
+    would see "Louis needs a few more answers" even though every essential is
+    already on their profile.
+
     Special rules:
       * "equipment_home" — must be a non-empty list. "bodyweight_only" is OK.
       * "no_go_movements" — must be a non-empty list. ["none"] is OK.
@@ -2242,32 +2248,79 @@ def _missing_essential_fields(assessment: dict, user: dict) -> list[str]:
     for fid in _ESSENTIAL_DNA_FIELDS:
         v = answers_flat.get(fid)
         if fid == "flying_type":
-            # Accept either answer OR profile.* (profile is source of truth).
             if not (v or profile.get("flying_type") or profile.get("route_focus")):
                 missing.append(fid)
+        elif fid == "primary_goal":
+            has_answer = bool(v)  # multi_select list, non-empty
+            has_profile = bool(
+                profile.get("primary_goal_id")
+                or profile.get("main_goal_key")
+                or profile.get("main_goal")
+            )
+            if not (has_answer or has_profile):
+                missing.append(fid)
+        elif fid == "training_days":
+            has_answer = v not in (None, "", [])
+            has_profile = bool(
+                profile.get("training_days_per_week")
+                or profile.get("training_days")
+            )
+            if not (has_answer or has_profile):
+                missing.append(fid)
+        elif fid == "time_home":
+            has_answer = v not in (None, "", [])
+            has_profile = profile.get("time_home_min") is not None
+            if not (has_answer or has_profile):
+                missing.append(fid)
+        elif fid == "time_layover":
+            has_answer = v not in (None, "", [])
+            has_profile = profile.get("time_layover_min") is not None
+            if not (has_answer or has_profile):
+                missing.append(fid)
         elif fid == "equipment_home":
-            if not v or not isinstance(v, list) or len(v) == 0:
+            has_answer = isinstance(v, list) and len(v) > 0
+            prof_eq = profile.get("equipment")
+            has_profile = isinstance(prof_eq, list) and len(prof_eq) > 0
+            if not (has_answer or has_profile):
+                missing.append(fid)
+        elif fid == "hotel_gyms":
+            has_answer = v not in (None, "", [])
+            has_profile = bool(
+                profile.get("hotel_gym_reliability")
+                or profile.get("hotel_gyms")
+            )
+            if not (has_answer or has_profile):
                 missing.append(fid)
         elif fid == "no_go_movements":
-            # Iter 91: accept explicit ["none"] or a `no_go_none` truthy flag as
-            # "answered with no restrictions" so genuinely healthy users can clear the pill.
             if isinstance(v, list) and len(v) > 0:
                 pass  # answered
             elif answers_flat.get("no_go_none") or answers_flat.get("no_no_go_movements"):
                 pass  # explicit-none flag
             elif isinstance(v, list) and any(str(x).lower() == "none" for x in v):
                 pass  # ["none"] sentinel — belt & braces
+            elif profile.get("no_go_none") is True:
+                pass  # /training-setup wrote explicit "no restrictions"
+            elif isinstance(profile.get("no_go_movements"), list):
+                # empty list also counts as "answered no restrictions" from
+                # /training-setup, which submits [] when nothing is ticked.
+                pass
             else:
                 missing.append(fid)
         elif fid == "injuries":
-            # Accept: non-empty text OR explicit-none dict OR a legacy boolean flag
             has_explicit_none = (
                 (isinstance(v, dict) and v.get("__explicit_none"))
                 or bool(answers_flat.get("no_injuries"))
                 or bool(answers_flat.get("injuries_none"))
+                or bool(profile.get("no_injuries"))
+                or bool(profile.get("injuries_none"))
             )
             has_text = bool(v and isinstance(v, str) and v.strip())
-            if not (has_explicit_none or has_text):
+            has_profile_text = bool(
+                profile.get("injuries")
+                and isinstance(profile.get("injuries"), str)
+                and profile.get("injuries").strip()
+            )
+            if not (has_explicit_none or has_text or has_profile_text):
                 missing.append(fid)
         else:
             if v in (None, "", []):
@@ -2293,6 +2346,11 @@ async def assessment_finalize(body: dict = None, user: dict = Depends(current_us
         # Return existing DNA
         dna = await db.coaching_dna.find_one({"user_id": user["id"]}, {"_id": 0}, sort=[("updated_at", -1)])
         return {"dna": dna, "already_completed": True}
+
+    # Iter 94g — Belt-and-braces: re-seed from profile just before we run the
+    # missing-check. Salvages any assessments created before the seeding fix
+    # was live (or where the user filled `/training-setup` mid-assessment).
+    await _seed_assessment_from_profile(a, user)
 
     # Iter 84 (Task 1.2) — Mandatory-fields guard.
     # Refuse to finalize until the 8 essential fields are present.

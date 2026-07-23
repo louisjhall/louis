@@ -55,6 +55,8 @@ DEFAULT_FLAGS: dict[str, dict[str, Any]] = {
     "missed_workout_recovery_enabled":     {"value": True,  "description": "Client-facing recovery flow for missed workouts."},
     "timezone_card_enabled":               {"value": True,  "description": "Timezone card at top of client home."},
     "calendar_scroll_enabled":             {"value": True,  "description": "±60 day scrollable calendar on home."},
+    "dual_session_enabled":                {"value": True,  "description": "Short-haul dual-session (airport activation + hotel evening) suggestions."},
+    "weekly_review_enabled":               {"value": True,  "description": "Sunday check-in / weekly review card."},
 }
 
 

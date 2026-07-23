@@ -1,0 +1,45 @@
+{
+  "summary": "Iter 95a backend-only testing. All three scoped items verified: (1) Weekly Review dedupe now stores/returns a real Mongo UUID in review.video_task_id (never the literal 'existing') and is idempotent across repeated checkin/progress complete calls; (2) new Dual-Session module (/api/dual-session/today, /upcoming, /debug/{user_id}) works end-to-end with proper flag gating and coach-only access (403 for client, 200 for coach); (3) feature_flag dual_session_enabled toggle via /api/admin/app-config correctly disables the feature client-side. testcal2@crewfit.com (mixed) returns 200 without any 500. weekly-review/current still returns the aggregated training/nutrition/habits/message_lines/coach payload. No duplicate weekly_video_review coach tasks for same user+week. 20/20 tests passing (11 endpoint + 9 unit).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "test_iter95a.py (unit tests)",
+        "issue": "Benign asyncio 'cannot schedule new futures after interpreter shutdown' warning printed at teardown because importing feature_dual_session pulls in server → feature_app_config._seed_defaults_once as a background task that survives pytest exit. Tests still exit 0 and all assertions pass. Non-blocking, worth silencing later by lazy-importing db in the unit test or using pytest-asyncio session-scoped teardown."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter95a_endpoints.py",
+    "/app/test_reports/pytest/iter95a_endpoints.xml",
+    "/app/test_reports/pytest/iter95a_unit.xml"
+  ],
+  "action_items": [
+    "(Optional/minor) Suppress the interpreter-shutdown warning in test_iter95a.py by not triggering server import at collection time, or by using a fixture that shields _seed_defaults_once from being scheduled during unit-only runs.",
+    "(Optional/minor) Consider adding a testID-friendly frontend surface for the Optional Activation nudge once wired up on Home — outside this backend-only scope."
+  ],
+  "critical_code_review_comments": [
+    "feature_dual_session.py — `_load_flag` treats an app_config doc without a 'value' key as falsy (returns bool(None)=False) instead of the documented 'default TRUE per seed'. The default-TRUE only applies when the doc is missing entirely. Not a functional issue today because the seed inserts value=true, but if an admin ever DELETEs the doc via /admin/app-config/{key} soft-disable (which sets enabled=false but keeps value), _load_flag still reads value truthily — consistent. Just worth noting the branch: `if not doc: return True` then `return bool(v)` — a doc with value:null would be treated as disabled. Fine for now.",
+    "feature_dual_session.py — `_roster_days_for_user` fetches rosters without filtering by status ('active'), so a stale/archived roster could shadow the active one. In today's data this returns identical days across rosters. Consider filtering `status: 'active'` for consistency with `_roster_summary` in feature_weekly_review.py.",
+    "feature_weekly_review.py `_maybe_create_video_task` — dedupe logic is solid: (1) reuse stored id if it still exists, (2) adopt any live task for same user+week+task_type, (3) create fresh + persist. Idempotency verified by test — same UUID on repeated check-in/progress complete calls.",
+    "server.py has grown very large (>7500 lines by grep offsets). Long-term maintainability concern; not in scope for Iter 95a."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter95a_endpoints.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 tests: 11 HTTP endpoint + 9 unit eligibility)",
+    "frontend": "not tested (backend-only iteration per request)"
+  },
+  "seed_data_creation": "None. Only wrote TEST_-prefixed notes in weekly_reviews via the existing checkin/progress endpoints — same review doc keyed on user+week_start, no orphan rows.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 95a scope was narrow: dual-session module + weekly-review dedupe fix. Both green. Base URL http://localhost:8001, /api prefix, Bearer JWT from POST /api/auth/login. Test users in /app/memory/test_credentials.md. To re-run: `cd /app/backend && python3 -m pytest tests/test_iter95a_endpoints.py -v`. The flag-toggle test always restores dual_session_enabled=true in a finally block so state is safe. Do NOT run full legacy sweep per main-agent note.",
+  "rca_of_issue": "n/a — this iteration was a small additive feature + a targeted dedupe fix; both verified green."
+}

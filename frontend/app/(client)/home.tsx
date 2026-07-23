@@ -19,6 +19,7 @@ import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
 import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
 import { WeeklyReviewCard } from "@/src/components/WeeklyReviewCard";
+import { DualSessionCard } from "@/src/components/DualSessionCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
@@ -127,6 +128,7 @@ export default function Home() {
   const tzFlag = useFlag("timezone_card_enabled");
   const missedFlag = useFlag("missed_workout_recovery_enabled");
   const nutritionFlag = useFlag("nutrition_dashboard_enabled");
+  const dualSessionFlag = useFlag("dual_session_enabled");
   const calendarFlag = useFlag("calendar_scroll_enabled");
   const [workouts, setWorkouts] = useState<any[]>([]);
   const [roster, setRoster] = useState<any>(null);
@@ -388,6 +390,8 @@ export default function Home() {
           {tzFlag ? <TimezoneCard /> : null}
           {/* Iter 94w — Sunday weekly review card (Thu-Sun only). */}
           <WeeklyReviewCard refreshKey={activityRefreshKey} />
+          {/* Iter 95a — Optional airport-activation card for short-haul dual-session days. */}
+          {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
           {/* Iter 94t Phase 1 — Nutrition (calories + protein) near top. */}
           {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
           {/* Iter 94s — Missed sessions banner (only renders if there are any

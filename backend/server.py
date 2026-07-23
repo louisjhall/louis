@@ -11267,6 +11267,7 @@ import feature_media_reconciliation       # noqa: E402,F401  Iter 94t Phase 1: e
 import feature_progress_dynamic           # noqa: E402,F401  Iter 94t Phase 3: goal-adaptive progress + charts
 import feature_daily_briefing             # noqa: E402,F401  Iter 94u: Daily briefing from Louis + coach profile
 import feature_weekly_review              # noqa: E402,F401  Iter 94w: Sunday weekly review from Louis
+import feature_dual_session               # noqa: E402,F401  Iter 95a: Short-haul dual-session (airport activation) suggestions
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

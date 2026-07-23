@@ -273,35 +273,79 @@ async def _get_or_build(user: dict) -> dict:
     return doc
 
 
-async def _maybe_create_video_task(user: dict, review: dict) -> None:
-    if review.get("checkin_status") != "complete": return
-    if review.get("progress_status") != "complete": return
-    if review.get("video_task_id"): return
+async def _maybe_create_video_task(user: dict, review: dict) -> Optional[str]:
+    """Create or reuse the weekly-video-review coach task.
+
+    Returns the actual coach-task id (new or existing) so the frontend
+    can deep-link into it. Idempotent: if the review already has a
+    stored `video_task_id` that points to a live coach task, we reuse it;
+    if the stored id is stale/missing but an open task exists for the
+    same week we adopt it; otherwise we create a fresh task.
+    """
+    if review.get("checkin_status") != "complete": return None
+    if review.get("progress_status") != "complete": return None
+
+    uid = user["id"]
+    week_start = review["week_start"]
+
+    # 1) Fast-path: stored task id → verify it still exists.
+    stored = review.get("video_task_id")
+    if isinstance(stored, str) and stored:
+        exists = await db.coach_tasks.find_one({"id": stored}, {"id": 1})
+        if exists:
+            return stored
+
+    # 2) Look for any live task for this client + week (adopt / dedupe).
+    live = await db.coach_tasks.find_one(
+        {
+            "user_id": uid,
+            "task_type": "weekly_video_review",
+            "payload.week_start": week_start,
+            "status": {"$in": ["todo", "in_progress", "snoozed"]},
+        },
+        {"id": 1},
+    )
+    if live and live.get("id"):
+        task_id = live["id"]
+        await db.weekly_reviews.update_one(
+            {"user_id": uid, "week_start": week_start},
+            {"$set": {
+                "video_task_id": task_id,
+                "video_review_status": "ready",
+                "review_ready_for_louis": True,
+                "review_ready_at": review.get("review_ready_at") or now_iso(),
+            }},
+        )
+        return task_id
+
+    # 3) Create a fresh task and store its id.
     try:
-        await _create_coach_task(
+        task_id = await _create_coach_task(
             user, "weekly_video_review",
             f"Weekly video review ready: {user.get('name') or user.get('email')}",
             f"Both check-in and progress are complete. Adherence: {review['training'].get('adherence_pct')}%. Nutrition days: {review['nutrition'].get('days_logged')}.",
             priority="normal",
             category="weekly_review",
             payload={
-                "user_id": user["id"],
-                "week_start": review["week_start"],
+                "user_id": uid,
+                "week_start": week_start,
                 "training": review["training"], "nutrition": review["nutrition"],
                 "habits": review["habits"], "goal_class": review.get("goal_class"),
             },
         )
         await db.weekly_reviews.update_one(
-            {"user_id": user["id"], "week_start": review["week_start"]},
+            {"user_id": uid, "week_start": week_start},
             {"$set": {
-                "video_task_id": True,
+                "video_task_id": task_id,
                 "video_review_status": "ready",
                 "review_ready_for_louis": True,
                 "review_ready_at": now_iso(),
             }},
         )
+        return task_id
     except Exception:
         logger.exception("failed to create weekly video task")
+        return None
 
 
 @api.get("/weekly-review/current")

@@ -9,6 +9,7 @@ import * as Linking from "expo-linking";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
+import { useOtaUpdates } from "@/src/hooks/use-ota-updates";
 import { AuthProvider, useAuth } from "@/src/lib/auth";
 import { ToastHost } from "@/src/lib/ux";
 import { PreviewProvider } from "@/src/lib/preview";
@@ -47,6 +48,9 @@ export default function RootLayout() {
   const [loaded, error] = useIconFonts();
   const [brandLoaded] = useBrandFonts();
   const router = useRouter();
+
+  // Iter 95a — silent OTA check (no-ops in web / Expo Go / dev).
+  useOtaUpdates();
 
   useEffect(() => {
     if (loaded || error) SplashScreen.hideAsync();

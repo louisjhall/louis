@@ -131,14 +131,53 @@ export default function RosterUpload() {
   };
   const pickPdf = async () => {
     setError(null);
-    const res = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
+    // Iter 94h — accept both PDFs and images in the same picker. On Android this
+    // opens the SAF file browser with folder navigation (Downloads / Documents /
+    // OneDrive / Drive), not just "recent PDFs".
+    const res = await DocumentPicker.getDocumentAsync({
+      type: ["application/pdf", "image/*"],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
     if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
     try {
       const b64 = await uriToBase64(a.uri);
-      await startJob(b64, a.mimeType || "application/pdf", a.name || "roster.pdf");
+      const mime = a.mimeType || (a.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+      await startJob(b64, mime, a.name || (mime === "application/pdf" ? "roster.pdf" : "roster.jpg"));
     } catch (e: any) {
-      setError(e?.message || "Could not read PDF");
+      setError(e?.message || "Could not read that file. Try a different one.");
+    }
+  };
+  // Iter 94h — full "browse anywhere" escape hatch. Uses `type: "*/*"` which on
+  // Android forces the system SAF picker to expose the ☰ menu with Downloads,
+  // Documents, OneDrive, Google Drive, phone storage, etc. — instead of only
+  // showing PDF-source apps' shortcuts. Fixes the "it only lets me open from
+  // other apps" complaint.
+  const pickAnyFile = async () => {
+    setError(null);
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: "*/*",
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (res.canceled || !res.assets?.[0]) return;
+      const a = res.assets[0];
+      const nameLower = (a.name || "").toLowerCase();
+      const mime = a.mimeType
+        || (nameLower.endsWith(".pdf") ? "application/pdf"
+        : nameLower.endsWith(".png") ? "image/png"
+        : nameLower.endsWith(".jpg") || nameLower.endsWith(".jpeg") ? "image/jpeg"
+        : "");
+      if (!mime.startsWith("image/") && mime !== "application/pdf") {
+        setError(`We can only read PDFs and photos of your roster. "${a.name || "This file"}" isn't supported — try exporting your roster as a PDF or taking a screenshot.`);
+        return;
+      }
+      const b64 = await uriToBase64(a.uri);
+      await startJob(b64, mime, a.name || "roster");
+    } catch (e: any) {
+      setError(e?.message || "Could not read that file. Try a different one.");
     }
   };
 
@@ -221,6 +260,19 @@ export default function RosterUpload() {
               </View>
               <Ionicons name="chevron-forward" size={18} color={theme.color.textMuted} />
             </Pressable>
+
+            <Pressable testID="ru-pick-any" onPress={pickAnyFile} disabled={starting} style={[styles.pickBtn, starting && { opacity: 0.5 }]}>
+              <Ionicons name="folder-open-outline" size={22} color={theme.color.brand} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pickBtnTitle}>BROWSE FILES</Text>
+                <Text style={styles.pickBtnSub}>Pick from Downloads, Documents, Drive, OneDrive…</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.color.textMuted} />
+            </Pressable>
+
+            <Text style={styles.browseTip} testID="ru-browse-tip">
+              On Android, tap the <Text style={{ fontWeight: "800" }}>☰</Text> menu at the top-left of the file picker to browse your phone storage, Downloads or any cloud drive.
+            </Text>
 
             {starting ? (
               <View style={{ marginTop: 20, alignItems: "center" }}>
@@ -402,4 +454,5 @@ const styles = StyleSheet.create({
   actBtnGhostText: { color: theme.color.brand, fontSize: 12, fontWeight: "800", letterSpacing: 1.5 },
 
   leaveHint: { color: theme.color.textMuted, fontSize: 12, marginTop: 14, textAlign: "center", fontStyle: "italic" },
+  browseTip: { color: theme.color.textMuted, fontSize: 11, marginTop: 6, marginBottom: 6, lineHeight: 16, fontStyle: "italic" },
 });

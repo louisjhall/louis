@@ -4488,11 +4488,12 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
     await _assert_profile_complete_or_409(user["id"])
     import asyncio as _asyncio
     job_id = new_id()
+    _now = now_iso()
     await db.roster_jobs.insert_one({
         "id": job_id, "user_id": user["id"],
         "status": "queued", "stage": "uploading",
         "message": "Uploading your roster...",
-        "progress": 1, "created_at": now_iso(),
+        "progress": 1, "created_at": _now, "updated_at": _now,
         "filename": body.filename or "roster",
         "roster_id": None, "error": None, "overlap": None, "retry_count": 0,
     })
@@ -10134,14 +10135,20 @@ async def _startup():
         while True:
             try:
                 await _asyncio.sleep(60)
-                cutoff = (datetime.now(_tz.utc) - timedelta(minutes=5)).isoformat()
+                # Iter 94h — Sweep BOTH `processing` AND `queued`. A queued job
+                # can be orphaned too (background worker never picked it up
+                # after a container restart). Previously only "processing" was
+                # swept, which meant queued zombies stayed silent forever and
+                # the client never saw a failure state. Also tightened to 3
+                # minutes so the client is told sooner.
+                cutoff = (datetime.now(_tz.utc) - timedelta(minutes=3)).isoformat()
                 r = await db.roster_jobs.update_many(
-                    {"status": "processing", "updated_at": {"$lt": cutoff}},
+                    {"status": {"$in": ["processing", "queued"]}, "updated_at": {"$lt": cutoff}},
                     {"$set": {
                         "status": "failed",
                         "stage": "interrupted",
                         "message": "This generation stopped responding.",
-                        "error": "The AI generation timed out. Please tap Retry — this is usually a transient blip.",
+                        "error": "The upload timed out or was interrupted. Please tap Retry — this is usually a transient blip.",
                         "updated_at": now_iso(),
                         "interrupted_by": "watchdog",
                     }},

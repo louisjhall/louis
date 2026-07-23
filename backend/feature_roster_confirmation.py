@@ -137,11 +137,12 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
     generated. The client must POST /api/roster/pending/{id}/confirm to
     trigger the plan build."""
     job_id = new_id()
+    now = now_iso()
     await db.roster_jobs.insert_one({
         "id": job_id, "user_id": user["id"],
         "status": "queued", "stage": "uploading",
         "message": "Uploading your roster...",
-        "progress": 1, "created_at": now_iso(),
+        "progress": 1, "created_at": now, "updated_at": now,
         "filename": body.filename or "roster",
         "flow": "parse_only",
         "pending_roster_id": None, "roster_id": None,

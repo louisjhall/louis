@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Modal } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -198,6 +198,40 @@ export default function Home() {
   };
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  // Iter 94h — Live poll while a roster job is active OR failed. Without this
+  // the client home was stale — if an upload failed 20s after the user landed
+  // on the home page, they had no idea unless they pulled to refresh.
+  const rosterJobPollRef = useRef<any>(null);
+  useEffect(() => {
+    if (rosterJobPollRef.current) {
+      clearInterval(rosterJobPollRef.current);
+      rosterJobPollRef.current = null;
+    }
+    const isActive = rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing");
+    if (!isActive) return;
+    rosterJobPollRef.current = setInterval(async () => {
+      try {
+        const j = await api<any>("/roster/jobs/active").catch(() => null);
+        setRosterJob(j && j.id ? j : null);
+        // If the job just finished successfully, reload the whole home so the
+        // roster card + week list pick up the new data.
+        if (j && (j.status === "complete" || j.status === "awaiting_confirmation")) {
+          load();
+        }
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => {
+      if (rosterJobPollRef.current) {
+        clearInterval(rosterJobPollRef.current);
+        rosterJobPollRef.current = null;
+      }
+    };
+    // We only want the polling loop to restart when the job identity/status
+    // transitions — NOT on every progress/message tick (that would thrash the
+    // interval every 3s and defeat the purpose).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterJob?.status, rosterJob?.id, load]);
+
   const openDayPicker = useCallback((dateStr: string) => {
     if (!roster?.id) return;
     // Only allow correcting dates the roster actually covers — otherwise the
@@ -302,6 +336,61 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg }}>
+          {/* Iter 94h — TOP-OF-PAGE roster-job status banner. Impossible to miss
+              when an upload has failed, is stuck, or is still processing. */}
+          {rosterJob && rosterJob.status === "failed" ? (
+            <Pressable
+              testID="home-roster-job-failed"
+              onPress={() => router.push("/roster-upload")}
+              style={styles.jobFailedBanner}
+            >
+              <View style={styles.jobFailedIconWrap}>
+                <Ionicons name="alert-circle" size={28} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.jobFailedTitle}>ROSTER UPLOAD FAILED</Text>
+                <Text style={styles.jobFailedSub}>
+                  {rosterJob.error || "We couldn't finish processing your last roster. Tap here to try again."}
+                </Text>
+                <Text style={styles.jobFailedCta}>TAP TO RETRY →</Text>
+              </View>
+            </Pressable>
+          ) : null}
+          {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial") ? (
+            <Pressable
+              testID="home-roster-job-review"
+              onPress={() => router.push("/roster-upload")}
+              style={styles.jobReviewBanner}
+            >
+              <View style={styles.jobReviewIconWrap}>
+                <Ionicons name="warning" size={26} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.jobReviewTitle}>ROSTER SAVED · PLAN NEEDS REVIEW</Text>
+                <Text style={styles.jobReviewSub}>
+                  {rosterJob.error || "Your roster was saved but the training plan needs a retry. Louis has been notified."}
+                </Text>
+                <Text style={styles.jobReviewCta}>OPEN ROSTER UPLOAD →</Text>
+              </View>
+            </Pressable>
+          ) : null}
+          {rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing") ? (
+            <Pressable
+              testID="home-roster-job-processing"
+              onPress={() => router.push("/roster-upload")}
+              style={styles.jobProcessingBanner}
+            >
+              <ActivityIndicator color={theme.color.brand} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.jobProcessingTitle}>PREPARING YOUR TRAINING PLAN</Text>
+                <Text style={styles.jobProcessingSub}>
+                  {rosterJob.message || "CrewFit is building your calendar around your roster."} {rosterJob.progress ? `· ${rosterJob.progress}%` : ""}
+                </Text>
+                <Text style={styles.jobProcessingCta}>TAP TO SEE PROGRESS →</Text>
+              </View>
+            </Pressable>
+          ) : null}
+
           {showBanner && (
             <Pressable testID="roster-banner" onPress={() => router.push("/roster-upload")} style={[styles.banner, { borderLeftColor: bannerColor }]}>
               <Ionicons name={expiry.expired ? "warning" : "time"} size={18} color={bannerColor} />
@@ -602,23 +691,10 @@ export default function Home() {
               Tip: long-press any day to correct its duty type.
             </Text>
           ) : null}
-          {rosterJob && (rosterJob.status === "queued" || rosterJob.status === "processing") ? (
-            <View style={styles.planBanner} testID="plan-preparing-banner">
-              <Ionicons name="hourglass" size={14} color={theme.color.brand} />
-              <Text style={styles.planBannerT}>CrewFit is preparing your training plan around your roster.</Text>
-            </View>
-          ) : null}
-          {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial" || rosterJob.status === "failed") ? (
-            <View style={styles.planBannerAmber} testID="plan-needs-review-banner">
-              <Ionicons name="alert-circle" size={14} color={theme.color.amber} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.planBannerT}>{rosterJob.error || "Your roster uploaded successfully, but your training plan needs review. Louis has been notified."}</Text>
-                <Pressable onPress={() => router.push({ pathname: "/roster-upload" })} testID="plan-review-open">
-                  <Text style={styles.planBannerLink}>OPEN ROSTER UPLOAD →</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
+          {/* Iter 94h — Old plan-preparing / plan-needs-review banners moved to
+              the TOP of the page (above hero content) so failures are impossible
+              to miss. Keep only the passive "preparing" hint here as a redundancy
+              in case a slow render lands here first — no destructive fallback. */}
           {loading && !workouts.length ? (
             <ActivityIndicator color={theme.color.brand} />
           ) : (
@@ -861,6 +937,43 @@ const styles = StyleSheet.create({
   },
   planBannerT: { color: theme.color.text, fontSize: 12, lineHeight: 17, flex: 1 },
   planBannerLink: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 6 },
+  // Iter 94h — Big, unmissable roster-job banners for the client home. These
+  // sit ABOVE every other card because the earlier failure state was buried.
+  jobFailedBanner: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 14, borderRadius: 12, marginBottom: theme.space.md,
+    backgroundColor: "rgba(239,68,68,0.14)",
+    borderWidth: 2, borderColor: theme.color.red,
+  },
+  jobFailedIconWrap: {
+    width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.red,
+  },
+  jobFailedTitle: { color: theme.color.red, fontSize: 13, fontWeight: "900", letterSpacing: 1.5 },
+  jobFailedSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  jobFailedCta:   { color: theme.color.red, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 8 },
+  jobReviewBanner: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 14, borderRadius: 12, marginBottom: theme.space.md,
+    backgroundColor: "rgba(245,158,11,0.14)",
+    borderWidth: 2, borderColor: theme.color.amber,
+  },
+  jobReviewIconWrap: {
+    width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.amber,
+  },
+  jobReviewTitle: { color: theme.color.amber, fontSize: 13, fontWeight: "900", letterSpacing: 1.5 },
+  jobReviewSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  jobReviewCta:   { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 8 },
+  jobProcessingBanner: {
+    flexDirection: "row", alignItems: "center",
+    padding: 14, borderRadius: 12, marginBottom: theme.space.md,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  jobProcessingTitle: { color: theme.color.brand, fontSize: 13, fontWeight: "900", letterSpacing: 1.5 },
+  jobProcessingSub:   { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  jobProcessingCta:   { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 8 },
   setupCard: {
     padding: theme.space.lg, borderRadius: theme.radius.md,
     borderWidth: 1, borderColor: theme.color.brand,

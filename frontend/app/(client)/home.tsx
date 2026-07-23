@@ -17,6 +17,8 @@ import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 import { TimezoneCard } from "@/src/components/TimezoneCard";
 import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
 import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
+import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
+import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
@@ -118,6 +120,12 @@ function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): { pri
 export default function Home() {
   const { user } = useAuth();
   const router = useRouter();
+  // Iter 94t (Phase 1) — server-driven feature flags. Safe defaults if
+  // /app-config isn't reachable.
+  const tzFlag = useFlag("timezone_card_enabled");
+  const missedFlag = useFlag("missed_workout_recovery_enabled");
+  const nutritionFlag = useFlag("nutrition_dashboard_enabled");
+  const calendarFlag = useFlag("calendar_scroll_enabled");
   const [workouts, setWorkouts] = useState<any[]>([]);
   const [roster, setRoster] = useState<any>(null);
   const [event, setEvent] = useState<any>(null);
@@ -375,10 +383,12 @@ export default function Home() {
         <View style={{ padding: theme.space.lg }}>
           {/* Iter 94r — Timezone card. Always at top so crew immediately see
               which timezone their day / workouts are being scheduled in. */}
-          <TimezoneCard />
+          {tzFlag ? <TimezoneCard /> : null}
+          {/* Iter 94t Phase 1 — Nutrition (calories + protein) near top. */}
+          {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
           {/* Iter 94s — Missed sessions banner (only renders if there are any
               recoverable missed sessions). Sits above the roster banners. */}
-          <MissedSessionsCard refreshKey={activityRefreshKey} />
+          {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
           {/* Iter 94h — TOP-OF-PAGE roster-job status banner. Impossible to miss
               when an upload has failed, is stuck, or is still processing. */}
           {rosterJob && rosterJob.status === "failed" ? (
@@ -815,16 +825,20 @@ export default function Home() {
             </Text>
           ) : null}
           {/* Iter 94s — Scrollable calendar (±30 days initially, up to ±60). */}
-          <View
-            onLayout={(e) => { calendarTopYRef.current = e.nativeEvent.layout.y; }}
-          >
-            <ClientCalendarPanel
-              refreshKey={activityRefreshKey}
-              onLongPressDay={(d) => openDayPicker(d)}
-              onTodayLayoutY={(y) => { todayLocalYRef.current = y; }}
-              onJumpToToday={jumpToToday}
-            />
-          </View>
+          {calendarFlag ? (
+            <View
+              onLayout={(e) => { calendarTopYRef.current = e.nativeEvent.layout.y; }}
+            >
+              <ClientCalendarPanel
+                refreshKey={activityRefreshKey}
+                onLongPressDay={(d) => openDayPicker(d)}
+                onTodayLayoutY={(y) => { todayLocalYRef.current = y; }}
+                onJumpToToday={jumpToToday}
+              />
+            </View>
+          ) : (
+            <Text style={styles.sectionHint}>Calendar temporarily unavailable — message Louis if this persists.</Text>
+          )}
         </View>
       </ScrollView>
 

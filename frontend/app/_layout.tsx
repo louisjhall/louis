@@ -12,6 +12,7 @@ import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
 import { AuthProvider, useAuth } from "@/src/lib/auth";
 import { ToastHost } from "@/src/lib/ux";
 import { PreviewProvider } from "@/src/lib/preview";
+import { AppConfigProvider } from "@/src/lib/appConfig";
 import { PreviewBanner } from "@/src/components/PreviewBanner";
 import { BetaDisclaimerGate } from "@/src/components/BetaDisclaimerGate";
 import { TrainingSetupGate } from "@/src/components/TrainingSetupGate";
@@ -78,14 +79,16 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000000" }}>
       <SafeAreaProvider>
         <AuthProvider>
-          <PreviewWiring>
-            <StatusBar barStyle="light-content" backgroundColor="#000000" />
-            <PreviewBanner />
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
-            <BetaDisclaimerGate />
-            <TrainingSetupGate />
-            <ToastHost />
-          </PreviewWiring>
+          <AppConfigProvider>
+            <PreviewWiring>
+              <StatusBar barStyle="light-content" backgroundColor="#000000" />
+              <PreviewBanner />
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+              <BetaDisclaimerGate />
+              <TrainingSetupGate />
+              <ToastHost />
+            </PreviewWiring>
+          </AppConfigProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

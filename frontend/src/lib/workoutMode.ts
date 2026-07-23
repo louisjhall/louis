@@ -13,6 +13,7 @@ const AUTO_CONTINUE_KEY = "crewfit.workout.autoContinue";
 const AUTO_REST_KEY = "crewfit.workout.autoRest";
 const SOUND_KEY = "crewfit.workout.sound";
 const HAPTICS_KEY = "crewfit.workout.haptics";
+const VOICE_KEY = "crewfit.workout.voice";
 
 /* Mode preference ---------------------------------------------------------- */
 export async function getRememberedMode(): Promise<WorkoutMode | null> {
@@ -60,26 +61,31 @@ export const setSoundOn = (on: boolean) => setBool(SOUND_KEY, on);
 export const getHapticsOn = () => getBool(HAPTICS_KEY, true);
 export const setHapticsOn = (on: boolean) => setBool(HAPTICS_KEY, on);
 
+/* Voice narration (default ON) — used by the Guided Flow only ------------- */
+export const getVoiceOn = () => getBool(VOICE_KEY, true);
+export const setVoiceOn = (on: boolean) => setBool(VOICE_KEY, on);
+
 /* Reactive hook for the settings screen ----------------------------------- */
 export type WorkoutSettings = {
   sound: boolean;
   haptics: boolean;
+  voice: boolean;
   autoRest: boolean;
   autoContinue: boolean;
 };
 
 export function useWorkoutSettings() {
   const [settings, setSettings] = useState<WorkoutSettings>({
-    sound: true, haptics: true, autoRest: true, autoContinue: false,
+    sound: true, haptics: true, voice: true, autoRest: true, autoContinue: false,
   });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const [sound, haptics, autoRest, autoContinue] = await Promise.all([
-        getSoundOn(), getHapticsOn(), getAutoRest(), getAutoContinue(),
+      const [sound, haptics, voice, autoRest, autoContinue] = await Promise.all([
+        getSoundOn(), getHapticsOn(), getVoiceOn(), getAutoRest(), getAutoContinue(),
       ]);
-      setSettings({ sound, haptics, autoRest, autoContinue });
+      setSettings({ sound, haptics, voice, autoRest, autoContinue });
       setLoading(false);
     })();
   }, []);
@@ -89,6 +95,7 @@ export function useWorkoutSettings() {
     setSettings(next);
     if ("sound" in patch) await setSoundOn(next.sound);
     if ("haptics" in patch) await setHapticsOn(next.haptics);
+    if ("voice" in patch) await setVoiceOn(next.voice);
     if ("autoRest" in patch) await setAutoRest(next.autoRest);
     if ("autoContinue" in patch) await setAutoContinue(next.autoContinue);
   };

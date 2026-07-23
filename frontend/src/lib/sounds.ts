@@ -1,13 +1,27 @@
 /**
- * Cross-platform lightweight audio cue helper.
- * Uses Web Audio API on web (Expo dev preview + real web builds).
- * On native, falls back to a haptic-only cue (soft chime not shipped in v1).
- * Never throws — respects the user's Sound setting.
+ * Cross-platform audio cue helper for the workout flow.
+ *
+ * - Web: Web Audio API (synth tones — small, no assets)
+ * - Native (iOS/Android): pre-bundled short WAV files loaded with expo-audio.
+ *   Players are created lazily and reused, and calls to play() reset the
+ *   playhead so back-to-back beeps (e.g. 3-2-1) all fire.
+ * - Silently no-ops if the user disabled Sound in workout settings, or if
+ *   audio init fails on the device (never throws).
  */
 import { Platform } from "react-native";
+import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from "expo-audio";
 import { getSoundOn } from "./workoutMode";
 
-// Reusable AudioContext on web
+/* ------------------------------------------------------------------ */
+/*  Guard                                                              */
+/* ------------------------------------------------------------------ */
+async function guard(): Promise<boolean> {
+  try { return await getSoundOn(); } catch { return true; }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Web synth (unchanged)                                              */
+/* ------------------------------------------------------------------ */
 let ctx: AudioContext | null = null;
 function getCtx(): AudioContext | null {
   if (Platform.OS !== "web") return null;
@@ -17,8 +31,7 @@ function getCtx(): AudioContext | null {
       if (!AC) return null;
       ctx = new AC();
     }
-    // Resume if browser paused it (autoplay policy)
-    if (ctx && ctx.state === "suspended") { ctx.resume().catch(() => {}); }
+    if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
     return ctx;
   } catch { return null; }
 }
@@ -31,7 +44,6 @@ function beep(frequency: number, durationMs: number, volume = 0.15, type: Oscill
     const gain = c.createGain();
     osc.type = type;
     osc.frequency.value = frequency;
-    // Envelope: quick attack, gentle release — feels premium, not annoying
     const now = c.currentTime;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(volume, now + 0.01);
@@ -42,33 +54,109 @@ function beep(frequency: number, durationMs: number, volume = 0.15, type: Oscill
   } catch { /* silent */ }
 }
 
-async function guard(): Promise<boolean> {
-  try { return await getSoundOn(); } catch { return true; }
+/* ------------------------------------------------------------------ */
+/*  Native players (expo-audio)                                        */
+/* ------------------------------------------------------------------ */
+type SoundKey = "tick" | "chime" | "restStart" | "success";
+
+// Static requires so Metro bundles the assets.
+const SOURCES = {
+  tick: require("../../assets/audio/tick.wav"),
+  chime: require("../../assets/audio/chime.wav"),
+  restStart: require("../../assets/audio/rest_start.wav"),
+  success: require("../../assets/audio/success.wav"),
+} as const;
+
+const players: Partial<Record<SoundKey, AudioPlayer>> = {};
+let audioModeConfigured = false;
+
+async function configureAudioModeOnce(): Promise<void> {
+  if (audioModeConfigured) return;
+  audioModeConfigured = true;
+  try {
+    // Play through the media channel, respect the silent switch. Workouts
+    // are foreground-only for the audio cues in v1 — no background playback.
+    await setAudioModeAsync({
+      playsInSilentMode: false,
+      shouldPlayInBackground: false,
+      interruptionMode: "mixWithOthers",
+    });
+  } catch { /* ignore — cues are best-effort */ }
 }
+
+function ensurePlayer(key: SoundKey): AudioPlayer | null {
+  if (Platform.OS === "web") return null;
+  try {
+    if (!players[key]) {
+      const p = createAudioPlayer(SOURCES[key] as unknown as number);
+      // Keep the player around; we reuse it on every cue.
+      players[key] = p;
+    }
+    return players[key] || null;
+  } catch { return null; }
+}
+
+function playNative(key: SoundKey): void {
+  configureAudioModeOnce();
+  const p = ensurePlayer(key);
+  if (!p) return;
+  try {
+    // Reset playhead so consecutive triggers (e.g. 3-2-1) all fire.
+    try { p.seekTo(0); } catch { /* not always available before load */ }
+    p.play();
+  } catch { /* silent */ }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Public API                                                         */
+/* ------------------------------------------------------------------ */
 
 /** Soft, low chime — "rest starting". */
 export async function playRestStart(): Promise<void> {
   if (!(await guard())) return;
-  beep(440, 120);
+  if (Platform.OS === "web") beep(440, 120);
+  else playNative("restStart");
 }
 
 /** Short high pip — used for 3, 2, 1 countdown. */
 export async function playCountdownTick(): Promise<void> {
   if (!(await guard())) return;
-  beep(660, 80, 0.18);
+  if (Platform.OS === "web") beep(660, 80, 0.18);
+  else playNative("tick");
 }
 
 /** Bright ready chime — "next set ready". */
 export async function playRestEnd(): Promise<void> {
   if (!(await guard())) return;
-  beep(880, 90, 0.2);
-  setTimeout(() => beep(1108, 160, 0.2), 100);
+  if (Platform.OS === "web") {
+    beep(880, 90, 0.2);
+    setTimeout(() => beep(1108, 160, 0.2), 100);
+  } else {
+    playNative("chime");
+  }
 }
 
 /** Warm triumphant tone — workout complete. */
 export async function playWorkoutComplete(): Promise<void> {
   if (!(await guard())) return;
-  beep(523, 140, 0.22);      // C5
-  setTimeout(() => beep(659, 140, 0.22), 130); // E5
-  setTimeout(() => beep(784, 260, 0.22), 260); // G5
+  if (Platform.OS === "web") {
+    beep(523, 140, 0.22);
+    setTimeout(() => beep(659, 140, 0.22), 130);
+    setTimeout(() => beep(784, 260, 0.22), 260);
+  } else {
+    playNative("success");
+  }
+}
+
+/**
+ * Pre-warm players on native so the first cue doesn't have any startup lag.
+ * Safe to call multiple times — no-ops after the first success.
+ */
+export function warmupSoundEngine(): void {
+  if (Platform.OS === "web") { getCtx(); return; }
+  configureAudioModeOnce();
+  ensurePlayer("tick");
+  ensurePlayer("chime");
+  ensurePlayer("restStart");
+  ensurePlayer("success");
 }

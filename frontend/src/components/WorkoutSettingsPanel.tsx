@@ -22,6 +22,7 @@ export function WorkoutSettingsPanel() {
 
   const rows: Array<{ key: keyof typeof settings; label: string; hint: string; icon: any }> = [
     { key: "sound", label: "Workout Sounds", hint: "Soft cues at rest end and set complete.", icon: "volume-medium" },
+    { key: "voice", label: "Coach Voice", hint: "Louis calls out the next set and warm-up move in Guided mode.", icon: "mic" },
     { key: "haptics", label: "Haptics", hint: "Vibration on 3-2-1 and set complete (mobile only).", icon: "phone-portrait" },
     { key: "autoRest", label: "Auto Rest Timer", hint: "Start the rest timer automatically after each set.", icon: "timer" },
     { key: "autoContinue", label: "Auto Continue After Rest", hint: "Jump straight to the next set when rest ends.", icon: "play-forward" },

@@ -17,6 +17,7 @@ import { theme } from "@/src/lib/theme";
 import { hapticLight, hapticMedium, hapticSuccess } from "@/src/lib/haptics";
 import { playRestStart, playCountdownTick, playRestEnd } from "@/src/lib/sounds";
 import { getAutoContinue } from "@/src/lib/workoutMode";
+import { narrateRestStart, narrateRestReady } from "@/src/lib/narration";
 
 type Props = {
   seconds: number;
@@ -61,6 +62,7 @@ export function RestTimer({
   // Kick off on mount — one cue + start ticking
   useEffect(() => {
     playRestStart(); hapticLight();
+    narrateRestStart(seconds, nextLabel);
     setLeft(seconds);
     completedRef.current = false;
     countdownedRef.current = { three: false, two: false, one: false };
@@ -110,6 +112,7 @@ export function RestTimer({
     if (completedRef.current) return;
     completedRef.current = true;
     playRestEnd(); hapticSuccess();
+    narrateRestReady();
     if (autoCont) {
       // Small delay so the completion cue lands before we jump
       setTimeout(() => onComplete?.(), 400);

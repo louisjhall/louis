@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator, Image, Modal, Vibration, Dimensions,
+  ActivityIndicator, Image, Modal, Vibration, Dimensions, Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,9 +18,15 @@ import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
 import { WorkoutMediaCarousel } from "@/src/components/WorkoutMediaCarousel";
 import { RestTimer } from "@/src/components/RestTimer";
-import { getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue, getAutoRest } from "@/src/lib/workoutMode";
+import {
+  getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue,
+  getAutoRest, getVoiceOn, setVoiceOn as saveVoiceOn,
+} from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
-import { playWorkoutComplete } from "@/src/lib/sounds";
+import { playWorkoutComplete, playCountdownTick, warmupSoundEngine } from "@/src/lib/sounds";
+import {
+  narrateWarmup, narrateWorkStart, narrateWorkoutComplete, stopNarration,
+} from "@/src/lib/narration";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -68,6 +74,7 @@ export default function GuidedFlow() {
   const [autoCont, setAutoCont] = useState(true);
   const [autoRest, setAutoRest] = useState(true);
   const [soundOn, setSoundOn] = useState(true);
+  const [voiceOn, setVoiceOnState] = useState(true);
   const [previousLabel, setPreviousLabel] = useState<string>("");
   const [howToOpen, setHowToOpen] = useState(false);
   // Iter 94t (Phase 2) — When the client opens the demo/how-to sheet during
@@ -102,17 +109,20 @@ export default function GuidedFlow() {
 
   // Load workout + settings
   useEffect(() => {
+    warmupSoundEngine(); // Pre-warm native audio players so first cue has no lag.
     (async () => {
-      const [w, ac, ar, so] = await Promise.all([
+      const [w, ac, ar, so, vo] = await Promise.all([
         api<any>(`/workouts/${id}`),
         getAutoContinue(),
         getAutoRest(),
         getSoundOn(),
+        getVoiceOn(),
       ]);
       setWorkout(w);
       setAutoCont(ac);
       setAutoRest(ar);
       setSoundOn(so);
+      setVoiceOnState(vo);
       // Start with warmup if any, else jump to first exercise
       if (Array.isArray(w.warmup) && w.warmup.length > 0) {
         setPhase("warmup");
@@ -124,6 +134,7 @@ export default function GuidedFlow() {
     return () => {
       if (restTick.current) clearInterval(restTick.current);
       if (warmupTick.current) clearInterval(warmupTick.current);
+      stopNarration();
     };
   }, [id]);
 
@@ -146,7 +157,9 @@ export default function GuidedFlow() {
       .then((r) => setPrev(r || null)).catch(() => setPrev(null));
     // Prefill inputs with previous / suggested values
     setLogWeight(""); setLogReps(String(targetReps || "")); setLogRpe(""); setLogNote("");
-  }, [currentEx?.name, phase, exIdx, targetReps]);
+    // Coach voice cue for the incoming set.
+    narrateWorkStart(currentEx.name, setIdx, targetSets, targetReps, isCardio);
+  }, [currentEx?.name, phase, exIdx, setIdx, targetReps, targetSets, isCardio]);
 
   // Warmup timer
   useEffect(() => {
@@ -155,9 +168,15 @@ export default function GuidedFlow() {
     if (!item) return;
     const dur = Math.max(10, parseInt(String(item.duration_sec || 30), 10));
     setWarmupTimer(dur);
+    // Announce the move as it kicks off.
+    narrateWarmup(item.name, warmupIdx + 1, workout?.warmup?.length || 1);
     if (warmupTick.current) clearInterval(warmupTick.current);
     warmupTick.current = setInterval(() => {
       setWarmupTimer((s) => {
+        // 3-2-1 audio cues on the tail end of each warm-up move
+        if (s === 4) playCountdownTick();
+        else if (s === 3) playCountdownTick();
+        else if (s === 2) playCountdownTick();
         if (s <= 1) {
           clearInterval(warmupTick.current);
           Vibration.vibrate([0, 200, 100, 200]);
@@ -243,6 +262,7 @@ export default function GuidedFlow() {
       if (isLastSet && isLastExercise) {
         hapticSuccess();
         playWorkoutComplete();
+        narrateWorkoutComplete();
         setPhase("complete");
       } else if (autoRest) {
         startRest(restSec, `${currentEx.name} Set ${setIdx} complete`);
@@ -356,6 +376,23 @@ export default function GuidedFlow() {
             {(phase === "work" || phase === "rest") && `EX ${exIdx + 1}/${totalExercises} · SET ${setIdx}/${targetSets}`}
           </Text>
         </View>
+        <Pressable
+          onPress={async () => {
+            const next = !voiceOn;
+            setVoiceOnState(next);
+            await saveVoiceOn(next);
+            if (!next) stopNarration();
+          }}
+          hitSlop={12}
+          testID="gf-voice-toggle"
+          style={{ marginRight: 14 }}
+        >
+          <Ionicons
+            name={voiceOn ? "mic" : "mic-off"}
+            size={20}
+            color={voiceOn ? theme.color.brand : theme.color.textMuted}
+          />
+        </Pressable>
         <Pressable onPress={() => setPaused((v) => !v)} hitSlop={12} testID="gf-pause">
           <Ionicons name={paused ? "play" : "pause"} size={22} color={theme.color.text} />
         </Pressable>

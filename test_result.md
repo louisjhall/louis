@@ -213,6 +213,18 @@ backend:
         comment: "New endpoint returning per-client compliance %, avg RPE, key_sessions completed vs scheduled, load distribution, and global aggregates for last N days (default 30). Verified manually via curl - returns 15 clients + load_distribution. Requires role=coach."
 
 frontend:
+  - task: "Guided Flow audio: countdown beeps + Louis coach voice narration"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/workout/[id]/guided.tsx, frontend/src/lib/sounds.ts, frontend/src/lib/narration.ts, frontend/src/components/RestTimer.tsx, frontend/src/lib/workoutMode.ts, frontend/src/components/WorkoutSettingsPanel.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New: (1) sounds.ts now plays native beeps via expo-audio + bundled WAV assets (tick / chime / rest_start / success) in assets/audio/, with the existing Web Audio synth kept as web fallback. Players are created lazily, reused, and audio-mode is configured once (playsInSilentMode=false, mixWithOthers). warmupSoundEngine() pre-warms players on guided-flow mount. (2) narration.ts wraps expo-speech with a Louis coach voice — en-GB on iOS, en-US on Android/web — cancels the previous utterance before speaking a new one, de-dupes any cue that repeats within 800ms, and never throws. Helpers: narrateWorkStart, narrateWarmup, narrateRestStart, narrateRestReady, narrateWorkoutComplete. (3) workoutMode.ts adds `voice` pref (default ON) — surfaced in WorkoutSettingsPanel as 'Coach Voice'. (4) Guided flow now (a) pre-warms audio, (b) speaks 'Set X of Y — Exercise — reps' when a new work set begins, (c) speaks the warm-up move name and plays 3-2-1 beeps in the tail of each warm-up move, (d) speaks 'Rest N seconds, next up …' at rest start and 'Ready, let's go' at rest end (via RestTimer), (e) speaks 'Workout complete, great work' on finish. Voice toggle button (mic / mic-off) added to guided-flow top bar for one-tap mute. stopNarration() runs on unmount. All copy respects the NO-AI rule (no bot/generated/AI wording). Foreground-only for v1 — no background audio session, no lock-screen playback. Untouched: Manual mode. Expo dev-preview: beeps + TTS both work; on real device they will also work in Expo Go (no dev-build required) since we did not enable background playback."
+
   - task: "Coach Desktop Shell (sidebar + slot) on wide web viewports (>=1024px)"
     implemented: true
     working: "NA"

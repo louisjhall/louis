@@ -185,6 +185,23 @@ function DutyChipView({ chip, small }: { chip: DutyChip; small?: boolean }) {
   );
 }
 
+/**
+ * Iter 95h — compact icon-only status dot for the top-right of a day card.
+ * Communicates duty context at a glance without cluttering the row body.
+ * Long-press / tap-through opens the workout; we don't add own handler.
+ */
+function DutyIconDot({ chip }: { chip: DutyChip }) {
+  const c = dutyChipColors(chip.tone);
+  return (
+    <View
+      accessibilityLabel={chip.label}
+      style={[styles.dutyDot, { backgroundColor: c.bg, borderColor: c.border }]}
+    >
+      <Ionicons name={chip.icon} size={12} color={c.fg} />
+    </View>
+  );
+}
+
 export function ClientCalendarPanel({
   refreshKey = 0,
   onLongPressDay,
@@ -439,8 +456,14 @@ function DayRow({
             </Text>
             {card.is_today ? <Text style={styles.dateSub}>{dl}</Text> : null}
           </View>
-          <View style={[styles.badge, { backgroundColor: bs.bg }]}>
-            <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
+          {/* Iter 95h — duty status now lives as a small icon dot in the
+              top-right, next to the workout status badge. Cleaner than the
+              old bottom chip row. */}
+          <View style={styles.rowHeadRight}>
+            <DutyIconDot chip={dutyChip} />
+            <View style={[styles.badge, { backgroundColor: bs.bg }]}>
+              <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
+            </View>
           </View>
         </View>
 
@@ -448,7 +471,7 @@ function DayRow({
           <>
             <Text style={styles.title} numberOfLines={1}>{card.workout.title || "Session"}</Text>
             <Text style={styles.meta} numberOfLines={1}>
-              {card.workout.location || "Home"}
+              {card.workout.location || dutyChip.label}
               {card.workout.estimated_minutes ? ` · ${card.workout.estimated_minutes}min` : ""}
               {card.workout.key_session ? "  ·  KEY" : ""}
             </Text>
@@ -459,13 +482,15 @@ function DayRow({
           <Text style={styles.titleRest}>REST</Text>
         )}
 
-        {/* Iter 95f — always show a duty context chip so clients see
-            where they are and what they're doing on this date. */}
-        <View style={styles.chipRow}>
-          <DutyChipView chip={dutyChip} />
-          {flightChip ? <DutyChipView chip={flightChip} small /> : null}
-          {layoverChip ? <DutyChipView chip={layoverChip} small /> : null}
-        </View>
+        {/* Iter 95h — only surface a chip row when there's genuine extra
+            context beyond the top-right duty dot (i.e. a flight number or
+            layover city). Keeps the base card visually clean. */}
+        {(flightChip || layoverChip) ? (
+          <View style={styles.chipRow}>
+            {flightChip ? <DutyChipView chip={flightChip} small /> : null}
+            {layoverChip ? <DutyChipView chip={layoverChip} small /> : null}
+          </View>
+        ) : null}
 
         {acts.map((a) => (
           <View key={a.id} style={styles.actChip}>
@@ -587,6 +612,28 @@ const styles = StyleSheet.create({
     borderRadius: 12, backgroundColor: theme.color.brandTint,
   },
   actChipT: { color: theme.color.brand, fontSize: 10, fontWeight: "800" },
+
+  // Iter 95h — duty context lives inline in the top-right of every day
+  // card as a small round icon dot. If there is extra roster context
+  // (flight number, layover city) it appears as a compact pill below.
+  rowHeadRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  dutyDot: {
+    width: 24, height: 24, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1,
+  },
+  chipRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+    paddingHorizontal: 12, marginTop: 8,
+  },
+  chip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 10, borderWidth: 1,
+  },
+  chipSmall: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
+  chipT: { fontSize: 10, fontWeight: "800", letterSpacing: 0.4 },
+  chipTSmall: { fontSize: 9, letterSpacing: 0.3 },
 
   missedCopy: { color: theme.color.textMuted, fontSize: 12, paddingHorizontal: 12, marginTop: 6, lineHeight: 17 },
   missedActions: { flexDirection: "row", gap: 8, padding: 12, paddingTop: 8 },

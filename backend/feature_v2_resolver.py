@@ -274,10 +274,21 @@ async def create_exercise_request_if_missing(
             "reason": reason,
             "at": now_iso(),
         }
+        # Iter 95j — the dedup path used to only bump the counter, which
+        # meant a second workout requesting the same missing exercise never
+        # got its workout_id / programme_id linked. That made the demand
+        # queue's "Needed Soon" bucket permanently empty. We now $addToSet
+        # every id so downstream urgency scoring works on repeat requests.
+        add_to_set: dict[str, Any] = {"requested_for_user_ids": user.get("id")}
+        if programme_id:
+            add_to_set["requested_for_programme_ids"] = programme_id
+        if workout_id:
+            add_to_set["requested_for_workout_ids"] = workout_id
         await db.exercises_v2.update_one(
             {"id": existing["id"]},
             {"$inc": {"request_count": 1},
              "$push": {"request_history": usage_ctx},
+             "$addToSet": add_to_set,
              "$set": {"updated_at": now_iso()}},
         )
         # Ensure the coach task is present + fresh (dedup + escalate priority).
@@ -694,6 +705,11 @@ async def exercise_requests_grouped(admin: dict = Depends(require_role("coach"))
     # Which drafts are referenced by a workout in the next 7 days?
     horizon_iso = (_dt.date.today() + _dt.timedelta(days=7)).isoformat()
     today_iso = _dt.date.today().isoformat()
+    # Iter 95j — also treat "just-generated" drafts as Needed Soon so newly
+    # created exercise requests always surface on the top tab, even if their
+    # workout hasn't landed in the calendar yet (regeneration races, cron
+    # ordering, workout deletes / rebuilds).
+    recent_horizon = (_dt.datetime.utcnow() - _dt.timedelta(days=3)).isoformat()
     upcoming_workout_ids: set[str] = set()
     try:
         cur = db.workouts.find(
@@ -714,7 +730,20 @@ async def exercise_requests_grouped(admin: dict = Depends(require_role("coach"))
     awaiting_review: list[dict] = []
     for r in drafts:
         ref_ids = set(r.get("requested_for_workout_ids") or [])
-        if ref_ids & upcoming_workout_ids:
+        # Iter 95j — the dedup path historically only wrote to request_history,
+        # so many draft rows have empty requested_for_workout_ids even though
+        # they've been re-requested by newer workouts. Union in the ids we
+        # find in history so needed_soon reflects reality until the backfill
+        # from Iter 95j's dedup-path fix catches up.
+        for h in (r.get("request_history") or []):
+            wid = h.get("workout_id")
+            if wid:
+                ref_ids.add(wid)
+        # Iter 95j — either linked to an upcoming workout, OR requested
+        # recently (last 3 days). Freshly generated exercises always land
+        # in needed_soon so Louis can review them fast.
+        is_recent = str(r.get("updated_at") or r.get("created_at") or "") >= recent_horizon
+        if (ref_ids & upcoming_workout_ids) or is_recent:
             needed_soon.append(_enrich(r))
         else:
             awaiting_review.append(_enrich(r))

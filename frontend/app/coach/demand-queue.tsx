@@ -56,9 +56,9 @@ type Grouped = {
 type SectionKey = "needed_soon" | "awaiting_review" | "history";
 
 const SECTIONS: { key: SectionKey; title: string; sub: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
-  { key: "needed_soon",     title: "NEEDED SOON",     sub: "Referenced by a workout in the next 7 days", icon: "flame",       color: "#e5a337" },
-  { key: "awaiting_review", title: "AWAITING REVIEW", sub: "Draft exercise requests from recent programmes", icon: "hourglass", color: theme.color.brand },
-  { key: "history",         title: "HISTORY",         sub: "Rejected or merged into existing exercises", icon: "archive",     color: theme.color.textDim },
+  { key: "needed_soon",     title: "NEEDED SOON",     sub: "Recently requested, or referenced by a workout in the next 7 days", icon: "flame",       color: "#e5a337" },
+  { key: "awaiting_review", title: "AWAITING REVIEW", sub: "Older draft exercise requests still pending",                       icon: "hourglass",   color: theme.color.brand },
+  { key: "history",         title: "HISTORY",         sub: "Rejected or merged into existing exercises",                        icon: "archive",     color: theme.color.textDim },
 ];
 
 export default function DemandQueue() {
@@ -66,6 +66,7 @@ export default function DemandQueue() {
   const [data, setData] = useState<Grouped | null>(null);
   const [loading, setLoading] = useState(true);
   const [section, setSection] = useState<SectionKey>("needed_soon");
+  const [autoSectionApplied, setAutoSectionApplied] = useState(false);
   const [selected, setSelected] = useState<Request | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -82,6 +83,20 @@ export default function DemandQueue() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Iter 95j — on first successful load, if "Needed Soon" is empty but there
+  // ARE items awaiting review, jump the client straight to that tab so newly
+  // generated exercises are actually visible. Only fires once per mount so
+  // manual tab switches aren't overridden.
+  useEffect(() => {
+    if (!data || autoSectionApplied) return;
+    const ns = data.counts.needed_soon ?? 0;
+    const ar = data.counts.awaiting_review ?? 0;
+    if (section === "needed_soon" && ns === 0 && ar > 0) {
+      setSection("awaiting_review");
+    }
+    setAutoSectionApplied(true);
+  }, [data, autoSectionApplied, section]);
 
   const rows = data ? data[section] : [];
 

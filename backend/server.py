@@ -11264,6 +11264,7 @@ import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base
 import feature_calendar_recovery          # noqa: E402,F401  Iter 94s: calendar range + missed workout recovery
 import feature_app_config                 # noqa: E402,F401  Iter 94t Phase 1: remote config + feature flags
 import feature_media_reconciliation       # noqa: E402,F401  Iter 94t Phase 1: exercise media reconciliation + coach tasks
+import feature_progress_dynamic           # noqa: E402,F401  Iter 94t Phase 3: goal-adaptive progress + charts
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

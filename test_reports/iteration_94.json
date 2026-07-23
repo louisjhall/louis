@@ -1,0 +1,37 @@
+{
+  "summary": "Iter 94t Phase 3 (Dynamic Progress) backend regression — 43/43 tests passed on the deployed backend (https://flight-fit-plans.preview.emergentagent.com). File: /app/backend/tests/test_iter94t_phase3_progress.py. Coverage split across 8 test classes: (1) BODY METRICS — POST /progress/body creates a metric with weight/waist/hips/chest + rejects all-null + validates pydantic ranges; GET /progress/body returns just-created row within days=30; auth-guarded. (2) RUNNING — POST /progress/running persists duration/distance/rpe/session_type; validates duration>=1; GET returns rows. (3) STRENGTH — POST /progress/strength stores exercise_key (lowercased) and computes Epley 1RM = load × (1 + reps/30), verified with two cases (100kg×10 → 133.3; 150kg×1 → 155.0); GET returns rows. (4) PHOTOS — POST /progress/photo/base64 uploads a tiny JPEG, returns {id,url,expires_at_epoch,mime,angle,private,size_bytes} where url is /api/progress/photo/{id}?u=&e=&t=; rejects bad mime (400), bad angle (400), bad base64 (400), and payload >6MB (413); GET /progress/photos returns fresh signed URL per photo; the signed URL served real image bytes (Content-Type image/*); tampered token returns 403; already-expired exp returns 403; DELETE removes from DB and returns 404 on nonexistent. (5) DASHBOARD — GET /progress/dashboard returns all required keys (goal_class, adherence, nutrition_last_14d, habits_last_7d, body{latest,starting,series_weight,series_waist,weight_change_kg,waist_change_cm}, running{count,long_run_min,series}, strength{key_lifts,sessions}, photos with signed URLs); adherence carries weeks/planned/completed/missed/adherence_pct. (6) GOAL DETECTION (unit) — _detect_goal_class returns fat_loss for {fat_loss, weight_loss, recomposition}, running for {running, marathon, half_marathon}, strength for {strength, hypertrophy, power}, health for empty/general_fitness/recovery/unknown; secondary_goals=[marathon] correctly routes to running. (7) ADMIN — client cannot hit /admin/client/{uid}/progress-dashboard (403); coach can and receives the same payload plus a `client` block ({id,name,email}); nonexistent uid → 404. (8) PHASE 1+2 REGRESSION — /app-config, /admin/media/reconcile, /calendar/range, /recovery/missed, /profile/timezone-status, /nutrition/today all 200 with expected shapes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter94t_phase3_progress.py",
+    "/app/test_reports/pytest/iter94t_phase3_progress.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_progress_dynamic.py: PHOTO_SECRET is generated fresh per-process when env var is unset (`os.environ.get('PROGRESS_PHOTO_SECRET') or secrets.token_hex(32)`). This means every backend restart invalidates every already-issued signed photo URL. Fine for a single-instance deployment as long as URLs are short-lived (they are, 6h), but on a multi-instance / rolling-deploy setup URLs signed by pod A will 403 on pod B. Recommend setting PROGRESS_PHOTO_SECRET in backend/.env once we go multi-pod. Documented in the module docstring; flagged as an FYI, not a blocker.",
+    "_verify_photo_token uses hmac.compare_digest AFTER truncating HMAC to 24 hex chars — that's ~96 bits which is still fine for a 6-hour token but worth noting. The truncation is deliberate (shorter URLs).",
+    "get_photo (GET /progress/photo/{id}) intentionally does NOT depend on current_user so <Image src=...> tags work without auth headers. Access is gated purely by the signed token — correct pattern for private media served to a native client.",
+    "delete_photo lets a coach delete any client's photo (only client role is scoped to own photos). If we want strict per-client ownership even for coaches, we'd need to tighten this. Current behaviour is arguably correct for coach-of-record.",
+    "Base64 decode with validate=True correctly rejects malformed input (verified). 6 MB cap is enforced on decoded bytes (correct — before-decode cap would still allow ~4.5 MB after decode, so decoded-bytes is the right measure).",
+    "_dashboard_for pulls up to 500 body_metrics + 500 running_metrics + 2000 strength_metrics + 60 photos on every dashboard read. Fine for the current client base; if a single client ever crosses those limits the client would silently only see a slice. Consider paginating series server-side once we have a heavy user.",
+    "Epley formula and lift grouping in _strength_summary use exercise_key (lower-cased trimmed name). Same exercise typed with different casing will merge — good. Different spellings (e.g. 'Back Squat' vs 'Backsquat') won't merge — probably intentional, but worth mentioning to product."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter94t_phase3_progress.py (new — 43 tests, 43 passing)",
+    "/app/test_reports/pytest/iter94t_phase3_progress.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (43/43 passed)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Test-scoped only. Under testcal2@crewfit.com: 1 body_metric (weight 82.5, waist 88), 1 running_metric (45min long_run), 2 strength_metrics (Back Squat 100×10, Deadlift 1RM 150×1), 2 progress photos (front + back — the back one was then deleted by the test). Nothing was cleaned up after (kept as friendly Progress-screen seed data for testcal2 going forward). No production data mutated.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Re-run: cd /app/backend && python -m pytest tests/test_iter94t_phase3_progress.py -v. All 43 Phase-3 progress endpoints green. If backend is restarted between the upload and the signed-URL fetch, the signed URL will 403 because PROGRESS_PHOTO_SECRET is process-random when the env var is unset — the tests always upload+fetch inside the same run so this doesn't affect the suite. For frontend-side testing of the /progress screen, the react-native-gifted-charts render path is untested here (backend-only sweep).",
+  "rca_of_issue": "N/A — no bugs. The Task-2 shutdown traceback printed at the end of the pytest run is an unrelated import-time side effect: importing feature_progress_dynamic in the unit test transitively imports server.py, which registers @app.on_event('startup') tasks. The event loop those tasks were scheduled on gets torn down at interpreter shutdown, so the tasks raise `cannot schedule new futures after interpreter shutdown`. Cosmetic only, no functional impact on the running FastAPI server."
+}

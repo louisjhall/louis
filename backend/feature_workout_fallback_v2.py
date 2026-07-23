@@ -96,13 +96,82 @@ def _infer_pattern(item: dict) -> str:
     return "squat"  # last-ditch safe default
 
 
+# Iter 95g — endurance/run exercises must NEVER be substituted with a
+# bodyweight movement. If a runner's plan has "Easy Run" / "Long Run" /
+# "Tempo Run" / "Intervals" / "Swim" / "Bike" / "Steady Ride" as the main
+# item, the resolver cannot match it against a resistance-exercise
+# library — but that's fine, those items are self-contained sessions.
+# Passing them through here fixes the class of bugs where a marathon
+# client saw "High-Knee March" as their Easy Run.
+_ENDURANCE_KEYWORDS = (
+    "run", "jog", "sprint", "stride", "tempo", "interval", "fartlek",
+    "swim", "cycle", "bike", "ride", "row erg", "erg", "assault",
+    "walk", "hike",
+)
+
+# Iter 95g — mobility / stretching / breathing / warm-up items must also
+# NEVER be substituted with a resistance-training bodyweight movement.
+# They are self-contained. This was the class of bug that produced 5
+# identical "Bodyweight Squat" rows on a Mobility Flow workout.
+_MOBILITY_KEYWORDS = (
+    "stretch", "mobility", "breathing", "breath", "rotation", "circle",
+    "cat-cow", "cat cow", "world's greatest", "worlds greatest",
+    "downward dog", "cobra", "child's pose", "childs pose", "shavasana",
+    "90/90", "hip opener", "shoulder circle", "neck roll", "hamstring stretch",
+    "quad stretch", "calf stretch", "figure four", "pigeon", "thread the needle",
+    "diaphragmatic", "box breathing", "meditation", "flow",
+)
+
+def _is_endurance_item(item: dict) -> bool:
+    """True if the exercise is a self-contained endurance session that
+    doesn't need a bodyweight substitute (it IS its own workout)."""
+    name = str(item.get("name") or item.get("exercise_name") or "").lower()
+    if not name:
+        return False
+    st = str(item.get("session_type") or item.get("focus") or "").lower()
+    if st in {"easy_run", "long_run", "tempo", "intervals", "fartlek",
+              "recovery_run", "swim", "bike", "cycle", "walk", "steady_ride"}:
+        return True
+    for kw in _ENDURANCE_KEYWORDS:
+        if kw in name:
+            return True
+    return False
+
+
+def _is_mobility_item(item: dict) -> bool:
+    """True if the exercise is mobility / stretching / breathing — never
+    substitute these with resistance movements."""
+    name = str(item.get("name") or item.get("exercise_name") or "").lower()
+    if not name:
+        return False
+    mp = str(item.get("movement_pattern") or "").lower()
+    if mp in {"mobility", "stretch", "breathing", "cooldown", "warmup"}:
+        return True
+    for kw in _MOBILITY_KEYWORDS:
+        if kw in name:
+            return True
+    return False
+
+
 def bodyweight_substitute_for(item: dict) -> dict:
     """Return a fully-formed bodyweight substitute dict that mirrors the original
     item's set/rep/rest scheme when present, so the workout duration stays sane.
     The returned dict includes `substitute_for` + `substitution_reason` so the
     client-facing WHY-THIS-CHANGED text still lists the original ask.
+
+    Iter 95g — endurance and mobility items pass through unchanged, and the
+    caller can bias the pattern via `_pattern_hint` to avoid producing five
+    identical Bodyweight Squats.
     """
-    pattern = _infer_pattern(item)
+    # Iter 95g — never sub out the run itself.
+    if _is_endurance_item(item) or _is_mobility_item(item):
+        passthrough = dict(item)
+        passthrough.setdefault("equipment_required", ["bodyweight"])
+        passthrough.setdefault("equipment_check", "pass")
+        passthrough["source"] = passthrough.get("source") or "endurance_mobility_passthrough"
+        return passthrough
+
+    pattern = str(item.get("_pattern_hint") or "").lower() or _infer_pattern(item)
     tmpl = dict(_PATTERN_SUBS.get(pattern) or _PATTERN_SUBS["squat"])
     # Preserve original sets/reps/rest/RPE if the LLM specified them.
     for k in ("sets", "reps", "rest_sec", "tempo", "rpe", "intensity_note", "duration_sec"):

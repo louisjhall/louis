@@ -438,6 +438,16 @@ async def apply_resolver_to_workouts(
     for w in workouts:
         exs_in = w.get("exercises") or []
         exs_out: list[dict] = []
+        # Iter 95g — track patterns already used in this workout so we
+        # never produce five identical "Bodyweight Squat" rows. When the
+        # bodyweight fallback is needed and the natural pattern is already
+        # taken, we rotate to the next-best unused pattern.
+        _used_patterns_this_workout: set[str] = set()
+        _rotation_order = [
+            "squat", "hinge", "lunge", "single_leg",
+            "push", "pull", "vertical_push", "vertical_pull",
+            "core", "anti_rotation", "carry", "conditioning",
+        ]
         for item in exs_in:
             res = resolve_exercise_need(item, pool, client_ctx=client_ctx)
             if res["kind"] == "matched":
@@ -492,8 +502,27 @@ async def apply_resolver_to_workouts(
                 # substitute so the workout stays intact and the client can
                 # still train. We still log the exercise-request task so
                 # Louis is notified.
-                from feature_workout_fallback_v2 import bodyweight_substitute_for
-                sub = bodyweight_substitute_for(item)
+                # Iter 95g — rotate the pattern hint if the item's natural
+                # bodyweight substitute has already been used in this workout,
+                # so we don't produce duplicate rows.
+                from feature_workout_fallback_v2 import (
+                    bodyweight_substitute_for,
+                    _infer_pattern,
+                    _is_endurance_item,
+                    _is_mobility_item,
+                )
+                item_for_sub = dict(item)
+                if not (_is_endurance_item(item_for_sub) or _is_mobility_item(item_for_sub)):
+                    natural = _infer_pattern(item_for_sub)
+                    chosen = natural
+                    if natural in _used_patterns_this_workout:
+                        for alt in _rotation_order:
+                            if alt not in _used_patterns_this_workout:
+                                chosen = alt
+                                break
+                    _used_patterns_this_workout.add(chosen)
+                    item_for_sub["_pattern_hint"] = chosen
+                sub = bodyweight_substitute_for(item_for_sub)
                 sub["exercise_id"] = None  # no library id — synthesized
                 sub["resolver_status"] = "unresolved_bodyweight_fallback"
                 exs_out.append(sub)

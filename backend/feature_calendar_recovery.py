@@ -85,6 +85,29 @@ def _today() -> _dt.date:
     return _dt.date.today()
 
 
+def _account_start_date(user: dict) -> Optional[_dt.date]:
+    """The earliest date that should count for missed-session logic.
+
+    Anything on the client's roster before this date was uploaded for
+    historical context only and MUST NOT be counted as a missed session.
+
+    Priority (newest wins so we're conservative):
+      1. plan_start_at        — explicit start of programming
+      2. onboarded_at         — when they finished onboarding
+      3. signed_up_at         — when they created the account
+      4. created_at           — DB creation timestamp
+    """
+    candidates: list[_dt.date] = []
+    for k in ("plan_start_at", "onboarded_at", "signed_up_at", "created_at", "joined_at"):
+        d = _parse_date(user.get(k))
+        if d:
+            candidates.append(d)
+    if not candidates:
+        return None
+    # Use the newest date — anything older than that is "before I started".
+    return max(candidates)
+
+
 def _is_hard(w: dict) -> bool:
     """A workout is considered hard if intensity or focus flags it."""
     if not w:
@@ -161,6 +184,7 @@ def _duty_is_off(row: Optional[dict]) -> bool:
 
 def _badge_for(
     w: Optional[dict], the_date: _dt.date, today: _dt.date, roster_row: Optional[dict],
+    *, account_start: Optional[_dt.date] = None,
 ) -> str:
     """Resolve a single primary badge for a day-card workout.
 
@@ -182,6 +206,11 @@ def _badge_for(
     if _is_off_workout(w):
         return "rest"
     if the_date < today:
+        # Iter 95f — historic dates that pre-date the account are NOT
+        # "missed" — they were never actually assigned. Show them as
+        # planned/rest so they don't inflate the recovery card.
+        if account_start and the_date < account_start:
+            return "rest"
         return "missed"
     if w.get("needs_coach_review"):
         return "awaiting_coach_review"
@@ -374,6 +403,10 @@ async def calendar_range(
     roster_by_date = await _roster_days_between(user["id"], d_from, d_to)
     acts_by_date = await _activities_between(user["id"], d_from, d_to)
 
+    # Iter 95f — respect the client's account start so historic roster
+    # days don't get flagged as missed.
+    account_start = _account_start_date(user)
+
     days: list[dict] = []
     step = d_from
     while step <= d_to:
@@ -381,7 +414,7 @@ async def calendar_range(
         w = by_date.get(ds)
         rd = roster_by_date.get(ds)
         acts = acts_by_date.get(ds, [])
-        badge = _badge_for(w, step, today, rd)
+        badge = _badge_for(w, step, today, rd, account_start=account_start)
         card = {
             "date": ds,
             "is_today": step == today,
@@ -447,7 +480,12 @@ async def workouts_missed(
     user: dict = Depends(current_user),
 ):
     today = _today()
-    cutoff = today - _dt.timedelta(days=window)
+    # Iter 95f — don't count workouts that were on the roster BEFORE
+    # the client had an account / a live plan. Those are historic
+    # context only and were never actually assigned to the client.
+    account_start = _account_start_date(user)
+    window_start = today - _dt.timedelta(days=window)
+    cutoff = max(window_start, account_start) if account_start else window_start
     rows = await db.workouts.find(
         {
             "user_id": user["id"],

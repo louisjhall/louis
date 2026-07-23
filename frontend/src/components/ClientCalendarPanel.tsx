@@ -109,6 +109,82 @@ function badgeStyle(b: string): BadgeStyle {
   }
 }
 
+
+// Iter 95f — pretty labels + icon per duty type. Every day gets a chip.
+type DutyChip = {
+  label: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  tone: "brand" | "amber" | "muted" | "green";
+};
+
+function buildDutyChip(rd: DayCard["roster_day"] | null): DutyChip {
+  const raw = String(rd?.day_type || "").toLowerCase();
+  const map: Record<string, DutyChip> = {
+    long_haul:      { label: "Long-Haul Flight", icon: "airplane", tone: "brand" },
+    "long-haul":    { label: "Long-Haul Flight", icon: "airplane", tone: "brand" },
+    short_haul:     { label: "Short-Haul",       icon: "airplane", tone: "brand" },
+    flight_day:     { label: "Flying",           icon: "airplane", tone: "brand" },
+    flying:         { label: "Flying",           icon: "airplane", tone: "brand" },
+    layover_full:   { label: "Layover",          icon: "bed",      tone: "amber" },
+    layover:        { label: "Layover",          icon: "bed",      tone: "amber" },
+    night_flight:   { label: "Night Flight",     icon: "moon",     tone: "brand" },
+    early_start:    { label: "Early Start",      icon: "alarm",    tone: "amber" },
+    standby:        { label: "Standby",          icon: "hourglass",tone: "amber" },
+    airport_standby:{ label: "Airport Standby",  icon: "hourglass",tone: "amber" },
+    sim:            { label: "Simulator",        icon: "desktop",  tone: "brand" },
+    training:       { label: "Training Day",     icon: "school",   tone: "brand" },
+    ground_school:  { label: "Ground School",    icon: "school",   tone: "brand" },
+    medical:        { label: "Medical",          icon: "medkit",   tone: "amber" },
+    home_day:       { label: "Home",             icon: "home",     tone: "muted" },
+    home:           { label: "Home",             icon: "home",     tone: "muted" },
+    rest:           { label: "Rest",             icon: "leaf",     tone: "green" },
+    off:            { label: "Off",              icon: "leaf",     tone: "green" },
+    day_off:        { label: "Day Off",          icon: "leaf",     tone: "green" },
+    annual_leave:   { label: "Annual Leave",     icon: "sunny",    tone: "green" },
+    sick:           { label: "Sick",             icon: "medkit",   tone: "amber" },
+    recovery:       { label: "Recovery",         icon: "heart",    tone: "green" },
+  };
+  if (raw && map[raw]) return map[raw];
+  if (raw) {
+    // Sensible fallback — Title Case the raw string.
+    return {
+      label: raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      icon: "briefcase",
+      tone: "muted",
+    };
+  }
+  // No roster loaded for this date — treat as Home so the row isn't blank.
+  return { label: "Home", icon: "home", tone: "muted" };
+}
+
+function dutyChipColors(tone: DutyChip["tone"]) {
+  switch (tone) {
+    case "brand": return { bg: theme.color.brandTint, fg: theme.color.brand, border: theme.color.brand };
+    case "amber": return { bg: "rgba(245,158,11,0.14)", fg: theme.color.amber, border: theme.color.amber };
+    case "green": return { bg: "rgba(34,197,94,0.14)",  fg: theme.color.green, border: theme.color.green };
+    default:      return { bg: theme.color.surface3,    fg: theme.color.textMuted, border: theme.color.border };
+  }
+}
+
+function _isRestish(rd: NonNullable<DayCard["roster_day"]>): boolean {
+  const t = String(rd.day_type || "").toLowerCase();
+  return t === "rest" || t === "off" || t === "day_off" || t === "annual_leave" || t === "home" || t === "home_day";
+}
+
+function DutyChipView({ chip, small }: { chip: DutyChip; small?: boolean }) {
+  const c = dutyChipColors(chip.tone);
+  return (
+    <View style={[
+      styles.chip,
+      { backgroundColor: c.bg, borderColor: c.border },
+      small && styles.chipSmall,
+    ]}>
+      <Ionicons name={chip.icon} size={small ? 10 : 11} color={c.fg} />
+      <Text style={[styles.chipT, { color: c.fg }, small && styles.chipTSmall]}>{chip.label}</Text>
+    </View>
+  );
+}
+
 export function ClientCalendarPanel({
   refreshKey = 0,
   onLongPressDay,
@@ -321,14 +397,16 @@ function DayRow({
   const bs = badgeStyle(card.badge);
   const rd = card.roster_day || null;
   const flightNo = rd?.flights?.[0]?.number;
-  const dutyBits = [
-    rd?.day_type ? String(rd.day_type).replace(/_/g, " ") : null,
-    flightNo ? `Flight ${flightNo}` : null,
-    rd?.layover_city || null,
-  ].filter(Boolean);
-  const dutySummary = dutyBits.join(" · ");
   const dl = niceDate(card.date);
   const acts = card.activities || [];
+
+  // Iter 95f — proper duty-context chip.
+  // Every day gets at least one chip so clients see where/what they are.
+  const dutyChip = buildDutyChip(rd);
+  const flightChip = flightNo ? { label: `Flight ${flightNo}`, icon: "airplane" as const, tone: "brand" as const } : null;
+  const layoverChip = rd?.layover_city
+    ? { label: rd.layover_city, icon: "location" as const, tone: "muted" as const }
+    : null;
 
   const isMissed = card.badge === "missed";
   const canRecover = isMissed
@@ -375,15 +453,19 @@ function DayRow({
               {card.workout.key_session ? "  ·  KEY" : ""}
             </Text>
           </>
-        ) : rd ? (
-          <Text style={styles.titleRest}>REST · {String(rd.day_type || "duty").replace(/_/g, " ").toUpperCase()}</Text>
+        ) : rd && !_isRestish(rd) ? (
+          <Text style={styles.titleRest}>REST FROM TRAINING</Text>
         ) : (
           <Text style={styles.titleRest}>REST</Text>
         )}
 
-        {dutySummary ? (
-          <Text style={styles.duty} numberOfLines={1}>{dutySummary}</Text>
-        ) : null}
+        {/* Iter 95f — always show a duty context chip so clients see
+            where they are and what they're doing on this date. */}
+        <View style={styles.chipRow}>
+          <DutyChipView chip={dutyChip} />
+          {flightChip ? <DutyChipView chip={flightChip} small /> : null}
+          {layoverChip ? <DutyChipView chip={layoverChip} small /> : null}
+        </View>
 
         {acts.map((a) => (
           <View key={a.id} style={styles.actChip}>

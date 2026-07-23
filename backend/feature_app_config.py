@@ -57,6 +57,12 @@ DEFAULT_FLAGS: dict[str, dict[str, Any]] = {
     "calendar_scroll_enabled":             {"value": True,  "description": "±60 day scrollable calendar on home."},
     "dual_session_enabled":                {"value": True,  "description": "Short-haul dual-session (airport activation + hotel evening) suggestions."},
     "weekly_review_enabled":               {"value": True,  "description": "Sunday check-in / weekly review card."},
+    # Iter 95b — Public URLs (single source of truth for App Store/Play metadata).
+    "public_privacy_url":                  {"value": "https://crewfit.net/privacy", "description": "Public Privacy Policy URL — matches App Store Connect metadata."},
+    "public_support_url":                  {"value": "https://crewfit.net/support", "description": "Public Support URL — matches App Store Connect metadata."},
+    "public_terms_url":                    {"value": "https://crewfit.net/terms",   "description": "Public Terms of Service URL."},
+    "public_website_url":                  {"value": "https://crewfit.net",         "description": "Public marketing URL."},
+    "whatsapp_support_url":                {"value": "https://wa.link/k9x12s",      "description": "Direct WhatsApp support link."},
 }
 
 
@@ -75,6 +81,11 @@ SAFE_CONTENT_KEYS = {
     "guided_flow_placeholder_copy",
     "nutrition_empty_state_copy",
     "wearable_coming_soon_copy",
+    "public_privacy_url",
+    "public_support_url",
+    "public_terms_url",
+    "public_website_url",
+    "whatsapp_support_url",
 }
 
 

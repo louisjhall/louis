@@ -13,7 +13,7 @@
 import { useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, ScrollView, Image,
-  KeyboardAvoidingView, Platform, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Linking,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -22,6 +22,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { PUBLIC_URLS } from "@/src/lib/publicUrls";
 
 type Sex = "male" | "female" | "other" | "prefer_not_to_say";
 const SEX_OPTIONS: { key: Sex; label: string }[] = [
@@ -354,6 +355,21 @@ export default function Signup() {
 
           {err && <Text style={styles.err} testID="signup-error">{err}</Text>}
 
+          {/* Iter 95b — Health disclaimer BEFORE the CTA. Required for
+              App Store / Play Store beta review. Do not remove or hide. */}
+          <View style={styles.healthDisclaimer} testID="signup-health-disclaimer">
+            <View style={styles.healthDisclaimerHeader}>
+              <Ionicons name="medkit-outline" size={16} color={theme.color.brand} />
+              <Text style={styles.healthDisclaimerTitle}>Before you continue</Text>
+            </View>
+            <Text style={styles.healthDisclaimerBody}>
+              CrewFit provides fitness, nutrition and lifestyle coaching support.
+              It is not medical advice. Speak to a qualified medical professional
+              before starting a new programme if you have any medical condition,
+              injury or concern.
+            </Text>
+          </View>
+
           <Pressable
             testID="signup-submit-button"
             onPress={submit}
@@ -365,10 +381,35 @@ export default function Signup() {
 
           <Text style={styles.legalNote}>
             By continuing you accept our{" "}
-            <Text onPress={() => router.push("/legal/terms" as any)} style={styles.legalLink}>Terms</Text>
+            <Text
+              onPress={() => router.push("/legal/terms" as any)}
+              style={styles.legalLink}
+              testID="signup-terms-link"
+            >Terms</Text>
             {" "}and{" "}
-            <Text onPress={() => router.push("/legal/privacy" as any)} style={styles.legalLink}>Privacy Policy</Text>.
+            <Text
+              onPress={() => router.push("/legal/privacy" as any)}
+              style={styles.legalLink}
+              testID="signup-privacy-link"
+            >Privacy Policy</Text>.
           </Text>
+          <View style={styles.publicLinksRow}>
+            <Pressable
+              onPress={() => Linking.openURL(PUBLIC_URLS.privacy)}
+              testID="signup-privacy-public-link"
+              hitSlop={8}
+            >
+              <Text style={styles.publicLink}>crewfit.net/privacy</Text>
+            </Pressable>
+            <Text style={styles.publicSep}>·</Text>
+            <Pressable
+              onPress={() => Linking.openURL(PUBLIC_URLS.support)}
+              testID="signup-support-public-link"
+              hitSlop={8}
+            >
+              <Text style={styles.publicLink}>crewfit.net/support</Text>
+            </Pressable>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -430,6 +471,33 @@ const styles = StyleSheet.create({
 
   err: { color: theme.color.red, marginTop: theme.space.md, fontSize: 13 },
 
+  // Iter 95b — Health disclaimer above signup CTA
+  healthDisclaimer: {
+    marginTop: theme.space.lg,
+    borderRadius: theme.radius.md,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+    padding: 14,
+  },
+  healthDisclaimerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6,
+  },
+  healthDisclaimerTitle: {
+    color: theme.color.brand,
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  healthDisclaimerBody: {
+    color: theme.color.text,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
   cta: {
     backgroundColor: theme.color.brand, marginTop: theme.space.xl,
     paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center",
@@ -437,4 +505,22 @@ const styles = StyleSheet.create({
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 14 },
   legalNote: { color: theme.color.textDim, fontSize: 12, textAlign: "center", marginTop: 16, lineHeight: 18 },
   legalLink: { color: theme.color.brand, fontWeight: "700" },
+  publicLinksRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  publicLink: {
+    color: theme.color.textDim,
+    fontSize: 11,
+    textDecorationLine: "underline",
+    fontWeight: "500",
+  },
+  publicSep: {
+    color: theme.color.textDim,
+    fontSize: 11,
+  },
 });

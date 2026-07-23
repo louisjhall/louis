@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform,
-  ScrollView, ActivityIndicator, useWindowDimensions,
+  ScrollView, ActivityIndicator, useWindowDimensions, Linking,
 } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -11,6 +11,7 @@ import { useAuth } from "@/src/lib/auth";
 import { usePreview } from "@/src/lib/preview";
 import { theme } from "@/src/lib/theme";
 import { CrewFitLogo } from "@/src/components/Logo";
+import { PUBLIC_URLS } from "@/src/lib/publicUrls";
 
 // Iter 94t — Login hero shows airline crew in uniform (pilot walking through
 // airport with roller bag) to match the "crew, not civilian" brand feel.
@@ -152,6 +153,25 @@ export default function Login() {
                 Private beta access only.
               </Text>
 
+              {/* Iter 95b — Public Privacy + Support links for App Store review. */}
+              <View style={styles.publicLinksRow} testID="login-public-links">
+                <Pressable
+                  onPress={() => Linking.openURL(PUBLIC_URLS.privacy)}
+                  testID="login-privacy-public-link"
+                  hitSlop={8}
+                >
+                  <Text style={styles.publicLink}>Privacy Policy</Text>
+                </Pressable>
+                <Text style={styles.publicSep}>·</Text>
+                <Pressable
+                  onPress={() => Linking.openURL(PUBLIC_URLS.support)}
+                  testID="login-support-public-link"
+                  hitSlop={8}
+                >
+                  <Text style={styles.publicLink}>Support</Text>
+                </Pressable>
+              </View>
+
               {/* Iter 94l — Louis's dev quick-login is now gated behind the
                 * EXPO_PUBLIC_SHOW_DEMO_LOGIN_SHORTCUTS flag (default OFF).
                 * Set it in the frontend .env only for local dev. Never leave
@@ -232,6 +252,23 @@ const styles = StyleSheet.create({
   linkRow: { flexDirection: "row", justifyContent: "center", marginTop: theme.space.lg },
   linkDim: { color: theme.color.textMuted },
   link: { color: theme.color.brand, fontWeight: "700" },
+  publicLinksRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+  },
+  publicLink: {
+    color: theme.color.textMuted,
+    fontSize: 12,
+    textDecorationLine: "underline",
+    fontWeight: "600",
+  },
+  publicSep: {
+    color: theme.color.textDim,
+    fontSize: 12,
+  },
   betaLine: {
     marginTop: theme.space.xl, textAlign: "center",
     color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",

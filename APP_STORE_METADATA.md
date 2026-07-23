@@ -31,7 +31,10 @@ CrewFit is a personal wellbeing tool — not a medical device. Speak to your AME
 
 **Support URL:** https://crewfit.net/support  
 **Marketing URL:** https://crewfit.net  
-**Privacy Policy URL:** https://crewfit.net/privacy (mirrored in-app at `/legal/privacy`)
+**Privacy Policy URL:** https://crewfit.net/privacy (mirrored in-app at `/legal/privacy`, banner on that screen tapping through to the public URL)
+**Terms URL:** https://crewfit.net/terms (mirrored in-app at `/legal/terms`)
+
+> Single source of truth for these URLs is `/app/frontend/src/lib/publicUrls.ts` (frontend) and `app_config` keys `public_privacy_url`, `public_support_url`, `public_terms_url`, `public_website_url`, `whatsapp_support_url` (backend).
 
 **Copyright:** © 2026 CrewFit Ltd.
 

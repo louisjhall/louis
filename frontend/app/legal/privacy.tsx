@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, Linking, Pressable } from "react-na
 import { Stack } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { theme } from "../../src/lib/theme";
+import { PUBLIC_URLS } from "../../src/lib/publicUrls";
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <View style={styles.sect}>
@@ -21,6 +22,16 @@ export default function PrivacyPolicy() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
         <Text style={styles.h1}>Privacy Policy</Text>
         <Text style={styles.updated}>Last updated: June 2026</Text>
+
+        <Pressable
+          onPress={() => Linking.openURL(PUBLIC_URLS.privacy)}
+          testID="privacy-public-mirror"
+          style={styles.mirrorBox}
+        >
+          <Text style={styles.mirrorLabel}>PUBLIC MIRROR</Text>
+          <Text style={styles.mirrorUrl}>crewfit.net/privacy</Text>
+          <Text style={styles.mirrorNote}>Tap to open the latest version in your browser.</Text>
+        </Pressable>
 
         <Section title="Who we are">
           <P>CrewFit is a fitness and wellbeing platform for aviation professionals. This policy explains how we collect, use, share and protect your personal data. If you have questions, contact us at louis@crewfit.net.</P>
@@ -97,6 +108,32 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: theme.color.surface },
   h1: { color: theme.color.text, fontFamily: theme.font.display, fontSize: 28, marginBottom: 4 },
   updated: { color: theme.color.textDim, fontFamily: theme.font.text, fontSize: 12, marginBottom: 20 },
+  mirrorBox: {
+    backgroundColor: theme.color.surface2,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    marginBottom: 20,
+  },
+  mirrorLabel: {
+    color: theme.color.brand,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    marginBottom: 4,
+  },
+  mirrorUrl: {
+    color: theme.color.text,
+    fontFamily: theme.font.textSemi,
+    fontSize: 16,
+    marginBottom: 2,
+  },
+  mirrorNote: {
+    color: theme.color.textDim,
+    fontSize: 11,
+    fontStyle: "italic",
+  },
   sect: { marginBottom: 20 },
   h2: { color: theme.color.text, fontFamily: theme.font.textBold, fontSize: 17, marginBottom: 8 },
   p: { color: theme.color.textMuted, fontFamily: theme.font.text, fontSize: 14, lineHeight: 22, marginBottom: 6 },

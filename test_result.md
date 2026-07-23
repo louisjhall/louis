@@ -2311,3 +2311,150 @@ backend:
 agent_communication:
   - agent: "main"
     message: "Iter 95a shipped four items in one pass: (1) Weekly Review dedupe returns the real coach-task id so the coach app can deep-link. (2) Dual-Session (short-haul airport activation) — feature-flagged endpoints + Home card that renders only on eligible days, never touches the planned session doc. (3) expo-updates wired for OTA (silent, safe fallback). (4) App Store metadata doc committed to /app. 20/20 backend tests green (11 endpoint + 9 unit). Frontend restarted. Ready for user verification of the Home-screen card on a device with an eligible short-haul roster day."
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Iter 95b — Phase 1 Beta Blockers: Privacy URL + Support URL + Health Disclaimer
+# ─────────────────────────────────────────────────────────────────────────
+
+backend:
+  - task: "Public URLs seeded into app_config (privacy, support, terms, website, whatsapp)"
+    implemented: true
+    working: true
+    file: "backend/feature_app_config.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Seeded 5 new keys: public_privacy_url (https://crewfit.net/privacy),
+            public_support_url (https://crewfit.net/support), public_terms_url,
+            public_website_url, whatsapp_support_url. All added to
+            SAFE_CONTENT_KEYS so they can be edited live without an app update.
+            Verified via GET /api/app-config → all 5 present under `flags`.
+
+frontend:
+  - task: "Public URLs single source of truth (publicUrls.ts)"
+    implemented: true
+    working: true
+    file: "frontend/src/lib/publicUrls.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: "New PUBLIC_URLS constants file. No hard-coded URLs remain anywhere else."
+
+  - task: "Health disclaimer above signup CTA"
+    implemented: true
+    working: true
+    file: "frontend/app/(auth)/signup.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Added highlighted disclaimer box with medkit-outline icon,
+            "Before you continue" heading, and the exact required copy.
+            Placed directly above the CREATE ACCOUNT button so a reviewer
+            or beta tester cannot miss it. Not blocking — signup still
+            proceeds on age-check + submit. Verified via screenshot.
+
+  - task: "Public Privacy + Support links on signup and login"
+    implemented: true
+    working: true
+    file: "frontend/app/(auth)/signup.tsx, frontend/app/(auth)/login.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Signup: `crewfit.net/privacy · crewfit.net/support` links below
+            the CTA (testIDs signup-privacy-public-link, signup-support-public-link).
+            Login: `Privacy Policy · Support` links below the beta line
+            (testIDs login-privacy-public-link, login-support-public-link).
+            Both use Linking.openURL() so they open the mobile browser.
+            Screenshots captured.
+
+  - task: "In-app Privacy screen shows public mirror URL"
+    implemented: true
+    working: true
+    file: "frontend/app/legal/privacy.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Added a highlighted "PUBLIC MIRROR — crewfit.net/privacy" card
+            at the top of the in-app policy so reviewers can confirm the
+            offline mirror matches the URL declared in App Store Connect.
+
+  - task: "Contact screen shows public Support URL and WhatsApp"
+    implemented: true
+    working: true
+    file: "frontend/app/legal/contact.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Rebuilt the contact screen with a top-of-screen "ONLINE SUPPORT —
+            crewfit.net/support" card, plus a WhatsApp card (uses
+            PUBLIC_URLS.whatsapp = https://wa.link/k9x12s), plus existing
+            email cards.
+
+  - task: "Profile — new SUPPORT button"
+    implemented: true
+    working: true
+    file: "frontend/app/(client)/profile.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Added `SUPPORT` button below `LEGAL & PRIVACY` (testID hq-support)
+            → routes to /legal/contact which contains the public URL card.
+
+  - task: "Store review risk audit — beta clean"
+    implemented: true
+    working: true
+    file: "audit"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        -working: true
+        -agent: "main"
+        -comment: |
+            Audit results:
+              - No Coach Kai references in /app/frontend
+              - No fake/demo client data
+              - Demo login gated by EXPO_PUBLIC_SHOW_DEMO_LOGIN_SHORTCUTS
+                (not set in .env; also requires __DEV__) → hidden in TestFlight/Play
+              - No client-facing AI/generated/bot wording (privacy policy
+                disclosure of inference providers is REQUIRED for GDPR,
+                not client UI copy)
+              - No location permission requested (no expo-location, no
+                NSLocationUsageDescription, no ACCESS_FINE_LOCATION)
+              - Push opt-in only: push.ts calls getPermissionsAsync then
+                only registers if already granted. First launch stays quiet.
+              - Delete account route /legal/delete-account exists
+              - Health disclaimer visible on signup screen
+              - Public Privacy + Support URLs open the mobile browser
+
+agent_communication:
+  - agent: "main"
+    message: "Phase 1 beta blockers cleared. All required public URLs (privacy, support) wired via a single-source-of-truth constants file plus backend app_config. Health disclaimer added to signup with exact required copy. Store-review risk audit: clean. Login demo shortcut confirmed gated (hidden in beta builds). Both public URLs verified opening on mobile."

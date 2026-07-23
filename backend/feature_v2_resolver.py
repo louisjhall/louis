@@ -685,6 +685,130 @@ async def exercise_requests_list(
         r["programmes_affected"] = len(set(r.get("requested_for_programme_ids") or []))
     return {"requests": rows, "count": len(rows)}
 
+async def backfill_missing_exercise_requests_from_workouts(
+    admin: dict,
+    *,
+    days_back: int = 14,
+    days_forward: int = 21,
+    max_new: int = 100,
+) -> dict:
+    """Iter 95k — Walk every workout in the window and ensure every exercise
+    name has a matching row in exercises_v2 (approved OR draft). Any name that
+    is missing gets a `draft_requested` row filed via
+    ``create_exercise_request_if_missing`` so the coach demand queue never
+    misses an exercise that made it into a client's programme.
+
+    Cheap and idempotent — the dedup path inside
+    ``create_exercise_request_if_missing`` handles repeated calls.
+    """
+    import datetime as _dt
+
+    today = _dt.date.today()
+    from_iso = (today - _dt.timedelta(days=days_back)).isoformat()
+    to_iso = (today + _dt.timedelta(days=days_forward)).isoformat()
+
+    # Pre-load every normalised name we already know about (approved OR draft)
+    # so we don't hammer the DB with per-exercise lookups.
+    known: set[str] = set()
+    async for row in db.exercises_v2.find(
+        {}, {"_id": 0, "exercise_name": 1, "requested_name_norm": 1}
+    ):
+        n = _normalise_name(row.get("exercise_name"))
+        if n:
+            known.add(n)
+        norm = row.get("requested_name_norm")
+        if norm:
+            known.add(norm)
+
+    created = 0
+    linked = 0
+    scanned = 0
+    seen_norms_this_run: set[str] = set()
+
+    async for w in db.workouts.find(
+        {"date": {"$gte": from_iso, "$lte": to_iso}},
+        {"_id": 0, "id": 1, "user_id": 1, "date": 1,
+         "programme_id": 1, "exercises": 1, "warmup": 1},
+    ):
+        scanned += 1
+        # Consolidate every candidate name from both the main body and warm-up.
+        candidates: list[dict] = []
+        for e in (w.get("exercises") or []):
+            candidates.append(e)
+        for wu in (w.get("warmup") or []):
+            candidates.append(wu)
+
+        for item in candidates:
+            name = (item.get("name") or item.get("exercise_name") or "").strip()
+            if not name:
+                continue
+            norm = _normalise_name(name)
+            if not norm:
+                continue
+            if norm in known:
+                # Already in the library — but ensure any existing draft is
+                # linked to this workout so "Needed Soon" bucketing can find
+                # it. No-op for approved rows since the update filter includes
+                # a status check.
+                if w.get("id"):
+                    try:
+                        await db.exercises_v2.update_one(
+                            {"requested_name_norm": norm,
+                             "status": {"$in": list(DRAFT_STATUSES)}},
+                            {"$addToSet": {"requested_for_workout_ids": w["id"]},
+                             "$set": {"updated_at": now_iso()}},
+                        )
+                        linked += 1
+                    except Exception:
+                        pass
+                continue
+
+            if created >= max_new:
+                continue
+            if norm in seen_norms_this_run:
+                continue
+            seen_norms_this_run.add(norm)
+
+            # Reconstruct a minimal user context so the request row records
+            # who was affected. Fall back to admin if the user row is gone.
+            user = None
+            uid = w.get("user_id")
+            if uid:
+                user = await db.users.find_one({"id": uid}, {"_id": 0})
+            user = user or admin
+            try:
+                rid = await create_exercise_request_if_missing(
+                    {"name": name},
+                    user=user,
+                    programme_id=w.get("programme_id"),
+                    workout_id=w.get("id"),
+                    substitute_used=None,
+                    reason=(
+                        f"Found in workout on {(w.get('date') or 'unknown date')} "
+                        f"but no matching library entry — backfilled by demand-queue scan."
+                    ),
+                )
+                if rid:
+                    created += 1
+                    known.add(norm)
+            except Exception:
+                logger.exception(
+                    "backfill: create_exercise_request_if_missing raised for %r", name
+                )
+
+    return {"scanned_workouts": scanned, "created": created, "linked": linked}
+
+
+@api.post("/exercise-requests/scan-workouts")
+async def scan_workouts_for_requests(admin: dict = Depends(require_role("coach"))):
+    """Coach-triggered manual scan. Same code as the auto-scan inside
+    /exercise-requests/grouped but with a wider window and higher cap."""
+    return await backfill_missing_exercise_requests_from_workouts(
+        admin, days_back=60, days_forward=60, max_new=500,
+    )
+
+
+
 
 @api.get("/exercise-requests/grouped")
 async def exercise_requests_grouped(admin: dict = Depends(require_role("coach"))):
@@ -697,6 +821,16 @@ async def exercise_requests_grouped(admin: dict = Depends(require_role("coach"))
     Each list is capped for UI responsiveness.
     """
     import datetime as _dt
+
+    # Iter 95k — backfill any missing draft requests from workouts BEFORE we
+    # return the response. Some generation paths (mobility flow, pre/post
+    # flight mobility templates) bypass the v2 resolver and land exercises
+    # into workouts without ever filing a draft, which made them invisible
+    # here. Idempotent (dedup by name) and capped so it stays cheap.
+    try:
+        await backfill_missing_exercise_requests_from_workouts(admin)
+    except Exception:
+        logger.exception("backfill_missing_exercise_requests_from_workouts failed — non-fatal")
 
     drafts = await db.exercises_v2.find(
         {"status": {"$in": list(DRAFT_STATUSES)}}, {"_id": 0}

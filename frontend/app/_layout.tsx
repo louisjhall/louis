@@ -17,6 +17,7 @@ import { AppConfigProvider } from "@/src/lib/appConfig";
 import { PreviewBanner } from "@/src/components/PreviewBanner";
 import { BetaDisclaimerGate } from "@/src/components/BetaDisclaimerGate";
 import { TrainingSetupGate } from "@/src/components/TrainingSetupGate";
+import { RootErrorBoundary } from "@/src/components/RootErrorBoundary";
 import { initSentry } from "@/src/lib/sentry";
 
 // One-shot at module load; safe no-op when EXPO_PUBLIC_SENTRY_DSN is unset.
@@ -80,22 +81,24 @@ export default function RootLayout() {
   if (!loaded && !error) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000000" }}>
-      <SafeAreaProvider>
-        <AuthProvider>
-          <AppConfigProvider>
-            <PreviewWiring>
-              <StatusBar barStyle="light-content" backgroundColor="#000000" />
-              <PreviewBanner />
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
-              <BetaDisclaimerGate />
-              <TrainingSetupGate />
-              <ToastHost />
-            </PreviewWiring>
-          </AppConfigProvider>
-        </AuthProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <RootErrorBoundary>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000000" }}>
+        <SafeAreaProvider>
+          <AuthProvider>
+            <AppConfigProvider>
+              <PreviewWiring>
+                <StatusBar barStyle="light-content" backgroundColor="#000000" />
+                <PreviewBanner />
+                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+                <BetaDisclaimerGate />
+                <TrainingSetupGate />
+                <ToastHost />
+              </PreviewWiring>
+            </AppConfigProvider>
+          </AuthProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </RootErrorBoundary>
   );
 }
 

@@ -870,8 +870,8 @@ function HowToSheet({
               <View style={sheetStyles.noVideoCard}>
                 <Ionicons name="videocam-off" size={20} color={theme.color.textMuted} />
                 <View style={{ flex: 1 }}>
-                  <Text style={sheetStyles.noVideoT}>Video coming soon</Text>
-                  <Text style={sheetStyles.noVideoS}>Louis is preparing a demo for this exercise. Follow the coaching cues below for now.</Text>
+                  <Text style={sheetStyles.noVideoT}>No demo for this one yet</Text>
+                  <Text style={sheetStyles.noVideoS}>Louis is filming this exercise. Follow the coaching cues below for now.</Text>
                 </View>
               </View>
             )}

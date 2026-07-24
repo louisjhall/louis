@@ -81,7 +81,7 @@ export default function LogFoodPicker() {
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>{m.label}</Text>
               <Text style={styles.sub}>
-                {m.disabled ? "Coming soon — Louis will enable this shortly." : m.sub}
+                {m.disabled ? "Louis unlocks this after your next check-in." : m.sub}
               </Text>
             </View>
             {!m.disabled ? (

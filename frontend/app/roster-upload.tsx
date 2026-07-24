@@ -22,9 +22,9 @@ const STAGES = [
   { key: "detecting", label: "Detecting layovers", copy: "Detecting layovers and turnarounds..." },
   { key: "ready_to_confirm", label: "Review your roster", copy: "Ready to review — confirm your duty pattern next." },
   { key: "overlap", label: "Checking overlaps", copy: "Checking for roster overlaps..." },
-  { key: "calendar", label: "Building calendar", copy: "Building your CrewFit calendar..." },
-  { key: "generating", label: "Generating plan", copy: "Generating your personalised plan..." },
-  { key: "coach", label: "Preparing coach review", copy: "Preparing coach review..." },
+  { key: "calendar", label: "Reading your roster", copy: "Reading your roster..." },
+  { key: "generating", label: "Louis is looking over your week", copy: "Louis is looking over your week..." },
+  { key: "coach", label: "Louis is finalising your programme", copy: "Louis is finalising your programme..." },
 ];
 
 // If we see no progress movement for this many milliseconds, warn the user.
@@ -241,19 +241,19 @@ export default function RosterUpload() {
     router.push({
       pathname: "/(client)/messages",
       params: {
-        draft: "Hi Louis, my roster uploaded but the plan generation got stuck. Can you check it?",
+        draft: "Hi Louis, my roster uploaded but I haven't seen my week yet. Can you take a look?",
       },
     });
   };
 
   const cancelWithConfirm = () => {
     Alert.alert(
-      "Cancel plan generation?",
+      "Stop this upload?",
       "Your uploaded roster can be kept, but the plan may not be created yet.",
       [
         { text: "Continue waiting", style: "cancel" },
         { text: "Keep roster and exit", onPress: () => { pollRef.current && clearInterval(pollRef.current); router.replace("/(client)/home"); } },
-        { text: "Cancel generation", style: "destructive", onPress: () => { pollRef.current && clearInterval(pollRef.current); setJob(null); } },
+        { text: "Stop upload", style: "destructive", onPress: () => { pollRef.current && clearInterval(pollRef.current); setJob(null); } },
       ],
     );
   };
@@ -280,7 +280,7 @@ export default function RosterUpload() {
         {!job ? (
           <>
             <Text style={styles.subtitle}>Upload roster and CrewFit does the rest.</Text>
-            <Text style={styles.helper}>PDF or photo of your roster — we parse it, build your calendar, and generate your training plan automatically.</Text>
+            <Text style={styles.helper}>PDF or photo of your roster — Louis reads it and plans your training around your flights and layovers.</Text>
 
             <Pressable testID="ru-pick-image" onPress={pickImage} disabled={starting} style={[styles.pickBtn, starting && { opacity: 0.5 }]}>
               <Ionicons name="image-outline" size={22} color={theme.color.brand} />
@@ -403,7 +403,7 @@ export default function RosterUpload() {
               {active && slowness === "stuck" && (
                 <View style={styles.stuckBanner} testID="ru-stuck-banner">
                   <Ionicons name="warning" size={14} color={theme.color.red} />
-                  <Text style={styles.stuckBannerT}>Your roster was uploaded, but plan generation may need review.</Text>
+                  <Text style={styles.stuckBannerT}>Your roster is in. Louis wants a second look at this one before it goes live.</Text>
                 </View>
               )}
             </View>
@@ -411,7 +411,7 @@ export default function RosterUpload() {
             {(failed || needsReview || partial) && (
               <View style={styles.errCard}>
                 <Ionicons name={needsReview || partial ? "alert-circle" : "close-circle"} size={18} color={needsReview || partial ? theme.color.amber : theme.color.red} />
-                <Text style={styles.errCardText}>{job.error || (needsReview ? "Your roster was uploaded, but CrewFit could not finish building your plan automatically. Louis has been notified." : "We couldn't read this roster clearly. Please upload a clearer file or enter the details manually.")}</Text>
+                <Text style={styles.errCardText}>{job.error || (needsReview ? "Louis wants a second look at this one — he'll be in touch shortly." : "This roster wasn't clear enough to work with. Try a sharper photo or PDF, or enter the details manually.")}</Text>
               </View>
             )}
 
@@ -441,7 +441,7 @@ export default function RosterUpload() {
               {(needsReview || partial) && (
                 <>
                   <Pressable testID="ru-retry-plan" onPress={retryPlanGeneration} disabled={retrying} style={[styles.actBtn, { backgroundColor: theme.color.brand }, retrying && { opacity: 0.6 }]}>
-                    {retrying ? <ActivityIndicator color="#fff" /> : <Text style={styles.actBtnText}>RETRY PLAN GENERATION</Text>}
+                    {retrying ? <ActivityIndicator color="#fff" /> : <Text style={styles.actBtnText}>SEND TO LOUIS AGAIN</Text>}
                   </Pressable>
                   <View style={{ flexDirection: "row", gap: 10 }}>
                     <Pressable testID="ru-message-louis" onPress={messageLouis} style={[styles.actBtn, styles.actBtnGhost]}>

@@ -21,6 +21,7 @@ import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
 import { WeeklyReviewCard } from "@/src/components/WeeklyReviewCard";
 import { DualSessionCard } from "@/src/components/DualSessionCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
+import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
@@ -427,6 +428,10 @@ export default function Home() {
               </View>
             </View>
           ) : null}
+
+          {/* Iter 95n — placeholder while Louis is "reviewing" a freshly
+              uploaded roster. Auto-hides when the review window elapses. */}
+          <RosterReviewBanner onReadyChanged={load} />
           {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial") ? (
             <View style={styles.jobReviewBanner} testID="home-roster-job-review">
               <Pressable

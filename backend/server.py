@@ -4987,7 +4987,18 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                 )
                 await _open_coach_task_for_stuck_generation(user, roster, job_id, reason="0 workouts generated")
                 return
-            await _set_job(job_id, stage="coach", progress=98, message="Preparing coach review...")
+
+            # Iter 95n — hide workouts from the client for ~12-20 min and
+            # queue a Louis chat message that lands at the same moment.
+            # Non-fatal on failure — the workouts still exist, we just skip
+            # the review-delay feel.
+            try:
+                from feature_roster_review_delay import apply_review_delay
+                await apply_review_delay(db, user, roster)
+            except Exception:
+                logger.exception("apply_review_delay failed — non-fatal, workouts will be visible immediately")
+
+            await _set_job(job_id, stage="coach", progress=98, message="Louis is looking over your week...")
             # Best-effort coach notification (silent-fail if push disabled)
             try:
                 await _notify_coaches_of_new_roster(user, roster, job_id)
@@ -7478,6 +7489,14 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
 @api.get("/workouts/week")
 async def workouts_week(user: dict = Depends(current_user)):
     rows = await db.workouts.find({"user_id": user["id"]}, {"_id": 0}).sort("date", 1).to_list(500)
+    # Iter 95n — client must not see workouts that are still inside the
+    # roster review window. Coach endpoints do NOT call this filter so Louis
+    # can see + tweak them during the window.
+    try:
+        from feature_roster_review_delay import prune_pending
+        rows = prune_pending(rows)
+    except Exception:
+        logger.exception("workouts/week: prune_pending failed — showing all")
     # Iter 83 — Defence layer 2: read-time healing. Any workout that slipped
     # through the persistence guards with empty main exercises on a training
     # day gets healed on-read AND the DB row is updated so subsequent reads
@@ -9018,6 +9037,13 @@ async def msg_thread(other_id: str, user: dict = Depends(current_user)):
         {"$or": [{"from_user_id": user["id"], "to_user_id": other_id},
                  {"from_user_id": other_id, "to_user_id": user["id"]}]}, {"_id": 0}
     ).sort("created_at", 1).to_list(500)
+    # Iter 95n — hide scheduled auto-messages (e.g. Louis's roster-ack) until
+    # their visible_from timestamp lands, so the "review" feels real.
+    try:
+        from feature_roster_review_delay import prune_pending
+        rows = prune_pending(rows)
+    except Exception:
+        pass
     if rows:
         from feature_message_attachments import hydrate_message_attachments
         for r in rows:
@@ -9037,9 +9063,17 @@ async def msg_thread(other_id: str, user: dict = Depends(current_user)):
 async def msg_unread_count(user: dict = Depends(current_user)):
     """Iter 82 — total unread messages FOR the current user. Powers the
     tab-bar badge on the client bottom nav (and coach dashboard alerts)."""
+    # Iter 95n — a pending roster-ack message must not bump the badge until
+    # it actually lands, otherwise the client sees an unread indicator with
+    # nothing behind it (breaks the illusion).
+    now_iso_val = now_iso()
     count = await db.messages.count_documents({
         "to_user_id": user["id"],
         "read": {"$ne": True},
+        "$or": [
+            {"visible_from": {"$exists": False}},
+            {"visible_from": {"$lte": now_iso_val}},
+        ],
     })
     return {"count": int(count)}
 
@@ -11369,6 +11403,14 @@ try:
     )
 except Exception:
     logger.exception("feature_food_search failed to register")
+
+# Iter 95n — mount the roster review-delay status endpoint under /api.
+try:
+    from feature_roster_review_delay import make_router as _rrd_make_router
+    api.include_router(_rrd_make_router(db, current_user))
+    logger.info("feature_roster_review_delay: /roster/status registered")
+except Exception:
+    logger.exception("feature_roster_review_delay failed to register")
 
 app.include_router(api)
 

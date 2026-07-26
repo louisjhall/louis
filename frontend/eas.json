@@ -1,4 +1,5 @@
 {
+  "_comment": "versionCode is managed in app.json under expo.android.versionCode (currently 300). appVersionSource=local + autoIncrement=false forces EAS to read from app.json. If Play Console rejects with 'Version code X already used', bump app.json versionCode ONLY — never re-enable autoIncrement.",
   "cli": {
     "version": ">= 5.0.0",
     "appVersionSource": "local"
@@ -21,7 +22,7 @@
       }
     },
     "production": {
-      "autoIncrement": true,
+      "autoIncrement": false,
       "env": {
         "SENTRY_DISABLE_AUTO_UPLOAD": "true",
         "SENTRY_ALLOW_FAILURE": "true"

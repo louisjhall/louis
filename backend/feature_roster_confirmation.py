@@ -1051,15 +1051,23 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
         except Exception:
             logger.exception("Failed to create coach task for keep_both overlap")
     else:
-        # Default (replace) — supersede all previously active rosters and
-        # mark any overlapping non-primary ones as `superseded`.
-        await db.rosters.update_many({"user_id": user["id"], "is_active": True},
-                                     {"$set": {"is_active": False}})
+        # Default (replace) — supersede prior rosters that OVERLAP this new
+        # one's date range. Non-overlapping months (e.g. July + August) can
+        # remain active side-by-side so the plan spans both.
         try:
             pending_dates = {d.get("date") for d in days if d.get("date")}
             if pending_dates:
-                # Find prior rosters whose date range intersects and mark them.
                 start = min(pending_dates); end = max(pending_dates)
+                # Only deactivate overlapping active rosters.
+                await db.rosters.update_many(
+                    {
+                        "user_id": user["id"], "is_active": True,
+                        "id": {"$ne": rid},
+                        "start_date": {"$lte": end}, "end_date": {"$gte": start},
+                    },
+                    {"$set": {"is_active": False}},
+                )
+                # Mark prior overlapping confirmed rosters as `superseded`.
                 superseded = await db.rosters.find({
                     "user_id": user["id"], "id": {"$ne": rid},
                     "start_date": {"$lte": end}, "end_date": {"$gte": start},
@@ -1071,8 +1079,17 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
                         {"id": {"$in": ids}},
                         {"$set": {"status": "superseded", "superseded_by": rid, "superseded_at": now}},
                     )
+            else:
+                await db.rosters.update_many(
+                    {"user_id": user["id"], "is_active": True, "id": {"$ne": rid}},
+                    {"$set": {"is_active": False}},
+                )
         except Exception:
-            logger.exception("Failed to mark superseded rosters (non-fatal)")
+            logger.exception("Failed to run overlap-aware deactivation (falling back to legacy behaviour)")
+            await db.rosters.update_many(
+                {"user_id": user["id"], "is_active": True, "id": {"$ne": rid}},
+                {"$set": {"is_active": False}},
+            )
 
     await db.rosters.update_one(
         {"id": rid},

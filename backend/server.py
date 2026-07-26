@@ -11649,6 +11649,7 @@ import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach 
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history
 import feature_coach_workout_swap        # noqa: E402,F401  Phase 5: coach inline workout-swap picker (alternative presets)
 import feature_coach_notes               # noqa: E402,F401  Phase 6: per-client structured coach notes injected into plan generator
+import feature_coach_reset               # noqa: E402,F401  Phase 6: coach reset-programme utility
 import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base + current timezone card + confirm endpoint
 import feature_calendar_recovery          # noqa: E402,F401  Iter 94s: calendar range + missed workout recovery
 import feature_app_config                 # noqa: E402,F401  Iter 94t Phase 1: remote config + feature flags

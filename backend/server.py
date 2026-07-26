@@ -1110,6 +1110,36 @@ async def me(user: dict = Depends(current_user)):
     return user
 
 
+# ------------------------------------------------------------------
+# Change password (self-service, from Profile)
+# Requires the current password + new password (min 6 chars). Best-practice:
+# rotates the token so any other logged-in sessions are silently invalidated.
+# ------------------------------------------------------------------
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6)
+
+
+@api.post("/auth/change-password")
+async def change_password(body: ChangePasswordBody, user: dict = Depends(current_user)):
+    # Re-fetch to get password_hash (current_user usually strips it).
+    u = await db.users.find_one({"id": user["id"]})
+    if not u or not verify_pw(body.current_password, u.get("password_hash", "")):
+        raise HTTPException(400, "Current password is incorrect")
+    if body.current_password == body.new_password:
+        raise HTTPException(400, "New password must be different from your current password")
+
+    new_hash = hash_pw(body.new_password)
+    await db.users.update_one({"id": user["id"]}, {"$set": {
+        "password_hash": new_hash,
+        "password_changed_at": now_iso(),
+    }})
+
+    # Re-issue token so client can keep going without a re-login.
+    token = make_token(u["id"], u["role"])
+    return {"status": "ok", "token": token}
+
+
 @api.post("/auth/onboarding")
 async def onboarding(body: HomeEquipmentBody, user: dict = Depends(current_user)):
     # Merge instead of overwriting the profile object so re-running onboarding

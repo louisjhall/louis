@@ -16,6 +16,7 @@ import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
 import { NotificationPreferencesCard } from "@/src/components/NotificationPreferencesCard";
 import { ProfilePhotoRow } from "@/src/components/ProfilePhotoRow";
 import { PersonalImageryCard } from "@/src/components/PersonalImageryCard";
+import { ChangePasswordModal } from "@/src/components/ChangePasswordModal";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -56,6 +57,7 @@ export default function ProfileScreen() {
   });
   const [editing, setEditing] = useState<EditSpec | null>(null);
   const [prModalOpen, setPrModalOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -619,6 +621,13 @@ export default function ProfileScreen() {
           <Text style={styles.legacyText}>LEGAL &amp; PRIVACY</Text>
         </Pressable>
         <Pressable
+          testID="hq-change-password"
+          onPress={() => setChangePasswordOpen(true)}
+          style={[styles.legacyCta, { marginTop: 8 }]}
+        >
+          <Text style={styles.legacyText}>CHANGE PASSWORD</Text>
+        </Pressable>
+        <Pressable
           testID="hq-support"
           onPress={() => router.push("/legal/contact" as any)}
           style={[styles.legacyCta, { marginTop: 8 }]}
@@ -653,6 +662,12 @@ export default function ProfileScreen() {
         visible={prModalOpen}
         onClose={() => setPrModalOpen(false)}
         onSaved={() => { setPrModalOpen(false); load(); }}
+      />
+
+      {/* Change password modal */}
+      <ChangePasswordModal
+        visible={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
       />
     </SafeAreaView>
   );

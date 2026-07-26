@@ -204,6 +204,240 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
 
 
 # ---------------------------------------------------------------------------
+# Multi-file upload (Phase 3): "these files are pages of ONE roster" (merge)
+# OR "these files are SEPARATE rosters" (batch). Both cases route through the
+# same parse pipeline as the single-file endpoint above so behaviour stays
+# identical — just applied N times.
+# ---------------------------------------------------------------------------
+
+class RosterFilePart(BaseModel):
+    file_base64: str
+    mime_type: str
+    filename: Optional[str] = None
+
+
+class RosterUploadMultiBody(BaseModel):
+    files: list[RosterFilePart]
+    merge_as_one: bool = True     # True (default) → merge pages into ONE pending roster
+                                  # False → each file becomes its own pending roster
+
+
+def _merge_day_pages(pages: list[list[dict]]) -> list[dict]:
+    """Merge parsed day-lists from multiple pages of the same roster into one.
+
+    Dedup rule: last-wins per date, EXCEPT if the incoming entry is less
+    detailed than what we already have. "More detailed" = has flights, has
+    layover_city, has a confirmed day_type (not 'Unknown/Needs Confirmation'),
+    or higher confidence.
+    """
+    merged: dict[str, dict] = {}
+
+    def detail_score(d: dict) -> int:
+        s = 0
+        if d.get("flights"):
+            s += 3
+        if d.get("layover_city"):
+            s += 2
+        dtype = (d.get("day_type") or "").lower()
+        if dtype and not dtype.startswith("unknown"):
+            s += 2
+        try:
+            s += int(round(float(d.get("confidence") or 0.5) * 2))
+        except Exception:
+            pass
+        return s
+
+    for page in pages:
+        for d in page or []:
+            key = d.get("date")
+            if not key:
+                continue
+            if key not in merged:
+                merged[key] = dict(d)
+                continue
+            # Choose whichever entry is more detailed.
+            if detail_score(d) > detail_score(merged[key]):
+                merged[key] = dict(d)
+
+    return list(merged.values())
+
+
+@api.post("/roster/upload-parse-multi")
+async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = Depends(current_user)):
+    """Multi-file roster upload. Supports two modes:
+
+    * `merge_as_one=True` (default): treat all files as pages of one roster.
+      Returns a single job_id.
+    * `merge_as_one=False`: each file becomes its own pending roster. Returns
+      a list of job_ids (one per file). Jobs run sequentially so we don't
+      hammer Gemini in parallel.
+    """
+    if not body.files:
+        raise HTTPException(400, "No files provided")
+    if len(body.files) > 12:
+        raise HTTPException(400, "Please upload no more than 12 files at once")
+
+    # ---------------- MERGE MODE (Option A) ----------------
+    if body.merge_as_one:
+        job_id = new_id()
+        now = now_iso()
+        primary_filename = (body.files[0].filename or "roster") + (
+            f" (+{len(body.files) - 1} more)" if len(body.files) > 1 else ""
+        )
+        await db.roster_jobs.insert_one({
+            "id": job_id, "user_id": user["id"],
+            "status": "queued", "stage": "uploading",
+            "message": f"Uploading {len(body.files)} page(s)...",
+            "progress": 1, "created_at": now, "updated_at": now,
+            "filename": primary_filename,
+            "flow": "parse_only_multi",
+            "file_count": len(body.files),
+            "pending_roster_id": None, "roster_id": None,
+            "error": None, "overlap": None, "retry_count": 0,
+        })
+
+        async def _merge_worker():
+            paths: list[str] = []
+            try:
+                total = len(body.files)
+                pages: list[list[dict]] = []
+                combined_raw = ""
+                for idx, f in enumerate(body.files):
+                    pct_base = 5 + int((idx / max(1, total)) * 70)
+                    await _set_job(
+                        job_id, status="processing", stage="reading",
+                        progress=pct_base,
+                        message=f"Reading page {idx + 1} of {total}...",
+                    )
+                    path = await write_temp(f.file_base64, f.mime_type)
+                    paths.append(path)
+                    raw = ""
+                    try:
+                        raw = await call_gemini_file(
+                            ROSTER_SYSTEM,
+                            "Extract the complete roster shown. Return only JSON.",
+                            path, f.mime_type,
+                        )
+                    except Exception as e:
+                        logger.warning("Gemini roster call failed on page %d: %s", idx + 1, e)
+                    combined_raw += (raw or "") + "\n---\n"
+                    parsed: Any = {}
+                    try:
+                        parsed = parse_json_from_text(raw) if raw else {}
+                    except Exception as e:
+                        logger.warning("roster parse failed on page %d: %s", idx + 1, e)
+                    days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+                    if days:
+                        pages.append(days)
+
+                if not pages:
+                    await _set_job(
+                        job_id, status="failed", stage="extracting", progress=45,
+                        error="We couldn't read any of these files clearly. Please upload clearer photos or add days manually on the next screen.",
+                        message="Roster could not be read",
+                    )
+                    return
+
+                await _set_job(job_id, stage="detecting", progress=80, message="Merging pages and detecting layovers...")
+                days = _merge_day_pages(pages)
+                days = _apply_day_defaults(days)
+                overlap = await _detect_overlap(user["id"], days)
+                pending = await _persist_pending_roster(user["id"], days, primary_filename, combined_raw, job_id)
+                await _set_job(
+                    job_id,
+                    pending_roster_id=pending["id"],
+                    overlap=overlap,
+                    status="awaiting_confirmation",
+                    stage="ready_to_confirm",
+                    progress=100,
+                    message="Roster ready to review",
+                    completed_at=now_iso(),
+                )
+            except Exception as e:
+                logger.exception("multi-page roster parse job %s failed", job_id)
+                await _set_job(job_id, status="failed", error=str(e)[:400], message="Roster processing failed")
+            finally:
+                for p in paths:
+                    try:
+                        import os as _os
+                        _os.unlink(p)
+                    except Exception:
+                        pass
+
+        _asyncio.create_task(_merge_worker())
+        return {"job_id": job_id, "status": "queued", "poll": f"/roster/jobs/{job_id}", "mode": "merged"}
+
+    # ---------------- BATCH MODE (Option B) ----------------
+    job_ids: list[str] = []
+    now = now_iso()
+    for idx, f in enumerate(body.files):
+        job_id = new_id()
+        job_ids.append(job_id)
+        await db.roster_jobs.insert_one({
+            "id": job_id, "user_id": user["id"],
+            "status": "queued", "stage": "waiting",
+            "message": f"Waiting to process file {idx + 1} of {len(body.files)}...",
+            "progress": 0, "created_at": now, "updated_at": now,
+            "filename": f.filename or f"roster_{idx + 1}",
+            "flow": "parse_only_batch",
+            "batch_index": idx, "batch_total": len(body.files),
+            "pending_roster_id": None, "roster_id": None,
+            "error": None, "overlap": None, "retry_count": 0,
+        })
+
+    async def _batch_worker():
+        for idx, (jid, f) in enumerate(zip(job_ids, body.files)):
+            path: Optional[str] = None
+            try:
+                await _set_job(jid, status="processing", stage="uploading", progress=5, message=f"Uploading file {idx + 1} of {len(body.files)}...")
+                path = await write_temp(f.file_base64, f.mime_type)
+                await _set_job(jid, stage="reading", progress=25, message="Reading your duty pattern...")
+                raw = ""
+                try:
+                    raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, f.mime_type)
+                except Exception as e:
+                    logger.warning("Gemini roster call failed (batch): %s", e)
+                await _set_job(jid, stage="extracting", progress=55, message="Extracting duties...")
+                parsed: Any = {}
+                try:
+                    parsed = parse_json_from_text(raw) if raw else {}
+                except Exception as e:
+                    logger.warning("roster parse failed (batch): %s", e)
+                days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+                if not days:
+                    await _set_job(jid, status="failed", stage="extracting", progress=55,
+                                   error="Couldn't read this file. Try re-uploading or add days manually.",
+                                   message="Roster could not be read")
+                    continue
+                await _set_job(jid, stage="detecting", progress=75, message="Detecting layovers and turnarounds...")
+                days = _apply_day_defaults(days)
+                overlap = await _detect_overlap(user["id"], days)
+                pending = await _persist_pending_roster(user["id"], days, f.filename or f"roster_{idx + 1}", raw, jid)
+                await _set_job(jid, pending_roster_id=pending["id"], overlap=overlap,
+                               status="awaiting_confirmation", stage="ready_to_confirm",
+                               progress=100, message="Roster ready to review", completed_at=now_iso())
+            except Exception as e:
+                logger.exception("batch roster job %s failed", jid)
+                await _set_job(jid, status="failed", error=str(e)[:400], message="Roster processing failed")
+            finally:
+                if path:
+                    try:
+                        import os as _os
+                        _os.unlink(path)
+                    except Exception:
+                        pass
+
+    _asyncio.create_task(_batch_worker())
+    return {
+        "job_ids": job_ids,
+        "first_job_id": job_ids[0] if job_ids else None,
+        "status": "queued",
+        "poll": f"/roster/jobs/{job_ids[0]}" if job_ids else None,
+        "mode": "batch",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Pending roster CRUD
 # ---------------------------------------------------------------------------
 

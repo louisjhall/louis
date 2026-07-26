@@ -88,6 +88,11 @@ export default function RosterUpload() {
   const [starting, setStarting] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [slowness, setSlowness] = useState<"none" | "slow" | "stuck">("none");
+  // Multi-file upload staging area.
+  const [multiFiles, setMultiFiles] = useState<
+    { base64: string; mime: string; filename: string }[]
+  >([]);
+  const [mergeAsOne, setMergeAsOne] = useState(true);
   const pollRef = useRef<any>(null);
   const lastMoveRef = useRef<{ progress: number; at: number }>({ progress: 0, at: Date.now() });
 
@@ -163,29 +168,75 @@ export default function RosterUpload() {
       Alert.alert("Permission needed", "Please allow photo library access to upload a roster image.");
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, base64: true, quality: 0.7 });
-    if (res.canceled || !res.assets?.[0]?.base64) return;
-    const a = res.assets[0];
-    await startJob(a.base64!, a.mimeType || "image/jpeg", a.fileName || "roster.jpg");
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      base64: true,
+      quality: 0.7,
+      allowsMultipleSelection: true,
+      selectionLimit: 12,
+    });
+    if (res.canceled || !res.assets?.length) return;
+
+    // Single image → keep the existing single-file path.
+    if (res.assets.length === 1) {
+      const a = res.assets[0];
+      if (!a.base64) return;
+      await startJob(a.base64, a.mimeType || "image/jpeg", a.fileName || "roster.jpg");
+      return;
+    }
+
+    // Multi-image → stage for review before upload.
+    const staged = res.assets
+      .filter((a) => !!a.base64)
+      .map((a, i) => ({
+        base64: a.base64!,
+        mime: a.mimeType || "image/jpeg",
+        filename: a.fileName || `roster_${i + 1}.jpg`,
+      }));
+    setMultiFiles(staged);
+    setMergeAsOne(true);
   };
   const pickPdf = async () => {
     setError(null);
-    // Iter 94h — accept both PDFs and images in the same picker. On Android this
-    // opens the SAF file browser with folder navigation (Downloads / Documents /
-    // OneDrive / Drive), not just "recent PDFs".
     const res = await DocumentPicker.getDocumentAsync({
       type: ["application/pdf", "image/*"],
       copyToCacheDirectory: true,
-      multiple: false,
+      multiple: true,
     });
-    if (res.canceled || !res.assets?.[0]) return;
-    const a = res.assets[0];
+    if (res.canceled || !res.assets?.length) return;
+
+    // Single file → keep the existing single-file path.
+    if (res.assets.length === 1) {
+      const a = res.assets[0];
+      try {
+        const b64 = await uriToBase64(a.uri);
+        const mime = a.mimeType || (a.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
+        await startJob(b64, mime, a.name || (mime === "application/pdf" ? "roster.pdf" : "roster.jpg"));
+      } catch (e: any) {
+        setError(e?.message || "Could not read that file. Try a different one.");
+      }
+      return;
+    }
+
+    // Multi-file → stage for review.
     try {
-      const b64 = await uriToBase64(a.uri);
-      const mime = a.mimeType || (a.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg");
-      await startJob(b64, mime, a.name || (mime === "application/pdf" ? "roster.pdf" : "roster.jpg"));
+      const staged = await Promise.all(
+        res.assets.slice(0, 12).map(async (a, i) => {
+          const b64 = await uriToBase64(a.uri);
+          const nameLower = (a.name || "").toLowerCase();
+          const mime = a.mimeType
+            || (nameLower.endsWith(".pdf") ? "application/pdf"
+            : nameLower.endsWith(".png") ? "image/png"
+            : "image/jpeg");
+          return { base64: b64, mime, filename: a.name || `roster_${i + 1}` };
+        })
+      );
+      setMultiFiles(staged);
+      // Default merge=OFF when several PDFs (usually separate months) — heuristic.
+      const pdfCount = staged.filter((s) => s.mime === "application/pdf").length;
+      setMergeAsOne(!(pdfCount >= 2 && staged.length >= 2));
     } catch (e: any) {
-      setError(e?.message || "Could not read that file. Try a different one.");
+      setError(e?.message || "Could not read one of those files. Try again.");
     }
   };
   // Iter 94h — full "browse anywhere" escape hatch. Uses `type: "*/*"` which on
@@ -220,7 +271,47 @@ export default function RosterUpload() {
     }
   };
 
-  const startFresh = () => { setJob(null); setError(null); setSlowness("none"); };
+  const startFresh = () => { setJob(null); setError(null); setSlowness("none"); setMultiFiles([]); };
+
+  const removeMultiFile = (idx: number) => {
+    setMultiFiles((files) => files.filter((_, i) => i !== idx));
+  };
+
+  const submitMulti = async () => {
+    if (!multiFiles.length) return;
+    setStarting(true);
+    setError(null);
+    try {
+      const res = await api<any>(`/roster/upload-parse-multi`, {
+        method: "POST",
+        body: {
+          files: multiFiles.map((f) => ({
+            file_base64: f.base64,
+            mime_type: f.mime,
+            filename: f.filename,
+          })),
+          merge_as_one: mergeAsOne,
+        },
+      });
+      const primary = res?.job_id || res?.first_job_id;
+      if (!primary) throw new Error("No job id returned");
+      setJob({
+        id: primary,
+        status: "queued",
+        stage: "uploading",
+        progress: 1,
+        message: mergeAsOne
+          ? `Uploading ${multiFiles.length} page(s)...`
+          : `Uploading ${multiFiles.length} rosters...`,
+      });
+      setMultiFiles([]);
+      startPolling(primary);
+    } catch (e: any) {
+      setError(e?.message || "Upload failed. Please try again with fewer files.");
+    } finally {
+      setStarting(false);
+    }
+  };
 
   const retryPlanGeneration = async () => {
     if (!job?.id) return;
@@ -312,6 +403,87 @@ export default function RosterUpload() {
             <Text style={styles.browseTip} testID="ru-browse-tip">
               On Android, tap the <Text style={{ fontWeight: "800" }}>☰</Text> menu at the top-left of the file picker to browse your phone storage, Downloads or any cloud drive.
             </Text>
+            <Text style={[styles.browseTip, { marginTop: 6 }]}>
+              Have multiple pages or multiple months? Pick them all — you&apos;ll get to say whether they&apos;re one roster or separate.
+            </Text>
+
+            {/* Multi-file staging area — appears after selecting 2+ files. */}
+            {multiFiles.length > 0 ? (
+              <View style={styles.multiCard} testID="ru-multi-stage">
+                <Text style={styles.multiTitle}>{multiFiles.length} FILES SELECTED</Text>
+
+                <View style={styles.mergeToggleRow}>
+                  <Pressable
+                    onPress={() => setMergeAsOne(true)}
+                    style={[styles.mergeToggle, mergeAsOne && styles.mergeToggleOn]}
+                    testID="ru-merge-one"
+                  >
+                    <Ionicons name="albums" size={14} color={mergeAsOne ? "#fff" : theme.color.brand} />
+                    <Text style={[styles.mergeToggleT, mergeAsOne && { color: "#fff" }]}>
+                      ONE ROSTER (pages)
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setMergeAsOne(false)}
+                    style={[styles.mergeToggle, !mergeAsOne && styles.mergeToggleOn]}
+                    testID="ru-merge-many"
+                  >
+                    <Ionicons name="documents" size={14} color={!mergeAsOne ? "#fff" : theme.color.brand} />
+                    <Text style={[styles.mergeToggleT, !mergeAsOne && { color: "#fff" }]}>
+                      SEPARATE ROSTERS
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Text style={styles.mergeHint}>
+                  {mergeAsOne
+                    ? "Louis will merge all pages into one roster (best for multi-page monthly rosters)."
+                    : "Each file becomes its own roster (best for uploading multiple months at once)."}
+                </Text>
+
+                <View style={{ marginTop: 10 }}>
+                  {multiFiles.map((f, i) => (
+                    <View key={`${f.filename}-${i}`} style={styles.multiRow}>
+                      <Ionicons
+                        name={f.mime === "application/pdf" ? "document-text" : "image"}
+                        size={16}
+                        color={theme.color.brand}
+                      />
+                      <Text style={styles.multiFile} numberOfLines={1}>{f.filename}</Text>
+                      <Pressable
+                        onPress={() => removeMultiFile(i)}
+                        hitSlop={8}
+                        testID={`ru-multi-remove-${i}`}
+                      >
+                        <Ionicons name="close-circle" size={18} color={theme.color.textMuted} />
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+
+                <Pressable
+                  onPress={submitMulti}
+                  disabled={starting || multiFiles.length === 0}
+                  style={[styles.multiSubmit, (starting || !multiFiles.length) && { opacity: 0.5 }]}
+                  testID="ru-multi-submit"
+                >
+                  {starting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-upload" size={16} color="#fff" />
+                      <Text style={styles.multiSubmitT}>
+                        UPLOAD {mergeAsOne ? "AS ONE ROSTER" : `${multiFiles.length} ROSTERS`}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+
+                <Pressable onPress={() => setMultiFiles([])} style={styles.multiCancel} testID="ru-multi-cancel">
+                  <Text style={styles.multiCancelT}>CANCEL</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             {starting ? (
               <View style={{ marginTop: 20, alignItems: "center" }}>
@@ -548,4 +720,99 @@ const styles = StyleSheet.create({
 
   leaveHint: { color: theme.color.textMuted, fontSize: 12, marginTop: 14, textAlign: "center", fontStyle: "italic" },
   browseTip: { color: theme.color.textMuted, fontSize: 11, marginTop: 6, marginBottom: 6, lineHeight: 16, fontStyle: "italic" },
+
+  multiCard: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+  },
+  multiTitle: {
+    color: theme.color.brand,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+    marginBottom: 10,
+  },
+  mergeToggleRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginBottom: 6,
+  },
+  mergeToggle: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  mergeToggleOn: {
+    backgroundColor: theme.color.brand,
+  },
+  mergeToggleT: {
+    color: theme.color.brand,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+  mergeHint: {
+    color: theme.color.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    fontStyle: "italic",
+    marginTop: 4,
+  },
+  multiRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    marginBottom: 4,
+  },
+  multiFile: {
+    flex: 1,
+    color: theme.color.text,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  multiSubmit: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: theme.color.brand,
+  },
+  multiSubmitT: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+  },
+  multiCancel: {
+    marginTop: 6,
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  multiCancelT: {
+    color: theme.color.textMuted,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+  },
 });

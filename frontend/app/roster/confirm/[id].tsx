@@ -64,8 +64,16 @@ type Pending = {
   end_date?: string;
   day_count: number;
   confidence_avg: number;
+  source_filename?: string | null;
   days: Day[];
   review_flags?: { low_confidence_count: number };
+  _queue?: {
+    total: number;
+    index: number;
+    next_id?: string | null;
+    next_range?: string | null;
+    next_filename?: string | null;
+  };
 };
 
 function fmtDate(iso?: string | null) {
@@ -233,7 +241,14 @@ export default function RosterConfirm() {
     setSubmitting(true);
     try {
       const res = await api<any>(`/roster/pending/${pending.id}/confirm`, { method: "POST" });
-      router.replace({ pathname: "/roster-upload" as any, params: { resume: res.job_id } } as any);
+      // If there's another pending roster (e.g. batch upload July + August),
+      // jump straight to it instead of going through the generation flow.
+      const nextId = pending._queue?.next_id;
+      if (nextId) {
+        router.replace({ pathname: "/roster/confirm/[id]" as any, params: { id: nextId } } as any);
+      } else {
+        router.replace({ pathname: "/roster-upload" as any, params: { resume: res.job_id } } as any);
+      }
     } catch (e: any) {
       // Iter 84 (Task 1.4) — profile_incomplete 409 → route to /training-setup.
       const detail = e?.detail || e?.body?.detail;
@@ -311,6 +326,16 @@ export default function RosterConfirm() {
       </View>
 
       <View style={styles.summary}>
+        {pending._queue && pending._queue.total > 1 ? (
+          <View style={styles.queueBar} testID="rc-queue-bar">
+            <Ionicons name="layers" size={14} color={theme.color.brand} />
+            <Text style={styles.queueT}>
+              ROSTER {(pending._queue.index ?? 0) + 1} OF {pending._queue.total}
+              {pending._queue.next_filename ? ` · NEXT: ${pending._queue.next_filename}` : ""}
+            </Text>
+          </View>
+        ) : null}
+
         <View style={styles.summaryRow}>
           <Text style={styles.sumLabel}>DUTIES</Text>
           <Text style={styles.sumVal}>{pending.day_count} days</Text>
@@ -523,7 +548,11 @@ export default function RosterConfirm() {
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={styles.ctaText}>
-              {unreviewed > 0 ? `${unreviewed} DAY${unreviewed === 1 ? "" : "S"} TO REVIEW` : "CONFIRM & BUILD PLAN"}
+              {unreviewed > 0
+                ? `${unreviewed} DAY${unreviewed === 1 ? "" : "S"} TO REVIEW`
+                : pending._queue?.next_id
+                  ? "CONFIRM & REVIEW NEXT ROSTER"
+                  : "CONFIRM & BUILD PLAN"}
             </Text>
           )}
         </Pressable>
@@ -667,6 +696,25 @@ const styles = StyleSheet.create({
   sumLabel: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "700" },
   sumVal: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
   summaryHint: { color: AMBER, fontSize: 12, marginTop: 6, lineHeight: 16 },
+  queueBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+    marginBottom: 10,
+  },
+  queueT: {
+    color: theme.color.brand,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.3,
+    flex: 1,
+  },
   card: {
     padding: theme.space.md, borderRadius: theme.radius.md,
     borderWidth: 1, marginBottom: theme.space.sm,

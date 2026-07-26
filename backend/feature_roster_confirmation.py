@@ -443,17 +443,33 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
 
 @api.get("/roster/pending")
 async def roster_pending_latest(user: dict = Depends(current_user)):
-    """Return the most recent pending roster for the user (if any)."""
-    r = await db.rosters.find_one(
+    """Return the OLDEST pending roster for the user (so multiple uploaded
+    rosters are confirmed in chronological month order — July before August).
+
+    Also returns a `_queue` field with the total number of pending rosters
+    so the UI can render a "1 of 3" counter.
+    """
+    # Sort by start_date ASC (chronological), fallback to created_at ASC.
+    all_pending = await db.rosters.find(
         {"user_id": user["id"], "status": "pending_confirmation"},
         {"_id": 0},
-        sort=[("created_at", -1)],
-    )
-    if not r:
+    ).sort([("start_date", 1), ("created_at", 1)]).to_list(20)
+    if not all_pending:
         return {}
+    r = all_pending[0]
     # Attach the per-day needs_review flag so the client can highlight amber.
     for d in r.get("days") or []:
         d["_needs_review"] = _needs_review(d)
+    r["_queue"] = {
+        "total": len(all_pending),
+        "index": 0,  # 0-based position of what we just returned
+        "next_id": (all_pending[1]["id"] if len(all_pending) > 1 else None),
+        "next_range": (
+            f"{all_pending[1].get('start_date')} → {all_pending[1].get('end_date')}"
+            if len(all_pending) > 1 else None
+        ),
+        "next_filename": (all_pending[1].get("source_filename") if len(all_pending) > 1 else None),
+    }
     return r
 
 
@@ -467,6 +483,26 @@ async def roster_pending_get(rid: str, user: dict = Depends(current_user)):
         raise HTTPException(404, "Pending roster not found")
     for d in r.get("days") or []:
         d["_needs_review"] = _needs_review(d)
+
+    # Attach the queue so the confirm screen can render "1 of 2" and jump
+    # to the next pending roster after this one is confirmed.
+    all_pending = await db.rosters.find(
+        {"user_id": user["id"], "status": "pending_confirmation"},
+        {"_id": 0, "id": 1, "start_date": 1, "end_date": 1, "source_filename": 1},
+    ).sort([("start_date", 1), ("created_at", 1)]).to_list(20)
+    ids = [p["id"] for p in all_pending]
+    try:
+        idx = ids.index(rid)
+    except ValueError:
+        idx = 0
+    next_ = all_pending[idx + 1] if idx + 1 < len(all_pending) else None
+    r["_queue"] = {
+        "total": len(all_pending),
+        "index": idx,
+        "next_id": (next_["id"] if next_ else None),
+        "next_range": (f"{next_.get('start_date')} → {next_.get('end_date')}" if next_ else None),
+        "next_filename": (next_.get("source_filename") if next_ else None),
+    }
     return r
 
 

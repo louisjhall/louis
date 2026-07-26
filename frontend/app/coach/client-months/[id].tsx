@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Modal,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -142,6 +142,10 @@ export default function CoachClientMonths() {
   const [detail, setDetail] = useState<MonthDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Phase 3 — version history modal state
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [versionsData, setVersionsData] = useState<any | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
 
   const loadMonths = useCallback(async () => {
     try {
@@ -173,6 +177,22 @@ export default function CoachClientMonths() {
 
   useEffect(() => { loadMonths(); }, [loadMonths]);
   useEffect(() => { if (selectedKey) loadDetail(selectedKey); }, [selectedKey, loadDetail]);
+
+  // Phase 3 — Load versions on modal open
+  useEffect(() => {
+    if (!versionsOpen || !selectedKey) return;
+    (async () => {
+      setVersionsLoading(true);
+      try {
+        const r = await api<any>(`/coach/clients/${id}/roster/versions/${selectedKey}`);
+        setVersionsData(r);
+      } catch (e: any) {
+        setError(e?.message || "Couldn't load versions");
+      } finally {
+        setVersionsLoading(false);
+      }
+    })();
+  }, [versionsOpen, selectedKey, id]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -288,10 +308,16 @@ export default function CoachClientMonths() {
                   );
                 })}
                 {activeMonth.version_count > 1 ? (
-                  <View style={styles.tlChip}>
-                    <Ionicons name="git-branch-outline" size={11} color={theme.color.textMuted} />
-                    <Text style={styles.tlChipT}>{activeMonth.version_count} versions</Text>
-                  </View>
+                  <Pressable
+                    testID="cm-open-versions"
+                    onPress={() => setVersionsOpen(true)}
+                    style={[styles.tlChip, { borderColor: theme.color.brand }]}
+                  >
+                    <Ionicons name="git-branch-outline" size={11} color={theme.color.brand} />
+                    <Text style={[styles.tlChipT, { color: theme.color.brand }]}>
+                      {activeMonth.version_count} versions
+                    </Text>
+                  </Pressable>
                 ) : null}
               </View>
             </View>
@@ -323,6 +349,122 @@ export default function CoachClientMonths() {
           </ScrollView>
         </>
       )}
+
+      {/* Phase 3 — Version history modal */}
+      <Modal
+        visible={versionsOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setVersionsOpen(false)}
+      >
+        <View style={styles.modalScrim}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>
+                  {versionsData?.month_label || activeMonth?.month_label} · Versions
+                </Text>
+                <Text style={styles.modalSub}>
+                  {versionsData?.versions?.length || 0} roster{(versionsData?.versions?.length || 0) === 1 ? "" : "s"} uploaded for this month
+                </Text>
+              </View>
+              <Pressable testID="cm-versions-close" onPress={() => setVersionsOpen(false)} hitSlop={10}>
+                <Ionicons name="close" size={26} color={theme.color.text} />
+              </Pressable>
+            </View>
+            <ScrollView contentContainerStyle={{ padding: theme.space.md, paddingBottom: 40 }}>
+              {versionsLoading ? (
+                <ActivityIndicator color={theme.color.brand} />
+              ) : (
+                (versionsData?.versions || []).map((v: any) => (
+                  <View
+                    key={v.id}
+                    style={[styles.versionCard, v.is_primary && styles.versionCardPrimary]}
+                    testID={`cm-version-${v.id}`}
+                  >
+                    <View style={styles.versionTopRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.versionTitle} numberOfLines={1}>
+                          {v.source_filename || "Roster upload"}
+                        </Text>
+                        <Text style={styles.versionMeta} numberOfLines={1}>
+                          {v.created_at ? new Date(v.created_at).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}
+                          {v.day_count ? ` · ${v.day_count} days` : ""}
+                          {v.parser_source ? ` · ${v.parser_source.replace("_parser_v1", "").toUpperCase()}` : ""}
+                        </Text>
+                      </View>
+                      {v.is_primary ? (
+                        <View style={[styles.versionBadge, { backgroundColor: theme.color.brand }]}>
+                          <Text style={styles.versionBadgeT}>PRIMARY</Text>
+                        </View>
+                      ) : v.status === "pending_confirmation" ? (
+                        <View style={[styles.versionBadge, { backgroundColor: "#a1611c" }]}>
+                          <Text style={styles.versionBadgeT}>PENDING</Text>
+                        </View>
+                      ) : v.confirmed ? (
+                        <View style={[styles.versionBadge, { backgroundColor: "#1f7c3a" }]}>
+                          <Text style={styles.versionBadgeT}>CONFIRMED</Text>
+                        </View>
+                      ) : v.status === "superseded" ? (
+                        <View style={[styles.versionBadge, { backgroundColor: "#5a5a5a" }]}>
+                          <Text style={styles.versionBadgeT}>SUPERSEDED</Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    {v.diff_vs_primary ? (
+                      <View style={styles.diffRow}>
+                        {v.diff_vs_primary.added?.length > 0 && (
+                          <View style={[styles.diffPill, { backgroundColor: "#1f7c3a" }]}>
+                            <Text style={styles.diffPillT}>+{v.diff_vs_primary.added.length} added</Text>
+                          </View>
+                        )}
+                        {v.diff_vs_primary.removed?.length > 0 && (
+                          <View style={[styles.diffPill, { backgroundColor: "#c85450" }]}>
+                            <Text style={styles.diffPillT}>−{v.diff_vs_primary.removed.length} removed</Text>
+                          </View>
+                        )}
+                        {v.diff_vs_primary.changed?.length > 0 && (
+                          <View style={[styles.diffPill, { backgroundColor: "#a1611c" }]}>
+                            <Text style={styles.diffPillT}>~{v.diff_vs_primary.changed.length} changed</Text>
+                          </View>
+                        )}
+                        {v.diff_vs_primary.unchanged_count > 0 && (
+                          <View style={[styles.diffPill, { backgroundColor: theme.color.surface }]}>
+                            <Text style={[styles.diffPillT, { color: theme.color.textMuted }]}>
+                              ={v.diff_vs_primary.unchanged_count} unchanged
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    ) : null}
+
+                    {v.diff_vs_primary?.changed?.length > 0 && (
+                      <View style={styles.diffList}>
+                        {v.diff_vs_primary.changed.slice(0, 6).map((c: any) => (
+                          <Text key={c.date} style={styles.diffChangeLine} numberOfLines={1}>
+                            {c.date}: {c.prev?.day_type || "—"} → {c.new?.day_type || "—"}
+                          </Text>
+                        ))}
+                        {v.diff_vs_primary.changed.length > 6 && (
+                          <Text style={styles.diffChangeMore}>
+                            +{v.diff_vs_primary.changed.length - 6} more…
+                          </Text>
+                        )}
+                      </View>
+                    )}
+                  </View>
+                ))
+              )}
+              {!versionsLoading && (versionsData?.versions || []).length === 0 ? (
+                <Text style={{ color: theme.color.textMuted, textAlign: "center", padding: 24 }}>
+                  No version history for this month.
+                </Text>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -598,4 +740,58 @@ const styles = StyleSheet.create({
     backgroundColor: "#c85450",
   },
   wChipMediaT: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  // Phase 3 — Version history modal
+  modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
+  modalSheet: {
+    backgroundColor: theme.color.surface,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    maxHeight: "88%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: theme.space.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.color.border,
+  },
+  modalTitle: { color: theme.color.text, fontSize: 16, fontWeight: "900" },
+  modalSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  versionCard: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+    marginBottom: theme.space.sm,
+  },
+  versionCardPrimary: {
+    borderColor: theme.color.brand, borderLeftWidth: 4, borderLeftColor: theme.color.brand,
+  },
+  versionTopRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  versionTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
+  versionMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  versionBadge: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: theme.radius.pill,
+  },
+  versionBadgeT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  diffRow: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  diffPill: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: theme.radius.pill,
+  },
+  diffPillT: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  diffList: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: theme.color.border,
+    gap: 3,
+  },
+  diffChangeLine: {
+    color: theme.color.textMuted, fontSize: 11, fontFamily: undefined,
+  },
+  diffChangeMore: {
+    color: theme.color.textDim, fontSize: 11, marginTop: 2, fontStyle: "italic",
+  },
 });

@@ -347,7 +347,10 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
             pending = await _persist_pending_roster(user["id"], days, body.filename or "roster", raw, job_id)
             # Attach the parser source so the confirmation UI can badge it.
             try:
-                await db.rosters.update_one({"id": pending["id"]}, {"$set": {"parser_source": parser_source}})
+                await db.rosters.update_one({"id": pending["id"]}, {"$set": {
+                    "parser_source": parser_source,
+                    "overlap": overlap,
+                }})
             except Exception:
                 pass
             await _set_job(
@@ -553,7 +556,10 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 overlap = await _detect_overlap(user["id"], days)
                 pending = await _persist_pending_roster(user["id"], days, primary_filename, combined_raw, job_id)
                 try:
-                    await db.rosters.update_one({"id": pending["id"]}, {"$set": {"parser_source": parser_source}})
+                    await db.rosters.update_one({"id": pending["id"]}, {"$set": {
+                        "parser_source": parser_source,
+                        "overlap": overlap,
+                    }})
                 except Exception:
                     pass
                 await _set_job(
@@ -660,7 +666,10 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 overlap = await _detect_overlap(user["id"], days)
                 pending = await _persist_pending_roster(user["id"], days, f.filename or f"roster_{idx + 1}", raw, jid)
                 try:
-                    await db.rosters.update_one({"id": pending["id"]}, {"$set": {"parser_source": parser_source}})
+                    await db.rosters.update_one({"id": pending["id"]}, {"$set": {
+                        "parser_source": parser_source,
+                        "overlap": overlap,
+                    }})
                 except Exception:
                     pass
                 await _set_job(jid, pending_roster_id=pending["id"], overlap=overlap,
@@ -1010,8 +1019,61 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
         )
 
     # Activate: mark all other rosters inactive, promote this one.
-    await db.rosters.update_many({"user_id": user["id"], "is_active": True}, {"$set": {"is_active": False}})
+    # Phase 3 — honour the client's overlap_mode selection ("replace" is the
+    # default already-active behaviour; "keep_both" preserves prior rosters
+    # by NOT deactivating them beyond required superseding).
+    overlap_mode = pending.get("overlap_mode") or "replace"
     now = now_iso()
+    if overlap_mode == "keep_both":
+        # Only mark rosters as inactive if they OVERLAP on more than half
+        # of the new roster's dates AND are unconfirmed. Otherwise leave
+        # them alone and open a coach task for review.
+        pending_dates = {d.get("date") for d in days if d.get("date")}
+        actives = await db.rosters.find({"user_id": user["id"], "is_active": True}, {"_id": 0}).to_list(20)
+        for a in actives:
+            a_dates = {d.get("date") for d in (a.get("days") or []) if d.get("date")}
+            if not pending_dates or not a_dates:
+                continue
+            overlap_pct = len(pending_dates & a_dates) / max(1, len(pending_dates))
+            if overlap_pct > 0.5 and not a.get("confirmed"):
+                await db.rosters.update_one({"id": a["id"]}, {"$set": {"is_active": False}})
+        # Open a review task for the coach.
+        try:
+            await db.coach_tasks.insert_one({
+                "id": new_id(),
+                "user_id": user["id"],
+                "kind": "roster_overlap_review",
+                "status": "open",
+                "created_at": now,
+                "roster_id": rid,
+                "message": "Client uploaded an additional roster that overlaps an existing one — please review versions.",
+            })
+        except Exception:
+            logger.exception("Failed to create coach task for keep_both overlap")
+    else:
+        # Default (replace) — supersede all previously active rosters and
+        # mark any overlapping non-primary ones as `superseded`.
+        await db.rosters.update_many({"user_id": user["id"], "is_active": True},
+                                     {"$set": {"is_active": False}})
+        try:
+            pending_dates = {d.get("date") for d in days if d.get("date")}
+            if pending_dates:
+                # Find prior rosters whose date range intersects and mark them.
+                start = min(pending_dates); end = max(pending_dates)
+                superseded = await db.rosters.find({
+                    "user_id": user["id"], "id": {"$ne": rid},
+                    "start_date": {"$lte": end}, "end_date": {"$gte": start},
+                    "status": {"$in": ["confirmed", "expired"]},
+                }, {"_id": 0, "id": 1}).to_list(20)
+                if superseded:
+                    ids = [s["id"] for s in superseded]
+                    await db.rosters.update_many(
+                        {"id": {"$in": ids}},
+                        {"$set": {"status": "superseded", "superseded_by": rid, "superseded_at": now}},
+                    )
+        except Exception:
+            logger.exception("Failed to mark superseded rosters (non-fatal)")
+
     await db.rosters.update_one(
         {"id": rid},
         {"$set": {

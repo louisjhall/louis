@@ -74,6 +74,8 @@ type Pending = {
   source_filename?: string | null;
   days: Day[];
   review_flags?: { low_confidence_count: number };
+  overlap?: { overlapping_dates: string[]; changes: { date: string; prev: any; new: any }[] } | null;
+  overlap_mode?: "replace" | "merge" | "keep_both" | null;
   _queue?: {
     total: number;
     index: number;
@@ -121,6 +123,32 @@ export default function RosterConfirm() {
   }, [id, router]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Phase 3 — Overlap resolution helper
+  const resolveOverlap = useCallback(async (mode: "replace" | "merge" | "keep_both") => {
+    if (!pending) return;
+    try {
+      setSaving(true);
+      const r = await api<{ mode: string; merged?: boolean; message?: string }>(
+        `/roster/pending/${id}/resolve-overlap`,
+        { method: "POST", body: { mode } },
+      );
+      if (mode === "merge" && r?.merged) {
+        Alert.alert(
+          "Merged into your existing roster",
+          "Your changes have been rolled into the current roster. Louis will re-check the affected days.",
+          [{ text: "OK", onPress: () => router.replace("/(client)/calendar") }],
+        );
+        return;
+      }
+      // For replace/keep_both, just record the mode and continue to review.
+      setPending((p) => p ? { ...p, overlap_mode: mode } : p);
+    } catch (e: any) {
+      Alert.alert("Couldn't save your choice", e?.message || "Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }, [pending, id, router]);
 
   const updateDay = (date: string, patch: Partial<Day>) => {
     setPending((p) => {
@@ -340,6 +368,88 @@ export default function RosterConfirm() {
               ROSTER {(pending._queue.index ?? 0) + 1} OF {pending._queue.total}
               {pending._queue.next_filename ? ` · NEXT: ${pending._queue.next_filename}` : ""}
             </Text>
+          </View>
+        ) : null}
+
+        {/* Phase 3 — Overlap resolution prompt. Shown when the parser
+             detected duty dates that already exist in an active roster and
+             the client has NOT yet chosen a resolution mode. */}
+        {pending.overlap && (pending.overlap.overlapping_dates?.length || 0) > 0 && !pending.overlap_mode ? (
+          <View style={styles.overlapBanner} testID="rc-overlap-banner">
+            <View style={styles.overlapHeaderRow}>
+              <Ionicons name="alert-circle" size={18} color={theme.color.warn || "#e5a337"} />
+              <Text style={styles.overlapTitle} numberOfLines={2}>
+                You already have {pending.overlap.overlapping_dates.length} day
+                {pending.overlap.overlapping_dates.length === 1 ? "" : "s"} covered by another roster
+              </Text>
+            </View>
+            <Text style={styles.overlapSub}>
+              What would you like to do with this new roster?
+            </Text>
+            <View style={styles.overlapBtnCol}>
+              <Pressable
+                testID="rc-overlap-replace"
+                onPress={() => resolveOverlap("replace")}
+                style={[styles.overlapBtn, styles.overlapBtnPrimary]}
+                disabled={saving}
+              >
+                <Ionicons name="swap-vertical" size={14} color="#fff" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.overlapBtnT}>REPLACE THE OLDER ROSTER</Text>
+                  <Text style={styles.overlapBtnSub}>The new one becomes your active plan.</Text>
+                </View>
+              </Pressable>
+              <Pressable
+                testID="rc-overlap-merge"
+                onPress={() => resolveOverlap("merge")}
+                style={styles.overlapBtn}
+                disabled={saving}
+              >
+                <Ionicons name="git-merge" size={14} color={theme.color.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.overlapBtnT, { color: theme.color.text }]}>
+                    MERGE THE CHANGES IN
+                  </Text>
+                  <Text style={[styles.overlapBtnSub, { color: theme.color.textMuted }]}>
+                    Keep the existing plan and update only the changed days.
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                testID="rc-overlap-keep-both"
+                onPress={() => resolveOverlap("keep_both")}
+                style={styles.overlapBtn}
+                disabled={saving}
+              >
+                <Ionicons name="albums" size={14} color={theme.color.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.overlapBtnT, { color: theme.color.text }]}>
+                    KEEP BOTH — LOUIS WILL REVIEW
+                  </Text>
+                  <Text style={[styles.overlapBtnSub, { color: theme.color.textMuted }]}>
+                    We store both versions and Louis picks the correct one.
+                  </Text>
+                </View>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {pending.overlap && pending.overlap_mode ? (
+          <View style={styles.overlapChosen} testID="rc-overlap-chosen">
+            <Ionicons name="checkmark-circle" size={14} color={theme.color.brand} />
+            <Text style={styles.overlapChosenT}>
+              CHOSEN: {pending.overlap_mode === "replace" ? "REPLACE OLDER ROSTER"
+                     : pending.overlap_mode === "merge" ? "MERGE CHANGES"
+                     : "KEEP BOTH · LOUIS TO REVIEW"}
+            </Text>
+            <Pressable
+              testID="rc-overlap-change"
+              onPress={() => setPending((p) => p ? { ...p, overlap_mode: null } : p)}
+              hitSlop={10}
+            >
+              <Text style={styles.overlapChangeT}>CHANGE</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -945,6 +1055,47 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: 0.5,
   },
+  // Phase 3 — Overlap banner
+  overlapBanner: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderLeftWidth: 4,
+    borderLeftColor: AMBER,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    marginBottom: theme.space.md,
+  },
+  overlapHeaderRow: {
+    flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6,
+  },
+  overlapTitle: {
+    flex: 1, color: theme.color.text, fontSize: 14, fontWeight: "800", lineHeight: 18,
+  },
+  overlapSub: {
+    color: theme.color.textMuted, fontSize: 12, marginBottom: 10, lineHeight: 16,
+  },
+  overlapBtnCol: { gap: 8 },
+  overlapBtn: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: theme.radius.sm,
+    backgroundColor: "transparent",
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  overlapBtnPrimary: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  overlapBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1 },
+  overlapBtnSub: { color: "rgba(255,255,255,0.85)", fontSize: 10, marginTop: 2, lineHeight: 13 },
+  overlapChosen: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    padding: 10,
+    borderRadius: theme.radius.sm,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+    marginBottom: theme.space.md,
+  },
+  overlapChosenT: { flex: 1, color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  overlapChangeT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   // Traffic-light overview strip
   tlOverview: {
     marginTop: 10,

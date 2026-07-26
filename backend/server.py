@@ -7661,6 +7661,115 @@ async def coach_recent_swaps(days: int = 30, user: dict = Depends(current_user))
 
 
 
+# ------------------------------------------------------------------
+# Client-driven "Move this session to another day" — reuses the same
+# reality-move logic Louis uses so guard-rails (locked / completed /
+# same-day) are enforced consistently. Louis is CC'd automatically.
+# ------------------------------------------------------------------
+
+class MoveWorkoutBody(BaseModel):
+    to_date: str  # ISO YYYY-MM-DD
+    reason: Optional[str] = None
+
+
+@api.post("/workouts/{wid}/move")
+async def workout_move(wid: str, body: MoveWorkoutBody, user: dict = Depends(current_user)):
+    """Client (or coach) moves a session from its current date to another day.
+
+    Reuses the existing `_apply_reality_action("move")` swap semantics so:
+      * if the target date has a session, the two swap payloads.
+      * if the target date is empty, the session's date is updated and a rest
+        day is left behind on the old date.
+    Guard-rails:
+      * refuses if source is completed / coach-locked
+      * refuses if target is completed / coach-locked
+      * refuses if to_date is in the past
+    Records to `move_history` and notifies Louis so it appears in the coach
+    change log — never mentions "AI", framed as the client rearranging their
+    own plan.
+    """
+    w = await db.workouts.find_one({"id": wid}, {"_id": 0})
+    if not w:
+        raise HTTPException(404, "workout not found")
+    if user["role"] == "client" and w.get("user_id") != user["id"]:
+        raise HTTPException(403, "forbidden")
+
+    from_date = w.get("date")
+    to_date = (body.to_date or "").strip()
+    if not from_date or not to_date:
+        raise HTTPException(400, "invalid dates")
+    if to_date == from_date:
+        raise HTTPException(400, "target is the same as current date")
+
+    # Past-date guard (allow today).
+    try:
+        today = datetime.now(timezone.utc).date().isoformat()
+    except Exception:
+        today = None
+    if today and to_date < today:
+        raise HTTPException(400, "cannot move a session to a past date")
+
+    if w.get("completed"):
+        raise HTTPException(400, "session already completed — can't move")
+    if w.get("coach_locked") and user.get("role") == "client":
+        raise HTTPException(400, "session is locked by Louis — message him to swap")
+
+    # Delegate to the proven reality-move engine.
+    change = await _apply_reality_action(w["user_id"], {
+        "kind": "move",
+        "from_date": from_date,
+        "to_date": to_date,
+    })
+    if not change.get("changed"):
+        reason = change.get("skipped_reason") or "unable to move"
+        raise HTTPException(400, reason)
+
+    # Audit trail — surfaced in the coach change log and reality history.
+    try:
+        await db.move_history.insert_one({
+            "id": new_id(),
+            "user_id": w["user_id"],
+            "reality_event_id": None,
+            "reality_kind": "client_move",
+            "reality_label": "Session moved by client",
+            "date": from_date,
+            "option_id": "client_move",
+            "option_title": f"Moved to {to_date}",
+            "option_why": body.reason or "",
+            "changes": [change],
+            "actor_id": user["id"],
+            "actor_role": user.get("role", "client"),
+            "coach_mode": "self_serve",
+            "created_at": now_iso(),
+        })
+    except Exception:
+        logger.exception("client move — move_history insert failed")
+
+    # Notify Louis so the change appears in the coach dashboard change log.
+    try:
+        await db.coach_alerts.insert_one({
+            "id": new_id(),
+            "client_id": w["user_id"],
+            "client_name": user.get("name") or user.get("email"),
+            "kind": "client_moved_session",
+            "date": from_date,
+            "to_date": to_date,
+            "workout_id": w["id"],
+            "reason": body.reason or "",
+            "created_at": now_iso(),
+            "read": False,
+        })
+    except Exception:
+        logger.exception("client move — coach_alerts insert failed")
+
+    return {
+        "status": "moved",
+        "from_date": from_date,
+        "to_date": to_date,
+        "change": change,
+    }
+
+
 @api.post("/workouts/{wid}/complete")
 async def workout_complete(wid: str, body: WorkoutCompleteBody, user: dict = Depends(current_user)):
     await db.workouts.update_one(

@@ -22,6 +22,7 @@ import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { RecoverySheet } from "./RecoverySheet";
+import { MoveWorkoutSheet } from "./MoveWorkoutSheet";
 
 type DayCard = {
   date: string;
@@ -227,6 +228,7 @@ export function ClientCalendarPanel({
   const [loading, setLoading] = useState(true);
   const [paging, setPaging] = useState<"none" | "back" | "fwd" | "today">("none");
   const [activeRecovery, setActiveRecovery] = useState<DayCard | null>(null);
+  const [moveSource, setMoveSource] = useState<DayCard | null>(null);
 
   const load = useCallback(async (from: string, to: string) => {
     try {
@@ -370,6 +372,7 @@ export function ClientCalendarPanel({
                 onOpenWorkout={() => goDetail(c)}
                 onLongPress={() => onLongPressDay?.(c.date)}
                 onRecover={() => setActiveRecovery(c)}
+                onMove={() => setMoveSource(c)}
               />
             </View>
           ))}
@@ -396,6 +399,25 @@ export function ClientCalendarPanel({
           load(fromDate, toDate);
         }}
       />
+
+      <MoveWorkoutSheet
+        visible={!!moveSource && !!moveSource.workout?.id}
+        source={
+          moveSource?.workout
+            ? {
+                workoutId: moveSource.workout.id,
+                fromDate: moveSource.date,
+                title: moveSource.workout.title || null,
+                key_session: moveSource.workout.key_session || null,
+              }
+            : null
+        }
+        onClose={() => setMoveSource(null)}
+        onMoved={() => {
+          setMoveSource(null);
+          load(fromDate, toDate);
+        }}
+      />
     </View>
   );
 }
@@ -405,11 +427,13 @@ function DayRow({
   onOpenWorkout,
   onLongPress,
   onRecover,
+  onMove,
 }: {
   card: DayCard;
   onOpenWorkout: () => void;
   onLongPress?: () => void;
   onRecover: () => void;
+  onMove?: () => void;
 }) {
   const bs = badgeStyle(card.badge);
   const rd = card.roster_day || null;
@@ -430,6 +454,16 @@ function DayRow({
     && !!card.workout?.id
     && !card.workout?.coach_locked
     && card.priority !== "optional_recovery";
+
+  // A session can be moved if it's a real planned/upcoming workout the client
+  // hasn't already done or missed. Missed → use RECOVER instead.
+  const canMove = !!card.workout?.id
+    && !card.workout?.completed
+    && !card.workout?.skipped
+    && !card.workout?.coach_locked
+    && !isMissed
+    && !card.is_past
+    && card.badge !== "rest";
 
   const barColor = card.workout
     ? loadColor(card.workout.day_load || rd?.load)
@@ -513,6 +547,18 @@ function DayRow({
               testID={`cal-recover-${card.date}`}
             >
               <Text style={styles.mBtnPrimaryT}>RECOVER</Text>
+            </Pressable>
+          </View>
+        ) : canMove ? (
+          <View style={styles.missedActions}>
+            <Pressable
+              onPress={(e) => { e.stopPropagation?.(); onMove?.(); }}
+              style={[styles.mBtn, styles.mBtnGhost]}
+              testID={`cal-move-${card.date}`}
+              hitSlop={6}
+            >
+              <Ionicons name="swap-horizontal" size={13} color={theme.color.brand} />
+              <Text style={styles.mBtnGhostT}>MOVE TO ANOTHER DAY</Text>
             </Pressable>
           </View>
         ) : null}
@@ -637,7 +683,9 @@ const styles = StyleSheet.create({
 
   missedCopy: { color: theme.color.textMuted, fontSize: 12, paddingHorizontal: 12, marginTop: 6, lineHeight: 17 },
   missedActions: { flexDirection: "row", gap: 8, padding: 12, paddingTop: 8 },
-  mBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  mBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6 },
   mBtnPrimary: { backgroundColor: theme.color.brand },
   mBtnPrimaryT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  mBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.brand },
+  mBtnGhostT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
 });

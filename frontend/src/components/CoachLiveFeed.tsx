@@ -22,6 +22,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { WorkoutQuickActions, type WorkoutQuickActionTarget } from "@/src/components/WorkoutQuickActions";
 
 
 type Filter =
@@ -133,6 +134,8 @@ export function CoachLiveFeed() {
   const [filter, setFilter] = useState<Filter>("all");
   const [days, setDays] = useState<5 | 7>(5);
   const [error, setError] = useState<string | null>(null);
+  // Phase 4 — quick action target
+  const [qaTarget, setQaTarget] = useState<WorkoutQuickActionTarget | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -276,21 +279,38 @@ export function CoachLiveFeed() {
               it={it}
               onOpenWorkout={() => router.push(`/coach/workout/edit/${it.workout_id}` as any)}
               onOpenClient={() => router.push(`/coach/client-months/${it.client.id}` as any)}
+              onOpenMenu={() => setQaTarget({
+                id: it.workout_id,
+                title: it.workout.title,
+                date: it.date,
+                approved: it.workout.approved,
+                coach_locked: it.workout.coach_locked,
+                missing_media_count: it.workout.missing_media_count,
+              })}
             />
           ))}
         </View>
       )}
+
+      {/* Phase 4 — Workout quick action sheet */}
+      <WorkoutQuickActions
+        visible={!!qaTarget}
+        target={qaTarget}
+        onClose={() => setQaTarget(null)}
+        onChanged={load}
+      />
     </View>
   );
 }
 
 
 function FeedCard({
-  it, onOpenWorkout, onOpenClient,
+  it, onOpenWorkout, onOpenClient, onOpenMenu,
 }: {
   it: FeedItem;
   onOpenWorkout: () => void;
   onOpenClient: () => void;
+  onOpenMenu: () => void;
 }) {
   const colour = TL[it.roster_day.training_colour || "green"];
   const flags = it.flags.filter((f) => FLAG_BADGE_STYLE[f]);
@@ -343,27 +363,37 @@ function FeedCard({
         ) : null}
 
         {/* Workout */}
-        <Pressable
-          testID={`lf-open-workout-${it.workout_id}`}
-          onPress={onOpenWorkout}
-          style={styles.workoutBox}
-        >
-          <View style={styles.workoutTop}>
-            <Text style={styles.workoutTitle} numberOfLines={1}>
-              {it.workout.title || "Workout"}
-              {it.workout.coach_locked ? "  🔒" : ""}
+        <View style={styles.workoutRow}>
+          <Pressable
+            testID={`lf-open-workout-${it.workout_id}`}
+            onPress={onOpenWorkout}
+            style={styles.workoutBox}
+          >
+            <View style={styles.workoutTop}>
+              <Text style={styles.workoutTitle} numberOfLines={1}>
+                {it.workout.title || "Workout"}
+                {it.workout.coach_locked ? "  🔒" : ""}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+            </View>
+            <Text style={styles.workoutMeta} numberOfLines={1}>
+              {(it.workout.focus || "").toUpperCase()}
+              {it.workout.duration_min ? ` · ${it.workout.duration_min}m` : ""}
+              {it.workout.exercise_count ? ` · ${it.workout.exercise_count} ex` : ""}
             </Text>
-            <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
-          </View>
-          <Text style={styles.workoutMeta} numberOfLines={1}>
-            {(it.workout.focus || "").toUpperCase()}
-            {it.workout.duration_min ? ` · ${it.workout.duration_min}m` : ""}
-            {it.workout.exercise_count ? ` · ${it.workout.exercise_count} ex` : ""}
-          </Text>
-          {it.workout.rationale ? (
-            <Text style={styles.workoutRat} numberOfLines={2}>{it.workout.rationale}</Text>
-          ) : null}
-        </Pressable>
+            {it.workout.rationale ? (
+              <Text style={styles.workoutRat} numberOfLines={2}>{it.workout.rationale}</Text>
+            ) : null}
+          </Pressable>
+          <Pressable
+            testID={`lf-menu-${it.workout_id}`}
+            onPress={onOpenMenu}
+            hitSlop={10}
+            style={styles.feedKebab}
+          >
+            <Ionicons name="ellipsis-vertical" size={18} color={theme.color.text} />
+          </Pressable>
+        </View>
 
         {/* Badges */}
         {flags.length > 0 ? (
@@ -471,9 +501,23 @@ const styles = StyleSheet.create({
   tlDot: { width: 8, height: 8, borderRadius: 4 },
   rosterLabel: { color: theme.color.text, fontSize: 12, fontWeight: "700", flex: 1 },
   rosterMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
-  workoutBox: {
+  workoutRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 6,
     marginTop: 8,
+  },
+  workoutBox: {
+    flex: 1,
     padding: 10,
+    borderRadius: theme.radius.sm,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  feedKebab: {
+    paddingHorizontal: 10,
+    justifyContent: "center",
+    alignItems: "center",
     borderRadius: theme.radius.sm,
     backgroundColor: theme.color.surface,
     borderWidth: 1, borderColor: theme.color.border,

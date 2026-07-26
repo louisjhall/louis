@@ -21,6 +21,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { WorkoutQuickActions, type WorkoutQuickActionTarget } from "@/src/components/WorkoutQuickActions";
 
 // -------------------- Types --------------------
 
@@ -146,6 +147,8 @@ export default function CoachClientMonths() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionsData, setVersionsData] = useState<any | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
+  // Phase 4 — quick action sheet target
+  const [qaTarget, setQaTarget] = useState<WorkoutQuickActionTarget | null>(null);
 
   const loadMonths = useCallback(async () => {
     try {
@@ -338,6 +341,14 @@ export default function CoachClientMonths() {
                   key={d.date}
                   d={d}
                   onWorkoutPress={() => d.workout?.id && router.push(`/coach/workout/edit/${d.workout.id}` as any)}
+                  onWorkoutMenu={() => d.workout?.id && setQaTarget({
+                    id: d.workout.id,
+                    title: d.workout.title,
+                    date: d.date,
+                    approved: d.workout.approved,
+                    coach_locked: d.workout.coach_locked,
+                    missing_media_count: d.workout.missing_media_count,
+                  })}
                 />
               ))
             ) : (
@@ -465,13 +476,25 @@ export default function CoachClientMonths() {
           </View>
         </View>
       </Modal>
+
+      {/* Phase 4 — Workout quick action sheet */}
+      <WorkoutQuickActions
+        visible={!!qaTarget}
+        target={qaTarget}
+        onClose={() => setQaTarget(null)}
+        onChanged={() => selectedKey && loadDetail(selectedKey)}
+      />
     </SafeAreaView>
   );
 }
 
 // -------------------- Day card --------------------
 
-function DayCardView({ d, onWorkoutPress }: { d: DayCard; onWorkoutPress: () => void }) {
+function DayCardView({ d, onWorkoutPress, onWorkoutMenu }: {
+  d: DayCard;
+  onWorkoutPress: () => void;
+  onWorkoutMenu: () => void;
+}) {
   const colour = TL_COLOURS[d.training_colour] || TL_COLOURS.green;
   const hasWorkout = !!d.workout && !!d.workout.id;
   const routeStr = (d.flights || []).map((f) => `${f.from || "?"}→${f.to || "?"}`).join(" · ");
@@ -533,7 +556,14 @@ function DayCardView({ d, onWorkoutPress }: { d: DayCard; onWorkoutPress: () => 
                   {d.workout!.title || "Workout"}
                   {d.workout!.coach_locked ? "  🔒" : ""}
                 </Text>
-                <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+                <Pressable
+                  testID={`cm-workout-menu-${d.workout!.id}`}
+                  onPress={(e) => { e.stopPropagation(); onWorkoutMenu(); }}
+                  hitSlop={10}
+                  style={styles.kebabBtn}
+                >
+                  <Ionicons name="ellipsis-horizontal" size={18} color={theme.color.text} />
+                </Pressable>
               </View>
               <Text style={styles.workoutMeta} numberOfLines={1}>
                 {(d.workout!.focus || "").toUpperCase()}
@@ -740,6 +770,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#c85450",
   },
   wChipMediaT: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  kebabBtn: {
+    padding: 4,
+    borderRadius: theme.radius.sm,
+  },
   // Phase 3 — Version history modal
   modalScrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   modalSheet: {

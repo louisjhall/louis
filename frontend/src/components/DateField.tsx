@@ -89,13 +89,21 @@ export function DateField({
             <DateTimePicker
               value={dateObj}
               mode="date"
-              display={Platform.OS === "ios" ? "spinner" : "default"}
+              // iOS: "inline" = Apple's proper calendar grid (respects dark mode).
+              // Android: "default" = native calendar dialog.
+              display={Platform.OS === "ios" ? "inline" : "default"}
+              // Force dark theme on iOS so text is legible on the dark card.
+              // (fixes the "black text on black background" invisibility bug)
+              themeVariant="dark"
+              textColor={theme.color.text}
+              accentColor={theme.color.brand}
               onChange={(_: any, d?: Date) => {
                 if (Platform.OS === "android") setNativeOpen(false);
                 if (d) onChange(d.toISOString().slice(0, 10));
               }}
               minimumDate={min ? new Date(min + "T00:00:00") : undefined}
               maximumDate={max ? new Date(max + "T00:00:00") : undefined}
+              style={Platform.OS === "ios" ? styles.iosInlinePicker : undefined}
             />
             {Platform.OS === "ios" && (
               <Pressable onPress={() => setNativeOpen(false)} style={styles.doneBtn}>
@@ -126,8 +134,13 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", alignItems: "center", padding: 20 },
   pickerCard: {
     backgroundColor: theme.color.surface, borderRadius: 14,
-    padding: 12, width: "90%",
+    padding: 12, width: "94%", maxWidth: 380,
     borderWidth: 1, borderColor: theme.color.border,
+  },
+  iosInlinePicker: {
+    // Ensure the inline calendar has room to render properly on iOS.
+    width: "100%",
+    minHeight: 340,
   },
   doneBtn: {
     marginTop: 10, paddingVertical: 12, borderRadius: 8,

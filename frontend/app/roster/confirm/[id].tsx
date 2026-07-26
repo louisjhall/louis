@@ -56,6 +56,13 @@ type Day = {
   flights?: any[];
   load?: string;
   home_or_away?: string;
+  // Parser-generated labels (Etihad / Emirates)
+  client_label?: string | null;
+  training_colour?: "green" | "amber" | "red" | "black" | null;
+  blocked?: string[] | null;
+  equipment_assumption?: string | null;
+  label?: string | null;
+  source?: string | null;
 };
 
 type Pending = {
@@ -355,6 +362,50 @@ export default function RosterConfirm() {
             Tap the amber days to confirm or edit their duty type before we build your plan. Any other day can also be edited if something looks wrong — tap EDIT on the card.
           </Text>
         )}
+
+        {/* Traffic-light overview — only shown when the parser produced
+            labels. Client-friendly wording only ("Louis will keep it light",
+            never "AI" / "auto"). */}
+        {(() => {
+          const counts = { green: 0, amber: 0, red: 0, black: 0 };
+          for (const d of pending.days) {
+            const c = (d as any).training_colour as keyof typeof counts | undefined;
+            if (c && counts[c] !== undefined) counts[c] += 1;
+          }
+          const total = counts.green + counts.amber + counts.red + counts.black;
+          if (total === 0) return null;
+          return (
+            <View style={styles.tlOverview} testID="rc-traffic-overview">
+              <Text style={styles.tlOverviewLabel}>THIS ROSTER</Text>
+              <View style={styles.tlOverviewRow}>
+                {counts.green > 0 && (
+                  <View style={styles.tlOverviewChip}>
+                    <View style={[styles.tlDot, styles.tlGreen]} />
+                    <Text style={styles.tlOverviewT}>{counts.green} full session{counts.green === 1 ? "" : "s"}</Text>
+                  </View>
+                )}
+                {counts.amber > 0 && (
+                  <View style={styles.tlOverviewChip}>
+                    <View style={[styles.tlDot, styles.tlAmber]} />
+                    <Text style={styles.tlOverviewT}>{counts.amber} moderated</Text>
+                  </View>
+                )}
+                {counts.red > 0 && (
+                  <View style={styles.tlOverviewChip}>
+                    <View style={[styles.tlDot, styles.tlRed]} />
+                    <Text style={styles.tlOverviewT}>{counts.red} recovery day{counts.red === 1 ? "" : "s"}</Text>
+                  </View>
+                )}
+                {counts.black > 0 && (
+                  <View style={styles.tlOverviewChip}>
+                    <View style={[styles.tlDot, styles.tlBlack]} />
+                    <Text style={styles.tlOverviewT}>{counts.black} need your check</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          );
+        })()}
       </View>
 
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140 }}>
@@ -464,6 +515,37 @@ export default function RosterConfirm() {
                 ) : null}
               </View>
               <Text style={styles.cardType} numberOfLines={1}>{d.day_type || "Unknown"}</Text>
+              {/* Parser-generated client label + traffic-light chip.
+                  Coach-voice only — never mentions AI/auto/generated. */}
+              {d.client_label ? (
+                <View style={styles.labelRow}>
+                  {d.training_colour ? (
+                    <View style={[
+                      styles.tlDot,
+                      d.training_colour === "green" && styles.tlGreen,
+                      d.training_colour === "amber" && styles.tlAmber,
+                      d.training_colour === "red" && styles.tlRed,
+                      d.training_colour === "black" && styles.tlBlack,
+                    ]} />
+                  ) : null}
+                  <Text style={styles.clientLabelT} numberOfLines={1}>
+                    {d.client_label}
+                  </Text>
+                </View>
+              ) : null}
+              {d.equipment_assumption && d.equipment_assumption !== "any" ? (
+                <View style={styles.eqPill}>
+                  <Ionicons name="barbell-outline" size={10} color={theme.color.textMuted} />
+                  <Text style={styles.eqPillT}>
+                    {d.equipment_assumption === "hotel_or_bodyweight"
+                      || d.equipment_assumption === "hotel_or_bodyweight_only"
+                      ? "Hotel / bodyweight"
+                      : d.equipment_assumption === "needs_confirmation"
+                      ? "Equipment TBC"
+                      : d.equipment_assumption.replace(/_/g, " ")}
+                  </Text>
+                </View>
+              ) : null}
               {d.layover_city ? (
                 <Text style={styles.cardSub} numberOfLines={1}>
                   {d.layover_city}
@@ -821,4 +903,81 @@ const styles = StyleSheet.create({
   row2: { flexDirection: "row", gap: theme.space.md },
   editorDone: { marginTop: theme.space.md, backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: theme.radius.md, alignItems: "center" },
   editorDoneText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 13 },
+  // Parser client label + traffic light chip
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+  },
+  tlDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.color.textMuted,
+  },
+  tlGreen: { backgroundColor: "#3DBE6E" },
+  tlAmber: { backgroundColor: "#E5A048" },
+  tlRed:   { backgroundColor: "#E15A5A" },
+  tlBlack: { backgroundColor: "#5A5A5A" },
+  clientLabelT: {
+    color: theme.color.text,
+    fontSize: 12,
+    fontWeight: "700",
+    flexShrink: 1,
+  },
+  eqPill: {
+    alignSelf: "flex-start",
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  eqPillT: {
+    color: theme.color.textMuted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  // Traffic-light overview strip
+  tlOverview: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.color.border,
+  },
+  tlOverviewLabel: {
+    color: theme.color.textMuted,
+    fontSize: 10,
+    letterSpacing: 1.5,
+    fontWeight: "700",
+    marginBottom: 6,
+  },
+  tlOverviewRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  tlOverviewChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  tlOverviewT: {
+    color: theme.color.text,
+    fontSize: 11,
+    fontWeight: "700",
+  },
 });

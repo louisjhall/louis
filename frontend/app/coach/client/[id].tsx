@@ -8,6 +8,7 @@ import { useAuth } from "@/src/lib/auth";
 import { usePreview } from "@/src/lib/preview";
 import { theme, loadColor } from "@/src/lib/theme";
 import { StatusBadge, deriveStatus } from "@/src/components/StatusBadge";
+import { CoachNotesTab } from "@/src/components/CoachNotesTab";
 import { confirm as uxConfirm, toast as uxToast } from "@/src/lib/ux";
 
 const DAY_TYPES = [
@@ -318,7 +319,7 @@ export default function ClientDetail() {
   const [coachPickerOpen, setCoachPickerOpen] = useState(false);
   const [availableCoaches, setAvailableCoaches] = useState<any[]>([]);
   // Slice 3: tabbed layout state.
-  type Tab = "overview" | "calendar" | "roster" | "programme" | "timeline" | "workouts" | "checkins" | "messages" | "profile" | "admin";
+  type Tab = "overview" | "notes" | "calendar" | "roster" | "programme" | "timeline" | "workouts" | "checkins" | "messages" | "profile" | "admin";
   const [tab, setTab] = useState<Tab>("overview");
 
   const openCoachPicker = async () => {
@@ -732,8 +733,8 @@ export default function ClientDetail() {
         {/* Slice 3: Tab bar. Sections below render according to the selected tab. */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 8, paddingRight: 12, gap: 6 }}>
           {(isAdmin
-            ? ["overview","admin","calendar","roster","programme","timeline","workouts","checkins","messages","profile"]
-            : ["overview","calendar","roster","programme","timeline","workouts","checkins","messages","profile"]
+            ? ["overview","admin","notes","calendar","roster","programme","timeline","workouts","checkins","messages","profile"]
+            : ["overview","notes","calendar","roster","programme","timeline","workouts","checkins","messages","profile"]
           ).map((t) => {
             const active = tab === (t as Tab);
             const isAdminTab = t === "admin";
@@ -774,6 +775,10 @@ export default function ClientDetail() {
             </Text>
           </View>
         )}
+
+        {tab === "notes" ? (
+          <CoachNotesTab clientId={String(id)} />
+        ) : null}
 
         {/* Plan C3 — Programme Overview enriched card */}
         {(tab === "overview" || tab === "programme") && overview ? (

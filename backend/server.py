@@ -7173,6 +7173,17 @@ async def _generate_month(
         logger.exception("constraint_block_for_prompt failed — continuing without block")
         constraint_block = []
 
+    # ---- Coach Notes injection ----
+    # Structured per-client overrides typed in by Louis (preferences,
+    # cautions, goal override, weekly shape, free-form notes). BINDING —
+    # takes precedence over inferred DNA where they conflict.
+    try:
+        from feature_coach_notes import coach_notes_for_prompt
+        coach_notes_payload = coach_notes_for_prompt(user)
+    except Exception:
+        logger.exception("coach_notes_for_prompt failed — continuing without coach notes")
+        coach_notes_payload = None
+
     # Chunk into weeks of 7
     chunks = [enriched[i : i + 7] for i in range(0, len(enriched), 7)]
 
@@ -7183,6 +7194,7 @@ async def _generate_month(
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
+            f"Coach Notes (BINDING overrides typed by Louis for this client — preferences, cautions, goal override, weekly shape): {json.dumps(coach_notes_payload)[:2200] if coach_notes_payload else 'None'}\n"
             f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal, strength_overload, live_state): {json.dumps(programme_ctx)[:4200] if programme_ctx else 'None'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
             f"Parser constraints (per-date labels from Etihad/Emirates roster analysis — BINDING): {json.dumps(chunk_constraints)[:2200] if chunk_constraints else 'None'}\n"
@@ -7226,6 +7238,15 @@ async def _generate_month(
             "For EVERY parser day, NEVER include any exercise mapped to a category in that day's `blocked` list (e.g. blocked=['main_strength','long_run'] → no barbell/kettlebell strength and no run >30 min). "
             "If `equipment` is 'hotel_or_bodyweight', constrain exercises to hotel-room or bodyweight variants only — no gym equipment. "
             "In the day's `rationale`, transparently reference the `client_label` (e.g. 'Louis kept this to mobility because you're returning from Sydney tonight'). NEVER mention 'AI', 'auto', or 'generated'."
+            " "
+            "(9) COACH NOTES ARE BINDING. If a `Coach Notes` block is present above, treat every non-empty slot as instructions typed by Louis for THIS client:"
+            " `preferences` = things they love/hate/have access to (bias exercise selection accordingly);"
+            " `cautions` = injuries or restrictions (NEVER program anything that violates them — even at the cost of an entire session);"
+            " `goal_override` = the actual training goal (overrides `profile.goal_type` where they conflict);"
+            " `weekly_shape` = the coach's preferred day-by-day pattern (respect it unless the roster forces otherwise);"
+            " `notes` = free-form catch-all (interpret in context)."
+            " Where Coach Notes and Coaching DNA conflict, Coach Notes ALWAYS win."
+            " In the `rationale`, transparently reference the coach's note when it changed the session (e.g. 'Louis noted your left shoulder — swapped OHP for a landmine press today')."
         )
         chunk_workouts: list[dict] = []
         try:
@@ -11627,6 +11648,7 @@ import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach month
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history
 import feature_coach_workout_swap        # noqa: E402,F401  Phase 5: coach inline workout-swap picker (alternative presets)
+import feature_coach_notes               # noqa: E402,F401  Phase 6: per-client structured coach notes injected into plan generator
 import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base + current timezone card + confirm endpoint
 import feature_calendar_recovery          # noqa: E402,F401  Iter 94s: calendar range + missed workout recovery
 import feature_app_config                 # noqa: E402,F401  Iter 94t Phase 1: remote config + feature flags

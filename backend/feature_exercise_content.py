@@ -47,46 +47,57 @@ MODEL_ID = "gemini-3.1-flash-image-preview"
 
 EXERCISE_STYLE_MALE = (
     "Premium dark athletic coaching photograph for the CrewFit exercise library. "
-    "The MALE model MUST look like the man in the attached reference photo — same "
-    "athletic build, same haircut, same skin tone, same forearm tattoos — but with "
-    "his FACE SOFTLY SHADED / slightly turned away / a soft shadow falling across "
-    "the upper face so the identity is not obvious and there are no AI face "
-    "artefacts. The body, movement and posture are the visual focus, not the face. "
-    "OUTFIT: plain black t-shirt showing a small red CrewFit chest logo, plain "
-    "black joggers or dark shorts, and **RED running trainers** (Nike-style, "
-    "bright red uppers, white sole) — the shoes must always be red for brand "
-    "consistency. "
+    "The MALE model MUST look like the man in the FIRST attached reference photo — same "
+    "athletic build, same haircut, same skin tone, same forearm tattoos, same natural "
+    "face. His face should be CLEARLY VISIBLE and NATURALLY LIT — do NOT darken, shade, "
+    "obscure, silhouette or shadow his face. The model can be looking down at the "
+    "equipment, at his hands, at the floor, or three-quarters away as the movement "
+    "requires, but the face itself must be evenly lit and identifiable as the man in "
+    "the reference photo. The body, movement and posture remain the visual focus. "
+    "OUTFIT: plain black t-shirt with the CrewFit chest logo shown in the SECOND "
+    "attached reference image — reproduce that exact logo faithfully on the left "
+    "chest at a small, tasteful size (do NOT invent a new logo, do NOT enlarge it, "
+    "do NOT stretch or recolour it). Plain black joggers or dark shorts, and "
+    "**RED running trainers** (Nike-style, bright red uppers, white sole) — the "
+    "shoes must always be red for brand consistency. "
     "SETTING: dark studio with a black brick textured wall directly behind the "
     "model, hard rim lighting from the left, deep shadow filling the rest of the "
-    "frame. Full-figure vertical composition, portrait 3:4 crop, model centred, "
-    "hands, feet and any equipment fully in-frame — never cropped. "
-    "IMPORTANT: do NOT place any wordmark, watermark, logo, text, badge or "
-    "graphic anywhere in the image (on the wall, floor, banners or corners). "
-    "The only branding allowed is the SMALL chest logo already on the t-shirt. "
-    "The rest of the image must be clean and text-free. "
-    "Realistic athletic proportions, no bodybuilding exaggeration, no shirtless, "
-    "no cheesy influencer pose, no obvious AI hands or feet artefacts."
+    "frame — but the face and the chest logo remain evenly lit. Full-figure vertical "
+    "composition, portrait 3:4 crop, model centred, hands, feet and any equipment "
+    "fully in-frame — never cropped. "
+    "IMPORTANT: do NOT place any additional wordmark, watermark, badge or graphic "
+    "anywhere in the image (on the wall, floor, banners or corners). The ONLY "
+    "branding allowed is the CrewFit chest logo from the second reference image, "
+    "shown once, small, on the t-shirt. The rest of the image must be clean and "
+    "text-free. Realistic athletic proportions, no bodybuilding exaggeration, no "
+    "shirtless, no cheesy influencer pose, no obvious AI hands or feet artefacts."
 )
 
 EXERCISE_STYLE_FEMALE = (
     "Premium dark athletic coaching photograph for the CrewFit exercise library. "
     "The FEMALE model is a realistic athletic woman, mid-20s to mid-30s, brown "
     "hair pulled back in a low ponytail, natural athletic build, minimal makeup, "
-    "friendly professional look — not over-sexualised, not a stock model. Face "
-    "SOFTLY SHADED / partially in shadow so the movement is the focus, not the "
-    "face. "
-    "OUTFIT: plain black fitted athletic top (short-sleeve or long-sleeve, "
-    "modest, not a sports bra) showing a small red CrewFit chest logo, black "
-    "athletic leggings, and **RED running trainers** (Nike-style, bright red "
-    "uppers, white sole) — the shoes must always be red for brand consistency. "
+    "friendly professional look — not over-sexualised, not a stock model. Her face "
+    "should be CLEARLY VISIBLE and NATURALLY LIT — do NOT darken, shade, silhouette "
+    "or obscure her face. She can be looking down at her hands, equipment, or "
+    "three-quarters away as the movement requires, but the face remains evenly lit. "
+    "The body, movement and posture are the visual focus. "
+    "OUTFIT: plain black fitted athletic top (short-sleeve or long-sleeve, modest, "
+    "not a sports bra) with the CrewFit chest logo shown in the ATTACHED reference "
+    "image — reproduce that exact logo faithfully on the left chest at a small, "
+    "tasteful size (do NOT invent a new logo, do NOT enlarge it, do NOT stretch "
+    "or recolour it). Black athletic leggings, and **RED running trainers** "
+    "(Nike-style, bright red uppers, white sole) — the shoes must always be red "
+    "for brand consistency. "
     "SETTING: dark studio with a black brick textured wall directly behind the "
     "model, hard rim lighting from the left, deep shadow filling the rest of the "
-    "frame. Full-figure vertical composition, portrait 3:4 crop, model centred, "
-    "hands, feet and any equipment fully in-frame — never cropped. "
-    "IMPORTANT: do NOT place any wordmark, watermark, logo, text, badge or "
-    "graphic anywhere in the image (on the wall, floor, banners or corners). "
-    "The only branding allowed is the SMALL chest logo already on the t-shirt. "
-    "The rest of the image must be clean and text-free. "
+    "frame — but the face and the chest logo remain evenly lit. Full-figure vertical "
+    "composition, portrait 3:4 crop, model centred, hands, feet and any equipment "
+    "fully in-frame — never cropped. "
+    "IMPORTANT: do NOT place any additional wordmark, watermark, badge or graphic "
+    "anywhere in the image (on the wall, floor, banners or corners). The ONLY "
+    "branding allowed is the CrewFit chest logo from the reference image, shown "
+    "once, small, on the top. The rest of the image must be clean and text-free. "
     "Realistic athletic proportions, no over-sexualisation, no cheesy influencer "
     "pose, no obvious AI hands or feet artefacts."
 )
@@ -180,10 +191,17 @@ async def _log(exercise_id: str, actor_id: str, kind: str, detail: str = "") -> 
 async def _generate_ex_image(prompt: str, session_id: str, *, use_louis_ref: bool = False) -> bytes:
     """Generate an exercise image via Nano Banana.
 
-    When ``use_louis_ref`` is true (male generations), we pass Louis's
-    reference full-body photo as an inline image so Nano Banana can lock
-    identity + outfit + red shoes. For female generations we let the text
-    prompt do the work.
+    Reference images attached:
+      - The CrewFit brand logo is ALWAYS attached (both male + female) so
+        Nano Banana copies the real logo onto the t-shirt / top instead of
+        hallucinating a red blob. Iter 103.
+      - When ``use_louis_ref`` is true (male generations), Louis's
+        full-body reference photo is ALSO attached FIRST so Nano Banana
+        locks identity + outfit + red shoes.
+
+    Order in the multimodal payload matters — the model treats the first
+    image as the primary reference. For male: [louis, logo]. For female:
+    [logo] only.
     """
     from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
     chat = LlmChat(
@@ -193,17 +211,25 @@ async def _generate_ex_image(prompt: str, session_id: str, *, use_louis_ref: boo
     )
     chat.with_model("gemini", MODEL_ID).with_params(modalities=["image", "text"])
 
-    message_kwargs: dict = {"text": prompt}
+    refs: list = []
     if use_louis_ref:
         # Import lazily to avoid a hard dep back into server.py at module load.
         try:
             from server import _louis_ref_b64
-            ref_b64 = _louis_ref_b64()
-            message_kwargs["file_contents"] = [
-                ImageContent(image_base64=ref_b64),
-            ]
+            refs.append(ImageContent(image_base64=_louis_ref_b64()))
         except Exception:
             logger.exception("could not attach Louis reference; falling back to text-only")
+    # ALWAYS attach the CrewFit logo (male + female). Silent fallback if the
+    # asset is missing — text prompt still describes the logo.
+    try:
+        from server import _crewfit_logo_b64
+        refs.append(ImageContent(image_base64=_crewfit_logo_b64()))
+    except Exception:
+        logger.exception("could not attach CrewFit logo reference; falling back to text-only for logo")
+
+    message_kwargs: dict = {"text": prompt}
+    if refs:
+        message_kwargs["file_contents"] = refs
 
     _t, imgs = await chat.send_message_multimodal_response(UserMessage(**message_kwargs))
     if not imgs:

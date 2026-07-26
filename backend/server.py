@@ -86,6 +86,13 @@ _init_sentry()
 LOUIS_REF_IMAGE_PATH = ROOT_DIR / "assets" / "louis_ref.png"
 _LOUIS_REF_B64_CACHE: Optional[str] = None
 
+# Iter 103 — CrewFit brand logo. Passed as an additional reference image on
+# every exercise generation so Nano Banana can copy the real logo onto the
+# model's t-shirt/top instead of hallucinating a red blob. Applies to both
+# male and female generations.
+CREWFIT_LOGO_IMAGE_PATH = ROOT_DIR / "assets" / "crewfit_logo.png"
+_CREWFIT_LOGO_B64_CACHE: Optional[str] = None
+
 
 def _louis_ref_b64() -> str:
     """Cache Louis reference photo base64 so we don't re-encode ~1.8MB on every request."""
@@ -96,6 +103,19 @@ def _louis_ref_b64() -> str:
         with open(LOUIS_REF_IMAGE_PATH, "rb") as f:
             _LOUIS_REF_B64_CACHE = base64.b64encode(f.read()).decode("utf-8")
     return _LOUIS_REF_B64_CACHE
+
+
+def _crewfit_logo_b64() -> str:
+    """Cache the CrewFit brand logo base64. Kept lazy so a missing file
+    doesn't take the whole app down at import — the caller falls back to
+    text-only prompt guidance if the logo is unavailable."""
+    global _CREWFIT_LOGO_B64_CACHE
+    if _CREWFIT_LOGO_B64_CACHE is None:
+        if not CREWFIT_LOGO_IMAGE_PATH.exists():
+            raise FileNotFoundError(str(CREWFIT_LOGO_IMAGE_PATH))
+        with open(CREWFIT_LOGO_IMAGE_PATH, "rb") as f:
+            _CREWFIT_LOGO_B64_CACHE = base64.b64encode(f.read()).decode("utf-8")
+    return _CREWFIT_LOGO_B64_CACHE
 
 
 def _make_thumb_data_url(img: Optional[str], size: int = 96, quality: int = 60) -> Optional[str]:

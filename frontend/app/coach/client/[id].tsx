@@ -690,9 +690,17 @@ export default function ClientDetail() {
         ) : null}
 
         <View style={styles.actionRow}>
-          <Pressable testID="cd-script-btn" onPress={() => router.push(`/coach/scripts/${client.id}`)} style={styles.actionBtn}>
-            <Ionicons name="videocam" size={16} color="#fff" />
-            <Text style={styles.actionText}>WEEKLY SCRIPT</Text>
+          <Pressable
+            testID="cd-months-btn"
+            onPress={() => router.push(`/coach/client-months/${client.id}` as any)}
+            style={[styles.actionBtn, { backgroundColor: theme.color.brand }]}
+          >
+            <Ionicons name="calendar" size={16} color="#fff" />
+            <Text style={styles.actionText}>PROGRAMME BY MONTH</Text>
+          </Pressable>
+          <Pressable testID="cd-script-btn" onPress={() => router.push(`/coach/scripts/${client.id}`)} style={[styles.actionBtn, { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border }]}>
+            <Ionicons name="videocam" size={16} color={theme.color.text} />
+            <Text style={[styles.actionText, { color: theme.color.text }]}>WEEKLY SCRIPT</Text>
           </Pressable>
           <Pressable
             testID="cd-draft-btn"

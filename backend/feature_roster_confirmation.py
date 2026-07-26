@@ -1103,6 +1103,14 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
     )
     roster = await db.rosters.find_one({"id": rid}, {"_id": 0})
 
+    # Phase 7A — client message + coach approval task (idempotent, non-fatal)
+    try:
+        from feature_programme_status import create_upload_confirmation_message, create_coach_approval_task
+        await create_upload_confirmation_message(user["id"])
+        await create_coach_approval_task(user["id"], rid)
+    except Exception:
+        logger.exception("Phase 7A post-confirm hooks failed (non-fatal)")
+
     # Kick off workout generation using a fresh job doc so the same
     # progress-polling UI works unchanged.
     job_id = new_id()

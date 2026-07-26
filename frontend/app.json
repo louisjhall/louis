@@ -2,7 +2,7 @@
   "expo": {
     "name": "CrewFit",
     "slug": "crewfit",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "crewfit",
@@ -19,6 +19,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "net.crewfit.app",
+      "buildNumber": "200",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Upload profile photos, meal photos and roster documents from your library.",
@@ -48,6 +49,7 @@
       }
     },
     "android": {
+      "versionCode": 200,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"

@@ -102,6 +102,75 @@ async def _persist_pending_roster(user_id: str, days: list[dict], source_filenam
     days = _apply_day_defaults(days)
     first = days[0]["date"] if days else None
     last = days[-1]["date"] if days else None
+
+    # ---- Etihad label enrichment ----
+    # If the days look like they came from the Etihad parser, apply the
+    # labelling engine and attach a compact per-day label + traffic-light
+    # colour so the coach dashboard and client review screen can render
+    # them without re-running the parser.
+    label_summary = None
+    try:
+        if any((d.get("source") == "etihad_parser_v1") for d in days):
+            from parsers.etihad_labels import decide_day, weekly_windows
+            # Recreate lightweight ParsedDay-shaped objects the labeller expects.
+            class _Shim:
+                pass
+            prev = None
+            decisions_out = []
+            for d in days:
+                s = _Shim()
+                s.date = d.get("date")
+                s.weekday = d.get("weekday")
+                s.day_type_raw = d.get("day_type")
+                s.day_type = {
+                    "home_day": "off",
+                    "rest": "rest",
+                    "standby": "standby",
+                    "layover_arrival": "flight_to_layover",
+                    "layover_full": "layover_day",
+                    "layover_departure": "return_from_layover",
+                    "turnaround": "turnaround",
+                    "custom": "unknown",
+                }.get(s.day_type_raw, "flight")
+                s.report_time = d.get("report_time")
+                s.release_time = d.get("release_time")
+                s.layover_city = d.get("layover_city")
+                s.sectors = [type("S", (), sec)() for sec in (d.get("flights") or [])]
+                s.sector_count = len(s.sectors)
+                s.is_turnaround = bool(d.get("is_turnaround"))
+                s.is_out_of_base = bool(d.get("is_out_of_base"))
+                s.end_location = None
+                s.start_location = None
+                s.standby_start = d.get("standby_start")
+                s.standby_end = d.get("standby_end")
+                dec = decide_day(s, prev)
+                d["label"] = dec.label
+                d["client_label"] = dec.client_label
+                d["training_colour"] = dec.training_colour
+                d["recommended"] = dec.recommended
+                d["blocked"] = dec.blocked
+                d["equipment_assumption"] = dec.equipment
+                d["recovery_risk"] = dec.recovery_risk
+                d["reason"] = dec.reason
+                if dec.needs_review:
+                    d["needs_review"] = True
+                d["chain_flag"] = dec.chain_flag
+                decisions_out.append(dec)
+                prev = dec
+            # Compact weekly summary for the coach dashboard.
+            label_summary = {
+                "weeks": weekly_windows(decisions_out),
+                "counts": {
+                    c: sum(1 for x in decisions_out if x.training_colour == c)
+                    for c in ("green", "amber", "red", "black")
+                },
+                "label_counts": {},
+            }
+            from collections import Counter
+            label_summary["label_counts"] = dict(Counter(x.label for x in decisions_out))
+    except Exception:
+        logger.exception("Etihad label enrichment failed — continuing without labels")
+
     doc = {
         "id": new_id(),
         "user_id": user_id,
@@ -121,9 +190,45 @@ async def _persist_pending_roster(user_id: str, days: list[dict], source_filenam
         "confidence_avg": round(sum(float(d.get("confidence") or 0.5) for d in days) / max(1, len(days)), 2),
         "review_flags": {
             "low_confidence_count": sum(1 for d in days if _needs_review(d)),
+            "black_day_count": sum(1 for d in days if (d.get("training_colour") == "black")),
         },
+        "label_summary": label_summary,
     }
     await db.rosters.insert_one(doc)
+
+    # ---- Coach review escalation ----
+    # If confidence is low OR any day is black OR the parser flagged
+    # multiple needs_review days, create a coach_tasks entry so Louis is
+    # alerted from his dashboard. Never mentions AI.
+    try:
+        needs_coach = (
+            doc["confidence_avg"] < 0.85
+            or doc["review_flags"]["low_confidence_count"] >= 2
+            or doc["review_flags"]["black_day_count"] >= 1
+        )
+        if needs_coach:
+            u = await db.users.find_one({"id": user_id}, {"_id": 0, "email": 1, "name": 1, "first_name": 1})
+            client_name = (u or {}).get("name") or (u or {}).get("first_name") or (u or {}).get("email") or "Client"
+            await db.coach_tasks.insert_one({
+                "id": new_id(),
+                "user_id": user_id,
+                "client_id": user_id,
+                "client_name": client_name,
+                "kind": "roster_review",
+                "priority": "high" if doc["review_flags"]["black_day_count"] else "normal",
+                "title": f"Review {client_name}'s roster",
+                "body": (
+                    f"{doc['review_flags']['low_confidence_count']} day(s) need review, "
+                    f"{doc['review_flags']['black_day_count']} unclear. "
+                    f"File: {source_filename}. Confidence: {int(doc['confidence_avg'] * 100)}%."
+                ),
+                "roster_id": doc["id"],
+                "created_at": now_iso(),
+                "resolved": False,
+            })
+    except Exception:
+        logger.exception("Failed to create roster_review coach_task")
+
     return doc
 
 

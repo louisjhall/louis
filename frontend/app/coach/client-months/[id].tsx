@@ -76,6 +76,9 @@ type DayCard = {
     completed?: boolean;
     rationale?: string;
     parser_enforced?: boolean;
+    client_hidden?: boolean;
+    client_visible_in_min?: number;
+    client_hidden_reason?: string;
   } | null;
 };
 
@@ -590,6 +593,14 @@ function DayCardView({ d, onWorkoutPress, onWorkoutMenu }: {
                     <Text style={styles.wChipEnforcedT}>ROSTER-AWARE</Text>
                   </View>
                 ) : null}
+                {d.workout!.client_hidden ? (
+                  <View style={styles.wChipHidden}>
+                    <Ionicons name="eye-off-outline" size={10} color="#fff" />
+                    <Text style={styles.wChipHiddenT}>
+                      HIDDEN FROM CLIENT · {d.workout!.client_visible_in_min || "?"}m
+                    </Text>
+                  </View>
+                ) : null}
                 {(d.workout!.missing_media_count || 0) > 0 ? (
                   <View style={styles.wChipMedia}>
                     <Ionicons name="image-outline" size={10} color="#fff" />
@@ -770,6 +781,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#c85450",
   },
   wChipMediaT: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  wChipHidden: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: theme.radius.pill,
+    backgroundColor: "#7a4a2b",
+  },
+  wChipHiddenT: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   kebabBtn: {
     padding: 4,
     borderRadius: theme.radius.sm,

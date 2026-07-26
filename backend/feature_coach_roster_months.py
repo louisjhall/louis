@@ -146,6 +146,31 @@ def _summarise_day(d: dict, workout: dict | None) -> dict:
     }
 
 
+def _summarise_workout_with_visibility(w: dict) -> dict:
+    s = _summarise_workout(w)
+    # Attach client-visibility flag so the coach UI can badge hidden items.
+    vf = w.get("visible_from")
+    if vf:
+        try:
+            from datetime import datetime as _dtv, timezone as _tzv
+            due = _dtv.fromisoformat(vf.replace("Z", "+00:00"))
+            now = _dtv.now(_tzv.utc)
+            hidden = due > now
+            s["client_hidden"] = hidden
+            if hidden:
+                s["client_visible_at"] = vf
+                remaining = int((due - now).total_seconds() // 60)
+                s["client_visible_in_min"] = max(0, remaining)
+                s["client_hidden_reason"] = w.get("visible_from_reason") or "review_delay"
+            else:
+                s["client_hidden"] = False
+        except Exception:
+            pass
+    else:
+        s["client_hidden"] = False
+    return s
+
+
 # ---------------------------------------------------------------------------
 # Endpoint 1 — list months summary
 # ---------------------------------------------------------------------------
@@ -316,7 +341,12 @@ async def coach_client_roster_month_detail(
     ).to_list(200)
     wk_map: dict[str, dict] = {w.get("date"): w for w in workouts if w.get("date")}
 
-    days_out = [_summarise_day(d, wk_map.get(d.get("date") or "")) for d in primary_days]
+    days_out = [
+        {**_summarise_day(d, wk_map.get(d.get("date") or "")),
+         "workout": _summarise_workout_with_visibility(wk_map[d["date"]])
+                    if wk_map.get(d.get("date") or "") else None}
+        for d in primary_days
+    ]
 
     return {
         "client": {"id": user["id"], "name": user.get("name"),

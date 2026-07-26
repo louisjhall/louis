@@ -257,6 +257,16 @@ async def coach_workout_apply_swap(
         # Reset approval so the new content flows through the normal review.
         "approved": False,
     }
+    # Add a jittered 2-8 min client delay so the swap doesn't appear
+    # instantaneous. Coach sees it immediately.
+    try:
+        import random as _rnd
+        from datetime import datetime as _dt2, timedelta as _td2, timezone as _tz2
+        delay_s = _rnd.randint(2 * 60, 8 * 60)
+        patch["visible_from"] = (_dt2.now(_tz2.utc) + _td2(seconds=delay_s)).isoformat()
+        patch["visible_from_reason"] = "coach_swapped"
+    except Exception:
+        logger.exception("Failed to attach coach-swap visible_from delay (non-fatal)")
     await db.workouts.update_one({"id": wid}, {"$set": patch})
     fresh = await db.workouts.find_one({"id": wid}, {"_id": 0})
     return {"ok": True, "workout": fresh, "preset_id": body.preset_id}

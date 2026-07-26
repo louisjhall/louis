@@ -44,6 +44,8 @@ export function WorkoutQuickActions({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const [busyStage, setBusyStage] = useState<string>("");
+  const [busyElapsed, setBusyElapsed] = useState(0);
   const [swapOpen, setSwapOpen] = useState(false);
 
   if (!target) return null;
@@ -51,11 +53,29 @@ export function WorkoutQuickActions({
   const run = async (
     key: string,
     fn: () => Promise<any>,
+    stages: string[],
     successMsg?: string,
   ) => {
     try {
       setBusy(key);
-      await fn();
+      setBusyElapsed(0);
+      setBusyStage(stages[0]);
+      const startedAt = Date.now();
+      // Progress cycler — advances through stages so the UI feels alive.
+      let stageIndex = 0;
+      const stageTimer = setInterval(() => {
+        stageIndex = Math.min(stageIndex + 1, stages.length - 1);
+        setBusyStage(stages[stageIndex]);
+      }, 6000);
+      const elapsedTimer = setInterval(() => {
+        setBusyElapsed(Math.round((Date.now() - startedAt) / 1000));
+      }, 500);
+      try {
+        await fn();
+      } finally {
+        clearInterval(stageTimer);
+        clearInterval(elapsedTimer);
+      }
       if (successMsg) {
         Alert.alert("Done", successMsg);
       }
@@ -65,6 +85,8 @@ export function WorkoutQuickActions({
       Alert.alert("Couldn't complete", e?.message || "Please try again.");
     } finally {
       setBusy(null);
+      setBusyStage("");
+      setBusyElapsed(0);
     }
   };
 
@@ -77,13 +99,21 @@ export function WorkoutQuickActions({
     run(
       "regen",
       () => api(`/coach/workouts/${target.id}/regenerate`, { method: "POST" }),
-      "Louis rebuilt this session using the latest roster context.",
+      [
+        "Louis is rebuilding this session…",
+        "Reading the roster context…",
+        "Choosing exercises for the day…",
+        "Applying safety constraints…",
+        "Finalising the plan…",
+      ],
+      "Louis rebuilt this session using the latest roster context. Client will see the change in 2-8 min.",
     );
 
   const approve = () =>
     run(
       "approve",
       () => api(`/coach/workouts/${target.id}/approve`, { method: "POST" }),
+      ["Approving…"],
       "Workout approved.",
     );
 
@@ -91,6 +121,7 @@ export function WorkoutQuickActions({
     run(
       "lock",
       () => api(`/coach/workouts/${target.id}/lock`, { method: "POST" }),
+      [target.coach_locked ? "Unlocking…" : "Locking…"],
     );
 
   return (
@@ -100,8 +131,16 @@ export function WorkoutQuickActions({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.scrim} onPress={onClose} testID="wqa-scrim">
+      <Pressable style={styles.scrim} onPress={busy ? undefined : onClose} testID="wqa-scrim">
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+          {busy && (busy === "regen") ? (
+            <View style={styles.busyOverlay} testID="wqa-busy">
+              <ActivityIndicator size="large" color={theme.color.brand} />
+              <Text style={styles.busyTitle}>{busyStage || "Working…"}</Text>
+              <Text style={styles.busySub}>Elapsed {busyElapsed}s · usually 30-90s</Text>
+              <Text style={styles.busyFoot}>Client will not see the change until you finish reviewing.</Text>
+            </View>
+          ) : null}
           <View style={styles.head}>
             <View style={{ flex: 1 }}>
               <Text style={styles.title} numberOfLines={1}>
@@ -264,4 +303,24 @@ const styles = StyleSheet.create({
   },
   actionT: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1 },
   actionS: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
+  busyOverlay: {
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: theme.color.surface + "F5",
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    alignItems: "center", justifyContent: "center", padding: 30,
+    zIndex: 999,
+    gap: 12,
+  },
+  busyTitle: {
+    color: theme.color.text, fontSize: 15, fontWeight: "800",
+    textAlign: "center", marginTop: 12,
+  },
+  busySub: {
+    color: theme.color.textMuted, fontSize: 12, letterSpacing: 0.5,
+  },
+  busyFoot: {
+    color: theme.color.textDim, fontSize: 11, textAlign: "center",
+    marginTop: 12, maxWidth: 260, fontStyle: "italic",
+  },
 });

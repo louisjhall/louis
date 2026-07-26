@@ -6558,8 +6558,15 @@ async def calendar_timeline(months_back: int = 2, months_ahead: int = 4, user: d
         for r in all_rosters
     ]
 
+    # Workouts — hide any whose `visible_from` review-delay is still in the
+    # future so the client sees the plan appear naturally.
+    _now_val = now_iso()
     workouts = await db.workouts.find({
         "user_id": user["id"], "date": {"$gte": start_iso, "$lte": end_iso},
+        "$or": [
+            {"visible_from": {"$exists": False}},
+            {"visible_from": {"$lte": _now_val}},
+        ],
     }, {"_id": 0}).sort("date", 1).to_list(2000)
     wk_map = {w["date"]: w for w in workouts}
 

@@ -367,6 +367,18 @@ async def coach_workout_regenerate_single(
         "created_at": existing.get("created_at", now_iso()) if existing else now_iso(),
         "updated_at": now_iso(),
     }
+    # Iter 95n / Phase 6 — hide the freshly regenerated workout from the
+    # client for a jittered 2-8 minutes so the change doesn't look
+    # instantaneous / automated. Coach sees it immediately (coach endpoints
+    # don't filter by visible_from).
+    try:
+        import random as _rnd
+        from datetime import datetime as _dt2, timedelta as _td2, timezone as _tz2
+        delay_s = _rnd.randint(2 * 60, 8 * 60)
+        doc["visible_from"] = (_dt2.now(_tz2.utc) + _td2(seconds=delay_s)).isoformat()
+        doc["visible_from_reason"] = "coach_regenerated"
+    except Exception:
+        logger.exception("Failed to attach coach-regen visible_from delay (non-fatal)")
     await db.workouts.delete_many({"user_id": client_id, "date": date})
     await db.workouts.insert_one(doc)
     fresh = await db.workouts.find_one({"id": doc["id"]}, {"_id": 0})

@@ -1,0 +1,35 @@
+{
+  "summary": "Phase 7B frontend test — Client ProgrammeStatusCard + Coach ApprovalQueueCard. Coach overview loads cleanly; CoachApprovalQueueCard correctly hides with 0 pending tasks. Client ProgrammeStatusCard correctly hides for reviewer@crewfit.net (programme_live + session_planned). /api/programme/status is called on client home mount and polled (9 calls observed). Could NOT exercise the visible-approval flow (row + modal) because Louis has zero programme_approval_pending tasks in the current DB. testcal2@crewfit.com login is BROKEN — credentials in /app/memory/test_credentials.md return 401 Invalid credentials.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Client home mount",
+        "issue": "Uncaught 'Missing token' error thrown from src/lib/api.ts (line 57) invoked by PersonalActivityCard.load (line 29). Not related to Phase 7B components — but it fires a red overlay/dev-error screen on the client home when the session is missing/expired. ProgrammeStatusCard itself correctly swallows the same 401 (per its try/catch), so no error is surfaced from the new components.",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Seed at least one 'programme_approval_pending' coach task for a Louis client so the CoachApprovalQueueCard row (testID coach-approval-queue-card, caq-approve-{id}) and preview sheet (caq-preview-approve / caq-preview-cancel) can be validated end-to-end. Currently Louis has 0 pending tasks so only the empty-state branch was exercisable.",
+    "Fix or update test credentials for testcal2@crewfit.com — /api/auth/login returns 'Invalid credentials' for TestCal123!. Either the user was removed / password rotated. Update /app/memory/test_credentials.md or reseed.",
+    "Pre-existing (not Phase 7B): PersonalActivityCard's /personal-activities call rethrows 'Missing token' as an uncaught error on client home when session is missing. Should catch/swallow like the other cards (workouts/week, roster/current, etc.)."
+  ],
+  "critical_code_review_comments": [
+    "ProgrammeStatusCard swallows all /programme/status errors silently (good — prevents blanking the dashboard) and correctly hides when programme_status=programme_live && today_plan_state=session_planned.",
+    "CoachApprovalQueueCard correctly returns null when tasks[] is empty — no permanent '0' box on Louis's dashboard.",
+    "CoachApprovalQueueCard modal wired via testIDs caq-preview-approve, caq-preview-cancel and row testIDs caq-approve-{id} / caq-review-{id} — matches the requested testIDs in the review request.",
+    "CoachToDoFeed already has programme_approval_pending routing + category (lines 46, 91, 208 in CoachToDoFeed.tsx)."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (frontend-only)", "frontend": "hidden-state branches: 100% (2/2 verified). Visible-state branches: not testable due to seed data + login blockers." },
+  "seed_data_creation": "None. Recommend main agent seeds a programme_approval_pending task for a Louis client to exercise the visible queue + preview modal.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Louis (louis@crewfit.net / Louis123!) works and lands on /(coach)/overview. Reviewer client (reviewer@crewfit.net / CrewFitReview2026!) has programme_status=programme_live + today_plan_state.state=session_planned → ProgrammeStatusCard hides (verified via DOM absence + direct API). testcal2@crewfit.com password TestCal123! is INVALID against /api/auth/login — do not rely on it. To fully validate the visible/happy path of CoachApprovalQueueCard, seed a task with task_type='programme_approval_pending' for one of Louis's clients (endpoint POST /api/coach/tasks or DB insert) and rerun. Direct API tests: GET /api/coach/tasks?filter_type=programme_approval_pending returned {tasks: [], count: 0} with Louis's token; GET /api/programme/status with reviewer token returned programme_status=programme_live, today_plan_state.state=session_planned, timeline all 4 steps completed.",
+  "rca_of_issue": "N/A — no new bugs in Phase 7B components. Two environmental blockers: (1) testcal2 credentials stale/invalid, (2) no seed data for programme_approval_pending tasks so the CoachApprovalQueueCard visible branch (rows + preview modal) is currently untestable. Fix by either seeding a pending task or by main agent doing a quick manual verify once a real client roster reaches the approval-pending state."
+}

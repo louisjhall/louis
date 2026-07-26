@@ -22,6 +22,7 @@ import { WeeklyReviewCard } from "@/src/components/WeeklyReviewCard";
 import { DualSessionCard } from "@/src/components/DualSessionCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
+import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
@@ -157,6 +158,11 @@ export default function Home() {
   const [liveStateData, setLiveStateData] = useState<any | null>(null);
   // Long-press-to-correct roster day-picker sheet (iter 82).
   const [dayPickerTarget, setDayPickerTarget] = useState<RosterDayPickerTarget | null>(null);
+  // Phase 7B — programme_status snapshot from /api/programme/status. Owned
+  // by the ProgrammeStatusCard component, mirrored here so we can gate the
+  // "Start today's session" hero and empty state on the correct value.
+  const [progrStatus, setProgrStatus] = useState<string | null>(null);
+  const [todayPlanState, setTodayPlanState] = useState<string | null>(null);
   // Iter 94o — Personal activities (sport/hobby) must show on the home week
   // list alongside workouts. Loaded on refresh; merged into next7.
   const [activities, setActivities] = useState<any[]>([]);
@@ -432,6 +438,22 @@ export default function Home() {
           {/* Iter 95n — placeholder while Louis is "reviewing" a freshly
               uploaded roster. Auto-hides when the review window elapses. */}
           <RosterReviewBanner onReadyChanged={load} />
+
+          {/* Phase 7B — dynamic programme status + today state.
+              Only renders when the client isn't in the default "programme
+              live + session planned today" state. Handles rest/travel/
+              layover days, roster review, and post-upload waiting UX. */}
+          <ProgrammeStatusCard
+            onStateChanged={(s) => {
+              setProgrStatus(s.programme_status);
+              setTodayPlanState(s.today_plan_state?.state || null);
+              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
+                // The programme just went live — reload workouts/roster so
+                // the "Start today's session" hero picks up the new plan.
+                load();
+              }
+            }}
+          />
           {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial") ? (
             <View style={styles.jobReviewBanner} testID="home-roster-job-review">
               <Pressable
@@ -711,6 +733,12 @@ export default function Home() {
               </Pressable>
             </View>
           ) : (
+            // Phase 7B — when the programme isn't live yet (waiting for
+            // Louis, roster in review, etc.) OR today has a special
+            // non-training state, the ProgrammeStatusCard at the top is
+            // already telling the story. Rendering the generic "No workout
+            // scheduled" empty box below it would be noisy and confusing.
+            progrStatus && (progrStatus !== "programme_live" || (todayPlanState && todayPlanState !== "session_planned" && todayPlanState !== "no_session_planned")) ? null : (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyTitle}>No workout scheduled for today</Text>
               <Text style={styles.emptySub}>Upload your roster so CrewFit can build your personalised training plan.</Text>
@@ -718,6 +746,7 @@ export default function Home() {
                 <Text style={styles.startText}>UPLOAD ROSTER</Text>
               </Pressable>
             </View>
+            )
           )}
 
           <View style={styles.quickRow}>

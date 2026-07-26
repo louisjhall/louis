@@ -8,6 +8,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
 import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
 import { CoachLiveFeed } from "@/src/components/CoachLiveFeed";
+import { CoachApprovalQueueCard } from "@/src/components/CoachApprovalQueueCard";
 import { ExerciseMediaSummary } from "@/src/components/ExerciseMediaSummary";
 import { useAuth } from "@/src/lib/auth";
 import { NotificationBell } from "@/src/components/NotificationBell";
@@ -236,6 +237,11 @@ export default function CoachOverview() {
           )}
 
           <ExerciseMediaSummary />
+
+          {/* Phase 7B — Programme approvals queue. Hides itself when there
+              are no clients waiting. One-tap approve pushes the programme
+              live and drops a Louis message in the client's inbox. */}
+          <CoachApprovalQueueCard />
 
           <CoachToDoFeed />
 

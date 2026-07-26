@@ -154,12 +154,26 @@ export default function CoachWorkoutEditor() {
         {/* Meta editor */}
         <Text style={styles.sectHeader}>MAIN</Text>
         <View style={styles.card}>
+          {/* Iter 102 — Layover context reason line for coach */}
+          {w?.layover_context ? (
+            <View style={styles.layoverCard} testID="coach-layover-context">
+              <View style={styles.layoverHead}>
+                <Text style={styles.layoverEyebrow}>LAYOVER CONTEXT</Text>
+                {w.layover_context.needs_destination_review ? (
+                  <Text style={styles.layoverFlag}>DESTINATION NEEDS REVIEW</Text>
+                ) : null}
+              </View>
+              <Text style={styles.layoverBody}>{w.layover_context.coach_reason}</Text>
+              <Text style={styles.layoverHint}>You can edit the title below — your edit will be preserved.</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.fieldLbl}>Title</Text>
           <TextInput
             style={styles.input}
             value={w?.title || ""}
             onChangeText={(v) => setField("title", v)}
-            onBlur={() => persistMeta({ title: w?.title })}
+            onBlur={() => persistMeta({ title: w?.title, title_manually_edited_by_coach: true })}
           />
           <View style={{ flexDirection: "row", gap: 10, marginTop: 10 }}>
             <View style={{ flex: 1 }}>
@@ -464,6 +478,25 @@ const styles = StyleSheet.create({
   sectHeader: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2, marginTop: 12, marginBottom: 8 },
   sectRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 },
   card: { backgroundColor: theme.color.cardBg, borderWidth: 1, borderColor: theme.color.line, borderRadius: 10, padding: 12, marginBottom: 10 },
+  // Iter 102 — Layover context (coach edit page)
+  layoverCard: {
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: theme.color.brandTint,
+    borderLeftWidth: 3,
+    borderLeftColor: theme.color.brand,
+    marginBottom: 12,
+  },
+  layoverHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
+  layoverEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  layoverFlag: {
+    color: theme.color.amber,
+    fontSize: 8, fontWeight: "900", letterSpacing: 0.8,
+    borderWidth: 1, borderColor: theme.color.amber,
+    paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3,
+  },
+  layoverBody: { color: theme.color.text, fontSize: 12, lineHeight: 16 },
+  layoverHint: { color: theme.color.textMuted, fontSize: 10, marginTop: 6, fontStyle: "italic" },
   fieldLbl: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 0.8, fontWeight: "700", marginBottom: 6, textTransform: "uppercase" },
   input: { backgroundColor: theme.color.bg, borderWidth: 1, borderColor: theme.color.line, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.color.text, fontSize: 13 },
   exName: { color: theme.color.text, fontSize: 14, fontWeight: "700", flex: 1 },

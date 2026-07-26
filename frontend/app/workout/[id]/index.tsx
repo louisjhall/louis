@@ -355,6 +355,23 @@ export default function WorkoutDetail() {
           </View>
         )}
 
+        {/* Iter 102 — Layover context reason line. Shown when this workout
+            was built around a detected layover day. Louis-branded, no AI
+            wording. */}
+        {view.layover_context?.client_reason ? (
+          <View style={styles.layoverCtx} testID="workout-layover-context">
+            <View style={styles.layoverCtxHead}>
+              <Text style={styles.layoverCtxEyebrow}>LAYOVER CONTEXT</Text>
+              {view.layover_context.needs_destination_review ? (
+                <Text style={styles.layoverCtxFlag}>NEEDS COACH REVIEW</Text>
+              ) : null}
+            </View>
+            <Text style={styles.layoverCtxBody}>
+              {view.layover_context.client_reason}
+            </Text>
+          </View>
+        ) : null}
+
         {isCoach && editing && (
           <Pressable testID="cycle-load" onPress={cycleLoad} style={styles.cycleBtn}>
             <Text style={{ color: theme.color.brand, fontWeight: "800", letterSpacing: 1.5 }}>CYCLE LOAD → NEXT</Text>
@@ -537,6 +554,24 @@ const styles = StyleSheet.create({
   workoutBannerEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "900", fontFamily: theme.font.textSemi },
   workoutBannerTitle: { color: theme.color.text, fontSize: 22, letterSpacing: 0.4, fontWeight: "900", fontFamily: theme.font.display },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
+  // Iter 102 — Layover context block
+  layoverCtx: {
+    marginTop: theme.space.md,
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  layoverCtxHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  layoverCtxEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  layoverCtxFlag: {
+    color: theme.color.amber,
+    fontSize: 8, fontWeight: "900", letterSpacing: 1,
+    borderWidth: 1, borderColor: theme.color.amber,
+    paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3,
+  },
+  layoverCtxBody: { color: theme.color.text, fontSize: 12, lineHeight: 17 },
   changeReason: {
     flexDirection: "row", alignItems: "flex-start", gap: 8,
     marginTop: theme.space.md, padding: theme.space.md,

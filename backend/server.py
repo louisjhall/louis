@@ -355,6 +355,12 @@ class WorkoutUpdateBody(BaseModel):
     # Phase 2 — Strict Equipment Matching (coach manual override)
     change_reason: Optional[str] = None
     needs_coach_review: Optional[bool] = None
+    # Iter 102 — coach edited title; layover_naming pass must skip this workout.
+    title_manually_edited_by_coach: Optional[bool] = None
+    duration_min: Optional[int] = None
+    focus: Optional[str] = None
+    date: Optional[str] = None
+    rationale: Optional[str] = None
 
 class WorkoutCompleteBody(BaseModel):
     completed_exercises: list[dict] = []
@@ -7344,6 +7350,18 @@ async def _generate_month(
         _apply_days_cap_and_min_content(unique, profile)
     except Exception:
         logger.exception("days-cap / min-content pass failed (non-fatal)")
+
+    # Iter 102 — Deterministic layover-day naming. Rewrite titles like
+    #   "Hotel Gym Strength" → "ICN Layover Hotel Gym Strength"
+    # so clients immediately see the workout was built around their roster.
+    # Runs LAST (after LLM + resolver + days cap) so title stays accurate.
+    try:
+        from feature_layover_naming import apply_layover_naming
+        _ln_stats = apply_layover_naming(unique, roster, airline=(roster or {}).get("airline"))
+        if _ln_stats.get("renamed"):
+            logger.info("layover_naming stats: %s", _ln_stats)
+    except Exception:
+        logger.exception("layover naming pass failed (non-fatal)")
 
     return unique
 

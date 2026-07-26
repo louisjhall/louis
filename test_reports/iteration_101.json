@@ -1,0 +1,28 @@
+{
+  "summary": "Iter 100 Roster Day Chips — FRONTEND verified. Home hero shows RosterDayChip (hero-roster-chip-today), NEXT 5 DAYS strip renders 5 rows with correct duty chips (DUBAI layover, T/R turnaround, OFF, HOME), and Calendar screen renders icon-only cal-day-chip-* on all 7 roster days (Jul 26-Aug 1). Row taps navigate to /workout/{id}; calendar day cells open the workout screen when a workout exists. No feature-related console errors (only a benign 401 during boot auth). The reviewer account required re-seeding via /app/scripts/seed_reviewer_account.py because it was in an inactive state before the run.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "home", "issues": ["Multiple welcome overlays stack on first login (Beta welcome modal + Timezone modal + Push permission prompt) — they block the NEXT 5 DAYS strip and hero on entry. Not new to Iter 100, but the new strip is the first content that can get hidden below the modal stack. Consider gating the push prompt behind a later interaction."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "None blocking. Optional: sequence welcome / timezone / push prompts so they don't cover the newly added NEXT 5 DAYS strip on first login."
+  ],
+  "critical_code_review_comments": [
+    "RosterDayChip is tightly focused and correctly returns null when there is no day_type/flights/layover (safe for Home days that pass through with type='home' still rendering a HOME chip via classify()). Good defensive coding.",
+    "home.tsx uses next7.slice(1, 6) for the NEXT 5 DAYS strip — this correctly skips today (index 0). Confirmed 5 rows rendered.",
+    "calendar.tsx passes {day_type: d.duty_type, flights: d.flights, layover_city: d.layover_city} to RosterDayChip — field mapping consistent with backend /api/calendar/timeline response."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not tested per request)", "frontend": "100%"},
+  "seed_data_creation": "Re-ran /app/scripts/seed_reviewer_account.py to reactivate reviewer@crewfit.net (account had is_active=false or similar → login rejected with 'currently unavailable'). After re-seed, login succeeded and 7-day roster (Home / Layover BA113 LHR→DXB Dubai / Turnaround / Off) + 5 workouts were present.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reviewer login flow now has BETA welcome + timezone-confirm + push-permission modals stacked on first login. To test any interactive home flow you MUST dismiss ACCEPT & CONTINUE, YES USE THIS, and NOT NOW before any tap tests will register. Use qs-month button to reach /calendar (bottom CALENDAR tab click via get_by_text may not route in every run).",
+  "rca_of_issue": "N/A — Iter 100 feature working. Only pre-existing behaviour worth noting: reviewer account can enter an 'unavailable' state; re-running the seed script restores it."
+}

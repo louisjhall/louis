@@ -6586,6 +6586,11 @@ async def calendar_timeline(months_back: int = 2, months_ahead: int = 4, user: d
                 "day": dd,
                 "load": (rday or {}).get("load"),
                 "duty_type": (rday or {}).get("day_type"),
+                # Iter 100 — expose roster context (flights + layover) so
+                # calendar cells + home cards can render a tiny chip like
+                # "BA113" / "DXB" next to the workout.
+                "flights": (rday or {}).get("flights") or [],
+                "layover_city": (rday or {}).get("layover_city"),
                 "has_roster": bool(rday),
                 "workout_id": (wk or {}).get("id"),
                 "workout_title": (wk or {}).get("title"),

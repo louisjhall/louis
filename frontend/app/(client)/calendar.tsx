@@ -8,6 +8,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { DayEditModal } from "@/src/components/DayEditModal";
 import { AddActivityModal } from "@/src/components/AddActivityModal";
 import { listActivities, type PersonalActivity } from "@/src/lib/personalActivities";
+import { RosterDayChip } from "@/src/components/RosterDayChip";
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
@@ -189,6 +190,16 @@ export default function CalendarScreen() {
                     style={[styles.dayCell, isToday && styles.todayCell]}
                   >
                     <Text style={[styles.dayNum, isToday && { color: theme.color.brand, fontWeight: "800" }]}>{d.day}</Text>
+                    {/* Iter 100 — glanceable roster-context chip: flight
+                        number / layover city / STBY / OFF. Icon-only in
+                        the tight monthly grid; the code chips render on
+                        the week strip / hero card instead. */}
+                    <RosterDayChip
+                      day={{ day_type: d.duty_type, flights: d.flights, layover_city: d.layover_city }}
+                      size="sm"
+                      showCode={false}
+                      testID={`cal-day-chip-${d.date}`}
+                    />
                     {d.load ? <View style={[styles.loadDot, { backgroundColor: loadColor(d.load) }]} /> : null}
                     {hasActivity ? <View style={styles.activityDot} /> : null}
                     {d.completed ? <Ionicons name="checkmark" size={9} color={theme.color.green} /> : null}

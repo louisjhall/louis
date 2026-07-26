@@ -23,6 +23,7 @@ import { DualSessionCard } from "@/src/components/DualSessionCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
 import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
+import { RosterDayChip } from "@/src/components/RosterDayChip";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { NotificationBell } from "@/src/components/NotificationBell";
@@ -381,11 +382,25 @@ export default function Home() {
                 isStandby={!!standbyToday?.is_standby}
               />
 
-              {todaysDay?.layover_city || todaysDay?.flights?.[0] ? (
-                <Text style={styles.duty}>
-                  {todaysDay?.layover_city ? `${String(todaysDay.layover_city).toUpperCase()}` : ""}
-                  {todaysDay?.flights?.[0] ? `  ${todaysDay.flights[0].from} → ${todaysDay.flights[0].to}` : ""}
-                </Text>
+              {todaysDay?.layover_city || todaysDay?.flights?.[0] || todaysDay?.day_type ? (
+                <View style={styles.dutyRow}>
+                  <RosterDayChip
+                    day={{
+                      day_type: todaysDay?.day_type,
+                      flights: todaysDay?.flights,
+                      layover_city: todaysDay?.layover_city,
+                    }}
+                    size="md"
+                    testID="hero-roster-chip-today"
+                  />
+                  {(todaysDay?.layover_city || todaysDay?.flights?.[0]) ? (
+                    <Text style={styles.duty}>
+                      {todaysDay?.flights?.[0] ? `${todaysDay.flights[0].from} → ${todaysDay.flights[0].to}` : ""}
+                      {todaysDay?.layover_city && !todaysDay?.flights?.[0]
+                        ? `Layover · ${String(todaysDay.layover_city)}` : ""}
+                    </Text>
+                  ) : null}
+                </View>
               ) : null}
             </View>
           </SafeAreaView>
@@ -755,6 +770,73 @@ export default function Home() {
             <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
           </View>
 
+          {/* Iter 100 — NEXT 5 DAYS strip. Compact glanceable list of the
+              upcoming week showing day, roster context chip and workout
+              title. Tap → opens the workout (or the calendar day if it's
+              a rest / non-training day). */}
+          {(next7 || []).length > 1 ? (
+            <View style={styles.next5Wrap} testID="home-next5-days">
+              <View style={styles.next5Head}>
+                <Text style={styles.next5Title}>NEXT 5 DAYS</Text>
+                <Pressable testID="next5-open-calendar" onPress={() => router.push("/(client)/calendar")} hitSlop={8}>
+                  <Text style={styles.next5More}>SEE ALL →</Text>
+                </Pressable>
+              </View>
+              {next7.slice(1, 6).map((d: any) => {
+                const dt = new Date(d.__key + "T00:00:00");
+                const dow = dt.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase();
+                const dnum = dt.getDate();
+                const rosterDayObj = roster?.days?.find((rd: any) => rd?.date === d.__key);
+                return (
+                  <Pressable
+                    key={d.__key}
+                    testID={`next5-row-${d.__key}`}
+                    onPress={() => {
+                      if (!d.__rest && d.id) router.push(`/workout/${d.id}`);
+                      else router.push("/(client)/calendar");
+                    }}
+                    style={styles.next5Row}
+                  >
+                    <View style={styles.next5DateCol}>
+                      <Text style={styles.next5Dow}>{dow}</Text>
+                      <Text style={styles.next5Dnum}>{dnum}</Text>
+                    </View>
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <Text
+                        style={[
+                          styles.next5WorkoutTitle,
+                          d.__rest && { color: theme.color.textMuted, fontWeight: "700" },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {d.title || (d.__rest ? "REST DAY" : "SESSION")}
+                      </Text>
+                      <View style={styles.next5MetaRow}>
+                        <RosterDayChip
+                          day={rosterDayObj || null}
+                          size="sm"
+                          testID={`next5-chip-${d.__key}`}
+                        />
+                        {d.duration_min ? (
+                          <Text style={styles.next5Meta}>{d.duration_min} min</Text>
+                        ) : null}
+                        {d.key_session ? (
+                          <View style={styles.next5KeyPill}>
+                            <Ionicons name="star" size={8} color={theme.color.brand} />
+                            <Text style={styles.next5KeyPillT}>KEY</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                    {!d.__rest && d.id ? (
+                      <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+
           <HabitTodayCard />
 
           <TodayPersonalActivities key={activityRefreshKey} />
@@ -962,7 +1044,43 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   loadText: { color: theme.color.text, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
   hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
-  duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", marginTop: 4 },
+  dutyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" },
+  duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
+
+  // Iter 100 — Next 5 Days strip on home
+  next5Wrap: {
+    marginTop: 20,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  next5Head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  next5Title: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  next5More: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  next5Row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.color.divider,
+  },
+  next5DateCol: { width: 42, alignItems: "center" },
+  next5Dow: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  next5Dnum: { color: theme.color.text, fontSize: 18, fontWeight: "900", marginTop: 1 },
+  next5WorkoutTitle: { color: theme.color.text, fontSize: 12, fontWeight: "800" },
+  next5MetaRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  next5Meta: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700" },
+  next5KeyPill: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 5, paddingVertical: 2,
+    borderRadius: 3,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  next5KeyPillT: { color: theme.color.brand, fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
   banner: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderLeftWidth: 3, marginBottom: theme.space.md },
   bannerTitle: { color: theme.color.text, fontSize: 12, letterSpacing: 1.5, fontWeight: "800" },
   bannerSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },

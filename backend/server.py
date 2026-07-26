@@ -7801,6 +7801,38 @@ async def workout_swap_exercise(wid: str, body: SwapExerciseBody, user: dict = D
         "date": w.get("date"),
     })
 
+    # Coach to-do: when the CLIENT swaps an exercise, surface it in Louis's
+    # exercise-review queue so he can eyeball whether the replacement fits
+    # the client's programme + roster context.
+    if user["role"] == "client":
+        try:
+            client_meta = await db.users.find_one(
+                {"id": w.get("user_id")}, {"_id": 0, "name": 1, "email": 1, "assigned_coach_id": 1}
+            )
+            await db.coach_tasks.insert_one({
+                "id": new_id(),
+                "kind": "client_exercise_swap",
+                "task_type": "client_exercise_swap",
+                "status": "todo",
+                "priority": "normal",
+                "user_id": w.get("user_id"),
+                "client_id": w.get("user_id"),
+                "workout_id": wid,
+                "date": w.get("date"),
+                "exercise_index": idx,
+                "original_name": original.get("name"),
+                "replacement_name": new_name,
+                "reason": body.reason,
+                "assigned_coach_id": (client_meta or {}).get("assigned_coach_id"),
+                "client_name": (client_meta or {}).get("name") or (client_meta or {}).get("email"),
+                "created_at": now_iso(),
+                "title": f"Client swapped an exercise · {(client_meta or {}).get('name') or 'client'}",
+                "summary": f"{original.get('name')} → {new_name}"
+                           + (f" ({body.reason})" if body.reason else ""),
+            })
+        except Exception:
+            logger.exception("Failed to create coach task for client exercise swap")
+
     fresh = await db.workouts.find_one({"id": wid}, {"_id": 0})
     return {"ok": True, "workout": fresh, "swapped_index": idx, "new_name": new_name}
 
@@ -11594,6 +11626,7 @@ import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach wo
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history
+import feature_coach_workout_swap        # noqa: E402,F401  Phase 5: coach inline workout-swap picker (alternative presets)
 import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base + current timezone card + confirm endpoint
 import feature_calendar_recovery          # noqa: E402,F401  Iter 94s: calendar range + missed workout recovery
 import feature_app_config                 # noqa: E402,F401  Iter 94t Phase 1: remote config + feature flags

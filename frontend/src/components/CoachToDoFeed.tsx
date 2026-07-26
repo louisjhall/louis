@@ -43,7 +43,8 @@ function categoryOf(t: Task): string {
   if (t.task_type === "check_in_review" || t.task_type === "missed_check_in") return "reviews";
   if (t.task_type === "record_weekly_video") return "videos";
   if (t.task_type === "programme_adjustment" || t.task_type === "habit_review" || t.task_type === "standby_key_affected") return "programme";
-  if (t.task_type === "roster_expired") return "roster";
+  if (t.task_type === "roster_expired" || t.task_type === "roster_overlap_review") return "roster";
+  if (t.task_type === "client_exercise_swap") return "exercise_swaps";
   return "other";
 }
 
@@ -80,6 +81,10 @@ export function CoachToDoFeed() {
     }
     if (t.task_type === "daily_social_media_post") {
       router.push("/social-studio" as any);
+      return;
+    }
+    if (t.task_type === "client_exercise_swap" && (t as any).workout_id) {
+      router.push(`/coach/workout/edit/${(t as any).workout_id}` as any);
       return;
     }
     if (t.check_in_id) {

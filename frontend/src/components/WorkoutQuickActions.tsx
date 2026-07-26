@@ -21,6 +21,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { SwapWorkoutPicker } from "./SwapWorkoutPicker";
 
 
 export type WorkoutQuickActionTarget = {
@@ -43,6 +44,7 @@ export function WorkoutQuickActions({
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
+  const [swapOpen, setSwapOpen] = useState(false);
 
   if (!target) return null;
 
@@ -127,9 +129,18 @@ export function WorkoutQuickActions({
           />
 
           <Action
+            testID="wqa-swap"
+            icon="swap-horizontal"
+            label="SWAP WORKOUT · PICK ALTERNATIVE"
+            sub="Choose from safe alternatives ranked to today's roster."
+            disabled={target.coach_locked}
+            onPress={() => setSwapOpen(true)}
+          />
+
+          <Action
             testID="wqa-regen"
             icon="refresh"
-            label="REGENERATE / SWAP WORKOUT"
+            label="REGENERATE FROM SCRATCH"
             sub="Rebuild this session using the latest roster context."
             busy={busy === "regen"}
             disabled={target.coach_locked}
@@ -169,6 +180,18 @@ export function WorkoutQuickActions({
           ) : null}
         </Pressable>
       </Pressable>
+
+      {/* Nested SwapWorkoutPicker (rendered inside Modal is fine for iOS/Android via portals). */}
+      <SwapWorkoutPicker
+        visible={swapOpen}
+        workoutId={target.id}
+        onClose={() => setSwapOpen(false)}
+        onApplied={() => {
+          setSwapOpen(false);
+          onChanged?.();
+          onClose();
+        }}
+      />
     </Modal>
   );
 }

@@ -994,6 +994,99 @@ async def signup(body: SignupBody):
     return {"token": token, "user": u}
 
 
+# ------------------------------------------------------------------
+# Coach-side manual client creation
+# Louis (or any coach) can hand-create a client from the coach dashboard
+# for people who couldn't get through self-service signup. Age confirmation
+# is vouched-for by the coach and recorded to the audit log.
+# ------------------------------------------------------------------
+class CoachCreateClientBody(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    name: Optional[str] = None
+    age: Optional[int] = None
+    sex: Optional[str] = None
+    airline: Optional[str] = None
+    job_title: Optional[str] = None
+    home_base: Optional[str] = None
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@api.post("/coach/clients/create")
+async def coach_create_client(body: CoachCreateClientBody, coach: dict = Depends(require_role("coach"))):
+    email = body.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already registered")
+
+    display_name = (body.name or "").strip()
+    if body.first_name or body.last_name:
+        composed = f"{(body.first_name or '').strip()} {(body.last_name or '').strip()}".strip()
+        display_name = composed or display_name
+    if not display_name:
+        display_name = email.split("@")[0]
+
+    seeded_profile: dict = {}
+    for k, v in [
+        ("age", body.age),
+        ("sex", body.sex),
+        ("height_cm", body.height_cm),
+        ("weight_kg", body.weight_kg),
+        ("airline", body.airline),
+        ("job_title", body.job_title),
+        ("home_base", body.home_base),
+    ]:
+        if v is not None and (not isinstance(v, str) or v.strip()):
+            seeded_profile[k] = v.strip() if isinstance(v, str) else v
+
+    now = now_iso()
+    u = {
+        "id": new_id(),
+        "email": email,
+        "name": display_name,
+        "first_name": (body.first_name or "").strip() or None,
+        "last_name":  (body.last_name  or "").strip() or None,
+        "role": "client",
+        "password_hash": hash_pw(body.password),
+        "created_at": now,
+        "onboarded": False,
+        "coach_id": None,
+        "profile": seeded_profile,
+        "age_confirmed": True,
+        "age_confirmed_at": now,
+        "age_confirmed_by_coach_id": coach.get("id"),
+        "created_by_coach_id": coach.get("id"),
+        "created_by_coach_name": coach.get("name") or coach.get("email"),
+        "manual_create_notes": (body.notes or "").strip() or None,
+        "status": "active",
+        "assigned_coach_id": coach.get("id"),
+        "assigned_coach_name": coach.get("name") or "Louis Hall",
+    }
+
+    await db.users.insert_one(u)
+
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "actor_id": coach.get("id"),
+            "actor_email": coach.get("email"),
+            "action": "coach_created_client",
+            "target_user_id": u["id"],
+            "target_email": email,
+            "created_at": now,
+            "notes": body.notes or "",
+        })
+    except Exception:
+        logger.exception("coach_create_client — audit_logs insert failed")
+
+    clean_doc(u)
+    u.pop("password_hash", None)
+    return {"status": "created", "client": u}
+
+
 @api.post("/auth/login")
 async def login(body: LoginBody):
     u = await db.users.find_one({"email": body.email.lower()})

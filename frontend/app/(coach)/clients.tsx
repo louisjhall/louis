@@ -10,6 +10,7 @@ import { PreviewClientButton } from "@/src/components/PreviewLauncher";
 import { useAuth } from "@/src/lib/auth";
 import { usePreview } from "@/src/lib/preview";
 import { confirm as uxConfirm, toast as uxToast } from "@/src/lib/ux";
+import { AddClientSheet } from "@/src/components/AddClientSheet";
 
 const FILTERS = [
   { key: "all", label: "ALL" },
@@ -33,6 +34,7 @@ export default function Clients() {
   const [data, setData] = useState<any>({ clients: [], counts: {}, total: 0, preview_sandbox: null });
   const [loading, setLoading] = useState(true);
   const [previewBusy, setPreviewBusy] = useState<null | "start" | "reset">(null);
+  const [addClientOpen, setAddClientOpen] = useState(false);
 
   const isAdmin = !!(
     user?.is_admin ||
@@ -161,6 +163,14 @@ export default function Clients() {
         {/* Admin quick-actions: Manage Coaches + New Client Preview sandbox */}
         {isAdmin ? (
           <View style={styles.adminBar} testID="admin-quick-actions">
+            <Pressable
+              testID="cl-add-client"
+              onPress={() => setAddClientOpen(true)}
+              style={[styles.adminBtn, styles.adminBtnPrimary]}
+            >
+              <Ionicons name="person-add" size={14} color="#fff" />
+              <Text style={[styles.adminBtnT, { color: "#fff" }]}>+ ADD CLIENT</Text>
+            </Pressable>
             <Pressable
               testID="cl-manage-coaches"
               onPress={() => router.push("/coach/admin/coaches" as any)}
@@ -387,6 +397,12 @@ export default function Clients() {
           })
         }
       </ScrollView>
+
+      <AddClientSheet
+        visible={addClientOpen}
+        onClose={() => setAddClientOpen(false)}
+        onCreated={() => { load(); }}
+      />
     </SafeAreaView>
   );
 }
@@ -457,6 +473,7 @@ const styles = StyleSheet.create({
   // Admin bar + preview sandbox card
   adminBar: { flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" },
   adminBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand },
+  adminBtnPrimary: { backgroundColor: theme.color.brand },
   adminBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
   previewCard: { padding: 14, backgroundColor: theme.color.brandTint || "rgba(59,130,246,0.08)", borderWidth: 1, borderColor: theme.color.brand, borderRadius: theme.radius.md, marginBottom: 14 },
   previewBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },

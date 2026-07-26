@@ -171,6 +171,35 @@ async def _persist_pending_roster(user_id: str, days: list[dict], source_filenam
     except Exception:
         logger.exception("Etihad label enrichment failed — continuing without labels")
 
+    # ---- Emirates label enrichment ----
+    # Emirates parser output already carries training_colour +
+    # equipment_assumption but does not populate client_label / blocked[].
+    # Enrich those here so the plan generator + review UI see the same shape
+    # as Etihad days.
+    try:
+        if any((d.get("source") == "emirates_parser_v1") for d in days):
+            from parsers.emirates_labels import enrich_emirates_days
+            enrich_emirates_days(days)
+            from collections import Counter
+            # Build a compact label summary for Emirates too so the coach
+            # dashboard can render weekly rollups.
+            colour_counts = {
+                c: sum(1 for d in days
+                       if d.get("source") == "emirates_parser_v1"
+                       and d.get("training_colour") == c)
+                for c in ("green", "amber", "red", "black")
+            }
+            label_counts = dict(Counter(
+                d.get("label") or "UNKNOWN"
+                for d in days if d.get("source") == "emirates_parser_v1"
+            ))
+            label_summary = label_summary or {}
+            label_summary.setdefault("counts", colour_counts)
+            label_summary.setdefault("label_counts", label_counts)
+            label_summary.setdefault("weeks", [])
+    except Exception:
+        logger.exception("Emirates label enrichment failed — continuing without labels")
+
     doc = {
         "id": new_id(),
         "user_id": user_id,
@@ -270,19 +299,24 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
             parser_source = "llm"
             if (body.mime_type or "").lower() == "application/pdf":
                 try:
-                    from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days
+                    from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days as etihad_to_days
+                    from parsers.emirates import detect_emirates, parse_emirates_pdf, to_crewfit_days as emirates_to_days
                     with open(path, "rb") as fh:
                         pdf_bytes = fh.read()
                     if detect_etihad(pdf_bytes):
                         await _set_job(job_id, stage="reading", progress=20, message="Reading your Etihad roster...")
                         pr = parse_etihad_pdf(pdf_bytes, filename=body.filename)
-                        days = to_crewfit_days(pr)
+                        days = etihad_to_days(pr)
                         parser_source = "etihad_parser_v1"
                         raw = f"etihad-parser: {len(days)} days, confidence={pr.parse_confidence}"
-                        logger.info("Etihad parser produced %d days (conf=%.3f) for user %s",
-                                    len(days), pr.parse_confidence, user["id"])
+                    elif detect_emirates(pdf_bytes):
+                        await _set_job(job_id, stage="reading", progress=20, message="Reading your Emirates roster...")
+                        pr = parse_emirates_pdf(pdf_bytes, filename=body.filename)
+                        days = emirates_to_days(pr)
+                        parser_source = "emirates_parser_v1"
+                        raw = f"emirates-parser: {len(days)} days, confidence={pr.parse_confidence}"
                 except Exception as e:
-                    logger.warning("Etihad parser skipped due to error: %s", e)
+                    logger.warning("Airline parser skipped due to error: %s", e)
                     days = []
 
             # ---- Fallback: existing Gemini flow ----

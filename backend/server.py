@@ -7160,15 +7160,32 @@ async def _generate_month(
 
     enriched = await _asyncio.gather(*[_day_for_prompt(d) for d in all_days])
 
+    # ---- Parser constraint injection ----
+    # If any day has parser-generated labels (client_label, training_colour,
+    # blocked, equipment_assumption from Etihad/Emirates parsers), surface
+    # those into the prompt so the LLM understands what's on-limits and
+    # what to avoid. Post-LLM we ALSO run enforce_constraints_on_workouts
+    # as a deterministic safety net.
+    try:
+        from parser_constraints import constraint_block_for_prompt
+        constraint_block = constraint_block_for_prompt(enriched)
+    except Exception:
+        logger.exception("constraint_block_for_prompt failed — continuing without block")
+        constraint_block = []
+
     # Chunk into weeks of 7
     chunks = [enriched[i : i + 7] for i in range(0, len(enriched), 7)]
 
     async def _run_chunk(idx: int, total: int, chunk: list[dict]) -> list[dict]:
+        # Constraint slice for THIS week only (dates in the chunk).
+        chunk_dates = {d.get("date") for d in chunk}
+        chunk_constraints = [c for c in constraint_block if c.get("date") in chunk_dates]
         prompt = (
             f"Client profile: {json.dumps(profile)[:2000]}\n"
             f"Coaching DNA (living profile): {json.dumps(dna_ctx)[:2500] if dna_ctx else 'not yet built'}\n"
             f"Programme context (goal, phase, weekly target, roster summary, weekly_shape_ideal, strength_overload, live_state): {json.dumps(programme_ctx)[:4200] if programme_ctx else 'None'}\n"
             f"Event context: {json.dumps(event_context)[:1000] if event_context else 'None'}\n"
+            f"Parser constraints (per-date labels from Etihad/Emirates roster analysis — BINDING): {json.dumps(chunk_constraints)[:2200] if chunk_constraints else 'None'}\n"
             f"Days to plan (chronological, 7-day chunk): {json.dumps(chunk)[:7500]}\n"
             "Design exactly one workout per date in this chunk. Return JSON. "
             "HARD RULES: (1) The number of REAL training sessions (focus not in recovery/mobility/rest) "
@@ -7200,6 +7217,15 @@ async def _generate_month(
             "`green` = the full planned session (identical to the top-level workout — title, duration_min, focus, warmup, exercises, rationale, plus `intensity_note` set to the target RPE guidance). "
             "`amber` = a ~65%-volume version of green for tired / short-on-time days: keep the same movement pattern but drop the last accessory if there are 5+ exercises, reduce sets ~35%, and shorten `duration_min` to about 65% of green. Set `intensity_note` to guide RPE 6 / stop 2 reps shy. "
             "`red` = a context-aware recovery session (no strength work) of 10–15 minutes made of mobility + breathwork tailored to the roster day — e.g. long-haul day = calf drain + hip flexor release + box breathing; night flight = physiological sigh + 4-7-8 breath; layover = gentle mobility + nasal-breathing walk; standby = quiet flow you can do without changing clothes. Give it a clear `title`, `duration_min`, `focus='recovery'`, `exercises` (mobility/breath items with sets/reps or time durations), `rationale`, and `intensity_note='Restorative — no effort'`."
+            " "
+            "(8) PARSER CONSTRAINTS ARE BINDING. If a date appears in the `parser_constraints` block above, it comes from a strict Etihad/Emirates roster reader — TREAT IT AS TRUTH about that day's fatigue and equipment. Rules per `action`: "
+            "action='rest_only' → prescribe focus='rest' with no exercises, duration_min=0, title 'Rest & Recovery'. "
+            "action='recovery_only' → prescribe focus='recovery' with mobility + breath ONLY, duration_min ≤ `max_duration_min` (default 25). Never program strength, running, or intervals on a recovery_only day. "
+            "action='moderated' → allowed session but cap `duration_min` at `max_duration_min` and drop any category listed in `blocked`. Bias toward mobility, easy_run, or hotel_strength. "
+            "action='full_session' → normal programming allowed. "
+            "For EVERY parser day, NEVER include any exercise mapped to a category in that day's `blocked` list (e.g. blocked=['main_strength','long_run'] → no barbell/kettlebell strength and no run >30 min). "
+            "If `equipment` is 'hotel_or_bodyweight', constrain exercises to hotel-room or bodyweight variants only — no gym equipment. "
+            "In the day's `rationale`, transparently reference the `client_label` (e.g. 'Louis kept this to mobility because you're returning from Sydney tonight'). NEVER mention 'AI', 'auto', or 'generated'."
         )
         chunk_workouts: list[dict] = []
         try:
@@ -7241,6 +7267,19 @@ async def _generate_month(
             continue
         seen.add(d)
         unique.append(w)
+
+    # ---- Phase 2 (Parser constraint enforcement) ----
+    # Deterministic safety net that runs AFTER the LLM. Guarantees that no
+    # workout violates the parser's per-day training_colour / blocked[] /
+    # equipment_assumption / action. Ensures aviation crew never receive a
+    # heavy strength session after a ULR / long-haul return, regardless of
+    # what the LLM produced.
+    try:
+        from parser_constraints import enforce_constraints_on_workouts
+        enforce_stats = enforce_constraints_on_workouts(unique, all_days)
+        logger.info("parser_constraints stats: %s", enforce_stats)
+    except Exception:
+        logger.exception("parser constraint enforcement failed — continuing without")
 
     # Phase 5: Constrain every client-visible exercise to the approved V2
     # Exercise Library. Any exercise the LLM produced that has no library

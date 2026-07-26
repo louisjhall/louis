@@ -11592,6 +11592,7 @@ import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reas
 import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
+import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_timezone_current           # noqa: E402,F401  Iter 94m: home base + current timezone card + confirm endpoint
 import feature_calendar_recovery          # noqa: E402,F401  Iter 94s: calendar range + missed workout recovery
 import feature_app_config                 # noqa: E402,F401  Iter 94t Phase 1: remote config + feature flags

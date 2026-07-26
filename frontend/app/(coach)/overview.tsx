@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { useIsDesktop, useIsWide } from "@/src/lib/responsive";
 import { CoachToDoFeed } from "@/src/components/CoachToDoFeed";
+import { CoachLiveFeed } from "@/src/components/CoachLiveFeed";
 import { ExerciseMediaSummary } from "@/src/components/ExerciseMediaSummary";
 import { useAuth } from "@/src/lib/auth";
 import { NotificationBell } from "@/src/components/NotificationBell";
@@ -244,6 +245,11 @@ export default function CoachOverview() {
             <Ionicons name="bug-outline" size={14} color={theme.color.textMuted} />
             <Text style={styles.uiIssuesT}>UI ISSUES REPORTED FROM PREVIEW MODE →</Text>
           </Pressable>
+
+          {/* Phase 2 — Live cross-client feed of upcoming workouts. */}
+          <View style={styles.section} testID="ov-live-feed-section">
+            <CoachLiveFeed />
+          </View>
 
           <View style={[styles.twoCol, !isWide && { flexDirection: "column" }]}>
             <View style={[styles.section, isWide ? { flex: 1 } : {}]}>

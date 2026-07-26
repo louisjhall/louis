@@ -20,6 +20,7 @@ import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete } from "@/src/lib/sounds";
 import { toast } from "@/src/lib/ux";
 import { WorkoutMediaCarousel } from "@/src/components/WorkoutMediaCarousel";
+import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 const TILES = ["IMAGE", "HOW TO", "VIDEO", "SWAP", "LOG"] as const;
@@ -148,9 +149,13 @@ export default function AtlasPlayer() {
     setRestVisible(true);
   };
 
+  const [rateOpen, setRateOpen] = useState(false);
   const finishWorkout = async () => {
-    try { await api(`/workouts/${id}/complete`, { method: "POST", body: {} }); }
-    catch { /* ignore */ }
+    // Iter 101 — quick rating sheet before completing.
+    setRateOpen(true);
+  };
+  const onRateDone = () => {
+    setRateOpen(false);
     router.replace(`/workout/${id}` as any);
   };
 
@@ -328,6 +333,14 @@ export default function AtlasPlayer() {
           </Pressable>
         )}
       </View>
+      <PostWorkoutRatingSheet
+        visible={rateOpen}
+        workoutId={id as string}
+        workoutTitle={w?.title}
+        extraPayload={{}}
+        onClose={() => setRateOpen(false)}
+        onDone={onRateDone}
+      />
     </SafeAreaView>
   );
 }

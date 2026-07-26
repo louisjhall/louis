@@ -357,9 +357,15 @@ class WorkoutUpdateBody(BaseModel):
     needs_coach_review: Optional[bool] = None
 
 class WorkoutCompleteBody(BaseModel):
-    completed_exercises: list[dict]
+    completed_exercises: list[dict] = []
     rpe: Optional[int] = None
     notes: Optional[str] = None
+    # --- Iter 101 · Quick post-workout rating (low-friction) ---------------
+    # rating ∈ {"smooth_flight","light_turbulence","heavy_turbulence","diverted"}
+    rating: Optional[str] = None
+    optional_note: Optional[str] = None
+    pain_reported: Optional[bool] = None   # None = never asked, True/False = client answered
+    pain_note: Optional[str] = None
 
 class ExerciseBody(BaseModel):
     name: str
@@ -7999,11 +8005,92 @@ async def workout_move(wid: str, body: MoveWorkoutBody, user: dict = Depends(cur
 
 @api.post("/workouts/{wid}/complete")
 async def workout_complete(wid: str, body: WorkoutCompleteBody, user: dict = Depends(current_user)):
+    # --- Iter 101 · Quick rating + selective coach-review task ------------
+    # Ratings that require Louis's attention. Client notes and pain reports
+    # also lift this to needs_coach_review, per spec.
+    ATTN_RATINGS = {"heavy_turbulence", "diverted"}
+    rating = body.rating if body.rating in {
+        "smooth_flight", "light_turbulence", "heavy_turbulence", "diverted",
+    } else None
+    optional_note = (body.optional_note or "").strip() or None
+    pain_reported = bool(body.pain_reported) if body.pain_reported is not None else None
+    pain_note = (body.pain_note or "").strip() or None
+    # Pain only asked for heavy_turbulence / diverted per spec; ignore
+    # accidental pain payload from other ratings.
+    if rating not in ATTN_RATINGS:
+        pain_reported = None
+        pain_note = None
+
+    needs_coach_review = bool(
+        (rating in ATTN_RATINGS)
+        or (pain_reported is True)
+        or (optional_note is not None)
+    )
+
+    completed_at = now_iso()
+    completion_meta = body.model_dump()
+    # Overwrite normalised values so the DB record matches server rules.
+    completion_meta.update({
+        "rating": rating,
+        "optional_note": optional_note,
+        "pain_reported": pain_reported,
+        "pain_note": pain_note,
+        "needs_coach_review": needs_coach_review,
+    })
+
+    update_set = {
+        "completed": True,
+        "completed_at": completed_at,
+        "completion": completion_meta,
+        # Duplicated top-level for cheap coach-side filtering.
+        "rating": rating,
+        "needs_coach_review": needs_coach_review,
+    }
     await db.workouts.update_one(
         {"id": wid, "user_id": user["id"]},
-        {"$set": {"completed": True, "completed_at": now_iso(), "completion": body.model_dump()}},
+        {"$set": update_set},
     )
     doc = await db.workouts.find_one({"id": wid}, {"_id": 0})
+
+    # Emit a coach task ONLY when the rules trigger.
+    if needs_coach_review and doc:
+        try:
+            reasons: list[str] = []
+            if rating == "heavy_turbulence":
+                reasons.append("Rated Heavy turbulence")
+            if rating == "diverted":
+                reasons.append("Rated Diverted (couldn't finish)")
+            if pain_reported is True:
+                reasons.append("Reported pain / discomfort")
+            if optional_note is not None:
+                reasons.append("Client left a note")
+            summary_bits: list[str] = list(reasons)
+            if pain_note:
+                summary_bits.append(f"Pain location: {pain_note}")
+            if optional_note:
+                summary_bits.append(f'Note: "{optional_note[:180]}"')
+            await db.coach_tasks.insert_one({
+                "id": new_id(),
+                "task_type": "workout_review",
+                "kind": "workout_review",
+                "status": "todo",
+                "priority": "high" if (rating in ATTN_RATINGS or pain_reported is True) else "normal",
+                "user_id": user["id"],
+                "client_id": user["id"],
+                "client_name": user.get("name") or user.get("email"),
+                "workout_id": wid,
+                "workout_date": doc.get("date"),
+                "workout_title": doc.get("title"),
+                "rating": rating,
+                "reasons": reasons,
+                "title": f"Review workout · {user.get('name') or 'client'}",
+                "summary": " · ".join(summary_bits) or "Client flagged this session for review.",
+                "created_at": completed_at,
+                "assigned_coach_id": user.get("assigned_coach_id"),
+            })
+        except Exception:
+            logger.exception("workout_complete — coach_tasks insert failed")
+
     # Phase 3 — reactive progression: if this was the last workout of the ISO
     # week, compute the progression snapshot. Non-fatal on error.
     try:

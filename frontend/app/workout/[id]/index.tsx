@@ -12,6 +12,7 @@ import { RealityModal } from "@/src/components/RealityModal";
 import { ModePickerModal } from "@/src/components/ModePickerModal";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
+import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 import { getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
 
 const PREFERRED_CHANNELS = [
@@ -135,15 +136,16 @@ export default function WorkoutDetail() {
     const next = order[(order.indexOf(w.day_load) + 1) % order.length];
     save({ day_load: next });
   };
+  const [rateOpen, setRateOpen] = useState(false);
   const complete = async () => {
-    setSaving(true);
-    try {
-      const done = await api<any>(`/workouts/${id}/complete`, {
-        method: "POST",
-        body: { completed_exercises: w.exercises, rpe: rpe ? parseInt(rpe) : null, notes: null },
-      });
-      setW(done);
-    } finally { setSaving(false); }
+    // Iter 101 — quick post-workout rating sheet before firing /complete.
+    setRateOpen(true);
+  };
+  const onRatingDone = async (result: { rating: any; completedDoc: any }) => {
+    setRateOpen(false);
+    if (result.completedDoc) setW(result.completedDoc);
+    // Route back to home so the client sees an updated dashboard.
+    router.replace("/(client)/home" as any);
   };
 
   if (loading || !w) {
@@ -486,6 +488,17 @@ export default function WorkoutDetail() {
         visible={modeOpen}
         onClose={() => setModeOpen(false)}
         onChoose={chooseMode}
+      />
+      <PostWorkoutRatingSheet
+        visible={rateOpen}
+        workoutId={id as string}
+        workoutTitle={w?.title}
+        extraPayload={{
+          completed_exercises: w?.exercises || [],
+          rpe: rpe ? parseInt(rpe) : null,
+        }}
+        onClose={() => setRateOpen(false)}
+        onDone={onRatingDone}
       />
     </SafeAreaView>
   );

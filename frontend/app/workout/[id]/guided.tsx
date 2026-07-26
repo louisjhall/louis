@@ -17,6 +17,7 @@ import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
 import { WorkoutMediaCarousel } from "@/src/components/WorkoutMediaCarousel";
+import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 import { RestTimer } from "@/src/components/RestTimer";
 import {
   getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue,
@@ -996,26 +997,18 @@ function SwapSheet({
 function WorkoutComplete({ workout, logs, durationMin, onDone }: {
   workout: any; logs: any[]; durationMin: number; onDone: () => void;
 }) {
-  const [saving, setSaving] = useState(false);
   const totalVolume = logs.reduce((sum, s) => sum + ((s.actual_weight || 0) * (s.actual_reps || 0)), 0);
   const rpes = logs.map((s) => s.rpe).filter((v) => typeof v === "number");
   const avgRpe = rpes.length ? (rpes.reduce((a, b) => a + b, 0) / rpes.length).toFixed(1) : "—";
   const setsCompleted = logs.length;
+  const [rateOpen, setRateOpen] = useState(true);
+  const [ratingResult, setRatingResult] = useState<any>(null);
 
   useEffect(() => {
-    (async () => {
-      if (saving) return;
-      setSaving(true);
-      // Fire the completion cue as soon as user lands on this screen
-      playWorkoutComplete(); hapticSuccess();
-      try {
-        await api<any>(`/workouts/${workout.id}/complete`, {
-          method: "POST",
-          body: { rpe: rpes.length ? Math.round(rpes.reduce((a, b) => a + b, 0) / rpes.length) : null, notes: null },
-        });
-      } catch { /* ignore */ } finally { setSaving(false); }
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Fire the completion cue as soon as user lands on this screen.
+    // The actual /complete POST now happens inside the rating sheet so
+    // the rating + note + pain payload lands in a single call.
+    playWorkoutComplete(); hapticSuccess();
   }, []);
 
   return (
@@ -1037,22 +1030,34 @@ function WorkoutComplete({ workout, logs, durationMin, onDone }: {
         </View>
 
         <View style={styles.atlasSummary}>
-          <Text style={styles.atlasEyebrow}>ATLAS SUMMARY</Text>
+          <Text style={styles.atlasEyebrow}>SESSION SUMMARY</Text>
           <Text style={styles.atlasBody}>
             You completed {setsCompleted} logged {setsCompleted === 1 ? "set" : "sets"} across {workout.exercises?.length || 0} exercises in {durationMin} minutes.
             {totalVolume ? ` Total load lifted: ${Math.round(totalVolume)}kg.` : ""}
-            {avgRpe !== "—" && Number(avgRpe) <= 8
-              ? " Effort looks controlled — Atlas will progress the load next session."
-              : avgRpe !== "—" && Number(avgRpe) >= 9
-              ? " Effort was high today — Atlas will hold the load next session to consolidate."
-              : ""}
           </Text>
         </View>
 
-        <Pressable onPress={onDone} style={styles.doneBtn} testID="gf-complete-done">
-          <Text style={styles.doneBtnT}>DONE</Text>
-        </Pressable>
+        {ratingResult?.rating ? (
+          <Pressable onPress={onDone} style={styles.doneBtn} testID="gf-complete-done">
+            <Text style={styles.doneBtnT}>DONE</Text>
+          </Pressable>
+        ) : (
+          <Pressable onPress={() => setRateOpen(true)} style={styles.doneBtn} testID="gf-complete-rate">
+            <Text style={styles.doneBtnT}>RATE THIS SESSION</Text>
+          </Pressable>
+        )}
       </ScrollView>
+
+      <PostWorkoutRatingSheet
+        visible={rateOpen}
+        workoutId={workout.id}
+        workoutTitle={workout.title}
+        extraPayload={{
+          rpe: rpes.length ? Math.round(rpes.reduce((a, b) => a + b, 0) / rpes.length) : null,
+        }}
+        onClose={() => setRateOpen(false)}
+        onDone={(r) => { setRateOpen(false); setRatingResult(r); onDone(); }}
+      />
     </SafeAreaView>
   );
 }

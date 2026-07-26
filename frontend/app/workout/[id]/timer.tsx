@@ -5,6 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
+import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 
 export default function GuidedTimer() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -120,15 +121,14 @@ export default function GuidedTimer() {
     setRemaining(phase === "rest" ? (ex?.rest_sec || 45) : inferSecs(ex));
   };
 
-  const finish = async () => {
-    setSaving(true);
-    try {
-      await api(`/workouts/${id}/complete`, {
-        method: "POST",
-        body: { completed_exercises: w.exercises, rpe: null, notes: "Completed via Guided Timer" },
-      });
-      router.back();
-    } finally { setSaving(false); }
+  const [rateOpen, setRateOpen] = useState(false);
+  const finish = () => {
+    // Iter 101 — quick rating sheet before completing.
+    setRateOpen(true);
+  };
+  const onRateDone = () => {
+    setRateOpen(false);
+    router.back();
   };
 
   if (loading || !w) {
@@ -208,6 +208,17 @@ export default function GuidedTimer() {
           </View>
         ))}
       </ScrollView>
+      <PostWorkoutRatingSheet
+        visible={rateOpen}
+        workoutId={id as string}
+        workoutTitle={w?.title}
+        extraPayload={{
+          completed_exercises: w?.exercises || [],
+          notes: "Completed via Guided Timer",
+        }}
+        onClose={() => setRateOpen(false)}
+        onDone={onRateDone}
+      />
     </SafeAreaView>
   );
 }

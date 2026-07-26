@@ -154,19 +154,47 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
         try:
             await _set_job(job_id, status="processing", stage="uploading", progress=5, message="Uploading your roster...")
             path = await write_temp(body.file_base64, body.mime_type)
-            await _set_job(job_id, stage="reading", progress=20, message="Reading your duty pattern...")
+
+            # ---- Fast-path: Etihad monthly-grid PDF ----
+            # We try the airline-specific parser FIRST for PDFs because it uses
+            # coordinate-based column extraction and handles Etihad's grid,
+            # multi-sector days, layover inference and overnight continuation
+            # far more reliably than a single LLM pass.
+            days: list = []
             raw = ""
-            try:
-                raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, body.mime_type)
-            except Exception as e:
-                logger.warning("Gemini roster call failed: %s", e)
-            await _set_job(job_id, stage="extracting", progress=45, message="Extracting duties...")
-            parsed: Any = {}
-            try:
-                parsed = parse_json_from_text(raw) if raw else {}
-            except Exception as e:
-                logger.warning("roster parse failed: %s", e)
-            days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+            parser_source = "llm"
+            if (body.mime_type or "").lower() == "application/pdf":
+                try:
+                    from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days
+                    with open(path, "rb") as fh:
+                        pdf_bytes = fh.read()
+                    if detect_etihad(pdf_bytes):
+                        await _set_job(job_id, stage="reading", progress=20, message="Reading your Etihad roster...")
+                        pr = parse_etihad_pdf(pdf_bytes, filename=body.filename)
+                        days = to_crewfit_days(pr)
+                        parser_source = "etihad_parser_v1"
+                        raw = f"etihad-parser: {len(days)} days, confidence={pr.parse_confidence}"
+                        logger.info("Etihad parser produced %d days (conf=%.3f) for user %s",
+                                    len(days), pr.parse_confidence, user["id"])
+                except Exception as e:
+                    logger.warning("Etihad parser skipped due to error: %s", e)
+                    days = []
+
+            # ---- Fallback: existing Gemini flow ----
+            if not days:
+                await _set_job(job_id, stage="reading", progress=20, message="Reading your duty pattern...")
+                try:
+                    raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, body.mime_type)
+                except Exception as e:
+                    logger.warning("Gemini roster call failed: %s", e)
+                await _set_job(job_id, stage="extracting", progress=45, message="Extracting duties...")
+                parsed: Any = {}
+                try:
+                    parsed = parse_json_from_text(raw) if raw else {}
+                except Exception as e:
+                    logger.warning("roster parse failed: %s", e)
+                days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+
             if not days:
                 await _set_job(
                     job_id, status="failed", stage="extracting", progress=45,
@@ -178,6 +206,11 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
             days = _apply_day_defaults(days)
             overlap = await _detect_overlap(user["id"], days)
             pending = await _persist_pending_roster(user["id"], days, body.filename or "roster", raw, job_id)
+            # Attach the parser source so the confirmation UI can badge it.
+            try:
+                await db.rosters.update_one({"id": pending["id"]}, {"$set": {"parser_source": parser_source}})
+            except Exception:
+                pass
             await _set_job(
                 job_id,
                 pending_roster_id=pending["id"],
@@ -302,6 +335,14 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 total = len(body.files)
                 pages: list[list[dict]] = []
                 combined_raw = ""
+                parser_source = "llm"
+                # Try Etihad parser on each PDF first; only fall back to LLM
+                # for pages the parser couldn't understand.
+                try:
+                    from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days
+                except Exception:
+                    detect_etihad = None  # type: ignore
+
                 for idx, f in enumerate(body.files):
                     pct_base = 5 + int((idx / max(1, total)) * 70)
                     await _set_job(
@@ -311,24 +352,39 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                     )
                     path = await write_temp(f.file_base64, f.mime_type)
                     paths.append(path)
-                    raw = ""
-                    try:
-                        raw = await call_gemini_file(
-                            ROSTER_SYSTEM,
-                            "Extract the complete roster shown. Return only JSON.",
-                            path, f.mime_type,
-                        )
-                    except Exception as e:
-                        logger.warning("Gemini roster call failed on page %d: %s", idx + 1, e)
-                    combined_raw += (raw or "") + "\n---\n"
-                    parsed: Any = {}
-                    try:
-                        parsed = parse_json_from_text(raw) if raw else {}
-                    except Exception as e:
-                        logger.warning("roster parse failed on page %d: %s", idx + 1, e)
-                    days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
-                    if days:
-                        pages.append(days)
+                    days_from_file: list = []
+                    # Etihad fast-path
+                    if detect_etihad is not None and (f.mime_type or "").lower() == "application/pdf":
+                        try:
+                            with open(path, "rb") as fh:
+                                pdf_bytes = fh.read()
+                            if detect_etihad(pdf_bytes):
+                                pr = parse_etihad_pdf(pdf_bytes, filename=f.filename)
+                                days_from_file = to_crewfit_days(pr)
+                                combined_raw += f"[etihad-parser {f.filename}]: {len(days_from_file)} days, conf={pr.parse_confidence}\n"
+                                parser_source = "etihad_parser_v1"
+                        except Exception as e:
+                            logger.warning("Etihad parser failed on file %d: %s", idx + 1, e)
+                    # LLM fallback
+                    if not days_from_file:
+                        raw = ""
+                        try:
+                            raw = await call_gemini_file(
+                                ROSTER_SYSTEM,
+                                "Extract the complete roster shown. Return only JSON.",
+                                path, f.mime_type,
+                            )
+                        except Exception as e:
+                            logger.warning("Gemini roster call failed on page %d: %s", idx + 1, e)
+                        combined_raw += (raw or "") + "\n---\n"
+                        parsed: Any = {}
+                        try:
+                            parsed = parse_json_from_text(raw) if raw else {}
+                        except Exception as e:
+                            logger.warning("roster parse failed on page %d: %s", idx + 1, e)
+                        days_from_file = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+                    if days_from_file:
+                        pages.append(days_from_file)
 
                 if not pages:
                     await _set_job(
@@ -343,6 +399,10 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 days = _apply_day_defaults(days)
                 overlap = await _detect_overlap(user["id"], days)
                 pending = await _persist_pending_roster(user["id"], days, primary_filename, combined_raw, job_id)
+                try:
+                    await db.rosters.update_one({"id": pending["id"]}, {"$set": {"parser_source": parser_source}})
+                except Exception:
+                    pass
                 await _set_job(
                     job_id,
                     pending_roster_id=pending["id"],
@@ -386,24 +446,44 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
         })
 
     async def _batch_worker():
+        try:
+            from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days
+        except Exception:
+            detect_etihad = None  # type: ignore
         for idx, (jid, f) in enumerate(zip(job_ids, body.files)):
             path: Optional[str] = None
             try:
                 await _set_job(jid, status="processing", stage="uploading", progress=5, message=f"Uploading file {idx + 1} of {len(body.files)}...")
                 path = await write_temp(f.file_base64, f.mime_type)
                 await _set_job(jid, stage="reading", progress=25, message="Reading your duty pattern...")
+                days = []
                 raw = ""
-                try:
-                    raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, f.mime_type)
-                except Exception as e:
-                    logger.warning("Gemini roster call failed (batch): %s", e)
-                await _set_job(jid, stage="extracting", progress=55, message="Extracting duties...")
-                parsed: Any = {}
-                try:
-                    parsed = parse_json_from_text(raw) if raw else {}
-                except Exception as e:
-                    logger.warning("roster parse failed (batch): %s", e)
-                days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
+                parser_source = "llm"
+                # Etihad fast-path
+                if detect_etihad is not None and (f.mime_type or "").lower() == "application/pdf":
+                    try:
+                        with open(path, "rb") as fh:
+                            pdf_bytes = fh.read()
+                        if detect_etihad(pdf_bytes):
+                            pr = parse_etihad_pdf(pdf_bytes, filename=f.filename)
+                            days = to_crewfit_days(pr)
+                            parser_source = "etihad_parser_v1"
+                            raw = f"etihad-parser: {len(days)} days, conf={pr.parse_confidence}"
+                    except Exception as e:
+                        logger.warning("Etihad parser failed (batch): %s", e)
+                # LLM fallback
+                if not days:
+                    try:
+                        raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, f.mime_type)
+                    except Exception as e:
+                        logger.warning("Gemini roster call failed (batch): %s", e)
+                    await _set_job(jid, stage="extracting", progress=55, message="Extracting duties...")
+                    parsed: Any = {}
+                    try:
+                        parsed = parse_json_from_text(raw) if raw else {}
+                    except Exception as e:
+                        logger.warning("roster parse failed (batch): %s", e)
+                    days = parsed.get("days", []) if isinstance(parsed, dict) else parsed
                 if not days:
                     await _set_job(jid, status="failed", stage="extracting", progress=55,
                                    error="Couldn't read this file. Try re-uploading or add days manually.",
@@ -413,6 +493,10 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 days = _apply_day_defaults(days)
                 overlap = await _detect_overlap(user["id"], days)
                 pending = await _persist_pending_roster(user["id"], days, f.filename or f"roster_{idx + 1}", raw, jid)
+                try:
+                    await db.rosters.update_one({"id": pending["id"]}, {"$set": {"parser_source": parser_source}})
+                except Exception:
+                    pass
                 await _set_job(jid, pending_roster_id=pending["id"], overlap=overlap,
                                status="awaiting_confirmation", stage="ready_to_confirm",
                                progress=100, message="Roster ready to review", completed_at=now_iso())

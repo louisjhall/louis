@@ -2790,3 +2790,83 @@ agent_communication:
           field edits patch through to the backend on blur, and the
           drawer shows the fresh impl after mutation.
       No AI/bot wording anywhere in the new UI.
+
+##====================================================================
+## Coach Dashboard V2 Iteration 4 · P1 — Roster Upload + Client Profile Tabs
+##====================================================================
+
+frontend:
+  - task: "V2 workspace ribbon — inline Roster Upload button"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/coach/client/[id]/workspace.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Embedded the existing `CoachRosterUploadButton` (compact mode)
+          in the workspace ribbon so the coach can upload the next roster
+          without leaving the V2 workspace. Passes clientId + clientName,
+          onComplete triggers loadMonth() to refresh the whole month.
+  - task: "V2 client profile tabs — Plan / Check-ins / Messages / Progress / History / Goals"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/V2ClientTabs.tsx + frontend/app/coach/client/[id]/workspace.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          The workspace now has a 6-tab bar directly under the ribbon:
+            plan / checkins / messages / progress / history / goals
+          Plan (default) renders the existing Roster+Plan calendar with
+          ProgrammeSummaryPanel + GenerationStatusBanner + CommandBar +
+          day rows + exceptions + workout drawer.
+          All 5 non-Plan tabs live in `V2ClientTabs.tsx`:
+            - CheckinsPanel: `GET /coach/clients/{id}` → checkins list with
+              energy/recovery/mood/sleep/injury flags, review badge.
+            - MessagesPanel: `GET /messages/{cid}` list + `POST /messages`
+              compose bar. Coach messages align right (brand color).
+            - ProgressPanel: progression pill from client detail +
+              adherence bar from workouts + milestones from
+              /programme-overview.
+            - HistoryPanel: `GET /coach/clients/{id}/programme/history`
+              with status badge and completion bar.
+            - GoalsPanel: primary goal + target event (with phase &
+              weeks-out) + Training DNA rows (progression, days/week,
+              equipment, injuries, constraints).
+          All tabs are Coach-only surfaces; no AI/bot/generated wording.
+          Testable via testIDs `v2-tabbar`, `v2-tab-{plan|checkins|
+          messages|progress|history|goals}`, `v2-checkins-panel`,
+          `v2-messages-panel`, `v2-progress-panel`, `v2-history-panel`,
+          `v2-goals-panel`, `v2-message-input`, `v2-message-send`.
+
+test_plan:
+  current_focus:
+    - "V2 workspace ribbon includes CoachRosterUploadButton (compact)"
+    - "V2 tab bar with 6 tabs; Plan renders unchanged; each non-Plan tab loads without error"
+    - "MessagesPanel send + refresh round-trip"
+    - "GoalsPanel and HistoryPanel handle empty state gracefully"
+    - "No AI/bot/generated wording in any tab"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Coach Dashboard V2 Iteration 4 shipped. Both P1 items done in one
+      pass: (1) Roster Upload is now embedded inline in the workspace
+      ribbon; (2) A 6-tab bar switches between Plan (unchanged) and 5
+      new panels — Check-ins / Messages / Progress / History / Goals —
+      all reading from existing V1 coach endpoints (no new backend
+      required). Coach can now maintain full context in one screen with
+      no bounces to V1. No AI/bot wording. Please test the tab
+      switcher, empty states for a client without much data, and one
+      message round-trip.
+

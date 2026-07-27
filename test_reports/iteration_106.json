@@ -1,0 +1,61 @@
+{
+  "summary": "V2 Coach Dashboard Iteration 4 (P1a + P1b) — frontend-only, all 6 flows PASS. Tested on client@crewfit.com (Alex Rivera, V2 flag, no programme) since testcal2@crewfit.com is not present in Louis's coach client list (only reviewer@crewfit.net + louis@hotmail.co.uk returned). Roster upload button renders inline in ribbon; 6-tab bar renders with correct testIDs (v2-tab-plan default active + checkins/messages/progress/history/goals); switching to each panel loads correctly; Messages round-trip works end-to-end (sent 'Test from V2 workspace', bubble appeared instantly on right side); AI/bot/generated/artificial/algorithm/machine-learning sweep found ZERO hits across all 6 panels; V1 legacy screen still renders untouched. One console 401 during initial anonymous nav (pre-token) is benign. Two minor testID coverage misses on empty states (CheckinsPanel/HistoryPanel empty branches lack outer testID wrapper) — flagged as MINOR.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "CheckinsPanel (empty-state branch)",
+        "issue": "When rows.length === 0 the panel renders a <View style={styles.center}> without testID='v2-checkins-panel'. The visible empty-state copy is correct ('No check-ins yet' / 'The client hasn't submitted a wellness check-in...') but the panel testID is only attached to the populated branch. Ref: /app/frontend/src/components/V2ClientTabs.tsx:57-63",
+        "testID": "v2-checkins-panel",
+        "priority": "MINOR"
+      },
+      {
+        "component": "HistoryPanel (empty-state branch)",
+        "issue": "Empty state branch renders <View style={styles.center}> without testID='v2-history-panel'. Ref: /app/frontend/src/components/V2ClientTabs.tsx:298-304",
+        "testID": "v2-history-panel",
+        "priority": "MINOR"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Coach workspace (Iteration 4)",
+        "issues": [
+          "Cosmetic: at width 1280 the ribbon back button + 'CrewFit' brand logo are cut off (out of viewport in some captured screenshots) — layout ok but the back button overlaps the top-left. Non-blocking.",
+          "The compact 'UPLOAD ROSTER' pill uses backgroundColor #4a90e2 which is off-brand vs the neighbouring theme.color.brand (dark red). Consider aligning to brand tokens.",
+          "Ionicons in the tab bar sometimes render squares/glyph fallback on first frame while the icon font loads (transient)."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "shadow*/textShadow* deprecation warnings",
+        "issue": "Console shows 'shadow* style props are deprecated. Use boxShadow' and 'textShadow* style props are deprecated. Use textShadow' — RN Web deprecation, not blocking but should be migrated. Widely emitted across the app (not new in this iteration)."
+      },
+      {
+        "component": "props.pointerEvents deprecation",
+        "issue": "'props.pointerEvents is deprecated. Use style.pointerEvents' warning surfaced on the workspace screen (likely from a Modal/Pressable) — not new to this iteration."
+      }
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_106.json"],
+  "action_items": [
+    "MINOR: Add testID='v2-checkins-panel' to the CheckinsPanel empty-state <View> at V2ClientTabs.tsx:57 so tests can assert the panel exists regardless of data.",
+    "MINOR: Add testID='v2-history-panel' to the HistoryPanel empty-state <View> at V2ClientTabs.tsx:298 for the same reason.",
+    "Optional consistency: also add testID to the ActivityIndicator wrappers in each panel's loading branch (v2-*-panel) so tests never fall through the DOM.",
+    "SEED (informational): testcal2@crewfit.com is not returned by GET /api/coach/clients for louis@crewfit.net (coach list = 2: reviewer@crewfit.net + louis@hotmail.co.uk). Tests were run against client@crewfit.com (Alex Rivera) instead. If Iter 94s seed for testcal2 is meant to be assigned to Louis, re-run the seed or reassign — otherwise richer-data test paths (5 workouts, missed sessions) cannot be exercised by Louis via coach dashboard.",
+    "Cosmetic: align the compact 'UPLOAD ROSTER' pill background (#4a90e2) with the brand palette (theme.color.brand) so ribbon buttons match visually."
+  ],
+  "critical_code_review_comments": [
+    "workspace.tsx (818 lines) is getting large; consider extracting TabBar, DayRowView, WorkoutDrawer and StatusChip into siblings under /components/workspace/ to keep the file under 700 lines.",
+    "V2ClientTabs.tsx renders 5 independent panels each with its own load state duplicating error/loading UI — could be lifted into a small usePanelData hook. Non-blocking.",
+    "MessagesPanel fromCoach detection: MessageBubble receives coachId = m.from_user_id when m.from_user_id !== clientId — that means every non-client sender is treated as coach and the very first coach message may not have a stable coachId until the list contains at least one client message. Not a P1 bug but worth revisiting."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "N/A (not tested per request)", "frontend": "100% (6/6 flows PASS)" },
+  "seed_data_creation": "None. Sent one live message 'Test from V2 workspace' from Louis → Alex Rivera (client@crewfit.com) via POST /api/messages while validating Flow 4.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login as louis@crewfit.net / Louis123!. Store JWT under localStorage key 'cf_token' (that's what /src/lib/api.ts uses via AsyncStorage on web) — otherwise all V2ClientTabs panels error with 'Missing token'. Workspace URL: /coach/client/{id}/workspace. testcal2@crewfit.com is NOT assigned to Louis in this environment; use client@crewfit.com id d6e0be44-d3a5-407f-bc04-7cc7ef96179a (Alex Rivera, V2, no programme) or reassign testcal2 first.",
+  "rca_of_issue": "No functional bugs. testID gap on empty states is a straightforward oversight — the panel-level testID lives on the populated branch only; wrap the empty <View> or return early with an outer <View testID=…> encompassing both branches."
+}

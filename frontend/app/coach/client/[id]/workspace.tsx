@@ -26,6 +26,8 @@ import { GenerationStatusBanner } from "@/src/components/GenerationStatusBanner"
 import { ProgrammeSummaryPanel } from "@/src/components/ProgrammeSummaryPanel";
 import { PublishPanel } from "@/src/components/PublishPanel";
 import { InlineWorkoutEditor } from "@/src/components/InlineWorkoutEditor";
+import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
+import { V2ClientTabs, V2Tab } from "@/src/components/V2ClientTabs";
 
 type DayRow = {
   date: string;
@@ -113,6 +115,7 @@ export default function CoachWorkspaceScreen() {
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
   const [directiveOpen, setDirectiveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<V2Tab>("plan");
 
   const loadMonths = useCallback(async () => {
     if (!clientId) return;
@@ -250,10 +253,26 @@ export default function CoachWorkspaceScreen() {
                 <Text style={styles.publishBtnText}>Publish changes</Text>
               </Pressable>
             )}
+            <CoachRosterUploadButton
+              clientId={String(clientId)}
+              clientName={data.client?.name}
+              onComplete={loadMonth}
+              compact
+            />
           </View>
         )}
       </View>
 
+      {/* V2 client tabs — Plan (default) + Check-ins / Messages / Progress / History / Goals */}
+      <TabBar active={activeTab} onChange={setActiveTab} />
+
+      {activeTab !== "plan" ? (
+        <V2ClientTabs
+          clientId={String(clientId)}
+          tab={activeTab}
+        />
+      ) : (
+      <>
       {/* Programme summary panel — expandable header with goal + phase strip */}
       {data && <ProgrammeSummaryPanel clientId={String(clientId)} />}
 
@@ -309,6 +328,8 @@ export default function CoachWorkspaceScreen() {
           )}
         </ScrollView>
       )}
+      </>
+      )}
 
       {/* Workout drawer */}
       <WorkoutDrawer
@@ -345,6 +366,37 @@ function CountPill({ label, n, kind }: { label: string; n: number; kind: string 
     <View style={[styles.countPill, { borderColor: STATUS_TINT[kind] || theme.color.border }]}>
       <Text style={[styles.countPillN, { color: STATUS_TINT[kind] || theme.color.textHi }]}>{n}</Text>
       <Text style={styles.countPillLabel}>{label}</Text>
+    </View>
+  );
+}
+
+/* ---- V2 client tab bar ---- */
+const TABS: { key: V2Tab; label: string; icon: any }[] = [
+  { key: "plan",      label: "Plan",      icon: "calendar-outline" },
+  { key: "checkins",  label: "Check-ins", icon: "heart-outline" },
+  { key: "messages",  label: "Messages",  icon: "chatbubble-outline" },
+  { key: "progress",  label: "Progress",  icon: "trending-up-outline" },
+  { key: "history",   label: "History",   icon: "time-outline" },
+  { key: "goals",     label: "Goals",     icon: "flag-outline" },
+];
+
+function TabBar({ active, onChange }: { active: V2Tab; onChange: (t: V2Tab) => void }) {
+  return (
+    <View style={styles.tabBar} testID="v2-tabbar">
+      {TABS.map((t) => {
+        const on = t.key === active;
+        return (
+          <Pressable
+            key={t.key}
+            onPress={() => onChange(t.key)}
+            style={[styles.tabBtn, on && styles.tabBtnActive]}
+            testID={`v2-tab-${t.key}`}
+          >
+            <Ionicons name={t.icon} size={14} color={on ? theme.color.brand : theme.color.textDim} />
+            <Text style={[styles.tabBtnText, on && styles.tabBtnTextActive]}>{t.label}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -644,6 +696,23 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brand,
   },
   publishBtnText: { color: "#000", fontWeight: "800", fontSize: 12, letterSpacing: 0.3 },
+  tabBar: {
+    flexDirection: "row", gap: 4, paddingHorizontal: 16, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: theme.color.border,
+    backgroundColor: theme.color.surface2, flexWrap: "wrap",
+  },
+  tabBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6,
+    borderWidth: 1, borderColor: "transparent",
+  },
+  tabBtnActive: {
+    borderColor: theme.color.brand, backgroundColor: "#00000030",
+  },
+  tabBtnText: {
+    color: theme.color.textDim, fontSize: 12, fontWeight: "700",
+  },
+  tabBtnTextActive: { color: theme.color.brand },
 
   colHead: { flexDirection: "row", paddingHorizontal: 88, paddingTop: 12, paddingBottom: 6 },
   colHeadText: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },

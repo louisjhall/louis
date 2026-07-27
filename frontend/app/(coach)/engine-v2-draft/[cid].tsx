@@ -224,7 +224,7 @@ export default function EngineV2DraftScreen() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <ActivityIndicator style={{ marginTop: 60 }} color={theme.colors.primary} />
+        <ActivityIndicator style={{ marginTop: 60 }} color={theme.color.brand} />
       </SafeAreaView>
     );
   }

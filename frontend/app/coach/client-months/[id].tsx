@@ -22,6 +22,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { WorkoutQuickActions, type WorkoutQuickActionTarget } from "@/src/components/WorkoutQuickActions";
+import { ScheduleRow } from "@/src/components/ScheduleRow";
 
 // -------------------- Types --------------------
 
@@ -230,8 +231,8 @@ export default function CoachClientMonths() {
           <Ionicons name="chevron-back" size={26} color={theme.color.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>PROGRAMME · {clientName.toUpperCase()}</Text>
-          <Text style={styles.headerSub}>Roster & workouts by month</Text>
+          <Text style={styles.headerTitle} numberOfLines={1}>SCHEDULE · {clientName.toUpperCase()}</Text>
+          <Text style={styles.headerSub}>Schedule · roster + assigned plan by month</Text>
         </View>
         <Pressable testID="cm-refresh" onPress={onRefresh} hitSlop={10}>
           <Ionicons name="refresh" size={20} color={theme.color.textMuted} />
@@ -340,10 +341,10 @@ export default function CoachClientMonths() {
               </View>
             ) : detail && detail.days.length > 0 ? (
               detail.days.map((d) => (
-                <DayCardView
+                <ScheduleRow
                   key={d.date}
-                  d={d}
-                  onWorkoutPress={() => d.workout?.id && router.push(`/coach/workout/edit/${d.workout.id}` as any)}
+                  day={d as any}
+                  onOpenWorkout={(wid) => router.push(`/coach/workout/edit/${wid}` as any)}
                   onWorkoutMenu={() => d.workout?.id && setQaTarget({
                     id: d.workout.id,
                     title: d.workout.title,

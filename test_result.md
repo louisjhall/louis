@@ -2870,3 +2870,96 @@ agent_communication:
       switcher, empty states for a client without much data, and one
       message round-trip.
 
+
+##====================================================================
+## V1 → V2 MIGRATION · Phase A (default flip) + Phase C (data wipe)
+##====================================================================
+
+backend:
+  - task: "V2 flags default-on for new signups + coach-created clients"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_v2_defaults.py + backend/server.py (signup + coach_create_client)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Added feature_v2_defaults.py with default_client_v2_flags() and
+          default_coach_v2_flags() helpers. Both signup and
+          coach_create_client now inject the full V2 flag bundle
+          (state_foundation, goals_phases, roster_facets, scheduling_v2,
+          construction_v2, equipment_adaptation_v2, progression_v2,
+          reality_v2, events_v2, automation_v2, demand_engine +
+          v2_default). Coaches created via signup ROUTE cannot exist
+          (role forced to client), so no coach-creation change needed.
+  - task: "One-shot V2 flip + client-data wipe migration"
+    implemented: true
+    working: true
+    file: "backend/migrations/v2_flip_default.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Migration script (dry-run supported) executed twice against the
+          live crewfit_v1 DB. Final state:
+            - 2 coaches: louis@crewfit.net (13 flags), coach@crewfit.com (13 flags)
+            - 1 client: reviewer@crewfit.net (12 flags — App Store account, preserved)
+            - All test clients + orphan V1/V2 data wiped (30 collections
+              across programmes, workouts, plans, drafts, versions,
+              messages, audit_logs, etc.).
+          Preserved emails hardcoded: louis@crewfit.net,
+          reviewer@crewfit.net.
+
+frontend:
+  - task: "Coach lands on V2 Home by default (retiring /coach/clients as landing)"
+    implemented: true
+    working: true
+    file: "frontend/app/index.tsx + (auth)/login.tsx + (auth)/signup.tsx + (coach)/_layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          All 4 coach-redirect points changed from /coach/clients (or
+          /coach/overview on desktop) to /(coach)/v2-home:
+            - /app/index.tsx      Redirect on session
+            - login.tsx            first-login redirect
+            - login.tsx            demo-login redirect
+            - signup.tsx           post-signup redirect (defensive; role is
+                                   forced to client on this route)
+          Coach tab bar reordered: v2-home is now first tab, labeled
+          "HOME" (no longer "V2 HOME" — V2 IS home now). Verified on
+          desktop via screenshot at /app/scripts/coach_home_v2.png —
+          Louis lands on V2 Home instantly with sidebar "V2 Home (New)"
+          active.
+
+test_plan:
+  current_focus:
+    - "signup persists v2_flags on new clients"
+    - "coach_create_client persists v2_flags on manually-created clients"
+    - "coach login → V2 Home (not V1 clients/overview)"
+    - "V2 endpoints work for the reviewer account (only surviving client)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Phase A of V1→V2 migration shipped:
+        1. New signups/coach-created clients get the full V2 flag bundle
+        2. Existing users migrated (3 test clients deleted; louis coach +
+           reviewer client + coach@ coach retained with V2 flags on)
+        3. Coach lands on V2 Home by default; tab bar reordered
+      Phase B (client-facing V2 UI — reading LIVE plan from
+      workout_implementations) starts next. Phase D (V1 UI retirement)
+      after B is stable.
+

@@ -996,6 +996,16 @@ async def signup(body: SignupBody):
     ]:
         if v is not None and (not isinstance(v, str) or v.strip()):
             seeded_profile[k] = v.strip() if isinstance(v, str) else v
+    # V2 is default for all new signups — enables the LIVE/DRAFT plan
+    # boundary, P2-P12 pipelines, and the V2 client UI.
+    try:
+        from feature_v2_defaults import default_client_v2_flags
+        seeded_profile["v2_flags"] = {
+            **default_client_v2_flags(),
+            "updated_at": now, "updated_by": "system_signup",
+        }
+    except Exception:
+        logger.exception("signup — could not attach default V2 flags")
     u = {
         "id": new_id(), "email": body.email.lower(), "name": display_name,
         "first_name": (body.first_name or "").strip() or None,
@@ -1075,6 +1085,16 @@ async def coach_create_client(body: CoachCreateClientBody, coach: dict = Depends
             seeded_profile[k] = v.strip() if isinstance(v, str) else v
 
     now = now_iso()
+    # V2 is default for all clients — enables LIVE/DRAFT plan boundary +
+    # P2-P12 pipelines + V2 client UI.
+    try:
+        from feature_v2_defaults import default_client_v2_flags
+        seeded_profile["v2_flags"] = {
+            **default_client_v2_flags(),
+            "updated_at": now, "updated_by": coach.get("id") or "system_coach_create",
+        }
+    except Exception:
+        logger.exception("coach_create_client — could not attach default V2 flags")
     u = {
         "id": new_id(),
         "email": email,

@@ -145,7 +145,7 @@ export default function Signup() {
         photo_mime: photoBase64 ? photoMime : undefined,
       });
       // All new signups are clients — head straight to the DNA assessment.
-      if (u.role === "coach") router.replace("/(coach)/clients" as any);
+      if (u.role === "coach") router.replace("/(coach)/v2-home" as any);
       else router.replace("/training-setup" as any);   // Iter 84 (Task 1.3): setup first, then assessment
     } catch (e: any) {
       setErr(e.message);

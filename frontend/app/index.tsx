@@ -26,6 +26,6 @@ export default function Index() {
   if (!welcomed && !user) return <Redirect href="/welcome" />;
   if (!user) return <Redirect href="/(auth)/login" />;
   if (!user.onboarded && user.role === "client") return <Redirect href="/assessment" />;
-  if (user.role === "coach") return <Redirect href="/(coach)/clients" />;
+  if (user.role === "coach") return <Redirect href="/(coach)/v2-home" />;
   return <Redirect href="/(client)/home" />;
 }

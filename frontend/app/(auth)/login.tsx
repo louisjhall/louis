@@ -46,7 +46,7 @@ export default function Login() {
     setLoading(true);
     try {
       const u = await login(email.trim(), password);
-      if (u.role === "coach") router.replace(isDesktopWeb ? "/(coach)/overview" : "/(coach)/clients");
+      if (u.role === "coach") router.replace("/(coach)/v2-home");
       else if (!u.onboarded) router.replace("/assessment");
       else router.replace("/(client)/home");
     } catch (e: any) {
@@ -189,7 +189,7 @@ export default function Login() {
                     try {
                       const u = await login("louis@crewfit.net", "Louis123!");
                       if (u.role === "coach") {
-                        router.replace(isDesktopWeb ? "/(coach)/overview" : "/(coach)/clients");
+                        router.replace("/(coach)/v2-home");
                       } else {
                         router.replace("/(client)/home");
                       }

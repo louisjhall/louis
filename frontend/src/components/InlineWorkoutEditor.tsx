@@ -61,6 +61,9 @@ export function InlineWorkoutEditor({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [local, setLocal] = useState<Impl>({ ...impl });
+  // Track the last server-known baseline for meta diff, so successful
+  // PATCHes don't cause the next commitMeta to re-issue redundant work.
+  const baselineRef = React.useRef<Impl>({ ...impl });
 
   const patchMeta = useCallback(
     async (fields: Partial<Impl>) => {
@@ -71,6 +74,7 @@ export function InlineWorkoutEditor({
           { method: "PATCH", body: fields }
         );
         setLocal(fresh);
+        baselineRef.current = fresh;
         setDirty(false);
         onSaved(fresh);
       } catch (e: any) {
@@ -91,6 +95,7 @@ export function InlineWorkoutEditor({
           { method: "PATCH", body: patch }
         );
         setLocal(fresh);
+        baselineRef.current = fresh;
         setDirty(false);
         onSaved(fresh);
       } catch (e: any) {
@@ -111,6 +116,7 @@ export function InlineWorkoutEditor({
           { method: "DELETE" }
         );
         setLocal(fresh);
+        baselineRef.current = fresh;
         onSaved(fresh);
       } catch (e: any) {
         onError?.(e?.message || String(e));
@@ -136,6 +142,7 @@ export function InlineWorkoutEditor({
         }
       );
       setLocal(fresh);
+      baselineRef.current = fresh;
       onSaved(fresh);
     } catch (e: any) {
       onError?.(e?.message || String(e));
@@ -157,6 +164,7 @@ export function InlineWorkoutEditor({
         { method: "POST", body: { order } }
       );
       setLocal(fresh);
+      baselineRef.current = fresh;
       onSaved(fresh);
     } catch (e: any) {
       onError?.(e?.message || String(e));
@@ -168,16 +176,21 @@ export function InlineWorkoutEditor({
   // Local staging for meta edits (title/duration/rationale) — commit on blur
   const commitMeta = useCallback(() => {
     if (!dirty) return;
+    const base = baselineRef.current;
     const changed: Partial<Impl> = {};
-    if (local.title !== impl.title) changed.title = local.title;
-    if (local.duration_min !== impl.duration_min) changed.duration_min = local.duration_min;
-    if (local.focus !== impl.focus) changed.focus = local.focus;
-    if (local.location_label !== impl.location_label) changed.location_label = local.location_label;
-    if (local.coach_notes !== impl.coach_notes) changed.coach_notes = local.coach_notes;
-    if (local.rationale !== impl.rationale) changed.rationale = local.rationale;
-    if (local.key_session !== impl.key_session) changed.key_session = local.key_session;
-    if (Object.keys(changed).length > 0) patchMeta(changed);
-  }, [dirty, local, impl, patchMeta]);
+    if (local.title !== base.title) changed.title = local.title;
+    if (local.duration_min !== base.duration_min) changed.duration_min = local.duration_min;
+    if (local.focus !== base.focus) changed.focus = local.focus;
+    if (local.location_label !== base.location_label) changed.location_label = local.location_label;
+    if (local.coach_notes !== base.coach_notes) changed.coach_notes = local.coach_notes;
+    if (local.rationale !== base.rationale) changed.rationale = local.rationale;
+    if (local.key_session !== base.key_session) changed.key_session = local.key_session;
+    if (Object.keys(changed).length > 0) {
+      patchMeta(changed);
+    } else {
+      setDirty(false);
+    }
+  }, [dirty, local, patchMeta]);
 
   return (
     <ScrollView contentContainerStyle={styles.wrap} testID="inline-editor">

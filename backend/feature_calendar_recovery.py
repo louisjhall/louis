@@ -420,6 +420,23 @@ async def calendar_range(
     for w in workouts:
         ds = str(w.get("date") or "")[:10]
         by_date[ds] = w
+    # Iter 110 — Engine V2 client bridge: /calendar/range also drives the
+    # client HOME schedule (ClientCalendarPanel), so V2 clients need their
+    # plan_live_v2 placements merged in here too. Only fill dates that don't
+    # already have a legacy workout — V2 clients don't have any in practice.
+    try:
+        from feature_v2_client_bridge import synth_workouts_for_user
+        v2_rows = await synth_workouts_for_user(
+            db, user["id"],
+            start_iso=_iso(d_from), end_iso=_iso(d_to),
+        )
+        for r in v2_rows:
+            ds = str(r.get("date") or "")[:10]
+            if ds and ds not in by_date:
+                by_date[ds] = r
+    except Exception:
+        # Never let the bridge break /calendar/range for anyone.
+        pass
     roster_by_date = await _roster_days_between(user["id"], d_from, d_to)
     acts_by_date = await _activities_between(user["id"], d_from, d_to)
 

@@ -1,0 +1,48 @@
+{
+  "summary": "Iter 111 — BOTH critical/high fixes from iter110 are VERIFIED end-to-end for Pietro. Backend: extended test_iter110_v2_client_bridge.py with TestPietroCalendarRange (3 cases) and TestWorkoutDetailBridgeReshape (1 case); full suite = 13 passed / 1 skipped (the skipped one is the same coach-roster HTTP probe from iter110 — the DB-level V1 regression still passes). Curl confirms: GET /api/calendar/range?from=2026-07-25&to=2026-08-02 as Pietro now returns 2026-07-28 badge='planned' workout.title='Run Easy' estimated_minutes=35 coach_locked=true key_session=false, 2026-07-31 badge='key_session' workout.title='Run Long' estimated_minutes=60 key_session=true coach_locked=true, all other days badge='rest' workout=null. Workout detail /api/workouts/v2p:edc0be3a-…:{run_long_id} now returns warmup=null and blocks[]=[warmup 10min z1, long_steady 45min z2 pace_target='MP+90s' fuel_cue='Fuel every 30-40 min if >75 min.', cooldown 5min z1]. V1 regression: synth_workouts_for_user() returns [] for a real V1 client in the DB. Frontend E2E (390x844): Pietro logs in → Home schedule shows 'PLANNED Run Easy treadmill · 35min' on Tue 28 Jul and 'KEY SESSION Run Long outdoor · 60min · KEY' on Fri 31 Jul (no 'REST × 9'). Tapping the Run Long cell navigates to /workout/v2p:…:… and the SESSION section renders exactly three cards (Warmup 10 min · Z1 + cue, Long Steady 45 min · Z2 · MP+90s + cue + Fuel cue, Cooldown 5 min · Z1 + cue). No EXERCISES header appears. Rationale 'Run Long — foundation phase' renders. Calendar tab (July 2026) loads. Both regression gaps from iter110 are closed. NOTE: the pre-existing benign console warning 'Unexpected text node: . A text node cannot be a child of a <View>.' still fires once on the detail page — non-blocking, already flagged in iter110.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/calendar/timeline",
+        "issue": "Carry-over from iter110 (not part of this iter's spec): when a V2 day has multiple placements (Run Easy + Mobility on 2026-07-28) only the first surfaces on the timeline day cell. /calendar/range and /workouts/week both surface all rows. No new fix requested for this iter."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "/app/frontend/app/workout/[id]/index.tsx",
+        "issue": "Non-blocking console error 'Unexpected text node: . A text node cannot be a child of a <View>.' fires once when the Run Long detail page mounts. Likely a stray whitespace/text sibling inside a <View>. Same as iter110 finding — not a regression."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter110_v2_client_bridge.py",
+    "/app/test_reports/pytest/iter111_v2_client_bridge.xml"
+  ],
+  "action_items": [
+    "OPTIONAL — chase down the 'Unexpected text node' console warning on /app/frontend/app/workout/[id]/index.tsx (stray text child inside a <View>). Non-blocking.",
+    "OPTIONAL — /calendar/timeline currently returns only the first placement per date when Pietro has multiple V2 workouts on the same day (Run Easy + Mobility on 2026-07-28). If the design wants both to surface, extend the timeline day shape to carry a list of workout_ids/titles. Not requested in this iter."
+  ],
+  "critical_code_review_comments": [
+    "feature_calendar_recovery.calendar_range now correctly guards the V2 splice in a try/except so a bridge exception can never break /calendar/range for anyone. Good defensive pattern.",
+    "feature_v2_client_bridge.synth_workout_from_placement now emits warmup=None plus duration_minutes/estimated_minutes aliases — clean reshape that both /calendar/range and the frontend renderer consume without special-casing.",
+    "app/workout/[id]/index.tsx now renders blocks[] as its own SESSION section above EXERCISES, and the exercise heading is guarded by exercises.length > 0 so cardio sessions render clean. Nice separation from the legacy strength renderer."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter110_v2_client_bridge.py (extended — added TestPietroCalendarRange with 3 cases and TestWorkoutDetailBridgeReshape with 1 case; suite is now 14 tests total, 13 pass + 1 skipped)"
+  ],
+  "success_rate": {
+    "backend": "100% of executed tests pass (13/13 pass, 1 skipped is same coach-roster HTTP probe as iter110 — DB-level regression still passes)",
+    "frontend": "100% for the two paths verified — home schedule shows Run Easy & Run Long on the correct dates, workout detail renders all 3 blocks with duration/HR/pace/cue/fuel_cue, no EXERCISES header for cardio, KEY SESSION chip renders, calendar tab loads July 2026"
+  },
+  "seed_data_creation": "None. Read-only against existing plan_live_v2 (id=edc0be3a-9424-4bba-85eb-076b3818c945) for user c4c7c7dd-4303-4645-af2c-b70212495360 (Pietro).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iter110_v2_client_bridge.py is the canonical regression for the V2 client bridge. It now covers /workouts/week (5 cases), /workouts/{id} (2 cases incl warmup=null + blocks reshape), /calendar/timeline (1 case), /calendar/range (3 cases: happy path + rest-day negative + V1 no-splice), and the V1 bridge helper (1 direct DB case). All 13 executed cases pass; 1 case (V1 client HTTP week probe) is skipped because /api/v2/coach/clients returns 404 to Louis in this env — the DB-level V1 regression still runs. If a follow-up iter changes the timeline endpoint to surface multiple placements per day, that will need a new class. Pietro credentials still valid.",
+  "rca_of_issue": "Both bugs from iter110 are now fixed. (1) CRITICAL /calendar/range — feature_calendar_recovery.py:calendar_range now imports feature_v2_client_bridge.synth_workouts_for_user and merges the synthetic rows into by_date after the legacy _workouts_between() lookup, guarded by try/except so any bridge failure falls back to legacy behaviour (verified: 2026-07-28 planned + 2026-07-31 key_session, all other days rest with workout=null). (2) HIGH workout detail — feature_v2_client_bridge.synth_workout_from_placement now sets warmup=None (the legacy `view.warmup?.length > 0` guard is falsy) so app/workout/[id]/index.tsx routes to the new blocks[] renderer which emits a SESSION section with one card per block containing type, duration_min, hr_zone, pace_target, cue and fuel_cue. Verified visually on 390x844 viewport — Warmup / Long Steady / Cooldown cards render with all metadata, EXERCISES header suppressed for cardio."
+}

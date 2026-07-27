@@ -127,6 +127,8 @@ def synth_workout_from_placement(
         "title": _humanise(kind) or "Session",
         "focus": focus,
         "duration_min": duration,
+        "duration_minutes": duration,       # /calendar/range alias
+        "estimated_minutes": duration,      # /calendar/range alias
         "day_load": 3 if bool(placement.get("key")) else 2,
         "key_session": bool(placement.get("key")),
         "location": location,
@@ -136,7 +138,12 @@ def synth_workout_from_placement(
         "completed": False,
         "coach_notes": "",
         "rationale": spec.get("rationale") or "",
-        "warmup": (spec.get("payload") or {}).get("warmup") or None,
+        # NB: warmup is intentionally null — blocks[] already carries the
+        # warm-up segment. Client workout detail treats a non-empty `warmup`
+        # array as a gym-style warm-up list (name / duration_sec) which is the
+        # wrong shape for cardio/mobility. Leaving it null avoids a broken
+        # render; the BLOCKS section renders the full session.
+        "warmup": None,
         "exercises": exercises,
         "blocks": blocks,
         "alternatives": [],

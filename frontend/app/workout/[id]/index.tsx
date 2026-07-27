@@ -390,7 +390,60 @@ export default function WorkoutDetail() {
           </>
         )}
 
-        <Text style={styles.sect}>EXERCISES</Text>
+        {/* Iter 110 — Engine V2 cardio / mobility block renderer.
+            V2 running / cycling / swim / mobility sessions arrive with a
+            structured blocks[] (warmup, main, cooldown, segments) that the
+            legacy warmup+exercises layout can't show. Rendered above
+            EXERCISES so strength workouts (which have exercises[] but no
+            blocks[]) still look the same. */}
+        {view.blocks?.length > 0 && (
+          <>
+            <Text style={styles.sect}>SESSION</Text>
+            {view.blocks.map((b: any, i: number) => {
+              const label = String(b.type || "block")
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (c: string) => c.toUpperCase());
+              const meta: string[] = [];
+              if (b.duration_min) meta.push(`${b.duration_min} min`);
+              if (b.hr_zone) meta.push(String(b.hr_zone).toUpperCase());
+              if (b.pace_target) meta.push(String(b.pace_target));
+              if (b.power_target) meta.push(String(b.power_target));
+              if (b.cadence) meta.push(`cad ${b.cadence}`);
+              if (b.effort_rpe) meta.push(`RPE ${b.effort_rpe}`);
+              if (b.work_sec || b.rest_sec) {
+                meta.push(
+                  `${b.sets ? `${b.sets}× ` : ""}${b.work_sec || 0}s on / ${b.rest_sec || 0}s off`
+                );
+              }
+              return (
+                <View
+                  key={`blk-${i}`}
+                  style={styles.exCard}
+                  testID={`v2-block-${i}`}
+                >
+                  <Text style={styles.exName}>{label}</Text>
+                  {meta.length > 0 && (
+                    <Text style={styles.exMeta}>{meta.join(" · ")}</Text>
+                  )}
+                  {b.cue ? (
+                    <Text style={styles.exNotes} numberOfLines={3}>
+                      {b.cue}
+                    </Text>
+                  ) : null}
+                  {b.fuel_cue ? (
+                    <Text style={styles.exNotes} numberOfLines={2}>
+                      Fuel: {b.fuel_cue}
+                    </Text>
+                  ) : null}
+                </View>
+              );
+            })}
+          </>
+        )}
+
+        {((editing ? w.exercises : view.exercises) || []).length > 0 && (
+          <Text style={styles.sect}>EXERCISES</Text>
+        )}
         {((editing ? w.exercises : view.exercises) || []).map((ex: any, idx: number) => (
           <View key={idx} style={styles.exCard} testID={`ex-${idx}`}>
             {editing ? (

@@ -305,3 +305,130 @@ class TestV1ClientRegression:
 
         rows = asyncio.get_event_loop().run_until_complete(_run2(u["id"]))
         assert rows == [], f"Expected empty v2 rows for V1 client {u.get('email')}, got {rows}"
+
+
+# ---------- 5. /calendar/range for Pietro (Iter 111) -------------------
+
+class TestPietroCalendarRange:
+    """Iter 111 — /calendar/range must splice V2 placements.
+
+    Was returning badge='rest' for every day in iter110. Main agent
+    extended feature_calendar_recovery.calendar_range to merge in
+    synth_workouts_for_user() results.
+    """
+
+    def test_pietro_range_shows_planned_days(self, pietro_token):
+        r = requests.get(
+            f"{BASE_URL}/api/calendar/range?from=2026-07-25&to=2026-08-02",
+            headers=_auth(pietro_token), timeout=30,
+        )
+        assert r.status_code == 200, r.text
+        payload = r.json()
+        by_date = {d["date"]: d for d in payload.get("days") or []}
+
+        # 2026-07-28 — Run Easy
+        d28 = by_date.get("2026-07-28")
+        assert d28, f"missing 2026-07-28: {list(by_date.keys())}"
+        assert d28.get("badge") == "planned", d28
+        w28 = d28.get("workout") or {}
+        assert "Run Easy" in (w28.get("title") or ""), w28
+        assert w28.get("estimated_minutes") == 35, w28
+        assert w28.get("coach_locked") is True, w28
+        assert w28.get("key_session") is False, w28
+
+        # 2026-07-31 — Run Long
+        d31 = by_date.get("2026-07-31")
+        assert d31, f"missing 2026-07-31"
+        assert d31.get("badge") in ("key_session", "planned"), d31
+        w31 = d31.get("workout") or {}
+        assert "Run Long" in (w31.get("title") or ""), w31
+        assert w31.get("estimated_minutes") == 60, w31
+        assert w31.get("key_session") is True, w31
+        assert w31.get("coach_locked") is True, w31
+
+    def test_pietro_range_other_days_rest(self, pietro_token):
+        r = requests.get(
+            f"{BASE_URL}/api/calendar/range?from=2026-07-25&to=2026-08-02",
+            headers=_auth(pietro_token), timeout=30,
+        )
+        payload = r.json()
+        by_date = {d["date"]: d for d in payload.get("days") or []}
+        for ds in ("2026-07-25", "2026-07-26", "2026-07-27",
+                   "2026-07-29", "2026-07-30", "2026-08-01", "2026-08-02"):
+            d = by_date.get(ds)
+            assert d, f"missing {ds}"
+            assert d.get("badge") == "rest", f"{ds} should be rest, got {d.get('badge')}"
+            assert d.get("workout") in (None, {}), f"{ds} workout should be None: {d.get('workout')}"
+
+    def test_v1_client_range_no_v2p(self):
+        """Direct-DB regression: V1 client shouldn't get v2p: rows on /range.
+
+        We can't easily impersonate a V1 client without their password
+        (matches iter110's constraint), so we assert against the bridge
+        helper directly.
+        """
+        import asyncio
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from feature_v2_client_bridge import synth_workouts_for_user
+
+        mongo_url = os.environ.get("MONGO_URL")
+        db_name = os.environ.get("DB_NAME")
+        assert mongo_url and db_name
+
+        async def _run():
+            cli = AsyncIOMotorClient(mongo_url)
+            dbh = cli[db_name]
+            u = await dbh.users.find_one({
+                "role": "client",
+                "$or": [
+                    {"profile.v2_flags.engine_v2": {"$exists": False}},
+                    {"profile.v2_flags.engine_v2": False},
+                ],
+                "id": {"$ne": PIETRO_UID},
+            }, {"_id": 0, "id": 1, "email": 1})
+            if not u:
+                cli.close()
+                return None
+            out = await synth_workouts_for_user(
+                dbh, u["id"],
+                start_iso="2026-07-25", end_iso="2026-08-02",
+            )
+            cli.close()
+            return (u, out)
+
+        res = asyncio.get_event_loop().run_until_complete(_run())
+        if not res:
+            pytest.skip("No V1 client in DB")
+        u, rows = res
+        assert rows == [], f"V1 client {u.get('email')} unexpectedly got v2 rows: {rows}"
+
+
+# ---------- 6. Regression: /workouts/{id} warmup=None, blocks[] populated ----
+
+class TestWorkoutDetailBridgeReshape:
+    """Iter 111 — bridge should now emit warmup=None (previously a dict which
+    broke the legacy warmup-array renderer). blocks[] carries the segments."""
+
+    def test_run_long_detail_warmup_is_null(self, pietro_token):
+        r = requests.get(f"{BASE_URL}/api/workouts/week",
+                         headers=_auth(pietro_token), timeout=30)
+        rows = r.json()
+        rl = next((w for w in rows if w.get("source") == "engine_v2"
+                   and "Run Long" in (w.get("title") or "")), None)
+        assert rl
+        det = requests.get(f"{BASE_URL}/api/workouts/{rl['id']}",
+                           headers=_auth(pietro_token), timeout=30).json()
+        # warmup MUST be null so the legacy `view.warmup?.length > 0` guard
+        # is falsy and the new blocks[] renderer takes over.
+        assert det.get("warmup") is None, f"warmup must be null, got {det.get('warmup')!r}"
+        blocks = det.get("blocks") or []
+        assert len(blocks) >= 3, f"expected >=3 blocks, got {len(blocks)}"
+        types = [b.get("type") for b in blocks]
+        assert "warmup" in types and "cooldown" in types, types
+        ls = next((b for b in blocks if b.get("type") == "long_steady"), None)
+        assert ls, "long_steady missing"
+        assert ls.get("pace_target") == "MP+90s"
+        assert ls.get("fuel_cue")
+        assert ls.get("hr_zone")

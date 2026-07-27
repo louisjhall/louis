@@ -114,6 +114,19 @@ export default function EngineV2DraftScreen() {
     setLoading(true);
     setErrorMsg(null);
     try {
+      // First check if there's an active draft — if not, we render an
+      // empty state rather than trying to load exceptions/compare (both
+      // would return 404).
+      const state = await api(`/v2/coach/clients/${cid}/engine-v2/state`);
+      if (!state.has_active_draft) {
+        setDraft(null);
+        setExceptions([]);
+        setConfigStatus(null);
+        setCompare({ has_live: state.has_active_live });
+        setErrorMsg(null);
+        (window as any).__v2State = state;
+        return;
+      }
       const [d, e, c] = await Promise.all([
         api(`/v2/coach/clients/${cid}/engine-v2/draft`),
         api(`/v2/coach/clients/${cid}/engine-v2/exceptions`),
@@ -217,11 +230,43 @@ export default function EngineV2DraftScreen() {
   }
 
   if (!draft) {
+    const state = (typeof window !== "undefined" && (window as any).__v2State) || {};
     return (
-      <SafeAreaView style={styles.container}>
-        <Text style={styles.title}>Engine V2 Draft</Text>
-        <Text style={styles.muted}>No draft found. Run the Engine V2 kickoff first.</Text>
-        {errorMsg ? <Text style={styles.err}>{errorMsg}</Text> : null}
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <Stack.Screen options={{ title: "Engine V2 Draft" }} />
+        <ScrollView contentContainerStyle={{ padding: 16 }}>
+          <Text style={styles.title}>Engine V2 Draft</Text>
+          <View style={styles.warningBox}>
+            <Text style={styles.warningTitle}>No active Draft</Text>
+            <Text style={styles.warningItem}>
+              {state.has_roster
+                ? "A roster is uploaded but no active Draft has been generated yet. Run Engine V2 kickoff to create one."
+                : "No roster has been uploaded for this client. Upload the client's roster in Roster + Plan to create the next Draft."}
+            </Text>
+          </View>
+          {state.has_active_live ? (
+            <View style={[styles.warningBox, { backgroundColor: "#003A2A" }]}>
+              <Text style={[styles.warningTitle, { color: "#A7F3D0" }]}>
+                Current published Live plan is preserved
+              </Text>
+              <Text style={[styles.warningItem, { color: "#A7F3D0" }]}>
+                Live ID: {String(state.active_live_id || "").slice(0, 8)} · activated{" "}
+                {String(state.active_live_activated_at || "").slice(0, 10)}
+              </Text>
+              <Text style={[styles.warningItem, { color: "#A7F3D0" }]}>
+                The client continues to receive this Live programme until you
+                publish a replacement.
+              </Text>
+            </View>
+          ) : null}
+          {errorMsg ? <Text style={styles.err}>{errorMsg}</Text> : null}
+          <Pressable
+            style={[styles.toggleBtn, { marginTop: 20 }]}
+            onPress={() => router.back()}
+          >
+            <Text style={styles.toggleBtnLabel}>← Back</Text>
+          </Pressable>
+        </ScrollView>
       </SafeAreaView>
     );
   }

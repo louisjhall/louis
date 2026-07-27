@@ -244,16 +244,25 @@ def _extract_exceptions(draft: dict) -> list[dict]:
     return exceptions
 
 
+# The set of draft statuses that count as "the active draft" for coach review.
+# Published drafts are historical audit for a live plan; superseded_by_reset
+# drafts have been retired by an admin/reset action. Neither should be
+# returned as the current draft for exception review, compare, or publish.
+_ACTIVE_DRAFT_STATUSES = {"needs_review", "ready_for_review"}
+_ACTIVE_DRAFT_FILTER = {"status": {"$in": list(_ACTIVE_DRAFT_STATUSES)}}
+
+
 @api.get("/v2/coach/clients/{client_id}/engine-v2/exceptions")
 async def endpoint_engine_v2_exceptions(
     client_id: str,
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
     d = await db.plan_drafts_v2.find_one(
-        {"client_id": client_id}, {"_id": 0}, sort=[("created_at", -1)],
+        {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},
+        {"_id": 0}, sort=[("created_at", -1)],
     )
     if not d:
-        raise HTTPException(404, "No Engine V2 draft found.")
+        raise HTTPException(404, "No active Engine V2 draft found.")
 
     # Merge in stored resolutions (see resolve endpoint)
     resolutions = {r["exception_id"]: r for r in (d.get("exception_resolutions") or [])}
@@ -303,10 +312,11 @@ async def endpoint_engine_v2_resolve_exception(
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
     d = await db.plan_drafts_v2.find_one(
-        {"client_id": client_id}, {"_id": 0}, sort=[("created_at", -1)],
+        {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},
+        {"_id": 0}, sort=[("created_at", -1)],
     )
     if not d:
-        raise HTTPException(404, "No Engine V2 draft found.")
+        raise HTTPException(404, "No active Engine V2 draft found.")
 
     # Validate this exception exists on the current draft
     valid_ids = {e["id"] for e in _extract_exceptions(d)}
@@ -358,10 +368,11 @@ async def endpoint_engine_v2_compare(
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
     d = await db.plan_drafts_v2.find_one(
-        {"client_id": client_id}, {"_id": 0}, sort=[("created_at", -1)],
+        {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},
+        {"_id": 0}, sort=[("created_at", -1)],
     )
     if not d:
-        raise HTTPException(404, "No Engine V2 draft found.")
+        raise HTTPException(404, "No active Engine V2 draft found.")
 
     live = await db.plan_live_v2.find_one(
         {"client_id": client_id, "active": True}, {"_id": 0},
@@ -468,12 +479,13 @@ async def endpoint_engine_v2_publish(
     body: EngineV2PublishBody,
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
-    # 1. Load draft & confirm it's current
+    # 1. Load draft & confirm it's current (only consider active drafts)
     latest = await db.plan_drafts_v2.find_one(
-        {"client_id": client_id}, {"_id": 0}, sort=[("created_at", -1)],
+        {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},
+        {"_id": 0}, sort=[("created_at", -1)],
     )
     if not latest:
-        raise HTTPException(404, "No Engine V2 draft found.")
+        raise HTTPException(404, "No active Engine V2 draft found.")
     if latest["id"] != body.draft_id:
         raise HTTPException(422, {
             "code": "stale_draft",
@@ -692,3 +704,58 @@ async def endpoint_client_plan_live_day(
 
 
 logger.info("feature_v2_engine_v2_publish: /api/v2/coach/goal-config, exceptions, compare, publish + /api/v2/client/plan/* registered")
+
+
+# ---------------------------------------------------------------------------
+# Client state summary for the coach dashboard
+# ---------------------------------------------------------------------------
+
+@api.get("/v2/coach/clients/{client_id}/engine-v2/state")
+async def endpoint_engine_v2_client_state(
+    client_id: str,
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    """Return a lightweight state summary the coach dashboard can use to
+    decide what UI to render:
+        - has_roster           → any schedule_days exist
+        - has_active_draft     → a non-published, non-superseded draft exists
+        - has_active_live      → a plan_live_v2 with active=True exists
+        - active_draft_id      → id of the active draft, if any
+        - active_live_id       → id of the active Live plan, if any
+        - roster_range         → (min_date, max_date) of schedule_days
+    """
+    n_schedule = await db.schedule_days.count_documents({"client_id": client_id})
+    has_roster = n_schedule > 0
+    roster_range = None
+    if has_roster:
+        row_min = await db.schedule_days.find(
+            {"client_id": client_id}, {"_id": 0, "date": 1}
+        ).sort("date", 1).limit(1).to_list(1)
+        row_max = await db.schedule_days.find(
+            {"client_id": client_id}, {"_id": 0, "date": 1}
+        ).sort("date", -1).limit(1).to_list(1)
+        if row_min and row_max:
+            roster_range = {"start": row_min[0]["date"], "end": row_max[0]["date"],
+                             "days": n_schedule}
+
+    active_draft = await db.plan_drafts_v2.find_one(
+        {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},
+        {"_id": 0, "id": 1, "status": 1, "created_at": 1},
+        sort=[("created_at", -1)],
+    )
+    active_live = await db.plan_live_v2.find_one(
+        {"client_id": client_id, "active": True},
+        {"_id": 0, "id": 1, "activated_at": 1, "source_draft_id": 1},
+    )
+
+    return {
+        "client_id": client_id,
+        "has_roster": has_roster,
+        "roster_range": roster_range,
+        "has_active_draft": bool(active_draft),
+        "active_draft_id": (active_draft or {}).get("id"),
+        "active_draft_status": (active_draft or {}).get("status"),
+        "has_active_live": bool(active_live),
+        "active_live_id": (active_live or {}).get("id"),
+        "active_live_activated_at": (active_live or {}).get("activated_at"),
+    }

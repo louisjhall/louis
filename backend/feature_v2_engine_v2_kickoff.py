@@ -164,10 +164,39 @@ async def engine_v2_kickoff(
     event = ctx["event"]
 
     # ---- 2. Resolve goal + phase plan ---------------------------------
-    raw_goal = (profile.get("primary_goal_type")
-                or profile.get("primary_goal")
-                or profile.get("goal")
-                or "general.fitness")
+    # Read from every known DNA field name in priority order. If NONE
+    # produce a recognised goal, fail-loud instead of silently falling to
+    # general.fitness — per the directive: "Do not silently substitute
+    # permissive defaults."
+    from feature_v2_sport_configs import _GOAL_ALIASES, SPORT_CONFIGS
+    goal_candidates = [
+        profile.get("primary_goal_type"),
+        profile.get("primary_goal"),
+        profile.get("primary_goal_id"),
+        profile.get("goal"),
+        profile.get("main_goal"),
+        profile.get("main_goal_key"),
+        profile.get("event_type_pref"),
+    ]
+    raw_goal = None
+    for c in goal_candidates:
+        if not c:
+            continue
+        canon = canonicalise_goal_key(c)
+        # canonicalise falls back to general.fitness on unknown; only accept
+        # a canonical match if the input itself resolves via aliases or exact
+        k = str(c).strip().lower().replace(" ", "_")
+        if k in SPORT_CONFIGS or k in _GOAL_ALIASES:
+            raw_goal = c
+            break
+    if raw_goal is None:
+        # Critical DNA missing — refuse to guess.
+        return {
+            "ok": False,
+            "code": "critical_dna_missing",
+            "message": "No recognisable goal on profile. Coach must set primary_goal_type / main_goal / event_type_pref before Engine V2 can plan.",
+            "checked_fields": ["primary_goal_type", "primary_goal", "primary_goal_id", "goal", "main_goal", "main_goal_key", "event_type_pref"],
+        }
     goal_key = canonicalise_goal_key(raw_goal)
     goal = get_goal_config(goal_key)
 
@@ -221,6 +250,39 @@ async def engine_v2_kickoff(
         }
 
     day_contexts = build_day_contexts(sd_rows)
+    # Honour client's explicit per-context session maxes from DNA.
+    prof_max_home = profile.get("max_home_minutes") or profile.get("time_home_min")
+    prof_max_layover = profile.get("time_layover_min")
+    if prof_max_home or prof_max_layover:
+        from feature_v2_roster_context import DayContext as _DC
+        clipped: list = []
+        for ctx_day in day_contexts:
+            cap = ctx_day.available_time_min
+            dt = ctx_day.day_type
+            if prof_max_home and dt in ("home_day", "home", "off", "rest", "day_off",
+                                          "leave", "vacation", "annual_leave"):
+                cap = min(cap, int(prof_max_home))
+            elif prof_max_layover and dt in ("layover_arrival", "layover_departure",
+                                              "layover_full", "layover", "hotel",
+                                              "turnaround"):
+                cap = min(cap, int(prof_max_layover))
+            clipped.append(_DC(
+                date=ctx_day.date, day_type=ctx_day.day_type,
+                duty_burden_score=ctx_day.duty_burden_score,
+                training_opportunity=ctx_day.training_opportunity,
+                available_time_min=cap,
+                recommended_intensity_ceiling=ctx_day.recommended_intensity_ceiling,
+                recovery_state=ctx_day.recovery_state,
+                recent_hard_days_48h=ctx_day.recent_hard_days_48h,
+                upcoming_hard_days_48h=ctx_day.upcoming_hard_days_48h,
+                consecutive_duty_days=ctx_day.consecutive_duty_days,
+                sleep_opportunity=ctx_day.sleep_opportunity,
+                tz_shift_last_48h=ctx_day.tz_shift_last_48h,
+                layover_length_hours=ctx_day.layover_length_hours,
+                duty_duration_min_today=ctx_day.duty_duration_min_today,
+                reasons=ctx_day.reasons + (f"clipped_by_profile:{cap}",),
+            ))
+        day_contexts = clipped
     # Persist derived context back into schedule_days
     for ctx_day in day_contexts:
         derived = context_to_derived(ctx_day)

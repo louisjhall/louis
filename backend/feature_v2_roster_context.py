@@ -361,6 +361,8 @@ def _context_for(date: _dt.date, raw: dict, by_date: dict[_dt.date, dict]) -> Da
     opp = max(0, min(100, opp))
 
     # ---- Available time (a CAP) -------------------------------------------
+    # NOTE: This module doesn't know the client — a caller may want to
+    # further clip via profile.max_home_minutes / time_layover_min etc.
     time_by_type: dict[str, int] = {
         "home_day": 120, "home": 120,
         "off": 150, "rest": 150, "day_off": 150,

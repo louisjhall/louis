@@ -411,6 +411,16 @@ async def engine_v2_kickoff(
     else:
         draft_status = "needs_review"
 
+    # Supersede any prior ACTIVE drafts (needs_review / ready_for_review) so
+    # only the newest kickoff is treated as "the active draft" by the coach
+    # dashboard. Published + superseded drafts stay untouched (audit history).
+    await db.plan_drafts_v2.update_many(
+        {"client_id": client_id,
+         "status": {"$in": ["needs_review", "ready_for_review"]}},
+        {"$set": {"status": "superseded_by_newer",
+                   "superseded_at": now_iso(),
+                   "superseded_reason": "New Engine V2 kickoff produced a fresher draft"}},
+    )
     await db.plan_drafts_v2.insert_one({
         "id": draft_id,
         "client_id": client_id,

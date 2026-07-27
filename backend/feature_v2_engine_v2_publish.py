@@ -245,9 +245,9 @@ def _extract_exceptions(draft: dict) -> list[dict]:
 
 
 # The set of draft statuses that count as "the active draft" for coach review.
-# Published drafts are historical audit for a live plan; superseded_by_reset
-# drafts have been retired by an admin/reset action. Neither should be
-# returned as the current draft for exception review, compare, or publish.
+# Only the newest kickoff for a client is active. Prior kickoffs are marked
+# superseded_by_newer; publishing moves a draft to `published`; a full test
+# reset marks drafts `superseded_by_reset`. None of those are "active".
 _ACTIVE_DRAFT_STATUSES = {"needs_review", "ready_for_review"}
 _ACTIVE_DRAFT_FILTER = {"status": {"$in": list(_ACTIVE_DRAFT_STATUSES)}}
 

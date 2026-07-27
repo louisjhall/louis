@@ -128,6 +128,202 @@ async def emit_metric(event_name: str, *, client_id: Optional[str] = None,
 
 
 # ---------------------------------------------------------------------------
+# P0-6: DNA → V2 collection sync (restrictions + equipment_contexts)
+# ---------------------------------------------------------------------------
+
+# Free-text injury keyword → structured restriction row.
+# Keeps the map narrow — anything that doesn't match becomes a generic
+# "general" restriction so nothing is silently dropped.
+_INJURY_KEYWORDS: dict[str, dict] = {
+    "knee":      {"region": "knee",      "avoid_patterns": ["deep_squat", "lunge", "gait_run_tempo"]},
+    "acl":       {"region": "knee",      "avoid_patterns": ["deep_squat", "lateral_bound", "gait_run_tempo"]},
+    "meniscus":  {"region": "knee",      "avoid_patterns": ["deep_squat", "lunge"]},
+    "hip":       {"region": "hip",       "avoid_patterns": ["deep_squat", "hip_flex_heavy"]},
+    "back":      {"region": "lower_back","avoid_patterns": ["heavy_hinge", "overhead_press_heavy"]},
+    "lumbar":    {"region": "lower_back","avoid_patterns": ["heavy_hinge", "overhead_press_heavy"]},
+    "spine":     {"region": "lower_back","avoid_patterns": ["heavy_hinge"]},
+    "shoulder":  {"region": "shoulder",  "avoid_patterns": ["overhead_press_heavy", "vertical_push"]},
+    "rotator":   {"region": "shoulder",  "avoid_patterns": ["overhead_press_heavy", "vertical_pull"]},
+    "elbow":     {"region": "elbow",     "avoid_patterns": ["heavy_horizontal_push"]},
+    "wrist":     {"region": "wrist",     "avoid_patterns": ["heavy_horizontal_push", "front_rack_hold"]},
+    "ankle":     {"region": "ankle",     "avoid_patterns": ["gait_run_tempo", "lateral_bound"]},
+    "foot":      {"region": "foot",      "avoid_patterns": ["gait_run_tempo", "gait_run_long"]},
+    "plantar":   {"region": "foot",      "avoid_patterns": ["gait_run_tempo", "gait_run_long"]},
+    "achilles":  {"region": "ankle",     "avoid_patterns": ["gait_run_tempo", "lateral_bound"]},
+    "neck":      {"region": "neck",      "avoid_patterns": ["overhead_press_heavy"]},
+    "concussion":{"region": "head",      "avoid_patterns": ["overhead_press_heavy", "gait_run_tempo"]},
+    "pregnancy": {"region": "trunk",     "avoid_patterns": ["heavy_hinge", "supine_load"]},
+    "hernia":    {"region": "trunk",     "avoid_patterns": ["heavy_hinge", "valsalva_heavy"]},
+}
+
+
+def _parse_injury_freetext(text: str) -> list[dict]:
+    """Turn a free-text injury string into 0..N structured restriction rows.
+    Empty / 'none' / 'no injuries' string → empty list.
+    """
+    t = (text or "").strip().lower()
+    if not t or t in ("none", "no", "no injuries", "no restrictions", "n/a", "na", "-"):
+        return []
+    matched: list[dict] = []
+    for kw, meta in _INJURY_KEYWORDS.items():
+        if kw in t:
+            matched.append({
+                "region": meta["region"],
+                "severity": "moderate",
+                "avoid_patterns": meta["avoid_patterns"],
+                "raw_text": text,
+                "source": "profile.injuries",
+            })
+    if not matched:
+        # Fallback — we couldn't map it, but the client told us SOMETHING
+        matched.append({
+            "region": "general",
+            "severity": "moderate",
+            "avoid_patterns": [],
+            "raw_text": text,
+            "source": "profile.injuries",
+        })
+    return matched
+
+
+async def sync_restrictions_from_profile(client_id: str) -> int:
+    """Upsert `restrictions` collection rows from user profile.
+
+    Sources (any of):
+      - profile.injuries (free text)
+      - profile.persistent_restrictions (list of {region, avoid_patterns, severity})
+
+    Returns number of restriction rows now stored for the client.
+    """
+    user = await db.users.find_one({"id": client_id}, {"_id": 0})
+    if not user:
+        return 0
+    prof = user.get("profile") or {}
+    rows: list[dict] = []
+
+    # Structured list first
+    for r in prof.get("persistent_restrictions") or []:
+        if not isinstance(r, dict):
+            continue
+        rows.append({
+            "region": (r.get("region") or "general").lower(),
+            "severity": r.get("severity") or "moderate",
+            "avoid_patterns": list(r.get("avoid_patterns") or []),
+            "raw_text": r.get("raw_text") or r.get("description") or "",
+            "source": "profile.persistent_restrictions",
+        })
+
+    # Free-text injuries
+    inj = prof.get("injuries") or prof.get("injury") or ""
+    if isinstance(inj, str):
+        rows.extend(_parse_injury_freetext(inj))
+    elif isinstance(inj, list):
+        for item in inj:
+            if isinstance(item, str):
+                rows.extend(_parse_injury_freetext(item))
+            elif isinstance(item, dict):
+                rows.append({
+                    "region": (item.get("region") or "general").lower(),
+                    "severity": item.get("severity") or "moderate",
+                    "avoid_patterns": list(item.get("avoid_patterns") or []),
+                    "raw_text": item.get("raw_text") or item.get("description") or "",
+                    "source": "profile.injuries",
+                })
+
+    # Wipe & re-insert (idempotent), keeping any coach-added rows
+    await db.restrictions.delete_many(
+        {"client_id": client_id, "source": {"$in": ["profile.injuries", "profile.persistent_restrictions"]}}
+    )
+    for r in rows:
+        await db.restrictions.insert_one({
+            "id": new_id(),
+            "client_id": client_id,
+            "region": r["region"],
+            "severity": r["severity"],
+            "avoid_patterns": r["avoid_patterns"],
+            "raw_text": r["raw_text"],
+            "source": r["source"],
+            "status": "active",
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        })
+    return len(rows)
+
+
+async def sync_equipment_context_from_profile(client_id: str) -> Optional[str]:
+    """Upsert a `permanent`-scope equipment_context from the user profile.
+
+    Reads from (in priority order):
+      profile.equipment  →  list[str] or list[dict]
+      profile.home_equipment → list[str]
+      profile.equipment_permanent → list[dict] (already structured, coach-set)
+
+    Returns the equipment_context.id (or None if nothing to sync).
+    """
+    user = await db.users.find_one({"id": client_id}, {"_id": 0})
+    if not user:
+        return None
+    prof = user.get("profile") or {}
+    equip: set[str] = set()
+    for src_key in ("equipment", "home_equipment", "equipment_permanent"):
+        v = prof.get(src_key)
+        if not v:
+            continue
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, str):
+                    equip.add(item.strip().lower())
+                elif isinstance(item, dict):
+                    for e in (item.get("equipment") or []):
+                        equip.add(str(e).strip().lower())
+        elif isinstance(v, str):
+            equip.add(v.strip().lower())
+    # Always keep bodyweight as a floor so P6 never fails
+    equip.add("bodyweight")
+    equip.discard("")
+
+    # Upsert a permanent-scope context for this client
+    existing = await db.equipment_contexts.find_one(
+        {"client_id": client_id, "scope": "permanent", "source": "profile_sync"}, {"_id": 0}
+    )
+    if existing:
+        await db.equipment_contexts.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "equipment": sorted(equip),
+                "detail": {"home_base": prof.get("home_base"), "airline": prof.get("airline")},
+                "updated_at": now_iso(),
+            }}
+        )
+        return existing["id"]
+    cid = new_id()
+    await db.equipment_contexts.insert_one({
+        "id": cid,
+        "client_id": client_id,
+        "source": "profile_sync",
+        "scope": "permanent",
+        "equipment": sorted(equip),
+        "detail": {"home_base": prof.get("home_base"), "airline": prof.get("airline")},
+        "valid_from": now_iso(),
+        "valid_until": None,
+        "created_at": now_iso(),
+        "created_by": "system",
+    })
+    return cid
+
+
+async def sync_dna_to_v2_collections(client_id: str) -> dict:
+    """One-shot: mirror DNA fields into restrictions + equipment_contexts.
+    Safe to call any time (idempotent). Returns counts."""
+    n_restrictions = await sync_restrictions_from_profile(client_id)
+    ec_id = await sync_equipment_context_from_profile(client_id)
+    return {
+        "restrictions_written": n_restrictions,
+        "equipment_context_id": ec_id,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Idempotent index bootstrapping — called by each module on import
 # ---------------------------------------------------------------------------
 

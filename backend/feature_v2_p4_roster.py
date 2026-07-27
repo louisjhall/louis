@@ -28,13 +28,65 @@ FLAG = "roster_facets_enabled"
 # Deterministic scoring
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Categorical baseline burden by roster day_type.
+# These are absolute floors — a "layover_arrival" is ALWAYS at least HIGH
+# burden no matter how short the duty was, because the physiological cost
+# of arriving at a hotel after crossing timezones is inescapable.
+# ---------------------------------------------------------------------------
+_DAY_TYPE_BASELINE_BURDEN: dict[str, int] = {
+    # HIGH-burden aviation states
+    "layover_arrival":   75,   # just arrived at hotel, tz-crossed, exhausted
+    "layover_departure": 70,   # about to fly back, prep for another duty
+    "turnaround":        72,   # short-turn to base — same-day sortie
+    "flight":            65,   # active flight duty (fallback if we lack detail)
+    "duty":              60,   # generic duty catch-all
+    # MEDIUM-burden states
+    "standby":           45,   # on call, can't guarantee training window
+    "sim":               50,   # simulator duty — mentally taxing
+    "training":          40,   # ground/office training
+    "medical":           35,
+    # LAYOVER MID-STAY (recovered enough to train)
+    "layover_full":      25,   # full-day layover — well-rested
+    "layover":           30,   # generic layover fallback
+    "hotel":             30,
+    # LOW-burden home states
+    "home_day":          10,
+    "home":              10,
+    "off":               5,
+    "rest":              5,
+    "day_off":           5,
+    "leave":             0,
+    "vacation":          0,
+    "annual_leave":      0,
+    "sickness":          0,
+    "sick":              0,
+    "sick_leave":        0,
+}
+
+
+def _resolve_day_type(day: dict) -> str:
+    """Coerce whatever the roster parser wrote into a lower-case day_type key."""
+    raw = day.get("day_type") or day.get("classification") or ""
+    return str(raw).lower().strip()
+
+
 def _duty_burden(day: dict) -> tuple[int, str]:
     """Return (score 0-100, band).
 
-    Heuristic based on: duty duration total, crossings of midnight, ULR flag,
-    early report time, layover status, number of sectors, standby.
+    NEW MODEL (post P0-3):
+      1. Categorical baseline from `day_type` (aviation states like
+         layover_arrival ALWAYS start HIGH).
+      2. Additive load from duty duration, crossings of midnight, sectors,
+         ULR, early report.
+      3. Prior/next-24h duty (recovery window) — short recovery bumps score.
+      4. Timezone crossings (tz_offset_from_base_hours) — >4h bumps.
+    Never allowed to go below the categorical baseline.
     """
-    score = 0
+    day_type = _resolve_day_type(day)
+    baseline = _DAY_TYPE_BASELINE_BURDEN.get(day_type, 30)  # unknown → moderate default
+
+    score = baseline
     duties = day.get("duties") or []
     total_min = 0
     for d in duties:
@@ -47,74 +99,140 @@ def _duty_burden(day: dict) -> tuple[int, str]:
                 total_min += mins
         except Exception:
             pass
-        if d.get("crossed_midnight"): score += 12
-        if d.get("duty_type") == "standby": score += 8
-        if d.get("duty_type") == "flight":  score += 6
+        if d.get("crossed_midnight"): score += 8
+        if d.get("duty_type") == "standby": score += 4
+        if d.get("duty_type") == "flight":  score += 4
 
-    # Sector count
+    # Sector count (light additive on top of baseline)
     sector_count = sum(len(d.get("sectors") or []) for d in duties)
-    if sector_count >= 3: score += 15
-    elif sector_count == 2: score += 8
+    if sector_count >= 3: score += 10
+    elif sector_count == 2: score += 5
 
     # Total duty duration
-    if total_min > 12 * 60:      score += 40
-    elif total_min > 9 * 60:     score += 30
-    elif total_min > 6 * 60:     score += 20
-    elif total_min > 3 * 60:     score += 10
+    if total_min > 12 * 60:      score += 20
+    elif total_min > 9 * 60:     score += 15
+    elif total_min > 6 * 60:     score += 10
+    elif total_min > 3 * 60:     score += 5
 
-    # ULR flag
+    # ULR flag (ultra-long-range flight = big burden)
     if any((d.get("ulr") or (d.get("notes") or "").upper().find("ULR") >= 0) for d in duties):
-        score += 25
+        score += 15
 
     # Early report
     for d in duties:
         try:
             if d.get("report_time"):
                 hr = _dt.datetime.fromisoformat(d["report_time"]).hour
-                if hr <= 5:  score += 12
-                elif hr <= 7: score += 6
+                if hr <= 5:  score += 8
+                elif hr <= 7: score += 4
         except Exception:
             pass
 
-    # Classification-based fine-tuning
-    cls = day.get("classification") or ""
-    if cls == "layover_full":     score = max(score, 15)
-    if cls == "layover_departure": score += 10
-    if cls == "leave":            score = 0
-    if cls in ("rest", "off"):    score = 0
+    # Recovery window from prior duty (short = high burden carryover)
+    prior_recovery = day.get("recovery_window_hours_from_prior_duty")
+    if isinstance(prior_recovery, (int, float)):
+        if prior_recovery < 12: score += 12
+        elif prior_recovery < 18: score += 6
+
+    # Timezone crossings
+    tz = day.get("tz_offset_from_base_hours") or 0
+    try:
+        tz_abs = abs(int(tz))
+    except Exception:
+        tz_abs = 0
+    if tz_abs >= 7:      score += 12
+    elif tz_abs >= 4:    score += 6
+
+    # HARD FLOORS by categorical day_type (never dip below baseline)
+    score = max(baseline, score)
+
+    # Zero-out leave/sick
+    if day_type in ("leave", "vacation", "annual_leave", "sickness", "sick", "sick_leave"):
+        score = 0
 
     score = max(0, min(100, score))
-    if score < 25:      band = "light"
-    elif score < 55:    band = "moderate"
-    elif score < 80:    band = "heavy"
+    if score < 20:      band = "light"
+    elif score < 50:    band = "moderate"
+    elif score < 75:    band = "heavy"
     else:               band = "extreme"
     return score, band
 
 
 def _training_opportunity(day: dict, burden_score: int) -> tuple[int, str, int]:
-    """Return (score 0-100, recommended_intensity_ceiling, available_time_min)."""
-    # Baseline is inverse of burden, bumped by rest/layover_full days.
-    base = max(0, 100 - burden_score)
-    cls = day.get("classification") or ""
-    if cls in ("rest", "off", "home"): base = min(100, base + 15)
-    if cls == "layover_full":          base = min(100, base + 8)
-    if cls == "leave":                 base = min(100, base + 5)
-    if cls == "standby":               base = max(0, base - 15)
+    """Return (score 0-100, recommended_intensity_ceiling, available_time_min).
+
+    NEW MODEL (post P0-3):
+      Categorical ceiling by day_type FIRST, then reduced by burden.
+      A layover_arrival can never score above 30 no matter what;
+      a home_day can never score below 70 without an explicit reason.
+    """
+    day_type = _resolve_day_type(day)
+
+    # Categorical CEILING (max opportunity permitted for this day_type)
+    ceilings = {
+        "layover_arrival":    30,
+        "layover_departure":  25,
+        "turnaround":         25,
+        "flight":             30,
+        "duty":               35,
+        "standby":            50,   # on call — some flexibility for a light session
+        "sim":                45,
+        "training":           55,
+        "medical":            40,
+        "layover_full":       75,   # full rest day at destination
+        "layover":            65,
+        "hotel":              70,
+        "home_day":           95,
+        "home":               95,
+        "off":                100,
+        "rest":               100,
+        "day_off":            100,
+        "leave":              95,   # coach might want lighter workouts on vacation
+        "vacation":           95,
+        "annual_leave":       95,
+        "sickness":           0,
+        "sick":               0,
+        "sick_leave":         0,
+    }
+    ceiling = ceilings.get(day_type, 60)
+
+    # Categorical FLOOR (min opportunity we won't dip below on rest-like days)
+    floors = {
+        "home_day":  70,
+        "home":      70,
+        "off":       80,
+        "rest":      80,
+        "day_off":   80,
+    }
+    floor = floors.get(day_type, 0)
+
+    # Base = ceiling minus a proportional bite of burden
+    base = ceiling - int(burden_score * 0.6)
+    base = max(floor, min(ceiling, base))
+
+    # Zero-out sick
+    if day_type in ("sickness", "sick", "sick_leave"):
+        base = 0
 
     # Available time heuristic (minutes)
-    if cls in ("rest", "off", "home", "leave"):     avail = 90
-    elif cls == "layover_full":                     avail = 60
-    elif cls == "layover_arrival":                  avail = 30
-    elif cls == "layover_departure":                avail = 20
-    elif cls == "standby":                          avail = 45
-    else:                                           avail = max(0, 60 - burden_score // 5)
+    time_by_type = {
+        "home_day": 90, "home": 90, "off": 120, "rest": 120,
+        "day_off": 120, "leave": 90, "vacation": 90, "annual_leave": 90,
+        "layover_full": 60, "layover": 50, "hotel": 50,
+        "layover_arrival": 25, "layover_departure": 20, "turnaround": 15,
+        "flight": 20, "duty": 25, "standby": 45, "sim": 30, "training": 35,
+        "sickness": 0, "sick": 0, "sick_leave": 0,
+    }
+    avail = time_by_type.get(day_type, max(0, 60 - burden_score // 5))
 
-    # Recommended intensity ceiling
-    if burden_score >= 80:      rec = "rpe4"
-    elif burden_score >= 55:    rec = "rpe6"
-    elif burden_score >= 30:    rec = "rpe7"
-    elif burden_score >= 10:    rec = "rpe8"
-    else:                       rec = "any"
+    # Recommended intensity ceiling (based on burden, categorical-aware)
+    if day_type in ("layover_arrival", "layover_departure", "turnaround"):
+        rec = "rpe4"    # only easy movement on high-fatigue transitions
+    elif burden_score >= 75:      rec = "rpe4"
+    elif burden_score >= 55:      rec = "rpe6"
+    elif burden_score >= 30:      rec = "rpe7"
+    elif burden_score >= 10:      rec = "rpe8"
+    else:                         rec = "any"
     return base, rec, avail
 
 

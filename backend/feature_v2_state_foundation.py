@@ -813,14 +813,54 @@ async def lock_release(
 async def decisions_list(
     client_id: str,
     scope_id: Optional[str] = None,
+    assignment_id: Optional[str] = None,
     layer: Optional[str] = None,
     limit: int = 100,
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
+    """List decision records for the client.
+
+    P1-2: when `assignment_id` is provided, expand the scope query to include
+    the objective_id and programme_id linked to that assignment so the
+    coach's "Why this?" drawer surfaces WHY/WHAT/WHEN/HOW/ORCHESTRATION
+    layers, not only the assignment-scoped WHEN record.
+    """
     await _require_client_and_flag(client_id)
-    q: dict = {"client_id": client_id}
+    scope_ids: set[str] = set()
     if scope_id:
-        q["scope_id"] = scope_id
+        scope_ids.add(scope_id)
+    if assignment_id:
+        scope_ids.add(assignment_id)
+        try:
+            a = await db.workout_assignments.find_one(
+                {"id": assignment_id, "client_id": client_id}, {"_id": 0}
+            )
+            if a:
+                if a.get("objective_id"):
+                    scope_ids.add(a["objective_id"])
+                if a.get("programme_id"):
+                    scope_ids.add(a["programme_id"])
+                if a.get("draft_implementation_id"):
+                    scope_ids.add(a["draft_implementation_id"])
+                if a.get("live_implementation_id"):
+                    scope_ids.add(a["live_implementation_id"])
+                if a.get("objective_exposure_id"):
+                    scope_ids.add(a["objective_exposure_id"])
+                # Include phase-scoped decisions too, if the objective is linked
+                try:
+                    if a.get("objective_id"):
+                        obj = await db.training_objectives.find_one(
+                            {"id": a["objective_id"]}, {"_id": 0}
+                        )
+                        if obj and obj.get("phase_id"):
+                            scope_ids.add(obj["phase_id"])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    q: dict = {"client_id": client_id}
+    if scope_ids:
+        q["scope_id"] = {"$in": list(scope_ids)}
     if layer:
         q["layer"] = layer
     limit = max(1, min(500, int(limit)))
@@ -829,7 +869,7 @@ async def decisions_list(
         .sort("timestamp", -1)
         .to_list(limit)
     )
-    return {"decisions": rows}
+    return {"decisions": rows, "scope_ids": list(scope_ids)}
 
 
 # ---------------------------------------------------------------------------

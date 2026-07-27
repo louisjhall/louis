@@ -1,0 +1,30 @@
+{
+  "summary": "V2 Generation Engine P0 fixes — 13/13 backend tests PASSED against Pietro Sangermano (cbca8b09-1734-4442-9a55-1bb2f78f35c3) as coach louis@crewfit.net. All six P0 defects + P1-2 decisions scope expansion verified end-to-end via public https URL. P0-3 (categorical burden/opportunity): no day has training_opportunity==100; layover_arrival burden=75/opportunity=0; home_day burden=10/opportunity=89; standby burden=45/opportunity=23 — all within spec bands. P0-4/5/6 (kickoff pipeline): prep_window.end='2027-01-17' (event-anchored), phase_plan has all 6 phases (foundation 2w + aerobic_base 8w + build 8w + specific_prep 4w + taper 2w + race_week 1w = 25w = prep_window.weeks), dna_sync.equipment_context_id present (582a78a2-…), 17 implementations + 17 assignments created (>=5). P0-1/2 (READY gating + blocks[]): 17 ready assignments, all have non-empty blocks[]; running kinds (long_run/easy_run/tempo_run/intervals_run) have well-formed warmup/steady/cooldown blocks with type+duration_min. P1-2 (decisions scope): scope_ids=6 unique ids (programme+objective+objective_exposure+schedule_day+assignment+implementation), layers include WHEN, WHAT, HOW, ORCHESTRATION. P0-6 side effect: equipment_contexts has one profile_sync/permanent row with ['bodyweight','dumbbells','treadmill']. Note: Pietro's client record shows airline='Etihad'/base='AUH' rather than the Cathay Pacific stated in the review request — data mismatch, not a code defect; roster still has all expected day_types (home_day, standby, layover_arrival, layover_departure, layover_full, turnaround, flight, rest) spanning Jul-Aug 2026. No frontend testing performed per request.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter107_v2_p0_fixes.py",
+    "/app/test_reports/pytest/iter107_results.xml"
+  ],
+  "action_items": [
+    "INFO ONLY: Pietro's DNA airline shows 'Etihad' / home_base 'AUH' in the equipment_contexts.detail, while the review_request describes Cathay Pacific. This is a seed-data annotation mismatch; roster day types and event date (2027-01-17) are correct so no P0 fix required — main agent should decide if the seed should be re-run to align airline metadata.",
+    "INFO ONLY: 83 of 100 assignments are in 'cancelled' state (only 17 are 'ready'). This matches the P0-6 'superseded programme cleanup' behaviour after the force=true kickoff; the cancelled rows have no implementation (GET /plan/implementations/{aid} returns 404) which is expected. If clients GET assignments and filter by status client-side they'll see the correct 17 active — main agent may want to add a `?status=ready` query filter to reduce payload."
+  ],
+  "critical_code_review_comments": [
+    "GET /api/v2/coach/clients/{cid}/plan/assignments returns all 100 rows (17 ready + 83 cancelled) without pagination or default status filter. Consider server-side ?status= filtering and/or an index-backed default to hide cancelled rows in the coach UI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter107_v2_p0_fixes.py (new — 13 pytest cases covering the 20-step spec)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "N/A (not tested per request)"},
+  "seed_data_creation": "None. POST /roster-facets/build (all_active=true) and POST /plan/kickoff (force=true) were called against Pietro's existing data; these are idempotent per the P0-6 fix (legacy impl purge + superseded programme cleanup). No new users or credentials created; /app/memory/test_credentials.md untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use pytest at /app/backend/tests/test_iter107_v2_p0_fixes.py (13 tests). Requires EXPO_PUBLIC_BACKEND_URL env; login is coach louis@crewfit.net / Louis123!, client Pietro cbca8b09-1734-4442-9a55-1bb2f78f35c3. Response shape gotchas: schedule-days wrapper key is 'schedule_days'; assignment focus key is 'kind' (not 'focus' or 'session_type'); equipment-contexts wrapper key is 'equipment_contexts'; phase_plan items use 'phase_kind' (not 'name'/'phase'). Running assignments query must be restricted to status=='ready' — cancelled ones intentionally 404 on GET impl (P0-6 cleanup). Auth response uses key 'token' (also accepts access_token/jwt for future compat).",
+  "rca_of_issue": "N/A — all 6 P0 fixes + P1-2 verified passing. Initial test failures during authoring were due to my fixture assumptions about response wrappers (schedule_days, equipment_contexts) and field names (kind vs focus; phase_kind vs name); no product bugs."
+}

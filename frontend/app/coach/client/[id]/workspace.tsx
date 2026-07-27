@@ -554,7 +554,8 @@ function WorkoutDrawer({
       try {
         const impl = await api<any>(`/v2/coach/clients/${clientId}/plan/implementations/${assignmentId}`).catch(() => null);
         setDetail(impl);
-        const dr = await api<any>(`/v2/coach/clients/${clientId}/decisions?scope_id=${assignmentId}`).catch(() => ({ decisions: [] }));
+        // P1-2: use assignment_id so scope expands to include objective + programme + phase decisions
+        const dr = await api<any>(`/v2/coach/clients/${clientId}/decisions?assignment_id=${assignmentId}&limit=20`).catch(() => ({ decisions: [] }));
         setDecisions(dr?.decisions || []);
       } finally { setLoading(false); }
     })();
@@ -622,6 +623,30 @@ function WorkoutDrawer({
                   </Text>
                 </View>
               ))}
+              {/* P1-3: render endurance blocks */}
+              {(detail.blocks || []).map((bl: any, i: number) => (
+                <View key={`bl-${i}`} style={styles.exRow}>
+                  <Text style={styles.exName}>
+                    {String(bl.type || "block").toUpperCase()}
+                    {bl.duration_min ? ` · ${bl.duration_min} min` : ""}
+                  </Text>
+                  <Text style={styles.exMeta}>
+                    {bl.hr_zone ? `${String(bl.hr_zone).toUpperCase()}` : ""}
+                    {bl.pace_target ? ` · ${bl.pace_target}` : ""}
+                    {bl.effort_rpe ? ` · RPE ${bl.effort_rpe}` : ""}
+                    {bl.sets ? ` · ${bl.sets} × ${bl.work_sec}s / ${bl.rest_sec}s` : ""}
+                  </Text>
+                  {bl.cue ? <Text style={styles.exMeta}>{bl.cue}</Text> : null}
+                </View>
+              ))}
+              {(!detail.exercises?.length && !detail.blocks?.length) ? (
+                <View style={styles.exRow}>
+                  <Text style={styles.exName}>Needs coach review</Text>
+                  <Text style={styles.exMeta}>
+                    Auto-build didn&apos;t match a template. Edit inline to add content.
+                  </Text>
+                </View>
+              ) : null}
               <View style={{ height: 20 }} />
               <Text style={styles.sectionTitle}>WHY THIS?</Text>
               {decisions.length === 0 ? (

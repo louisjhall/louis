@@ -56,11 +56,13 @@ def _daydate(s: str) -> _dt.date:
     return _dt.date.fromisoformat(s)
 
 
-def _rank_days(days: list[dict], objective: dict) -> list[dict]:
+def _rank_days(days: list[dict], objective: dict, preferred_weekdays: Optional[set[int]] = None) -> list[dict]:
     """Sort candidate schedule_days by suitability for the objective.
-    Highest training_opportunity first, tie-breaking by lowest duty_burden."""
+    Highest training_opportunity first, tie-breaking by lowest duty_burden.
+    P0-4: honour client's preferred_training_days when set."""
     imp = objective.get("importance") or "important"
     key_penalty_bands = {"heavy": -10, "extreme": -30, "moderate": -3, "light": 0}
+    pref_wd = preferred_weekdays or set()
     ranked = []
     for d in days:
         drv = d.get("derived") or {}
@@ -70,6 +72,13 @@ def _rank_days(days: list[dict], objective: dict) -> list[dict]:
         adj = 0
         if imp == "key":
             adj += key_penalty_bands.get(band, 0)
+        # Prefer client's preferred weekdays
+        try:
+            wd = _daydate(d["date"]).weekday()
+            if pref_wd and wd in pref_wd:
+                adj += 10
+        except Exception:
+            pass
         ranked.append((opp - burden // 10 + adj, d))
     ranked.sort(key=lambda x: x[0], reverse=True)
     return [d for _, d in ranked]
@@ -128,6 +137,43 @@ async def plan_build(
     )}
     available_days = [d for d in days if d["id"] not in assigned_day_ids]
 
+    # P0-4: Client-frequency cap — load DNA
+    client = await db.users.find_one({"id": client_id}, {"_id": 0}) or {}
+    _prof = client.get("profile") or {}
+    # Weekly cap = max(preferred, sessions_per_week_max, training_days_per_week); default 5
+    week_cap = int(
+        _prof.get("sessions_per_week_max")
+        or _prof.get("training_days_per_week")
+        or _prof.get("training_days")
+        or 5
+    )
+    week_cap = max(1, min(7, week_cap))
+    # Track sessions placed per ISO week (also count already-scheduled ones)
+    from collections import defaultdict as _dd
+    weekly_count: dict[tuple[int, int], int] = _dd(int)
+    existing_in_range = await db.workout_assignments.find(
+        {"client_id": client_id, "date": {"$gte": sd.isoformat(), "$lte": ed.isoformat()},
+         "status": {"$in": ["proposed", "ready", "live", "in_progress"]}},
+        {"_id": 0, "date": 1}
+    ).to_list(1000)
+    for row in existing_in_range:
+        try:
+            iso = _daydate(row["date"]).isocalendar()
+            weekly_count[(iso[0], iso[1])] += 1
+        except Exception:
+            pass
+    # Preferred training days (list of weekday strings: "Mon","Tue","Wed"...)
+    preferred_wd_raw = _prof.get("preferred_training_days") or []
+    _wd_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6,
+               "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+               "friday": 4, "saturday": 5, "sunday": 6}
+    preferred_weekdays: set[int] = set()
+    if isinstance(preferred_wd_raw, list):
+        for w in preferred_wd_raw:
+            k = str(w).strip().lower()
+            if k in _wd_map:
+                preferred_weekdays.add(_wd_map[k])
+
     # Pending exposures ordered by importance then sequence
     importance_order = {"key": 0, "important": 1, "supporting": 2, "optional": 3}
     objectives_by_id = {
@@ -164,11 +210,31 @@ async def plan_build(
             })
             continue
 
-        ranked = _rank_days(cand, obj)
+        ranked = _rank_days(cand, obj, preferred_weekdays)
         placed = None
         forbid_reasons: list[str] = []
         from feature_v2_directive_engine import active_directives_for, directive_forbids_kind
         for d in ranked:
+            # P0-3: filter days where opportunity is below the minimum floor
+            #   Key sessions need opportunity ≥ 50, others need ≥ 30
+            opp = int((d.get("derived") or {}).get("training_opportunity") or 0)
+            min_opp = 50 if obj.get("importance") == "key" else 30
+            if opp < min_opp:
+                forbid_reasons.append(f"{d['date']} opportunity {opp} below floor {min_opp}")
+                continue
+            # Filter out categorically-unavailable day_types
+            dtype = ((d.get("day_type")) or "").lower()
+            if dtype in ("sickness", "sick", "sick_leave"):
+                continue
+            # P0-4: weekly cap check — reject if placing here would exceed weekly budget
+            try:
+                iso = _daydate(d["date"]).isocalendar()
+                wk_key = (iso[0], iso[1])
+            except Exception:
+                wk_key = None
+            if wk_key and weekly_count.get(wk_key, 0) >= week_cap:
+                forbid_reasons.append(f"{d['date']} weekly cap {week_cap} reached")
+                continue
             # Check active coach directives for this candidate date
             try:
                 day_directives = await active_directives_for(client_id, _daydate(d["date"]))
@@ -189,10 +255,16 @@ async def plan_build(
             break
 
         if not placed:
-            reason = "; ".join(forbid_reasons) or f"No candidate day satisfies min_recovery_hours for {obj['kind']}"
+            reason = "; ".join(forbid_reasons[:3]) or f"No candidate day satisfies min_recovery_hours for {obj['kind']}"
+            exc_kind = "insufficient_recovery"
+            if any("weekly cap" in r for r in forbid_reasons):
+                exc_kind = "weekly_cap_exceeded"
+            elif any("opportunity" in r for r in forbid_reasons):
+                exc_kind = "low_opportunity_window"
+            elif any("directive" in r for r in forbid_reasons):
+                exc_kind = "coach_directive_conflict"
             exceptions.append({
-                "kind": "insufficient_recovery" if not forbid_reasons else "coach_directive_conflict",
-                "severity": "warning",
+                "kind": exc_kind, "severity": "warning",
                 "reason": reason + f" #{expo['sequence']}",
                 "expo_id": expo["id"],
             })
@@ -211,7 +283,11 @@ async def plan_build(
             "date": placed["date"],
             "status": "proposed",
             "importance": obj.get("importance"),
-            "planned_duration_min": (placed.get("derived") or {}).get("available_time_min") or 45,
+            "planned_duration_min": (
+                int(_prof.get("preferred_session_length"))
+                if _prof.get("preferred_session_length")
+                else (placed.get("derived") or {}).get("available_time_min") or 45
+            ),
             "safe_adaptation_boundary": None,
             "live_implementation_id": None,
             "draft_implementation_id": None,
@@ -231,6 +307,12 @@ async def plan_build(
                       "planning_window_id": body.window_id, "updated_at": now_iso()}}
         )
         placed_dates.setdefault(obj.get("discipline") or "conditioning", []).append(_daydate(placed["date"]))
+        # P0-4: increment weekly counter
+        try:
+            iso = _daydate(placed["date"]).isocalendar()
+            weekly_count[(iso[0], iso[1])] += 1
+        except Exception:
+            pass
         # Remove day from availability
         available_days = [d for d in available_days if d["id"] != placed["id"]]
         created += 1

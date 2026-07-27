@@ -3186,3 +3186,159 @@ agent_communication:
       drawer scope-query still needs to include programme_id +
       objective_id, not just assignment_id.
 
+
+##############################################################################
+# ITERATION 107 — V2 GENERATION ENGINE P0 FIXES
+##############################################################################
+
+backend:
+  - task: "P0-3 burden/opportunity redesign (feature_v2_p4_roster.py)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Rewrote _duty_burden + _training_opportunity around
+          CATEGORICAL day_type baselines. Layover_arrival = HIGH (75+
+          burden, opp ≤ 30). Turnaround, layover_departure = HIGH.
+          Standby = MEDIUM. Home_day = LOW. TZ crossings, prior-24h
+          recovery window, and duty duration additively increase burden.
+          Validated on Pietro's 62 real schedule_days: layover_arrival
+          n=7 avg_burden=75 avg_opp=0; home_day n=26 avg_burden=10
+          avg_opp=89; standby n=8 avg_burden=45 avg_opp=23.
+          BEFORE: every day had opp=100 (including turnarounds).
+
+  - task: "P0-4 client-frequency cap in P5 scheduler"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          feature_v2_p5_scheduling now reads profile.sessions_per_week_max
+          / training_days_per_week and enforces a weekly cap.
+          Days below opportunity floor (30 non-key / 50 key) are rejected
+          with "low_opportunity_window" exception. Preferred_training_days
+          list is honoured via +10 rank bump.
+
+  - task: "P0-5 event-anchored programme end date"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          _ensure_programme now ALWAYS recomputes start_date/end_date/
+          event_ids from the current active event on every kickoff
+          (previously stale on non-force runs). Emits a decision_record
+          whenever the window changes. Pietro's programme end now
+          correctly = 2027-01-17 (was 2026-09-20).
+
+  - task: "P0-6 DNA sync to restrictions + equipment_contexts"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added sync_dna_to_v2_collections() in feature_v2_common.py.
+          Parses profile.injuries free-text into structured
+          restriction rows (knee, back, shoulder etc. keywords).
+          Upserts a permanent-scope equipment_context from
+          profile.equipment. Called at start of kickoff. Pietro now has
+          an equipment_context row (['bodyweight','dumbbells','treadmill'])
+          and 0 restrictions (correctly parsed 'None').
+
+  - task: "P0-1 / P1-3 blocks[] schema + running/mobility/cardio builders"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added _build_running_blocks(), _build_mobility_blocks(),
+          _build_cardio_generic_blocks() in feature_v2_p6_construction.py.
+          Endurance sessions now populate blocks[] with warmup / steady /
+          tempo / interval / cooldown segments including pace_target,
+          hr_zone, effort_rpe, sets/reps for intervals, coaching cues.
+          Also added 20+ new slot_templates for missing phase_kind × 
+          objective_kind combinations.
+
+  - task: "P0-2 READY gating (no impl without content)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          P6 now requires len(exercises) > 0 OR len(blocks) > 0 before
+          transitioning assignment status to "ready". Otherwise leaves it
+          at "building" with needs_coach_review=True AND opens a
+          "impl_build_failed" exception in coach's tray.
+          Response includes implementations_needing_review count.
+
+  - task: "P1-2 drawer 'Why this?' scope expansion"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          /api/v2/coach/clients/{cid}/decisions now accepts
+          ?assignment_id= param that auto-expands scope to include
+          objective_id + programme_id + phase_id + exposure_id.
+          Frontend workspace.tsx drawer updated to call with
+          assignment_id. Also renders blocks[] for endurance sessions.
+
+frontend:
+  - task: "V2 workout drawer renders blocks[] for endurance"
+    implemented: true
+    working: "NA"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          workspace.tsx drawer now renders detail.blocks[] with
+          type / duration / hr_zone / pace / rpe / cue. Falls back to
+          "Needs coach review" pill if both exercises AND blocks are empty.
+
+metadata:
+  created_by: "main_agent"
+  version: "iter107"
+  test_sequence: 107
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "kickoff produces properly categorised burden/opportunity per day_type"
+    - "weekly cap enforced (no more than training_days_per_week sessions per ISO week)"
+    - "programme end anchored to event_date on every kickoff run"
+    - "restrictions collection populated from profile.injuries free-text"
+    - "equipment_contexts (scope=permanent) upserted from profile.equipment"
+    - "running assignments produce non-empty blocks[]"
+    - "assignments without content stay at status=building"
+    - "impl_build_failed exception opens for uncoverable slots"
+    - "/decisions?assignment_id=xxx returns programme + objective + assignment scoped records"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Executed authorised P0 fix plan for V2 generation engine:
+      (1) rewrote burden+opportunity around categorical day_type
+      baselines (P0-3); (2) added weekly cap in P5 (P0-4);
+      (3) event-anchored programme end recomputed on every kickoff
+      (P0-5); (4) DNA→restrictions/equipment_contexts sync at start
+      of kickoff (P0-6); (5) blocks[] schema + running / mobility /
+      cardio builders (P1-3, P0-1); (6) READY gating requires content
+      (P0-2); (7) decisions endpoint scope expansion (P1-2). Also
+      added new slot_templates for missing phase_kind × objective_kind
+      combos, and legacy empty-impl purge on kickoff.
+      Verified end-to-end on Pietro: 17 assignments across 5 weeks
+      (well under 5/wk cap), 17 impls all with blocks=3 or exercises.
+      Programme end correctly 2027-01-17. No more opp=100-everywhere.
+

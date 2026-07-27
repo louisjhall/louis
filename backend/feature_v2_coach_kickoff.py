@@ -34,7 +34,7 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 
 from server import api, db, require_role, new_id, now_iso, logger
-from feature_v2_common import write_decision, emit_metric
+from feature_v2_common import write_decision, emit_metric, sync_dna_to_v2_collections
 
 
 # ---------------------------------------------------------------------------
@@ -212,24 +212,65 @@ async def _ensure_programme(client_id: str, goal: dict, start: _dt.date, end: _d
             {"client_id": client_id, "status": {"$in": ["active", "draft"]}}, {"_id": 0}
         )
         if existing:
-            # Update start/end + primary_goal_id if they drifted from what we resolved
+            # P0-5: ALWAYS recompute start/end from the current active event,
+            # not just when the coach passes force=True. The prior behaviour
+            # baked in a wrong end_date if kickoff was first run before the
+            # event was linked.
+            prior_end = existing.get("end_date")
+            prior_start = existing.get("start_date")
+            prior_event_ids = existing.get("event_ids") or []
+            new_event_ids = [event["id"]] if event else []
             upd = {
                 "primary_goal_id": goal["id"],
                 "timeline_class": goal.get("timeline_class") or "maintenance",
                 "start_date": start.isoformat(),
                 "end_date": end.isoformat(),
-                "event_ids": [event["id"]] if event else [],
+                "event_ids": new_event_ids,
                 "updated_at": now_iso(),
             }
             await db.programmes_v2.update_one({"id": existing["id"]}, {"$set": upd})
             existing.update(upd)
+            # Emit a decision_record whenever end_date or event linkage changed
+            if prior_end != end.isoformat() or prior_start != start.isoformat() or prior_event_ids != new_event_ids:
+                try:
+                    await write_decision(
+                        actor="system", layer="WHEN", scope_kind="programme",
+                        scope_id=existing["id"], client_id=client_id,
+                        outcome="APPLIED",
+                        reason=(
+                            f"Programme window re-anchored: start {prior_start}→{start.isoformat()}, "
+                            f"end {prior_end}→{end.isoformat()}, "
+                            f"events {prior_event_ids}→{new_event_ids}"
+                        ),
+                    )
+                except Exception:
+                    pass
             return existing
 
     # Supersede any prior
-    await db.programmes_v2.update_many(
-        {"client_id": client_id, "status": "active"},
-        {"$set": {"status": "superseded", "updated_at": now_iso()}},
-    )
+    superseded = await db.programmes_v2.find({"client_id": client_id, "status": {"$in": ["active", "draft"]}}, {"_id": 0, "id": 1}).to_list(20)
+    superseded_ids = [p["id"] for p in superseded]
+    if superseded_ids:
+        await db.programmes_v2.update_many(
+            {"id": {"$in": superseded_ids}},
+            {"$set": {"status": "superseded", "updated_at": now_iso()}},
+        )
+        # Cancel non-live assignments and orphan-delete their draft impls
+        drafts_to_delete: list[str] = []
+        async for a in db.workout_assignments.find(
+            {"client_id": client_id, "programme_id": {"$in": superseded_ids},
+             "live_implementation_id": None},
+            {"_id": 0, "id": 1, "draft_implementation_id": 1}
+        ):
+            if a.get("draft_implementation_id"):
+                drafts_to_delete.append(a["draft_implementation_id"])
+        if drafts_to_delete:
+            await db.workout_implementations.delete_many({"id": {"$in": drafts_to_delete}})
+        await db.workout_assignments.update_many(
+            {"client_id": client_id, "programme_id": {"$in": superseded_ids},
+             "live_implementation_id": None},
+            {"$set": {"status": "cancelled", "updated_at": now_iso()}}
+        )
     pid = new_id()
     doc = {
         "id": pid,
@@ -322,6 +363,21 @@ async def plan_kickoff(
     if not (v2.get("v2_default") or v2.get("state_foundation_enabled")):
         raise HTTPException(409, "Client is not V2-flagged")
 
+    # P0-6: mirror DNA into restrictions + equipment_contexts BEFORE P6 reads them
+    try:
+        dna_sync = await sync_dna_to_v2_collections(client_id)
+    except Exception as _e:
+        logger.warning(f"kickoff: DNA sync failed for {client_id}: {_e}")
+        dna_sync = {"restrictions_written": 0, "equipment_context_id": None}
+
+    # P0-3: refresh roster facets so burden/opportunity scores reflect the
+    # current logic (older schedule_days may have been written before the fix)
+    try:
+        from feature_v2_p4_roster import _build_roster_facets
+        await _build_roster_facets(client_id=client_id, all_active=True, actor_id=coach["id"])
+    except Exception as _e:
+        logger.warning(f"kickoff: roster facet refresh failed for {client_id}: {_e}")
+
     # 1. Goal + event resolution ---------------------------------------------
     gd, goal_source = await _resolve_goal(client, body.goal_id_taxonomy)
     if not gd:
@@ -365,6 +421,36 @@ async def plan_kickoff(
     p3_res = await objectives_build(
         client_id, BuildDemandBody(programme_id=programme["id"]), coach=coach
     )
+
+    # P0-1 hygiene: purge legacy DRAFT implementations that have no content
+    # so P6 can re-build them with the new blocks[] schema. LIVE impls (any
+    # referenced by workout_assignments.live_implementation_id) are preserved.
+    try:
+        live_impl_ids = set()
+        async for a in db.workout_assignments.find(
+            {"client_id": client_id, "live_implementation_id": {"$ne": None}},
+            {"_id": 0, "live_implementation_id": 1}
+        ):
+            if a.get("live_implementation_id"):
+                live_impl_ids.add(a["live_implementation_id"])
+        del_q = {
+            "client_id": client_id,
+            "exercises": {"$in": [None, []]},
+            "$or": [{"blocks": {"$exists": False}}, {"blocks": {"$in": [None, []]}}],
+        }
+        if live_impl_ids:
+            del_q["id"] = {"$nin": list(live_impl_ids)}
+        await db.workout_implementations.delete_many(del_q)
+        # Reset any DRAFT assignments in current programme that were pointing
+        # at now-deleted impls back to "proposed" so P6 rebuilds them.
+        await db.workout_assignments.update_many(
+            {"client_id": client_id, "programme_id": programme["id"], "status": "ready",
+             "draft_implementation_id": {"$ne": None},
+             "live_implementation_id": None},
+            {"$set": {"status": "proposed", "draft_implementation_id": None, "updated_at": now_iso()}}
+        )
+    except Exception as _e:
+        logger.warning(f"kickoff: legacy impl purge failed: {_e}")
 
     # 5. P5 scheduling
     from feature_v2_p5_scheduling import plan_build as p5_plan_build, BuildPlanBody
@@ -479,6 +565,7 @@ async def plan_kickoff(
         "objectives_created": p3_res.get("objectives_created"),
         "assignments_created": p5_res.get("assignments_created"),
         "implementations_created": p6_res.get("implementations_created"),
+        "dna_sync": dna_sync,
         "rationale": rationale,
     }
 

@@ -603,18 +603,23 @@ async def workspace_month(
     days_by_date: dict[str, dict] = {}
     # start with schedule_days (whether V2 or V1-derived)
     for sd in sched_days:
+        derived = sd.get("derived") or {}
+        # Prefer derived.classification (V2 facets); fall back to top-level
+        # day_type set by the roster parser. Never silently render "home" when
+        # the day is actually a layover/turnaround/standby.
+        classification = (derived.get("classification")
+                          or sd.get("day_type")
+                          or "home")
         days_by_date[sd["date"]] = {
             "date": sd["date"],
             "schedule": {
-                "classification": (sd.get("derived") or {}).get("classification"),
-                "classification_label": _humanise_classification(
-                    (sd.get("derived") or {}).get("classification") or "home"
-                ),
-                "duty_burden_band": (sd.get("derived") or {}).get("duty_burden_band"),
-                "duty_burden_score": (sd.get("derived") or {}).get("duty_burden_score"),
-                "training_opportunity": (sd.get("derived") or {}).get("training_opportunity"),
-                "recommended_intensity_ceiling": (sd.get("derived") or {}).get("recommended_intensity_ceiling"),
-                "available_time_min": (sd.get("derived") or {}).get("available_time_min"),
+                "classification": classification,
+                "classification_label": _humanise_classification(classification),
+                "duty_burden_band": derived.get("duty_burden_band"),
+                "duty_burden_score": derived.get("duty_burden_score"),
+                "training_opportunity": derived.get("training_opportunity"),
+                "recommended_intensity_ceiling": derived.get("recommended_intensity_ceiling"),
+                "available_time_min": derived.get("available_time_min"),
                 "overnight_location": sd.get("overnight_location"),
                 "v1_source": sd.get("v1_source", False),
             },

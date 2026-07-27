@@ -160,6 +160,23 @@ export default function CoachWorkspaceScreen() {
     } finally { setBusy(false); }
   }, [clientId, month, data, loadMonth]);
 
+  const kickoffBuild = useCallback(async () => {
+    setBusy(true); setError(null);
+    try {
+      const res = await api<{ assignments_created: number; implementations_created: number }>(
+        `/v2/coach/clients/${clientId}/plan/kickoff`,
+        { method: "POST", body: { weeks: 8 } }
+      );
+      await loadMonth();
+      // Surface a summary error banner if 0 assignments were created
+      if (!res.assignments_created) {
+        setError("Plan built but no sessions could be scheduled. Check the schedule days.");
+      }
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally { setBusy(false); }
+  }, [clientId, loadMonth]);
+
   const stepMonth = useCallback((delta: number) => {
     if (!month) return;
     const [y, m] = month.split("-").map((s) => parseInt(s, 10));
@@ -243,6 +260,17 @@ export default function CoachWorkspaceScreen() {
               <Ionicons name="flag-outline" size={14} color={theme.color.textHi} />
               <Text style={styles.directiveBtnText}>Add directive</Text>
             </Pressable>
+            {!data.programme?.present && (
+              <Pressable
+                style={styles.publishBtn}
+                onPress={kickoffBuild}
+                disabled={busy}
+                testID="kickoff-build-btn"
+              >
+                <Ionicons name="flash" size={14} color="#000" />
+                <Text style={styles.publishBtnText}>{busy ? "Building…" : "Build plan"}</Text>
+              </Pressable>
+            )}
             {data.programme?.present && data.programme?.draft_id && (
               <Pressable
                 style={styles.publishBtn}

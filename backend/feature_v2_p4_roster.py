@@ -175,6 +175,21 @@ async def _build_roster_facets(
     await db.roster_duties.delete_many({"client_id": client_id, "source_roster_id": {"$in": roster_ids}})
     await db.flight_sectors.delete_many({"client_id": client_id, "source_roster_id": {"$in": roster_ids}})
 
+    # Also clear any lingering schedule_days for the exact date range of the
+    # rosters we're about to insert — this prevents a
+    # DuplicateKeyError on the (client_id, date) unique index when a NEW
+    # roster overlaps with a previous confirmed roster that we're now
+    # superseding.
+    all_dates: list[str] = []
+    for r in rosters:
+        for d in r.get("days") or []:
+            if d.get("date"):
+                all_dates.append(d["date"])
+    if all_dates:
+        await db.schedule_days.delete_many(
+            {"client_id": client_id, "date": {"$in": all_dates}}
+        )
+
     total_days, total_duties, total_sectors = 0, 0, 0
 
     for roster in rosters:

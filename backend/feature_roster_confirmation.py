@@ -62,6 +62,24 @@ LOW_CONFIDENCE_THRESHOLD = 0.6
 # Helpers
 # ---------------------------------------------------------------------------
 
+async def _effective_user_id(user: dict, on_behalf_of: Optional[str]) -> str:
+    """Resolve the user_id whose pending roster the caller is acting on.
+
+    Clients (role != 'coach') always act on their own pending roster.
+    Coaches MAY pass `?on_behalf_of={client_id}` to review/edit a
+    client's pending roster before confirmation. This powers the
+    coach-side "Verify days" screen without duplicating every endpoint.
+    """
+    if user.get("role") == "coach" and on_behalf_of:
+        client = await db.users.find_one(
+            {"id": on_behalf_of, "role": "client"}, {"_id": 0, "id": 1}
+        )
+        if not client:
+            raise HTTPException(404, "Client not found")
+        return client["id"]
+    return user["id"]
+
+
 def _needs_review(day: dict) -> bool:
     """True when a parsed day is low-confidence AND has not been reviewed by
     the client. Confirming a day (either by explicit toggle or by editing its
@@ -733,9 +751,14 @@ async def roster_pending_latest(user: dict = Depends(current_user)):
 
 
 @api.get("/roster/pending/{rid}")
-async def roster_pending_get(rid: str, user: dict = Depends(current_user)):
+async def roster_pending_get(
+    rid: str,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
+    uid = await _effective_user_id(user, on_behalf_of)
     r = await db.rosters.find_one(
-        {"id": rid, "user_id": user["id"], "status": "pending_confirmation"},
+        {"id": rid, "user_id": uid, "status": "pending_confirmation"},
         {"_id": 0},
     )
     if not r:
@@ -746,7 +769,7 @@ async def roster_pending_get(rid: str, user: dict = Depends(current_user)):
     # Attach the queue so the confirm screen can render "1 of 2" and jump
     # to the next pending roster after this one is confirmed.
     all_pending = await db.rosters.find(
-        {"user_id": user["id"], "status": "pending_confirmation"},
+        {"user_id": uid, "status": "pending_confirmation"},
         {"_id": 0, "id": 1, "start_date": 1, "end_date": 1, "source_filename": 1},
     ).sort([("start_date", 1), ("created_at", 1)]).to_list(20)
     ids = [p["id"] for p in all_pending]
@@ -766,11 +789,16 @@ async def roster_pending_get(rid: str, user: dict = Depends(current_user)):
 
 
 @api.patch("/roster/pending/{rid}")
-async def roster_pending_patch(rid: str, body: RosterConfirmBody, user: dict = Depends(current_user)):
+async def roster_pending_patch(
+    rid: str, body: RosterConfirmBody,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     """Save edits to a pending roster's days. Any day whose day_type has been
     changed away from 'Unknown/Needs Confirmation' auto-flags as reviewed.
     The client may also send `_confirmed_by_user=true` explicitly."""
-    r = await db.rosters.find_one({"id": rid, "user_id": user["id"], "status": "pending_confirmation"}, {"_id": 0})
+    uid = await _effective_user_id(user, on_behalf_of)
+    r = await db.rosters.find_one({"id": rid, "user_id": uid, "status": "pending_confirmation"}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Pending roster not found")
 
@@ -810,10 +838,15 @@ class ConfirmDayBody(BaseModel):
 
 
 @api.post("/roster/pending/{rid}/confirm-day")
-async def roster_pending_confirm_day(rid: str, body: ConfirmDayBody, user: dict = Depends(current_user)):
+async def roster_pending_confirm_day(
+    rid: str, body: ConfirmDayBody,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     """Mark a single day as reviewed (used for the amber 'Confirm' button on
     low-confidence days that the client wants to accept as-is)."""
-    r = await db.rosters.find_one({"id": rid, "user_id": user["id"], "status": "pending_confirmation"}, {"_id": 0})
+    uid = await _effective_user_id(user, on_behalf_of)
+    r = await db.rosters.find_one({"id": rid, "user_id": uid, "status": "pending_confirmation"}, {"_id": 0})
     if not r:
         raise HTTPException(404, "Pending roster not found")
     days = list(r.get("days") or [])
@@ -833,8 +866,13 @@ async def roster_pending_confirm_day(rid: str, body: ConfirmDayBody, user: dict 
 
 
 @api.delete("/roster/pending/{rid}")
-async def roster_pending_delete(rid: str, user: dict = Depends(current_user)):
-    res = await db.rosters.delete_one({"id": rid, "user_id": user["id"], "status": "pending_confirmation"})
+async def roster_pending_delete(
+    rid: str,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
+    uid = await _effective_user_id(user, on_behalf_of)
+    res = await db.rosters.delete_one({"id": rid, "user_id": uid, "status": "pending_confirmation"})
     return {"deleted": res.deleted_count > 0}
 
 

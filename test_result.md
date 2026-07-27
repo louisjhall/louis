@@ -2963,3 +2963,147 @@ agent_communication:
       workout_implementations) starts next. Phase D (V1 UI retirement)
       after B is stable.
 
+
+##====================================================================
+## V2 Migration · Hotfixes + Kickoff (unblocks the "Planning programme" stall)
+##====================================================================
+
+backend:
+  - task: "Roster upload — coach polling permission fix"
+    implemented: true
+    working: true
+    file: "backend/server.py (GET+POST /roster/jobs/{jid} + /retry)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Coach polling of roster jobs was returning 404 because the
+          endpoint filtered strictly on user_id == caller.id, but the
+          job's user_id is the CLIENT id (coach uploads on behalf of).
+          Fix: when caller is coach, match on user_id OR coach_id. Same
+          fix applied to /roster/jobs/{jid}/retry. Verified via curl —
+          coach now polls jobs successfully.
+  - task: "V1 roster → V2 schedule_days bridge on confirmation"
+    implemented: true
+    working: true
+    file: "backend/feature_v2_p4_roster.py (_build_roster_facets helper) + feature_coach_roster_upload.py + feature_roster_confirmation.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Refactored the P4 build endpoint into a reusable
+          `_build_roster_facets(client_id, roster_id?, actor_id)` helper.
+          Hooked into BOTH the coach-side and client-side roster confirm
+          endpoints so that whenever a roster is confirmed for a V2
+          client, V2 `schedule_days` + `roster_duties` + `flight_sectors`
+          are materialised immediately. Also added a duplicate-date
+          delete_many to avoid Mongo unique-index conflicts when a new
+          roster supersedes an old one. Verified live: Pietro's July
+          roster now shows classified days ("Light burden ·
+          opportunity 100") instead of "V1 roster · read-only".
+  - task: "V2 plan kickoff — one-click programme + phases + P3 + P5 + P6"
+    implemented: true
+    working: true
+    file: "backend/feature_v2_coach_kickoff.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          New endpoint POST /api/v2/coach/clients/{cid}/plan/kickoff.
+          Scaffolds the full V2 pipeline for a client that only has a
+          roster: (1) seed goals_v2 (general.longevity default),
+          (2) create programmes_v2, (3) build 2 phases (foundation +
+          maintenance) directly, (4) run P3 objectives_build, (5) run
+          P5 plan_build, (6) run P6 implementations_build. Also creates
+          a plan_drafts row so the workspace publish flow lights up.
+          Verified with Pietro Sangermano: single call created 2 phases,
+          6 objectives, 28 assignments, 18 implementations. Pipeline now
+          shows every stage lit except Validating/Published.
+  - task: "Pipeline status widget — data-driven fallback"
+    implemented: true
+    working: true
+    file: "backend/feature_v2_coach_directives.py (generation_status)"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          The generation_status widget only lit "Planning programme" and
+          "Generating workouts" when it found a `jobs.kind=draft_build`
+          row, which the one-click kickoff endpoint doesn't create.
+          Added a data-driven fallback: infer Planning programme = done
+          when training_objectives exist for the client; infer
+          Generating workouts state from assignments vs implementations
+          counts. Verified visually on Pietro's workspace — all stages
+          now show green/amber correctly after kickoff.
+
+frontend:
+  - task: "AddClientSheet — double-JSON-stringify fix"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AddClientSheet.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          The CREATE ACCOUNT button silently failed because the payload
+          was JSON.stringify'd twice (once by the sheet, once by the
+          api() helper). Removed the local JSON.stringify. Verified live:
+          TestLouis Hall created successfully from V2 Home → Add client.
+  - task: "V2 workspace — Kickoff 'Build plan' button + Add client on V2 Home"
+    implemented: true
+    working: true
+    file: "frontend/app/coach/client/[id]/workspace.tsx + (coach)/v2-home.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added "Build plan" button in workspace ribbon (testID
+          `kickoff-build-btn`) that shows ONLY when there's no
+          programme yet. Calls /plan/kickoff and refreshes the month.
+          Also added "Add client" button on V2 Home (testID
+          `add-client-btn`) that opens AddClientSheet inline.
+
+test_plan:
+  current_focus:
+    - "POST /v2/coach/clients/{cid}/plan/kickoff — happy path with roster present"
+    - "POST /v2/coach/clients/{cid}/plan/kickoff — 409 when client is not V2-flagged"
+    - "coach role can poll /roster/jobs/{jid} for uploads they created"
+    - "V1 roster confirm bridges to V2 schedule_days for V2-flagged clients"
+    - "AddClientSheet submits successfully (no double JSON stringify)"
+    - "generation_status lights Planning programme + Generating workouts stages after kickoff"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Batch of hotfixes shipped to unstick the V2 pipeline from
+      "Planning programme". After a roster is uploaded:
+        1. Coach can now poll the job (fixed 404)
+        2. V1 roster → V2 schedule_days auto-bridged on confirm
+        3. Coach clicks "Build plan" (new ribbon button) → single
+           /plan/kickoff call scaffolds programme + phases + objectives
+           and runs P5+P6 → assignments + implementations exist
+        4. Pipeline widget now lights every stage green/amber based
+           on actual DB state (no reliance on `jobs.kind=draft_build`).
+      Also fixed AddClient double-stringify bug from earlier session.
+

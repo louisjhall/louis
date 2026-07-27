@@ -262,6 +262,32 @@ async def generation_status(
         elif st in ("failed", "dead_letter"):
             stages["planning_programme"] = {"state": "error", "detail": dbjob.get("error") or st}
 
+    # Data-driven fallback — infer planning + generating stages from the DB
+    # directly when the coach used the one-click kickoff endpoint (which
+    # skips the async jobs infrastructure entirely).
+    prog_row = await db.programmes_v2.find_one(
+        {"client_id": client_id, "status": {"$in": ["active", "draft"]}}, {"_id": 0, "id": 1}
+    )
+    if prog_row and stages["planning_programme"].get("state") == "pending":
+        obj_count = await db.training_objectives.count_documents(
+            {"client_id": client_id, "programme_id": prog_row["id"]}
+        )
+        if obj_count > 0:
+            stages["planning_programme"] = {
+                "state": "done", "detail": f"{obj_count} objectives"
+            }
+    if stages["planning_programme"].get("state") == "done" \
+            and stages["generating_workouts"].get("state") == "pending":
+        asg_total = await db.workout_assignments.count_documents({"client_id": client_id})
+        impl_total = await db.workout_implementations.count_documents({"client_id": client_id})
+        if asg_total > 0:
+            if impl_total >= asg_total:
+                stages["generating_workouts"] = {"state": "done",
+                                                  "detail": f"{impl_total}/{asg_total} sessions built"}
+            elif impl_total > 0:
+                stages["generating_workouts"] = {"state": "in_progress",
+                                                  "detail": f"{impl_total}/{asg_total} sessions built"}
+
     # ---- open exceptions block "validating" until resolved
     open_exc = await db.exceptions.count_documents({"client_id": client_id, "status": "open"})
     if stages["generating_workouts"].get("state") == "done":

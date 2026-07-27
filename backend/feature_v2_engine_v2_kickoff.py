@@ -223,8 +223,27 @@ async def engine_v2_kickoff(
         cum += _dt.timedelta(weeks=ph.weeks_target)
 
     # ---- 3. Planning window -------------------------------------------
-    window_weeks = int(body.planning_window_weeks)
+    # If the coach passed the DEFAULT weeks (4), auto-extend the window to
+    # cover the entire uploaded roster range (capped at 12 weeks to keep
+    # generation bounded). If the coach explicitly passed a different value,
+    # honour it verbatim.
     window_start = today - _dt.timedelta(days=today.weekday())   # this Monday
+    if int(body.planning_window_weeks) == 4:
+        max_sd = await db.schedule_days.find(
+            {"client_id": client_id, "date": {"$gte": window_start.isoformat()}},
+            {"_id": 0, "date": 1},
+        ).sort("date", -1).limit(1).to_list(1)
+        if max_sd:
+            roster_end = _dt.date.fromisoformat(max_sd[0]["date"])
+            # Floor to the last COMPLETE week inside the roster — never
+            # schedule exposures on weeks with no roster coverage.
+            span_days = (roster_end - window_start).days + 1
+            derived_weeks = max(1, span_days // 7)
+            window_weeks = min(12, max(4, derived_weeks))
+        else:
+            window_weeks = 4
+    else:
+        window_weeks = int(body.planning_window_weeks)
     week_starts: list[_dt.date] = [
         window_start + _dt.timedelta(days=7 * i) for i in range(window_weeks)
     ]

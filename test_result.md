@@ -3342,3 +3342,153 @@ agent_communication:
       (well under 5/wk cap), 17 impls all with blocks=3 or exercises.
       Programme end correctly 2027-01-17. No more opp=100-everywhere.
 
+
+##############################################################################
+# ITERATION 108 — V2 ENGINE V2 (FULL WHAT→WHEN→HOW→VALIDATE REBUILD)
+##############################################################################
+
+backend:
+  - task: "Sport taxonomy registry (10 goals, 42 session kinds)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          feature_v2_sport_configs.py — declarative source of truth for
+          marathon / half / 10K / 5K / cycling.endurance / triathlon.olympic
+          / muscle_gain / fat_loss / strength.general / general.fitness. Each
+          goal has phase_sequence + phase_specs with QuotaRule (kind,
+          exposures_per_week, priority, min_recovery_hours, duration_min,
+          intensity_target, progression, can_skip_if_missed). Forbidden
+          sequences catalogued per goal. Invariant checks run on import.
+
+  - task: "Rolling roster context (feature_v2_roster_context.py)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Replaced isolated day scoring with 72h look-back + 48h look-ahead.
+          DayContext exposes burden, opportunity, available_time_min (CAP),
+          recovery_state, recent_hard_days_48h, upcoming_hard_days_48h,
+          consecutive_duty_days, sleep_opportunity, tz_shift_last_48h.
+          Rolling penalties: recent hard streak, tz jetlag carryover,
+          consecutive duty streak. Categorical baseline is a HINT, never a
+          verdict.
+
+  - task: "Sequencing engine (feature_v2_sequencing.py)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          PlacementPlan + validate_placement is the ONLY gatekeeper for
+          schedule decisions. Enforces: hard-day cap per week, key-day cap
+          per week, min recovery hours (family-specific), forbidden sequences
+          (prev-day AND next-day), 48h key spacing, consecutive training
+          days cap, same-day family collision, opportunity floors by priority.
+
+  - task: "Demand engine v2 (feature_v2_demand_v2.py)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          build_demand() derives REQUIRED exposures from goal + phase +
+          progression. Never invents demand from opportunity. Stable
+          exposure_id per (client, goal, phase, kind, week, ordinal) —
+          monotonic and persistent across reschedules. schedule_demand()
+          iterates required exposures in priority order, validates every
+          candidate via sequencing engine, surfaces Unfilled with
+          candidate_hint_dates when placement fails.
+
+  - task: "Construction v2 (feature_v2_construction_v2.py) — sport-typed session specs"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Discriminated union SessionSpec: running / cycling / swimming /
+          strength / mobility / recovery / travel_recovery / activation /
+          brick / rest. Each has its own payload shape. Running:
+          warmup/main/cooldown with pace/HR/RPE/intervals. Strength:
+          exercises[] with subs_allowed. Equipment labels are modality-
+          appropriate (running=outdoor/treadmill + running_shoes; strength=
+          gym/home/hotel_room/bodyweight_only). Running NEVER shows
+          "bodyweight, dumbbells" — that was the observed bug.
+
+  - task: "Validators v2 (feature_v2_validators_v2.py)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          validate_session: rejects zero-duration, empty payload, restriction
+          conflicts. validate_programme: KEY unfilled (error), forbidden
+          sequences in placements (error), weekly cap exceeded, exposure
+          numbering not monotonic, same-day family duplicate. Returns
+          ProgrammeValidation.ok=True only when ALL invariants pass.
+
+  - task: "Engine v2 orchestrator + feature flag (feature_v2_engine_v2_kickoff.py)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          POST /api/v2/coach/clients/{cid}/engine-v2/kickoff
+          GET  /api/v2/coach/clients/{cid}/engine-v2/draft
+          GET  /api/v2/coach/clients/{cid}/engine-v2/status
+          PATCH /api/v2/coach/clients/{cid}/engine-v2/enable
+          PATCH /api/v2/coach/clients/{cid}/engine-v2/disable
+          Draft/shadow output only in plan_drafts_v2. Existing Live plans
+          untouched. HTTP smoke: 409 pre-enable, 200 with graceful
+          no_schedule_days branch, enable/disable idempotent.
+
+  - task: "Regression test suite (37 tests, all green)"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          /app/backend/tests/test_engine_v2_invariants.py
+          Groups: TestGoalConfigInvariants (6), TestRosterContextRolling (6),
+          TestDemandDoesNotInventSessions (3), TestSchedulerRespectsInvariants
+          (8), TestConstructionSportTyped (6), TestValidatorGate (2),
+          TestPietroAugustRegression (6). Verifies every one of the 13+
+          named failure modes from the user directive.
+
+  - task: "Pietro deterministic fixture + shadow report"
+    implemented: true
+    working: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          /app/backend/scripts/run_pietro_shadow.py builds a marathon draft
+          from Pietro's real DNA + Cathay-shape roster and writes the
+          comparison to /app/memory/PIETRO_V2_ENGINE_V2_DRAFT.md. All 11
+          named failure modes verified fixed. 4 unfilled strength sessions
+          surfaced with candidate_hint_dates — coach gets an actionable
+          exception instead of a silent decision.
+
+metadata:
+  version: "iter108"
+  test_sequence: 108
+  run_ui: false
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Full V2 engine rebuild landed as parallel modules behind a per-client
+      `engine_v2` feature flag. Old engine untouched. 37/37 regression tests
+      pass. Pietro deterministic report proves all 11 named August-plan
+      failures are gone.
+

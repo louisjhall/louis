@@ -11888,6 +11888,7 @@ import feature_v2_coach_publish           # noqa: E402,F401  V2 Phase 11: Coach 
 import feature_v2_coach_inline_editor     # noqa: E402,F401  V2 Phase 11: Coach Dashboard V2 · Inline workout implementation editor
 import feature_v2_coach_kickoff           # noqa: E402,F401  V2 Phase 11: One-click plan scaffold (programme + phases + P3 + P5 + P6)
 import feature_v2_coach_client_admin     # noqa: E402,F401  V2 Phase 11: Coach Dashboard V2 · Delete client + all references
+import feature_v2_engine_v2_kickoff       # noqa: E402,F401  V2 Engine V2: WHAT→WHEN→HOW→VALIDATE pipeline (feature-flagged Draft-only)
 import feature_coach_audit_bundle         # noqa: E402,F401  Serves the collated Coach Dashboard audit bundle at a stable URL
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history

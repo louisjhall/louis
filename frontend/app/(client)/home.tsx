@@ -370,7 +370,15 @@ export default function Home() {
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
               <View style={styles.topBar}>
-                <CrewFitWings size={40} />
+                {/* Iter 106 — full CrewFit wordmark logo, small and slightly
+                    transparent so it reads as a subtle brand watermark rather
+                    than a hard header. */}
+                <Image
+                  source={require("@/assets/images/crewfit-logo-full.png")}
+                  style={styles.topLogo}
+                  contentFit="contain"
+                  accessibilityLabel="CrewFit"
+                />
                 <NotificationBell testID="client-notif-bell" />
               </View>
 
@@ -453,6 +461,31 @@ export default function Home() {
           {/* Iter 95n — placeholder while Louis is "reviewing" a freshly
               uploaded roster. Auto-hides when the review window elapses. */}
           <RosterReviewBanner onReadyChanged={load} />
+
+          {/* Iter 106 — Prominent, always-visible Upload Roster CTA.
+              This is CrewFit's critical first-step feature: the whole app
+              revolves around a valid roster. Keeping it as a dedicated
+              full-width button above the fold means clients (and returning
+              users uploading next month's roster) always know how to get
+              their next roster in without hunting. */}
+          <Pressable
+            testID="home-upload-roster-cta"
+            onPress={() => router.push("/roster-upload")}
+            style={styles.uploadRosterCta}
+            accessibilityLabel="Upload your roster"
+            accessibilityRole="button"
+          >
+            <View style={styles.uploadRosterIconWrap}>
+              <Ionicons name="cloud-upload" size={22} color={theme.color.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.uploadRosterTitle}>UPLOAD YOUR ROSTER</Text>
+              <Text style={styles.uploadRosterSub}>
+                Drop your latest roster PDF and Louis will build the week around it.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={theme.color.brand} />
+          </Pressable>
 
           {/* Phase 7B — dynamic programme status + today state.
               Only renders when the client isn't in the default "programme
@@ -766,7 +799,6 @@ export default function Home() {
 
           <View style={styles.quickRow}>
             <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
-            <QuickBtn icon="cloud-upload" label="ROSTER" onPress={() => router.push("/roster-upload")} testID="qs-roster" />
             <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
             <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
           </View>
@@ -972,6 +1004,7 @@ const styles = StyleSheet.create({
   heroWrap: { minHeight: 360, backgroundColor: theme.color.surface2 },
   heroContent: { padding: theme.space.lg, marginTop: theme.space.md, gap: theme.space.md },
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  topLogo: { width: 96, height: 30, opacity: 0.82 },
   hello: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "800" },
   date: { color: theme.color.textMuted, marginTop: 4, letterSpacing: 2, fontSize: 11 },
   loadBadge: { flexDirection: "row", alignItems: "center", marginTop: theme.space.md, paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, borderWidth: 1, alignSelf: "flex-start", backgroundColor: "rgba(0,0,0,0.35)" },
@@ -980,6 +1013,33 @@ const styles = StyleSheet.create({
   hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
   dutyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" },
   duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
+
+  // Iter 106 — Standalone Upload Roster button
+  uploadRosterCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: theme.space.md,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+  },
+  uploadRosterIconWrap: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  uploadRosterTitle: {
+    color: theme.color.brand,
+    fontSize: 12, fontWeight: "900", letterSpacing: 1.8,
+  },
+  uploadRosterSub: {
+    color: theme.color.textMuted,
+    fontSize: 11, marginTop: 3, lineHeight: 15,
+  },
 
   // Iter 100 — Next 5 Days strip on home
   next5Wrap: {

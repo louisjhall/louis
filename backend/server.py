@@ -11829,6 +11829,18 @@ import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach progr
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
 import feature_coach_roster_upload       # noqa: E402,F401  Phase A · A2: coach uploads roster on behalf of client
+import feature_v2_state_foundation        # noqa: E402,F401  V2 Phase 1: DRAFT/LIVE state layer (feature-flagged, off by default)
+import feature_v2_common                  # noqa: E402,F401  V2 shared helpers (flag gate + DecisionRecord)
+import feature_v2_p2_goals                # noqa: E402,F401  V2 Phase 2: Goals + Programmes + Phases catalog + engine
+import feature_v2_p3_demand               # noqa: E402,F401  V2 Phase 3: Training-demand engine (WHAT)
+import feature_v2_p4_roster               # noqa: E402,F401  V2 Phase 4: Structured roster facets (schedule_days/duties/sectors)
+import feature_v2_p5_scheduling           # noqa: E402,F401  V2 Phase 5: Scheduling engine (WHEN) + validation V1..V6
+import feature_v2_p6_construction         # noqa: E402,F401  V2 Phase 6: Workout construction (HOW) + slot templates
+import feature_v2_p7_equipment            # noqa: E402,F401  V2 Phase 7: EquipmentContext + SAB + adapt flow
+import feature_v2_p8_progression          # noqa: E402,F401  V2 Phase 8: Progression states + PerformanceRecord
+import feature_v2_p9_events               # noqa: E402,F401  V2 Phase 9: Event countdown + phase transitions
+import feature_v2_p10_reality             # noqa: E402,F401  V2 Phase 10: Readiness + Today's Reality chip resolver
+import feature_v2_p12_automation          # noqa: E402,F401  V2 Phase 12: Job runner + shadow mode + metrics
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history
 import feature_coach_workout_swap        # noqa: E402,F401  Phase 5: coach inline workout-swap picker (alternative presets)

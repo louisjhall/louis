@@ -2570,3 +2570,51 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Phase A (Coach Dashboard Rebuild) complete. A1 fixes the 'July disappeared' visibility bug via multi-roster merge in /roster/current and _roster_days_between. A2 gives Louis a one-tap 'Upload roster for client' path from both the client detail screen and the month-navigator, with auto-confirm on the coach's behalf. 6/6 pytest cases green. Ready for user validation before proceeding to Phase B."
+
+
+# V2 Phase 1 — DRAFT/LIVE state foundation (Iter 112)
+
+backend:
+  - task: "V2 Phase 1: DRAFT / LIVE / VERSION state layer"
+    working: true
+    file: "backend/feature_v2_state_foundation.py"
+    verified_on: "pytest tests/test_v2_state_foundation.py → 8/8 PASSED"
+    change: |
+      New module registering 13 endpoints under /api/v2/*:
+        - PATCH /v2/coach/clients/{cid}/flags           (enable V2 per client)
+        - GET   /v2/coach/clients/{cid}/flags
+        - POST/GET/PATCH /v2/coach/clients/{cid}/drafts
+        - GET   /v2/coach/clients/{cid}/drafts/{did}
+        - POST  /v2/coach/clients/{cid}/drafts/{did}/change-sets
+        - GET   /v2/coach/clients/{cid}/drafts/{did}/change-sets
+        - PATCH /v2/coach/clients/{cid}/change-sets/{csid}/resolve
+        - POST  /v2/coach/clients/{cid}/drafts/{did}/approvals
+        - GET   /v2/coach/clients/{cid}/versions
+        - GET   /v2/coach/clients/{cid}/versions/{vid}
+        - POST  /v2/coach/clients/{cid}/versions/revert
+        - POST/GET/DELETE /v2/coach/clients/{cid}/locks
+        - GET   /v2/coach/clients/{cid}/decisions
+        - GET   /v2/live/plan            (client stub; empty until later phases)
+      New collections used (write-only from V2 code, unread by V1):
+        plan_drafts, plan_versions, plan_snapshots, change_sets,
+        approvals, locks, decision_records.
+      Feature flag: profile.v2_flags.state_foundation_enabled — off by default.
+    invariants_verified:
+      - Flag gate: 409 without state_foundation_enabled=True
+      - Role gate: every /v2/coach/* endpoint requires role=coach
+      - Version immutability: immutable=True flag on every plan_versions row
+      - Non-destructive revert: revert(v1) creates v3, leaving v1 and v2 intact
+      - Draft supersession: second draft_create discards the prior building draft
+      - DecisionRecord fires on every state transition
+      - /v2/live/plan returns has_v2_plan=False by default — no V1 client sees V2 output
+
+agent_communication:
+  - agent: "main"
+    message: |
+      V2 Phase 1 shipped behind per-client feature flag. Zero V1 impact
+      (verified: no V1 files reference the new collections). 8/8 backend
+      tests green. This is the foundation every subsequent V2 phase
+      (goals → objectives → scheduling → construction) will build on.
+      To try it end-to-end: PATCH /v2/coach/clients/{cid}/flags with
+      {"state_foundation_enabled": true} then create a draft, approve,
+      revert. Client's actual LIVE plan remains served by V1.

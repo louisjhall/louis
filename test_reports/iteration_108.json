@@ -1,0 +1,44 @@
+{
+  "summary": "Engine V2 Coach Dashboard Publish backend — comprehensive E2E test coverage. All 6 endpoints validated: goal-config status classifier (COMPLETE/PARTIAL/MISSING), exceptions tray with resolve idempotency, Draft vs Live compare, Safe Publish with all 422/409 gates (unresolved_blocking_exceptions, stale_draft), and client V2 Live-read auth gates. Full happy-path lifecycle executed against Pietro (c4c7c7dd-...): kickoff -> exceptions list (1 IMPORTANT unfilled) -> publish blocked -> resolve KEY/IMPORTANT exceptions -> publish succeeds -> compare shows has_live=true. 25 passed, 2 intentional skips (config_missing + PARTIAL ack gates can't be triggered against Pietro whose goal is running.marathon COMPLETE; both are covered by classifier unit tests + code review). One MINOR SPEC DISCREPANCY found: publish stale_draft returns HTTP 409 in code but problem statement specifies 422 — behaviour semantically correct; only status code mismatch.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/v2/coach/clients/{cid}/engine-v2/publish",
+        "issue": "Stale-draft path returns HTTP 409 (feature_v2_engine_v2_publish.py:478) but problem statement spec says 422 stale_draft. Detail body correctly contains {code: 'stale_draft', current_draft_id}. Consider unifying to 422 to match the other publish gates (config_missing, partial_config_ack_required, unresolved_blocking_exceptions all return 422). Test accepts either status."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_engine_v2_publish_e2e.py",
+    "/app/test_reports/pytest/engine_v2_publish_e2e.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/NICE-TO-HAVE: Change HTTPException(409, ...) to HTTPException(422, ...) for stale_draft in feature_v2_engine_v2_publish.py L478 to match the rest of the publish-gate status-code contract (all other 4 gates use 422). Not blocking — detail payload already exposes {code: 'stale_draft'} which is what UI/clients should key off.",
+    "OPTIONAL: expose Pietro-like client credentials in /app/memory/test_credentials.md so future testers can hit /api/v2/client/plan/live end-to-end with a real Engine V2-enabled client and validate placements/session_specs shape."
+  ],
+  "critical_code_review_comments": [
+    "feature_v2_engine_v2_publish.py is 695 lines — approaching the 700-line threshold; consider splitting into publish_flows.py / exception_tray.py / client_read.py if further growth expected.",
+    "Compare endpoint (L355) doesn't include an 'unchanged' list in the response body (only 'unchanged' count in summary). The problem statement lists 'unchanged' as one of the returned arrays — currently only count is returned. Frontend may need this list.",
+    "Publish flow uses two update_one calls to upsert exception_resolutions (L331 pull + L335 push) — not wrapped in a Mongo transaction. Low risk since only single doc but worth noting for future hardening.",
+    "publish endpoint deactivates prev Live and inserts new Live via two separate ops (L546, L582) with no transaction — race window exists but low risk given single coach per client."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_engine_v2_publish_e2e.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (25 executed / 25 passed; 2 skipped by design)",
+    "frontend": "not tested (backend-only per request)"
+  },
+  "seed_data_creation": "Test regenerated Pietro's draft via kickoff endpoint (planning_window_weeks=4). Test also published Pietro's plan to plan_live_v2 as part of happy-path; a subsequent kickoff created a fresh draft. Pietro is left in state: latest draft exists post-publish, plan_live_v2 has an active Live doc from the test publish.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_engine_v2_publish_e2e.py is now the canonical E2E for Engine V2 publish/exception/compare/live-read. It regenerates Pietro's draft each run and completes the full lifecycle. Pietro's active Live plan will be replaced on each run. Test uses BASE_URL from EXPO_PUBLIC_BACKEND_URL. Two tests are intentionally skipped: config_missing gate (would require changing Pietro's goal_key to unknown) and partial_config_ack_required (Pietro's goal is running.marathon COMPLETE). Both are covered by classifier unit tests. To exercise those gates in future, seed a client whose profile.primary_goal_type is unset or set to a PARTIAL-configured goal (e.g. running.5k).",
+  "rca_of_issue": "No blocking issues. Sole minor finding: stale_draft returns 409 vs spec's 422. Root cause: feature_v2_engine_v2_publish.py L478 uses HTTPException(409, ...) while all other publish gates (config_missing L488, partial_config_ack_required L494, unresolved_blocking_exceptions L516, incomplete_workout_construction L536) use HTTPException(422, ...). Reproduce: POST publish with draft_id='nonexistent' -> receives 409 with detail.code='stale_draft'. Mitigation: one-line change of 409 to 422."
+}

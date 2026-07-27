@@ -759,3 +759,78 @@ async def endpoint_engine_v2_client_state(
         "active_live_id": (active_live or {}).get("id"),
         "active_live_activated_at": (active_live or {}).get("activated_at"),
     }
+
+
+
+# ---------------------------------------------------------------------------
+# V2 placement detail endpoint (used by the coach workspace's workout drawer)
+# ---------------------------------------------------------------------------
+# Coach dashboard renders V2 placements as calendar cards with synthetic IDs
+# of the form  "v2p:<source_id>:<exposure_id>"  (source_id is a plan_live_v2
+# id when the plan is published, else the plan_drafts_v2 id for a preview).
+# When the coach taps the card, the frontend calls this endpoint to hydrate a
+# workout-detail drawer without touching the legacy workout_implementations
+# collection (which V2 does NOT populate on publish by design).
+
+@api.get("/v2/coach/clients/{client_id}/engine-v2/placement-detail")
+async def endpoint_engine_v2_placement_detail(
+    client_id: str,
+    source: str,          # "live" | "draft"
+    source_id: str,
+    exposure_id: str,
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    """Return the placement + session_spec for a specific exposure in either
+    the active Live V2 plan or the active Draft V2 plan.
+
+    404 if the source doc no longer matches (e.g. the coach republished
+    or rebuilt in between). The frontend should refetch the workspace on 404.
+    """
+    if source not in ("live", "draft"):
+        raise HTTPException(400, "source must be 'live' or 'draft'")
+
+    if source == "live":
+        doc = await db.plan_live_v2.find_one(
+            {"id": source_id, "client_id": client_id}, {"_id": 0},
+        )
+        if not doc or not doc.get("active"):
+            raise HTTPException(404, "Live V2 plan not active or not found for this client.")
+    else:
+        doc = await db.plan_drafts_v2.find_one(
+            {"id": source_id, "client_id": client_id,
+             "status": {"$in": ["needs_review", "ready_for_review"]}},
+            {"_id": 0},
+        )
+        if not doc:
+            raise HTTPException(404, "Draft V2 plan not active or not found for this client.")
+
+    placement = None
+    for p in (doc.get("placements") or []):
+        if p.get("exposure_id") == exposure_id:
+            placement = p
+            break
+    if not placement:
+        raise HTTPException(404, f"Placement {exposure_id} not found in this V2 plan.")
+
+    spec = (doc.get("session_specs") or {}).get(exposure_id) or {}
+
+    # Find the corresponding required-exposure so we can surface priority,
+    # quota window and cadence hints in the coach drawer.
+    required = None
+    for e in ((doc.get("demand") or {}).get("required_exposures") or []):
+        if e.get("exposure_id") == exposure_id:
+            required = e
+            break
+
+    return {
+        "source": source,
+        "source_id": source_id,
+        "client_id": client_id,
+        "goal_key": doc.get("goal_key") or (doc.get("effective_context") or {}).get("goal_key"),
+        "planning_window": doc.get("planning_window"),
+        "placement": placement,
+        "session_spec": spec,
+        "required_exposure": required,
+        "activated_at": doc.get("activated_at"),
+        "coach_note": doc.get("coach_note"),
+    }

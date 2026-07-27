@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 109 — V2 Publish→Coach workspace calendar rendering fix verified end-to-end. Backend: 9 pytest cases passed, 2 skipped by design (V1 client not found in Louis's roster; draft-fallback path not exercisable while Pietro has an active LIVE plan). Live workspace for Pietro (c4c7c7dd-…) in month 2026-07 returns client.kind='v2' (shadowed-variable regression NOT present), 3 v2p:… cards with status_kind='live'/v2_source='live', counts.live=3 and total=3, run_easy (35 min, treadmill) + mobility (20 min, mat) on 2026-07-28, run_long (60 min, outdoor + running_shoes) on 2026-07-31 — matches review spec exactly. placement-detail endpoint returns placement+session_spec+required_exposure on happy path; source=draft with invalid source_id returns 404; source=live with invalid source_id returns 404; invalid source kind returns 400. Frontend: navigated as louis@crewfit.net to /coach/client/{pietro}/workspace, July 2026 renders the three workout cards with 'Live' chips on the correct days; tapping 'Run Easy' opens the drawer with WARMUP/STEADY/COOLDOWN blocks (duration + hr_zone + cue), 'WHY THIS?' shows 'ENGINE V2' + rationale + 'intensity: z2', and no 'Edit inline' button appears. EngineV2DraftPanel shows the expected 'Live plan edc0be3a is active. Build a new Draft to propose changes.' post-publish state. No React Native / Expo issues detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter109_workspace_v2_publish_render.py",
+    "/app/test_reports/pytest/iter109_workspace_v2_render.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_v2_coach_dashboard.py is 958 lines — over the 700-line guideline. Consider splitting into sub-modules (attention/roster/workspace/approve) in a future iteration; the workspace_month + V2 placement bridge is now the largest cohesive block.",
+    "In workspace_month, counts.live is incremented by `if a['status'] == 'live'` (line 776), while other status_kind counters (ready/review/…) use `status_kind`. This currently agrees for V2 placements (status='live', status_kind='live'), but a future refactor could accidentally set status='live_v2' or similar and desync the two — consider unifying to status_kind everywhere.",
+    "placement-detail endpoint sits on the coach-only auth path (require_role('coach')). If a coach were to view another coach's client the current code doesn't cross-check assignments — matches the rest of the workspace endpoints so no regression, but worth flagging for future multi-coach hardening."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter109_workspace_v2_publish_render.py (new — 11 pytest cases; 9 passed, 2 skipped)"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 executed passed; 2 skipped by design)",
+    "frontend": "100% of tested drawer + calendar + draft-panel expectations verified"
+  },
+  "seed_data_creation": "None. Ran read-only against Pietro's existing plan_live_v2 (id=edc0be3a-9424-4bba-85eb-076b3818c945) which was published during a previous iteration.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_iter109_workspace_v2_publish_render.py is the canonical regression for the V2 publish→calendar bridge. It re-uses Pietro (c4c7c7dd-4303-4645-af2c-b70212495360, month 2026-07) which currently has an active plan_live_v2 with 3 non-rest placements. If Pietro is later re-published or wiped, the LIVE-path assertions and counts.live=3 may need to be relaxed / re-seeded. TestV1Regression skips today because Louis's /api/v2/coach/clients roster returned no client with kind='v1' — if a legacy V1 client is later assigned to Louis the test will start asserting real V1 shape. TestDraftFallback skips whenever a LIVE plan is active; to exercise it, wipe plan_live_v2.active=True and leave a plan_drafts_v2 doc in 'needs_review' / 'ready_for_review'. Frontend testing hits AsyncStorage key 'cf_token' — inject via localStorage.setItem('cf_token', <jwt>) after /api/auth/login and then navigate to /coach/client/{id}/workspace.",
+  "rca_of_issue": "No regression found. The V2 publish→calendar bridge in feature_v2_coach_dashboard.py:675-762 correctly reads plan_live_v2 (preferred) or plan_drafts_v2 (fallback), materialises each non-rest placement as an assignment card with id 'v2p:<source_id>:<exposure_id>', copies duration_min from session_spec, prepends environment (outdoor/treadmill/…) to equipment_used, and sets status_kind='live'/'review'. feature_v2_engine_v2_publish.py:775-836 placement-detail endpoint correctly returns placement + session_spec + required_exposure and 404s on unknown ids. Frontend adapter (workspace.tsx:559-577) picks the right source (live→draft fallback) and hides 'Edit inline' for V2 placements. Original 'nothing appeared' bug is fixed."
+}

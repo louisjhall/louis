@@ -556,11 +556,33 @@ function WorkoutDrawer({
     setLoading(true);
     (async () => {
       try {
-        const impl = await api<any>(`/v2/coach/clients/${clientId}/plan/implementations/${assignmentId}`).catch(() => null);
-        setDetail(impl);
-        // P1-2: use assignment_id so scope expands to include objective + programme + phase decisions
-        const dr = await api<any>(`/v2/coach/clients/${clientId}/decisions?assignment_id=${assignmentId}&limit=20`).catch(() => ({ decisions: [] }));
-        setDecisions(dr?.decisions || []);
+        if (assignmentId.startsWith("v2p:")) {
+          // Engine V2 placement: id shape → "v2p:<source_id>:<exposure_id>"
+          const parts = assignmentId.split(":");
+          const sourceId = parts[1];
+          const exposureId = parts.slice(2).join(":");
+          // Try live first, then fall back to draft (matches workspace_month
+          // preference order — safe if the coach's calendar is showing a
+          // draft preview because plan_live_v2 hasn't been created yet).
+          let raw: any = null;
+          try {
+            raw = await api<any>(
+              `/v2/coach/clients/${clientId}/engine-v2/placement-detail?source=live&source_id=${encodeURIComponent(sourceId)}&exposure_id=${encodeURIComponent(exposureId)}`
+            );
+          } catch {
+            raw = await api<any>(
+              `/v2/coach/clients/${clientId}/engine-v2/placement-detail?source=draft&source_id=${encodeURIComponent(sourceId)}&exposure_id=${encodeURIComponent(exposureId)}`
+            ).catch(() => null);
+          }
+          setDetail(raw ? adaptV2PlacementToDrawer(raw) : null);
+          setDecisions([]);
+        } else {
+          const impl = await api<any>(`/v2/coach/clients/${clientId}/plan/implementations/${assignmentId}`).catch(() => null);
+          setDetail(impl);
+          // P1-2: use assignment_id so scope expands to include objective + programme + phase decisions
+          const dr = await api<any>(`/v2/coach/clients/${clientId}/decisions?assignment_id=${assignmentId}&limit=20`).catch(() => ({ decisions: [] }));
+          setDecisions(dr?.decisions || []);
+        }
       } finally { setLoading(false); }
     })();
   }, [assignmentId, clientId]);
@@ -653,7 +675,16 @@ function WorkoutDrawer({
               ) : null}
               <View style={{ height: 20 }} />
               <Text style={styles.sectionTitle}>WHY THIS?</Text>
-              {decisions.length === 0 ? (
+              {detail._v2_placement ? (
+                <View style={styles.decisionRow}>
+                  <Text style={styles.decisionLayer}>ENGINE V2</Text>
+                  <Text style={styles.decisionReason}>
+                    {detail.rationale || "Scheduled by Engine V2 (WHAT→WHEN→HOW)."}
+                    {detail._v2_intensity ? `  ·  intensity: ${detail._v2_intensity}` : ""}
+                    {detail._v2_key ? "  ·  KEY session" : ""}
+                  </Text>
+                </View>
+              ) : decisions.length === 0 ? (
                 <Text style={styles.drawerBody}>No decision records for this assignment yet.</Text>
               ) : (
                 decisions.slice(0, 6).map((d, i) => (
@@ -664,12 +695,14 @@ function WorkoutDrawer({
                 ))
               )}
               <View style={{ height: 20 }} />
-              <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                <Pressable style={styles.primaryBtn} onPress={() => { setEditErr(null); setMode("edit"); }} testID="drawer-edit">
-                  <Ionicons name="create-outline" size={14} color="#000" />
-                  <Text style={styles.primaryBtnText}>Edit inline</Text>
-                </Pressable>
-              </View>
+              {!detail._v2_placement && (
+                <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                  <Pressable style={styles.primaryBtn} onPress={() => { setEditErr(null); setMode("edit"); }} testID="drawer-edit">
+                    <Ionicons name="create-outline" size={14} color="#000" />
+                    <Text style={styles.primaryBtnText}>Edit inline</Text>
+                  </Pressable>
+                </View>
+              )}
             </ScrollView>
           )}
         </View>
@@ -683,6 +716,82 @@ function WorkoutDrawer({
 function humanise(s?: string): string {
   if (!s) return "";
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/**
+ * Convert an Engine V2 placement-detail response into the shape the workout
+ * drawer expects (title, duration_min, focus, equipment_context, rationale,
+ * blocks/exercises). Non-destructive: pure mapping.
+ *
+ * Session spec payloads shipped by feature_v2_construction_v2:
+ *   running/cycling/swim/brick:  { warmup, main, cooldown }
+ *   strength:                    { exercises: [...] }
+ *   mobility/recovery/activation/travel_recovery: { flow_blocks | ... }
+ */
+function adaptV2PlacementToDrawer(r: any): any {
+  const p = r?.placement || {};
+  const s = r?.session_spec || {};
+  const kind: string = p.kind || s.kind || "session";
+  const payload: any = s.payload || {};
+  const blocks: any[] = [];
+
+  const push = (b: any) => { if (b && b.duration_min) blocks.push(b); };
+  const _wu = payload.warmup;
+  const _main = payload.main;
+  const _cd = payload.cooldown;
+
+  if (s.spec_kind === "running" || s.spec_kind === "cycling"
+      || s.spec_kind === "swimming" || s.spec_kind === "brick") {
+    if (_wu) push({ type: "warmup", duration_min: _wu.duration_min,
+                     hr_zone: _wu.hr_zone, cue: _wu.cue });
+    if (_main) push({ type: _main.type || "main", duration_min: _main.duration_min,
+                       hr_zone: _main.hr_zone, pace_target: _main.pace_target,
+                       power_target: _main.power_target,
+                       cadence: _main.cadence,
+                       sets: _main.reps, work_sec: _main.work_sec, rest_sec: _main.rest_sec,
+                       cue: _main.cue || _main.fuel_cue });
+    if (_cd) push({ type: "cooldown", duration_min: _cd.duration_min,
+                     hr_zone: _cd.hr_zone, cue: _cd.cue });
+    // Brick shape → payload.segments[]
+    (payload.segments || []).forEach((seg: any) => {
+      push({ type: seg.type || seg.modality || "segment",
+             duration_min: seg.duration_min, hr_zone: seg.hr_zone,
+             pace_target: seg.pace_target, cue: seg.cue });
+    });
+  } else if (s.spec_kind === "mobility" || s.spec_kind === "recovery"
+             || s.spec_kind === "activation" || s.spec_kind === "travel_recovery") {
+    (payload.flow_blocks || payload.blocks || []).forEach((b: any) => {
+      push({ type: b.name || b.type || "block",
+             duration_min: b.duration_min || (b.duration_sec ? Math.max(1, Math.round(b.duration_sec / 60)) : 0),
+             cue: b.cue });
+    });
+  }
+
+  const exercises: any[] = (s.spec_kind === "strength")
+    ? (payload.exercises || []).map((ex: any) => ({
+        exercise_name_display: ex.name || ex.exercise || "Exercise",
+        sets: ex.sets, reps: ex.reps,
+        rpe: ex.rpe || ex.load_target,
+        rest_sec: ex.rest_sec,
+      }))
+    : [];
+
+  return {
+    title: humanise(kind) + (p.exposure_number ? ` · #${p.exposure_number}` : ""),
+    duration_min: s.duration_min || p.target_duration_min,
+    focus: s.spec_kind || kind,
+    equipment_context: {
+      equipment: (s.equipment_used || []).slice(0, 6),
+      environment: s.environment,
+    },
+    rationale: s.rationale || "",
+    coach_notes: r.coach_note || "",
+    exercises,
+    blocks,
+    _v2_placement: true,
+    _v2_intensity: p.intensity_target || s.intensity_target,
+    _v2_key: !!p.key,
+  };
 }
 
 function formatMonth(m: string, short = false): string {

@@ -672,6 +672,95 @@ async def workspace_month(
             "completed": bool(w.get("completed")),
         })
 
+    # --- Engine V2 placements (plan_live_v2 preferred, else active draft preview)
+    # This is the bridge that turns Engine V2's placements + session_specs into
+    # calendar cards for the coach's Roster + Plan workspace. Without this the
+    # V2 publish would leave the calendar empty (the classic "I published but
+    # nothing appeared" bug).
+    v2_live = await db.plan_live_v2.find_one(
+        {"client_id": client_id, "active": True}, {"_id": 0},
+    )
+    v2_source_doc = v2_live
+    v2_source_kind = "live" if v2_live else None
+    if not v2_live:
+        # Fall back to the active draft so the coach can *preview* placements
+        # on the calendar even before publishing.
+        v2_draft = await db.plan_drafts_v2.find_one(
+            {"client_id": client_id,
+             "status": {"$in": ["needs_review", "ready_for_review"]}},
+            {"_id": 0}, sort=[("created_at", -1)],
+        )
+        if v2_draft:
+            v2_source_doc = v2_draft
+            v2_source_kind = "draft"
+
+    if v2_source_doc:
+        placements = v2_source_doc.get("placements") or []
+        specs = v2_source_doc.get("session_specs") or {}
+        source_id = v2_source_doc.get("id")
+        for p in placements:
+            d = p.get("date")
+            if not d:
+                continue
+            if not (sd_str <= d <= ed_str):
+                continue
+            if d not in days_by_date:
+                days_by_date[d] = {
+                    "date": d, "schedule": None,
+                    "assignments": [], "v1_workouts": [],
+                }
+            # Skip duplicates if the same day already has a real assignment
+            # for the same objective_id (defensive; V2 flow doesn't create
+            # workout_assignments today).
+            eid = p.get("exposure_id") or ""
+            objective_id = p.get("objective_id")
+            already = any(
+                a.get("objective_id") and a.get("objective_id") == objective_id
+                for a in days_by_date[d]["assignments"]
+            )
+            if already:
+                continue
+            spec = specs.get(eid) or {}
+            spec_kind = spec.get("spec_kind") or ""
+            equipment = list(spec.get("equipment_used") or [])
+            env = spec.get("environment")
+            if env and env not in ("any", "none", "?"):
+                # Prepend environment as a badge (e.g. "outdoor", "treadmill")
+                equipment = [env] + [e for e in equipment if e != env]
+            status_kind = "live" if v2_source_kind == "live" else "review"
+            status_label = "Live" if status_kind == "live" else "Draft"
+            if p.get("kind") == "rest":
+                # Don't render rest as a card — the day cell already says "Rest"
+                continue
+            _kind = p.get("kind") or spec.get("kind") or "session"
+            days_by_date[d]["assignments"].append({
+                "id": f"v2p:{source_id}:{eid}",
+                "kind": _kind,
+                "kind_label": _humanise(_kind) or "Session",
+                "importance": p.get("priority"),
+                "duration_min": (spec.get("duration_min")
+                                  or p.get("target_duration_min")),
+                "equipment": equipment,
+                "focus": spec.get("rationale") or spec_kind or _kind,
+                "exposure_sequence": p.get("exposure_number"),
+                "objective_id": objective_id,
+                "status": "live" if status_kind == "live" else "draft",
+                "status_label": status_label,
+                "status_kind": status_kind,
+                "needs_coach_review": bool(spec.get("coach_review_required")),
+                "locked": False,
+                "live_implementation_id": None,
+                "draft_implementation_id": None,
+                "key_session": bool(p.get("key")),
+                "variant_type": spec_kind or None,
+                # Extra hints for the frontend drawer
+                "v2_source": v2_source_kind,
+                "v2_source_id": source_id,
+                "v2_exposure_id": eid,
+                "v2_intensity_target": (p.get("intensity_target")
+                                         or spec.get("intensity_target")),
+            })
+
     days = [days_by_date[k] for k in sorted(days_by_date.keys())]
 
     # --- Counts (per §9)

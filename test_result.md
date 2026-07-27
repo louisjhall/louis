@@ -3479,9 +3479,44 @@ backend:
           surfaced with candidate_hint_dates — coach gets an actionable
           exception instead of a silent decision.
 
+  - task: "Coach workspace renders V2 Live/Draft placements on the calendar"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/feature_v2_coach_dashboard.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Coach dashboard Publish silently produced an empty calendar because
+          workspace_month only pulled from the legacy `workout_assignments`
+          collection while Engine V2 stores its result in `plan_live_v2`
+          (placements + session_specs). Bridged the two:
+          - workspace_month now loads active plan_live_v2, else falls back
+            to the active plan_drafts_v2 (needs_review / ready_for_review).
+          - Each placement is emitted as a synthetic assignment card with
+            id="v2p:<source_id>:<exposure_id>", status_kind=live|review,
+            equipment/environment surfaced, key session flag preserved.
+          - Rest placements are skipped (day cell already reads "Rest").
+          - Added new endpoint
+            GET /api/v2/coach/clients/{cid}/engine-v2/placement-detail
+            that returns placement + session_spec + required_exposure so the
+            frontend drawer can hydrate without touching workout_implementations.
+          - Frontend workspace drawer now detects v2p: IDs and calls the new
+            endpoint, adapting running/cycling/swim/brick/strength/mobility
+            payloads into blocks[] + exercises[] the existing drawer renders.
+          - "Edit inline" is hidden for V2 placements (no inline editor yet
+            for immutable Live plans; will be a separate feature).
+          Backend verified with Pietro's account: /workspace/2026-07 now
+          returns counts.live=3, three v2p: assignments hydrated with
+          duration/equipment/status. Needs full E2E retest through the
+          publish flow + drawer.
+
 metadata:
-  version: "iter108"
-  test_sequence: 108
+  version: "iter109"
+  test_sequence: 109
   run_ui: false
 
 agent_communication:
@@ -3491,4 +3526,14 @@ agent_communication:
       `engine_v2` feature flag. Old engine untouched. 37/37 regression tests
       pass. Pietro deterministic report proves all 11 named August-plan
       failures are gone.
+  - agent: "main"
+    message: |
+      Fixed the "Publish did nothing" bug. Root cause: workspace_month
+      rendered from workout_assignments only, while Engine V2 stores its
+      results in plan_live_v2. Bridged the two + added placement-detail
+      endpoint + drawer adapter. Please backend-verify (workspace_month
+      returns V2 placements + placement-detail resolves) and then frontend-
+      verify the coach can click "Publish" on Pietro's July plan and see
+      the workouts land on the Roster+Plan calendar cells with a working
+      workout drawer.
 

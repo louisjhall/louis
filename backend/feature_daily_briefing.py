@@ -416,6 +416,24 @@ async def _get_or_build_today(user: dict) -> dict:
 
 @api.get("/daily-briefing/today")
 async def daily_briefing_today(user: dict = Depends(current_user)):
+    # Gate: do NOT show the briefing until the client has completed the
+    # DNA / onboarding assessment. Their profile is missing essentials
+    # (goal, availability, equipment...) so any briefing generated now would
+    # invent context.
+    try:
+        from server import _user_essentials_present
+        complete, missing = await _user_essentials_present(user["id"])
+    except Exception:
+        complete, missing = True, []
+    if not complete:
+        return {
+            "briefing": None,
+            "enabled": False,
+            "should_show_modal": False,
+            "reason": "profile_incomplete",
+            "missing_fields": missing,
+        }
+
     prefs = await db.daily_briefing_prefs.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
     enabled = prefs.get("daily_summary_enabled", True)
     doc = await _get_or_build_today(user)

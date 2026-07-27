@@ -98,10 +98,19 @@ export function LouisWelcomeVideoModal() {
   if (!checked || !visible) return null;
 
   const { width, height } = Dimensions.get("window");
-  // Portrait 9:16 video — fill vertically but not more than 82% of the
-  // screen so the copy under the frame is always visible on small devices.
-  const videoW = Math.min(width - 40, 380);
-  const videoH = Math.min(Math.round(videoW * (16 / 9)), height * 0.7);
+  // Louis's welcome.mp4 is a 480×642 portrait clip (≈ 3:4 aspect).
+  // Constrain the frame to the video's true aspect so the whole face is
+  // visible on every device — no cropping, no letterboxing.
+  const VIDEO_ASPECT = 480 / 642;   // width / height
+  const maxW = Math.min(width - 40, 380);
+  const maxH = height * 0.7;
+  // Fit to whichever dimension binds first while preserving aspect.
+  let videoW = maxW;
+  let videoH = Math.round(videoW / VIDEO_ASPECT);
+  if (videoH > maxH) {
+    videoH = Math.round(maxH);
+    videoW = Math.round(videoH * VIDEO_ASPECT);
+  }
 
   return (
     <Modal
@@ -123,7 +132,7 @@ export function LouisWelcomeVideoModal() {
           <VideoView
             player={player}
             style={StyleSheet.absoluteFill}
-            contentFit="cover"
+            contentFit="contain"
             nativeControls={false}
             allowsFullscreen={false}
             allowsPictureInPicture={false}

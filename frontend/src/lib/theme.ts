@@ -8,6 +8,10 @@ export const theme = {
     borderStrong: "#333340",
     divider: "#141419",
     text: "#F3F4F6",
+    /** Alias — high-contrast text (used by V2 components). Same as `text`. */
+    textHi: "#F3F4F6",
+    /** Alias — page background (used by V2 components). Same as `surface`. */
+    bg: "#000000",
     textMuted: "#9CA3AF",
     textDim: "#6B7280",
     // Brand — CrewFit crimson wings on black

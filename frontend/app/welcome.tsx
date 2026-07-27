@@ -1,10 +1,16 @@
-import React, { useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Dimensions } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, Dimensions, Animated } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { VideoView, useVideoPlayer } from "expo-video";
 import { theme } from "@/src/lib/theme";
+
+// Louis's welcome video. Bundled locally so it works offline, on native, and
+// through the web preview without CORS restrictions. Swap this require() to
+// update the video across the app — no rebuild of any URLs needed.
+const LOUIS_WELCOME_VIDEO_SOURCE = require("@/assets/louis/welcome.mp4");
 
 /* -------------------------------------------------------------------------- */
 /*  Welcome — Louis Hall introduction                                          */
@@ -13,10 +19,62 @@ export default function Welcome() {
   const router = useRouter();
   const { width } = Dimensions.get("window");
 
+  // Video card is a portrait 9:16 crop (matches Louis's uploaded video). We
+  // size at 60% viewport width and let the video fill it while preserving
+  // aspect ratio — smooth, non-cropping on all screen sizes.
+  const videoW = Math.min(width - 40, 340);
+  const videoH = Math.round(videoW * (16 / 9)); // 9:16 aspect
+
+  const player = useVideoPlayer(LOUIS_WELCOME_VIDEO_SOURCE, (p) => {
+    // Autoplay muted — required by mobile autoplay policy. Users tap to
+    // unmute (see the sound-toggle button below the frame).
+    p.loop = false;
+    p.muted = true;
+    p.play();
+  });
+
+  const [muted, setMuted] = useState(true);
+  const [playing, setPlaying] = useState(true);
+  const [finished, setFinished] = useState(false);
+  const fade = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     // Prefetch — mark that user reached welcome
     AsyncStorage.setItem("atlas_welcomed_started", "1").catch(() => {});
-  }, []);
+    // Fade the video card in for a smooth arrival.
+    Animated.timing(fade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
+  }, [fade]);
+
+  useEffect(() => {
+    // Listen for playback status → mark completion so the CTA highlights
+    // once Louis has finished speaking.
+    const sub = player.addListener("playToEnd", () => setFinished(true));
+    const sub2 = player.addListener("playingChange", (e: any) => {
+      setPlaying(!!e?.isPlaying);
+    });
+    return () => {
+      try { sub.remove(); } catch { /* ignore */ }
+      try { sub2.remove(); } catch { /* ignore */ }
+    };
+  }, [player]);
+
+  const toggleMute = () => {
+    const next = !muted;
+    player.muted = next;
+    setMuted(next);
+  };
+
+  const togglePlay = () => {
+    if (playing) {
+      player.pause();
+    } else {
+      if (finished) {
+        try { player.currentTime = 0; } catch { /* ignore */ }
+        setFinished(false);
+      }
+      player.play();
+    }
+  };
 
   const proceed = async () => {
     await AsyncStorage.setItem("atlas_welcomed", "1").catch(() => {});
@@ -32,25 +90,58 @@ export default function Welcome() {
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
-        {/* Video placeholder */}
-        <View style={[styles.videoCard, { height: width * 0.6 }]}>
-          <View style={styles.videoGrid} pointerEvents="none">
-            {Array.from({ length: 16 }).map((_, i) => (
-              <View key={i} style={styles.videoGridDot} />
-            ))}
-          </View>
-          <View style={styles.videoInner}>
-            <View style={styles.playRing}>
-              <Ionicons name="play" size={26} color="#fff" />
-            </View>
-            <Text style={styles.videoName}>LOUIS HALL</Text>
-            <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
-            <View style={styles.videoBadge}>
+        {/* Louis welcome video — hosted, autoplays muted, tap to unmute */}
+        <Animated.View style={[styles.videoCardWrap, { opacity: fade, width: videoW, height: videoH }]}>
+          <View style={styles.videoFrame}>
+            <VideoView
+              player={player}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              nativeControls={false}
+              allowsFullscreen={false}
+              allowsPictureInPicture={false}
+            />
+            {/* Tap layer — toggles play/pause */}
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={togglePlay}
+              testID="welcome-video-tap"
+            >
+              {(!playing || finished) ? (
+                <View style={styles.playOverlay} pointerEvents="none">
+                  <View style={styles.playRing}>
+                    <Ionicons name={finished ? "refresh" : "play"} size={26} color="#fff" />
+                  </View>
+                </View>
+              ) : null}
+            </Pressable>
+
+            {/* Mute / unmute toggle — top-right */}
+            <Pressable
+              testID="welcome-video-mute"
+              onPress={toggleMute}
+              hitSlop={10}
+              style={styles.muteBtn}
+            >
+              <Ionicons
+                name={muted ? "volume-mute" : "volume-high"}
+                size={16}
+                color="#fff"
+              />
+            </Pressable>
+
+            {/* Corner badge */}
+            <View style={styles.videoBadgeFloat}>
               <Ionicons name="film" size={10} color={theme.color.brand} />
               <Text style={styles.videoBadgeT}>WELCOME MESSAGE</Text>
             </View>
           </View>
-        </View>
+          <Text style={styles.videoName}>LOUIS HALL</Text>
+          <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
+          {muted ? (
+            <Text style={styles.tapUnmute}>Tap the video to unmute</Text>
+          ) : null}
+        </Animated.View>
 
         <View style={styles.divider} />
 
@@ -166,6 +257,56 @@ const styles = StyleSheet.create({
     backgroundColor: "#0a0a0a", borderWidth: 1, borderColor: theme.color.border,
     marginBottom: 24, position: "relative",
     alignItems: "center", justifyContent: "center",
+  },
+  // Iter 104 — Louis welcome video card
+  videoCardWrap: {
+    alignSelf: "center",
+    marginBottom: 22,
+    alignItems: "center",
+  },
+  videoFrame: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 18,
+    overflow: "hidden",
+    backgroundColor: "#000",
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    shadowColor: theme.color.brand,
+    shadowOpacity: 0.35,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+    position: "relative",
+  },
+  playOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  muteBtn: {
+    position: "absolute",
+    top: 10, right: 10,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.15)",
+  },
+  videoBadgeFloat: {
+    position: "absolute",
+    bottom: 10, left: 10,
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  tapUnmute: {
+    color: theme.color.textMuted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginTop: 8,
   },
   videoGrid: { ...StyleSheet.absoluteFillObject, flexDirection: "row", flexWrap: "wrap", opacity: 0.25 },
   videoGridDot: { width: "25%", height: "25%", borderRightWidth: 1, borderBottomWidth: 1, borderColor: "rgba(255,255,255,0.03)" },

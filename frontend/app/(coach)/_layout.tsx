@@ -26,6 +26,7 @@ export default function CoachLayout() {
       }}
     >
       <Tabs.Screen name="clients" options={{ title: "CLIENTS", tabBarIcon: ({ color }) => <Ionicons name="people" size={22} color={color} /> }} />
+      <Tabs.Screen name="v2-home" options={{ title: "V2 HOME", tabBarIcon: ({ color }) => <Ionicons name="sparkles" size={22} color={color} /> }} />
       <Tabs.Screen name="approvals" options={{ title: "APPROVALS", tabBarIcon: ({ color }) => <Ionicons name="checkmark-circle" size={22} color={color} /> }} />
       <Tabs.Screen name="library" options={{ title: "LIBRARY", tabBarIcon: ({ color }) => <Ionicons name="barbell" size={22} color={color} /> }} />
       <Tabs.Screen name="exercises" options={{ title: "CONTENT", tabBarIcon: ({ color }) => <Ionicons name="library" size={22} color={color} /> }} />

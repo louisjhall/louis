@@ -9,7 +9,8 @@ import { LouisAvatar } from "@/src/components/LouisAvatar";
 import { LOUIS, isLouis } from "@/src/lib/coachProfile";
 
 const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?: boolean }[] = [
-  { path: "/(coach)/overview", label: "Overview", icon: "home-outline", testId: "desktop-nav-overview" },
+  { path: "/(coach)/v2-home", label: "V2 Home (New)", icon: "sparkles-outline", testId: "desktop-nav-v2-home" },
+  { path: "/(coach)/overview", label: "Overview (V1)", icon: "home-outline", testId: "desktop-nav-overview" },
   { path: "/(coach)/clients", label: "Clients", icon: "people-outline", testId: "desktop-nav-clients" },
   { path: "/(coach)/calendar", label: "Calendar", icon: "calendar-outline", testId: "desktop-nav-calendar" },
   { path: "/(coach)/approvals", label: "Approvals", icon: "checkmark-circle-outline", testId: "desktop-nav-approvals" },

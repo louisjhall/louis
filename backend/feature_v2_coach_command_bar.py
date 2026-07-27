@@ -355,10 +355,19 @@ async def command_apply(
     await emit_metric("command_bar_applied", client_id=client_id, coach_id=coach["id"],
                       numeric_value=len(accepted))
 
+    # Actually execute the change_sets against the DRAFT (P5-level move / edit / skip).
+    application_stats = {"applied": 0, "rejected": 0, "seen": 0}
+    try:
+        from feature_v2_directive_engine import apply_pending_change_sets_for
+        application_stats = await apply_pending_change_sets_for(client_id, draft_id=draft_id)
+    except Exception as e:
+        logger.warning(f"command-bar: change-set application failed: {e}")
+
     return {
         "change_sets_created": len(change_sets),
         "directives_created": len(directives_created),
         "applied": {"change_sets": change_sets, "directives": directives_created},
+        "applier": application_stats,
     }
 
 

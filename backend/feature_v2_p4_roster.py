@@ -146,6 +146,14 @@ async def roster_facets_build(
 
     # Wipe existing V2 records for this client from these source rosters
     roster_ids = [r["id"] for r in rosters]
+
+    # Snapshot prior schedule_days for change detection (per-date derived state)
+    prior_map: dict[str, dict] = {}
+    async for sd in db.schedule_days.find(
+        {"client_id": client_id, "source_roster_id": {"$in": roster_ids}}, {"_id": 0}
+    ):
+        prior_map[sd["date"]] = {"derived": sd.get("derived") or {}}
+
     await db.schedule_days.delete_many({"client_id": client_id, "source_roster_id": {"$in": roster_ids}})
     await db.roster_duties.delete_many({"client_id": client_id, "source_roster_id": {"$in": roster_ids}})
     await db.flight_sectors.delete_many({"client_id": client_id, "source_roster_id": {"$in": roster_ids}})
@@ -249,7 +257,21 @@ async def roster_facets_build(
         client_id=client_id, outcome="APPLIED",
         reason=f"Roster facets built: {total_days} days, {total_duties} duties, {total_sectors} sectors from {len(rosters)} rosters",
     )
-    return {"schedule_days": total_days, "duties": total_duties, "sectors": total_sectors}
+
+    # Emit ROSTER_CHANGED exceptions where derived state materially changed.
+    try:
+        from feature_v2_directive_engine import emit_roster_change_exceptions
+        new_map: dict[str, dict] = {}
+        async for sd in db.schedule_days.find(
+            {"client_id": client_id, "source_roster_id": {"$in": roster_ids}}, {"_id": 0}
+        ):
+            new_map[sd["date"]] = {"derived": sd.get("derived") or {}}
+        change_count = await emit_roster_change_exceptions(client_id, prior_map, new_map)
+    except Exception as _e:
+        change_count = 0
+
+    return {"schedule_days": total_days, "duties": total_duties,
+            "sectors": total_sectors, "roster_changes_detected": change_count}
 
 
 @api.get("/v2/coach/clients/{client_id}/schedule-days")

@@ -2618,3 +2618,175 @@ agent_communication:
       To try it end-to-end: PATCH /v2/coach/clients/{cid}/flags with
       {"state_foundation_enabled": true} then create a draft, approve,
       revert. Client's actual LIVE plan remains served by V1.
+
+
+##====================================================================
+## Coach Dashboard V2 Iteration 3 · Priority 4 & 5 — DRAFT vs LIVE + INLINE EDITING
+##====================================================================
+
+backend:
+  - task: "V2 Draft vs Live diff endpoint"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_v2_coach_publish.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          New endpoint GET /api/v2/coach/clients/{cid}/plan/diff?month=YYYY-MM.
+          Returns per-assignment delta (LIVE vs DRAFT implementation
+          signatures + concrete field bullets) plus all proposed
+          change_sets attached to the active draft. Supports 4 delta
+          kinds: unchanged / modified / added / live_only. Handles the
+          "no programme yet" case gracefully by returning empty arrays.
+          Coach role + V2 dashboard flag required. Manual smoke test:
+          returns valid empty envelope for a v2-flagged client with no
+          programme. Sample response shape verified via curl.
+
+  - task: "V2 selective plan publish endpoint"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_v2_coach_publish.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          New endpoint POST /api/v2/coach/clients/{cid}/plan/publish.
+          Body: { draft_id, assignment_ids?, accept_change_set_ids?,
+          reject_change_set_ids?, notes?, scope: 'selected'|'all' }.
+          For each selected assignment promotes draft_implementation_id
+          → live_implementation_id and flips status to 'live'. Accepts
+          named change_sets, rejects others (never promoted). Creates
+          ONE new plan_version + snapshot + approval row and marks
+          accepted change_sets promoted_in_version_id. Draft status
+          transitions to promoted (all consumed) or partially_approved.
+          Programme.live_plan_version bumped. DecisionRecord written.
+          Guards: 404 draft not found, 409 draft promoted/discarded,
+          coach role + V2 dashboard flag.
+
+  - task: "V2 Inline Workout Implementation editor endpoints"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_v2_coach_inline_editor.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          5 new mutation endpoints on the DRAFT implementation:
+            PATCH  /v2/coach/clients/{cid}/plan/implementations/{iid}
+                   (title/duration/focus/rationale/key_session/coach_notes/needs_coach_review)
+            PATCH  /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises/{idx}
+                   (name/sets/reps/rpe/rest_sec/hr_zone/duration_sec/coaching_cue/slot_role)
+            DELETE /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises/{idx}
+            POST   /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises
+            POST   /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises/reorder
+          Guards: refuses edit if impl is LIVE (draft_impl != live_impl
+          contract); marks parent workout_assignment coach_edited=True
+          and downgrades status from 'live' to 'coach_edited'; writes a
+          DecisionRecord layer=HOW every mutation. Manual smoke: PATCH
+          on nonexistent impl returns 404.
+
+frontend:
+  - task: "PublishPanel — Draft vs Live diff modal + selective publish UI"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/PublishPanel.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Full-height right-side panel opened from Publish button in
+          workspace ribbon. Loads /plan/diff for current month, shows
+          summary chips (Changed/New/Unchanged/Changes to review), a
+          Proposed Changes list (each with Accept/Reject/Skip radio) and
+          per-day session cards with LIVE vs DRAFT columns + delta
+          bullets. Publishable items are checkable; locked ones are
+          disabled. Publish button posts to /plan/publish with
+          selection. Success shows a "Published · N sessions live · vX"
+          banner and refreshes the diff. Coach note (optional) attached
+          as `notes`. No AI wording.
+  - task: "InlineWorkoutEditor — inline exercise + meta editor inside V2 drawer"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/InlineWorkoutEditor.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Replaces the redirect to the V1 full-page editor (was pushing
+          /coach/workout/edit/[wid]) with an inline form INSIDE the
+          workspace drawer. Two-mode drawer: VIEW / EDIT. EDIT lets the
+          coach change title, duration, focus, location, coach note,
+          key-session toggle, and clear the "needs coach review" flag;
+          for each exercise: name, sets, reps, rest, RPE, cue, plus
+          add/delete/reorder. Every field commits on blur, calls the
+          V2 inline-editor endpoints, refreshes the impl, and marks the
+          assignment coach-edited. Errors surface inline. Live impls
+          return 409 → shown as inline error banner.
+  - task: "V2 Workspace ribbon Publish button + WorkoutDrawer rewrite"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/coach/client/[id]/workspace.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Added "Publish changes" button in the workspace ribbon (only
+          when data.programme.draft_id exists) that opens PublishPanel.
+          Rewired WorkoutDrawer.onEditRequested → drawer-local
+          setMode("edit") which renders InlineWorkoutEditor instead of
+          pushing to the V1 route. Drawer now displays coach_notes when
+          present, retains "Why this?" DecisionRecord list, and offers
+          "Edit inline" as the primary button.
+
+test_plan:
+  current_focus:
+    - "GET /v2/coach/clients/{cid}/plan/diff"
+    - "POST /v2/coach/clients/{cid}/plan/publish"
+    - "PATCH /v2/coach/clients/{cid}/plan/implementations/{iid}"
+    - "PATCH /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises/{idx}"
+    - "DELETE /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises/{idx}"
+    - "POST /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises"
+    - "POST /v2/coach/clients/{cid}/plan/implementations/{iid}/exercises/reorder"
+    - "PublishPanel modal open + publish button + change-set decisions"
+    - "InlineWorkoutEditor inside V2 drawer (view→edit toggle)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Coach Dashboard V2 Iteration 3 shipped. Priority 4 (Draft vs Live UI
+      + Publishing Flow) and Priority 5 (Inline Workout Editing) are both
+      implemented behind the existing per-coach v2 dashboard flag.
+      Coach credentials: louis@crewfit.net / Louis123!. V2 client with
+      flags enabled: client@crewfit.com (id d6e0be44-d3a5-407f-bc04-7cc7ef96179a),
+      but NB the client currently has no programmes_v2 row yet — the
+      empty-state paths must be exercised. Please test:
+      (1) All 7 new backend endpoints (auth+flag guards, happy path if
+          seeded, edge cases like 404 impl / rejects with no promotions).
+      (2) PublishPanel opens from workspace ribbon and renders empty
+          state when no draft exists.
+      (3) InlineWorkoutEditor renders in EDIT mode inside the drawer,
+          field edits patch through to the backend on blur, and the
+          drawer shows the fresh impl after mutation.
+      No AI/bot wording anywhere in the new UI.

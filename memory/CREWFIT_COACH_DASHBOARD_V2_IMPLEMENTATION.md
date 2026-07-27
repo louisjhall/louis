@@ -1,8 +1,67 @@
 # Coach Dashboard V2 — Implementation Progress
 
-**Version:** Iter 113 · 2026-07-27
-**Status:** Iteration 1 complete · Iteration 2 4/7 shipped (Command Bar, Directive editor, Programme summary, Progressive generation UX)
+**Version:** Iter 114 · 2026-07-27
+**Status:** Session A complete (3 engine loops closed)
 **Feature flag:** `users.profile.v2_flags.coach_dashboard_v2_enabled` (per-coach)
+
+
+---
+
+## Session A — engine loops closed (Iter 114)
+
+**Added `/app/backend/feature_v2_directive_engine.py`** — the missing bridge:
+- `active_directives_for(client_id, date)` — resolves scope (today · this_week · custom · phase · until_changed); auto-resolves `phase` to the current `phase_id` and persists it back
+- `directive_forbids_kind(directives, kind)` — pattern-match + text-heuristic (e.g. "no running" in free_text blocks any run objective)
+- `apply_change_set(cs)` — applies one proposed change_set to the DRAFT: `assignment_moved` (updates date + schedule_day_id) · `implementation_changed` (duration override, convert_to_mobility/recovery) · `exposure_deferred` (skip + defer exposure). Respects locks. Idempotent (only touches `status=proposed`). Marks `applied` on success with reason; `rejected` on failure with reason.
+- `apply_pending_change_sets_for(client_id, draft_id)` — sweeps all proposed change_sets for a draft
+- `emit_roster_change_exceptions(client_id, prior_days, new_days)` — diffs classification + duty_burden per date; writes `exceptions(kind=roster_change, severity=warning)` and a paired proposed `change_sets(kind=implementation_changed)` per changed date so the applier can absorb the change
+- `write_assignment_decision(...)` — writes a `decision_records` row with `scope_id=<assignment_id>` (fixes empty "Why this?" drawer)
+
+**Wired into engines**:
+- `feature_v2_p5_scheduling.py` — `plan_build` consults `active_directives_for(...)` for every candidate day; skips days blocked by `avoid_movement`; writes assignment-scoped DecisionRecord after every successful placement
+- `feature_v2_p6_construction.py` — `_load_context` merges directive avoid-patterns into the movement-region blocklist so exercise selection respects them
+- `feature_v2_p4_roster.py` — `roster_facets_build` snapshots prior derived state, then calls `emit_roster_change_exceptions` after rebuild → Attention queue now populates when a roster changes
+- `feature_v2_coach_command_bar.py` — `command_apply` now calls `apply_pending_change_sets_for` after writing the change_sets → coach's applied proposals actually mutate the DRAFT
+
+**Tests** (`tests/test_v2_directive_engine.py`), all pass:
+- ✅ Directive with `avoid_movement:gait_run_tempo` blocks tempo_run + long_run objectives, allows upper_hypertrophy
+- ✅ Proposed `assignment_moved` change_set moves the assignment's date + marks itself `applied`
+- ✅ classification change from `home` → `layover_full` emits a `roster_change` exception with human-readable reason
+
+**Regression check** — `tests/test_v2_full_pipeline.py` still passes end-to-end.
+
+### FULLY FUNCTIONAL END-TO-END now
+- Directive → planner: creating a directive genuinely prevents the planner placing forbidden objectives; the exception queue records `coach_directive_conflict` for anything that had no candidate day.
+- ChangeSet → draft: coach-applied change_sets actually move / edit / skip assignments and write DecisionRecords.
+- Roster changed → attention queue: a re-run of `roster_facets_build` with different duty classifications materialises exceptions on the affected dates and paired change_sets ready for the applier.
+- Assignment-level DecisionRecord: the "Why this?" drawer now has a record for every V2-planner-placed assignment.
+
+### INCOMPLETE / PRESENTATIONAL / WAITING (honest)
+- Draft vs Live diff view (no side-by-side yet — only counts).
+- Inline workout editor drawer (edit still hands off to V1 editor page).
+- Regenerate-one-session endpoint + button.
+- V1 workout → V2 drawer adapter (drawer still empty for V1 workouts).
+- Roster upload embedded in workspace (still on the client admin tab).
+- Real duty times (report/depart/arrive) in the roster column — only classification shows.
+- Check-ins + Messages inside V2 client profile.
+- Progress area (adherence/progression per objective per goal).
+- History timeline UI.
+- Signal → action narrative on the workspace.
+- Client-facing V2 read path (`/api/live/plan` still hits V1 collections).
+- Mobile card layout (untested at 390px).
+- "Switch to V1" as the only V1 reference (V1 Overview still in primary nav).
+- Setup-incomplete state on the client list.
+- V2 client profile navigation restructure (Roster+Plan / Check-ins / Messages / Progress / History / Profile / More).
+
+### Can I coach Louis entirely through V2 for a month without opening V1?
+**No — not yet.** Blockers:
+1. No inline workout editor → any edit sends coach to V1 page
+2. Check-ins, messages, notes still live in V1 tabs
+3. Roster upload still in V1 admin tab
+4. Client-facing plan reads V1
+
+Session B is needed for a yes.
+
 
 Companion documents:
 - `CREWFIT_COACH_DASHBOARD_CURRENT_STATE_AUDIT.md`

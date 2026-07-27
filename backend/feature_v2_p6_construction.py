@@ -275,6 +275,20 @@ async def _load_context(client_id: str) -> tuple[set[str], set[str]]:
     rs = await db.readiness_states.find_one({"client_id": client_id}, {"_id": 0}, sort=[("as_of_date", -1)])
     for p in ((rs or {}).get("signals", {}).get("pain_flags") or []):
         avoid.add((p.get("region") or "").lower())
+    # Active coach directives — avoid_movement patterns
+    try:
+        import datetime as _dtm
+        from feature_v2_directive_engine import active_directives_for
+        dirs = await active_directives_for(client_id, _dtm.date.today())
+    except Exception:
+        dirs = []
+    for d in dirs:
+        if d.get("kind") == "avoid_movement":
+            patt = ((d.get("parameters") or {}).get("pattern") or "").lower()
+            if patt: avoid.add(patt)
+            txt = (d.get("free_text") or "").lower()
+            if "run" in txt: avoid.add("gait_run_tempo"); avoid.add("gait_run_easy")
+            if "knee" in txt: avoid.add("knee")
     return equip_perm, {r for r in avoid if r}
 
 

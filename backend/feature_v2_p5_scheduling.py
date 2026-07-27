@@ -22,6 +22,8 @@ from server import api, db, require_role, new_id, now_iso, logger
 from feature_v2_common import (
     require_client_and_flag, write_decision, ensure_indexes, bg
 )
+# NOTE: feature_v2_directive_engine imported lazily inside functions to avoid
+# a circular import (that module also imports from `server`).
 
 FLAG = "scheduling_v2_enabled"
 
@@ -164,7 +166,17 @@ async def plan_build(
 
         ranked = _rank_days(cand, obj)
         placed = None
+        forbid_reasons: list[str] = []
+        from feature_v2_directive_engine import active_directives_for, directive_forbids_kind
         for d in ranked:
+            # Check active coach directives for this candidate date
+            try:
+                day_directives = await active_directives_for(client_id, _daydate(d["date"]))
+            except Exception:
+                day_directives = []
+            if directive_forbids_kind(day_directives, obj.get("kind")):
+                forbid_reasons.append(f"{d['date']} blocked by directive")
+                continue
             # min_recovery hours check
             disc = obj.get("discipline") or "conditioning"
             prev = _last_key_date_within(
@@ -177,9 +189,11 @@ async def plan_build(
             break
 
         if not placed:
+            reason = "; ".join(forbid_reasons) or f"No candidate day satisfies min_recovery_hours for {obj['kind']}"
             exceptions.append({
-                "kind": "insufficient_recovery", "severity": "warning",
-                "reason": f"No candidate day satisfies min_recovery_hours for {obj['kind']} #{expo['sequence']}",
+                "kind": "insufficient_recovery" if not forbid_reasons else "coach_directive_conflict",
+                "severity": "warning",
+                "reason": reason + f" #{expo['sequence']}",
                 "expo_id": expo["id"],
             })
             continue
@@ -220,6 +234,23 @@ async def plan_build(
         # Remove day from availability
         available_days = [d for d in available_days if d["id"] != placed["id"]]
         created += 1
+
+        # Assignment-scoped decision (populates "Why this?" drawer)
+        try:
+            from feature_v2_directive_engine import write_assignment_decision
+            burden = ((placed.get("derived") or {}).get("duty_burden_band") or "light")
+            opp = ((placed.get("derived") or {}).get("training_opportunity") or 0)
+            reason = (
+                f"{obj.get('importance','important').title()} {obj.get('kind','session')} "
+                f"placed on {placed['date']} ({burden} burden · opportunity {opp}). "
+                f"Exposure #{expo['sequence']} of objective."
+            )
+            await write_assignment_decision(
+                assignment_id=aid, client_id=client_id, reason=reason,
+                layer="WHEN", rule_id="planner_v1_place",
+            )
+        except Exception:
+            pass
 
     # V1..V6 post-validation
     await _validate_assignments(client_id, body.programme_id, body.draft_id, exceptions_out=exceptions)

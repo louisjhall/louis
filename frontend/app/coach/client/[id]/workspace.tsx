@@ -24,6 +24,8 @@ import { CommandBar } from "@/src/components/CommandBar";
 import { DirectiveEditor } from "@/src/components/DirectiveEditor";
 import { GenerationStatusBanner } from "@/src/components/GenerationStatusBanner";
 import { ProgrammeSummaryPanel } from "@/src/components/ProgrammeSummaryPanel";
+import { PublishPanel } from "@/src/components/PublishPanel";
+import { InlineWorkoutEditor } from "@/src/components/InlineWorkoutEditor";
 
 type DayRow = {
   date: string;
@@ -110,6 +112,7 @@ export default function CoachWorkspaceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
   const [directiveOpen, setDirectiveOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   const loadMonths = useCallback(async () => {
     if (!clientId) return;
@@ -237,6 +240,16 @@ export default function CoachWorkspaceScreen() {
               <Ionicons name="flag-outline" size={14} color={theme.color.textHi} />
               <Text style={styles.directiveBtnText}>Add directive</Text>
             </Pressable>
+            {data.programme?.present && data.programme?.draft_id && (
+              <Pressable
+                style={styles.publishBtn}
+                onPress={() => setPublishOpen(true)}
+                testID="publish-changes-btn"
+              >
+                <Ionicons name="rocket-outline" size={14} color="#000" />
+                <Text style={styles.publishBtnText}>Publish changes</Text>
+              </Pressable>
+            )}
           </View>
         )}
       </View>
@@ -302,10 +315,7 @@ export default function CoachWorkspaceScreen() {
         assignmentId={drawerAssignmentId}
         clientId={String(clientId)}
         onClose={() => setDrawerAssignmentId(null)}
-        onEditRequested={(implId) => {
-          setDrawerAssignmentId(null);
-          if (implId) router.push(`/coach/workout/edit/${implId}` as any);
-        }}
+        onEdited={loadMonth}
       />
 
       {/* Directive editor */}
@@ -314,6 +324,16 @@ export default function CoachWorkspaceScreen() {
         visible={directiveOpen}
         onClose={() => setDirectiveOpen(false)}
         onSaved={loadMonth}
+      />
+
+      {/* Publish panel */}
+      <PublishPanel
+        clientId={String(clientId)}
+        month={month}
+        draftId={data?.programme?.draft_id}
+        visible={publishOpen}
+        onClose={() => setPublishOpen(false)}
+        onPublished={loadMonth}
       />
     </View>
   );
@@ -434,19 +454,21 @@ function StatusChip({ kind, label }: { kind: string; label: string }) {
 /* ---- Workout drawer ---- */
 
 function WorkoutDrawer({
-  assignmentId, clientId, onClose, onEditRequested,
+  assignmentId, clientId, onClose, onEdited,
 }: {
   assignmentId: string | null;
   clientId: string;
   onClose: () => void;
-  onEditRequested: (implId?: string | null) => void;
+  onEdited: () => void;
 }) {
   const [detail, setDetail] = useState<any>(null);
   const [decisions, setDecisions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<"view" | "edit">("view");
+  const [editErr, setEditErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!assignmentId) { setDetail(null); return; }
+    if (!assignmentId) { setDetail(null); setMode("view"); return; }
     setLoading(true);
     (async () => {
       try {
@@ -478,6 +500,22 @@ function WorkoutDrawer({
             <View style={{ padding: 16 }}>
               <Text style={styles.drawerBody}>No implementation available yet. Open the plan builder to generate one.</Text>
             </View>
+          ) : mode === "edit" ? (
+            <>
+              {editErr && (
+                <View style={styles.editErrorBanner}>
+                  <Ionicons name="alert-circle" size={14} color="#ff6666" />
+                  <Text style={styles.editErrorText}>{editErr}</Text>
+                </View>
+              )}
+              <InlineWorkoutEditor
+                clientId={clientId}
+                impl={detail}
+                onExit={() => { setMode("view"); onEdited(); }}
+                onSaved={(fresh) => { setDetail(fresh); onEdited(); }}
+                onError={(msg) => setEditErr(msg)}
+              />
+            </>
           ) : (
             <ScrollView contentContainerStyle={{ padding: 16 }}>
               <Text style={styles.drawerMeta}>
@@ -487,6 +525,12 @@ function WorkoutDrawer({
                 <Text style={styles.drawerMeta}>Equipment: {detail.equipment_context.equipment.join(", ")}</Text>
               ) : null}
               {detail.rationale && <Text style={styles.rationale}>{detail.rationale}</Text>}
+              {detail.coach_notes ? (
+                <View style={styles.coachNote}>
+                  <Text style={styles.coachNoteLabel}>COACH NOTE</Text>
+                  <Text style={styles.coachNoteText}>{detail.coach_notes}</Text>
+                </View>
+              ) : null}
               <View style={{ height: 12 }} />
               {(detail.exercises || []).map((ex: any, i: number) => (
                 <View key={i} style={styles.exRow}>
@@ -512,8 +556,9 @@ function WorkoutDrawer({
               )}
               <View style={{ height: 20 }} />
               <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                <Pressable style={styles.primaryBtn} onPress={() => onEditRequested(detail?.id)} testID="drawer-edit">
-                  <Text style={styles.primaryBtnText}>Edit</Text>
+                <Pressable style={styles.primaryBtn} onPress={() => { setEditErr(null); setMode("edit"); }} testID="drawer-edit">
+                  <Ionicons name="create-outline" size={14} color="#000" />
+                  <Text style={styles.primaryBtnText}>Edit inline</Text>
                 </Pressable>
               </View>
             </ScrollView>
@@ -593,6 +638,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#00000030",
   },
   directiveBtnText: { color: theme.color.textHi, fontWeight: "700", fontSize: 12 },
+  publishBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    borderRadius: 6, paddingHorizontal: 12, paddingVertical: 8,
+    backgroundColor: theme.color.brand,
+  },
+  publishBtnText: { color: "#000", fontWeight: "800", fontSize: 12, letterSpacing: 0.3 },
 
   colHead: { flexDirection: "row", paddingHorizontal: 88, paddingTop: 12, paddingBottom: 6 },
   colHeadText: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
@@ -677,6 +728,21 @@ const styles = StyleSheet.create({
 
   primaryBtn: {
     backgroundColor: theme.color.brand, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 6,
+    flexDirection: "row", alignItems: "center", gap: 6,
   },
   primaryBtnText: { color: "#000", fontWeight: "800" },
+  coachNote: {
+    backgroundColor: "#00000030", borderRadius: 6, padding: 10,
+    borderLeftWidth: 3, borderLeftColor: "#f5b543", marginTop: 8,
+  },
+  coachNoteLabel: {
+    color: "#f5b543", fontSize: 9, letterSpacing: 1, fontWeight: "800",
+  },
+  coachNoteText: { color: theme.color.textHi, fontSize: 12, marginTop: 3 },
+  editErrorBanner: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#3a1414", borderColor: "#ff6666", borderWidth: 1,
+    padding: 8, margin: 12, marginBottom: 0, borderRadius: 6,
+  },
+  editErrorText: { color: "#ff6666", fontSize: 11, flex: 1 },
 });

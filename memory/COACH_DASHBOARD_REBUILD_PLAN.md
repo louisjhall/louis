@@ -17,29 +17,23 @@ Handoff document for next session. Tonight (Iter 100 → 108) is ready to publis
 
 ---
 
-## Phase A — Foundation (next session, ~2-3 hrs)
+## Phase A — Foundation (next session, ~2-3 hrs) — ✅ COMPLETE (Iter 109)
 
-### A1 — Diagnose + repair "July disappeared" for Louis Hall (`5a019f2a-d001-42c8-b875-eba4d3d3ccf1`)
-- Both July + August rosters are in DB (`is_active=True`, `confirmed=True`).
-- The coach months endpoint `/coach/clients/{cid}/roster/months` already groups by `days[].date` so both months should appear as tabs.
-- **First action:** hit the endpoint directly with Louis's cookie and check whether both months come back. If yes → it's a frontend tab-render bug. If no → the query is filtering something out (likely `status`).
-- Fix: `_roster_month_span` in `feature_coach_roster_months.py` — audit that `is_active`/`status` filters aren't excluding valid superseded rosters.
-- Confirm: `coach/client-months/[id].tsx` renders every returned month as a tab (line 265 for default selection).
+### A1 — Diagnose + repair "July disappeared" for Louis Hall (`5a019f2a-d001-42c8-b875-eba4d3d3ccf1`) — ✅ FIXED
+- Root cause: `_roster_days_between()` in `feature_calendar_recovery.py` filtered on `status="active"` (never actually set on any roster in DB) via `find_one` — so it returned nothing. Meanwhile `/roster/current` returned just the newest active roster via `find_one`.
+- Fix: both now query ALL `is_active=True` rosters and merge days by date (newest wins on conflict). Each day carries `_source_roster_id` so the day-picker routes edits back to the correct roster.
+- Verified: 17/17 backend tests green (6 unit + 11 HTTP integration in `tests/test_iter109_coach_roster_http.py`). Louis Hall's account now returns 62 merged days across July + August.
 
-### A2 — Coach uploads roster on behalf of client
-- Backend: reuse existing `/roster/upload` endpoint. Add a coach variant `/coach/clients/{cid}/roster/upload` that:
-  - Requires `role="coach"` auth
-  - Accepts multipart file
-  - Sets `roster.user_id = cid` (NOT the coach's id)
-  - Sets `roster.uploaded_by = "coach"` metadata
-  - Runs the same parser pipeline
-- Frontend: new `<UploadRosterForClientButton />` in the coach client profile header. Opens same file-picker modal as client upload.
+### A2 — Coach uploads roster on behalf of client — ✅ SHIPPED
+- New file `feature_coach_roster_upload.py` with two endpoints:
+  - `POST /api/coach/clients/{cid}/roster/upload-parse` — coach-role gated, parses to a pending roster owned by the client, stamps `uploaded_by='coach'` + `uploaded_by_coach_id`.
+  - `POST /api/coach/clients/{cid}/roster/pending/{rid}/confirm` — coach-side confirm that bypasses the client-side low-confidence review gate (coach IS the reviewer), reuses the overlap-aware deactivation + generation pipeline.
+- Frontend: `<CoachRosterUploadButton />` on `/coach/client/[id]` action row and `/coach/client-months/[id]` header + empty state. Auto-confirms on the coach's behalf and polls the generation job to completion.
 - Uses SAME roster collection. Same downstream generation.
 
-### A3 — Preview + confirm before save
-- After parse: preview extracted days, coach can correct entries inline (long-press to edit like client flow).
-- Big red "Save Roster & Generate Plan" button at bottom.
-- On save: preserve non-overlapping existing dates. Overwrite ONLY dates present in new upload.
+### A3 — Preview + confirm before save — ⏳ DEFERRED to Phase B (owned by workspace redesign)
+- Current implementation auto-confirms on coach's behalf. Inline preview + edit lands with `<ScheduleRow>` enrichment in Phase B.
+- Big red "Save Roster & Generate Plan" button UX will follow in Phase B.
 
 ---
 

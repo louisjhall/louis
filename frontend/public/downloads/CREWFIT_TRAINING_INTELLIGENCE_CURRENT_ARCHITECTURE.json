@@ -1,0 +1,404 @@
+{
+  "meta": {
+    "document": "CREWFIT_TRAINING_INTELLIGENCE_CURRENT_ARCHITECTURE",
+    "version": "Iter 110",
+    "session_date": "2026-07-27",
+    "scope": "Read-only forensic capture of current implementation",
+    "labels": {
+      "IMPLEMENTED": "reachable + verified working code path",
+      "PARTIAL": "code exists but only some branches / inputs work",
+      "AMBIGUOUS": "multiple code paths make the same decision; which wins depends on entry point",
+      "NOT_IMPLEMENTED": "no code found",
+      "PLACEHOLDER": "stub / hard-coded default / feature-flagged off"
+    },
+    "companion_document": "CREWFIT_TRAINING_INTELLIGENCE_CURRENT_ARCHITECTURE.md"
+  },
+  "goals": {
+    "keys": {
+      "lose_fat": {"label": "Fat loss", "sessions_per_week": 3, "session_style": "full-body strength + moderate conditioning", "movement_mix": {"push": 1, "pull": 1, "hinge": 1, "squat": 1, "core": 2, "conditioning": 1, "mobility": 1}, "status": "IMPLEMENTED"},
+      "build_muscle": {"label": "Build strength / muscle", "sessions_per_week": 4, "session_style": "progressive strength on the big lifts", "movement_mix": {"push": 2, "pull": 2, "hinge": 1, "squat": 1, "core": 2, "mobility": 1}, "status": "IMPLEMENTED"},
+      "general_fitness": {"label": "General fitness", "sessions_per_week": 3, "session_style": "balanced strength/conditioning/mobility", "movement_mix": {"push": 1, "pull": 1, "hinge": 1, "squat": 1, "core": 1, "conditioning": 1, "mobility": 1}, "status": "IMPLEMENTED"},
+      "health_markers": {"label": "Health markers / medical", "sessions_per_week": 3, "session_style": "moderate strength + aerobic base + mobility", "movement_mix": {"push": 1, "pull": 1, "hinge": 1, "squat": 1, "core": 1, "conditioning": 1, "mobility": 2}, "status": "IMPLEMENTED"},
+      "event": {"label": "Event training", "sessions_per_week": 4, "session_style": "event-specific progression", "movement_mix": {"long": 1, "intervals": 1, "tempo": 1, "strength": 1, "mobility": 1, "recovery": 1}, "status": "IMPLEMENTED"},
+      "aviation_consistency": {"label": "Aviation consistency", "sessions_per_week": 3, "session_style": "minimum effective dose", "movement_mix": {"push": 1, "pull": 1, "hinge": 1, "squat": 1, "core": 1, "mobility": 2}, "status": "IMPLEMENTED"},
+      "improve_energy": {"label": "Improve energy", "sessions_per_week": 3, "session_style": "aerobic base + mobility + light strength", "movement_mix": {"conditioning": 1, "mobility": 2, "strength": 1, "recovery": 1}, "status": "IMPLEMENTED"},
+      "return_to_training": {"label": "Return to training", "sessions_per_week": 2, "session_style": "rebuild volume gently", "movement_mix": {"push": 1, "pull": 1, "hinge": 1, "squat": 1, "core": 1, "mobility": 2}, "status": "IMPLEMENTED"}
+    },
+    "default": "general_fitness",
+    "resolver_priority": ["profile.main_goal_key (exact match)", "keyword-match main_goal/primary_goal/goal", "DEFAULT_GOAL_KEY"],
+    "coach_note_override": "coach_notes.goal_override extracts endurance/hypertrophy/strength/fat_loss/general_fitness via regex → overrides profile.goal_type",
+    "multi_goal_support": "NOT_IMPLEMENTED"
+  },
+  "phases": {
+    "non_endurance": {
+      "engine": "modulo cycle",
+      "sequence": ["foundation", "build", "peak", "deload"],
+      "advance_trigger": "week_index derived from db.programmes count",
+      "advance_rule": "PHASES[week_index % 4]",
+      "status": "IMPLEMENTED"
+    },
+    "endurance": {
+      "engine": "race-anchored",
+      "buckets": {
+        "base": "weeks_to_race > 16 or unknown",
+        "build": "8 < weeks_to_race <= 16",
+        "peak": "4 < weeks_to_race <= 8",
+        "taper": "2 < weeks_to_race <= 4",
+        "race_week": "weeks_to_race <= 2",
+        "recovery": "days_to_race < 0 and |days| <= 14",
+        "post": "days_to_race < 0 and |days| > 14"
+      },
+      "status": "IMPLEMENTED",
+      "post_race_gap": "post-race phase has no dedicated shape; falls through to Foundation shape"
+    },
+    "deload_volume_reduction": "30-40% (prompt Rule 5a) + strength_overload sets_delta=-1 load_delta_pct=-10",
+    "deload_triggers": [
+      "modulo phase cycle → deload every 4th week",
+      "auto_deload_trigger: adherence<0.50 AND avg_rpe_7d>=8",
+      "compute_status: very_high_rpe_count>=2 AND n_completed>=3"
+    ]
+  },
+  "events": {
+    "supported_types": ["5K", "10K", "half marathon", "marathon", "ultramarathon", "sprint triathlon", "Olympic triathlon", "Ironman 70.3", "full Ironman", "cycling event", "swimming event", "HYROX", "strength goal", "military/police/fire test", "custom"],
+    "categories": {
+      "race": {"label": "Race / Endurance", "days_label": "days to race"},
+      "medical": {"label": "Medical / Aviation Health", "days_label": "days to review", "has_safety_note": true},
+      "aviation_work": {"label": "Aviation / Work", "days_label": "days to assessment"},
+      "sport_hobby": {"label": "Sport / Hobby", "days_label": "days to activity"},
+      "personal": {"label": "Personal", "days_label": "days to event"}
+    },
+    "weekly_shapes": {
+      "marathon": {"foundation": ["easy_run", "long_run", "strength_support", "easy_run", "mobility", "recovery", "recovery"], "build": ["easy_run", "long_run", "tempo", "strength_support", "easy_run", "mobility", "recovery"], "peak": ["easy_run", "long_run", "intervals", "strength_support", "easy_run", "mobility", "recovery"], "deload": ["easy_run", "long_run", "easy_run", "strength_support", "mobility", "recovery", "recovery"]},
+      "half_marathon": "same shape as marathon",
+      "10k": "differs at build/peak — intervals earlier",
+      "5k": "differs at build/peak — intervals + tempo",
+      "hyrox": "conditioning-first shape",
+      "ironman": "long_bike + swim + brick shape",
+      "half_ironman": "same as ironman",
+      "sprint_tri": "shorter volumes",
+      "olympic_tri": "moderate volumes"
+    },
+    "peak_long_km_caps": {"marathon": 32, "half_marathon": 20, "10k": 14, "5k": 8, "hyrox": 10, "ironman": 30, "70.3": 18, "olympic_tri": 12, "sprint_tri": 8, "ultra": 40},
+    "long_run_curve": "linear ramp from base=6km at 16w out to peak_km at 4w out, ×0.75 at 3w, ×0.5 at 1w, RACE sentinel at 0",
+    "weekly_km_multiplier": "3.5x long_run (build/peak), 3.0x (early)",
+    "cutback_frequency": "every 4th week in build/peak, ×0.7 long_run",
+    "race_week_shape": ["easy_run", "recovery_walk", "shakeout", "rest", "event_race", "rest", "rest"],
+    "multiple_events": "only newest is_active event fed to generator",
+    "a_b_c_race_hierarchy": "NOT_IMPLEMENTED",
+    "post_race_shape": "PARTIAL — falls back to foundation"
+  },
+  "roster": {
+    "day_types": ["Home Day", "Home Training Day", "Turnaround Duty", "Layover Arrival Day", "Layover Full Day", "Layover Departure Day", "Long-Haul Duty", "Short-Haul Duty", "Night Flight", "Early Report", "Late Finish", "Rest Day", "Recovery Day", "Standby", "Simulator/Training Day", "Annual Leave", "Unknown/Needs Confirmation"],
+    "standby_subtypes": ["home_standby", "airport_standby", "reserve", "short_call", "long_call", "night_standby", "early_standby", "unknown_standby"],
+    "parsers": {
+      "etihad": {"file": "parsers/etihad.py", "type": "coordinate-based pdfplumber", "labels": "parsers/etihad_labels.py — writes training_colour + equipment_assumption + blocked[]"},
+      "emirates": {"file": "parsers/emirates.py", "type": "coordinate-based pdfplumber", "labels": "parsers/emirates_labels.py"},
+      "llm_fallback": {"prompt_name": "ROSTER_SYSTEM", "location": "server.py:4429", "model": "Gemini"}
+    },
+    "layover_threshold_hours": 18,
+    "recovery_first_days_rule": "long-haul day + next day is layover/rest/off AND hotel_id present → recovery-first",
+    "flight_recovery_tiers": {"short": "duty_hours < 6h → 8-min airport mobility", "medium": "6-11h → 15-min classic mobility", "ulr": ">=12h → 25-min ULR protocol"}
+  },
+  "hotels": {
+    "collection": "hotels",
+    "scope": "global — no user_id, shared across clients",
+    "fields": ["id", "name", "city", "country", "gym_available", "gym_type", "equipment{}", "safe_outdoor_run", "pool", "opening_hours", "verified_by_coach", "confidence", "notes"],
+    "gym_types": ["full_gym", "cardio_only", "basic", "bodyweight_only", "none", "unknown"],
+    "equipment_keys_v1": ["dumbbells", "treadmill", "bike", "rower", "cable_machine", "machines", "bench", "squat_rack", "free_weights", "pool", "outdoor_running"],
+    "equipment_keys_v2": ["dumbbells", "adjustable_dumbbells", "barbell", "bench", "cable_stack", "smith_machine", "treadmill", "stationary_bike", "rowing_machine", "kettlebell", "resistance_bands", "pull_up_bar", "medicine_ball", "trx", "yoga_mat", "foam_roller", "pool"],
+    "duplicate_vocabulary": "AMBIGUOUS — server.py has 11 keys, feature_hotel_system has 17",
+    "gym_type_presets": {
+      "full_gym": ["dumbbells", "barbell", "bench", "cable_stack", "treadmill", "stationary_bike", "kettlebell", "pull_up_bar", "yoga_mat"],
+      "cardio_only": ["treadmill", "stationary_bike", "rowing_machine", "yoga_mat"],
+      "basic": ["dumbbells", "yoga_mat", "resistance_bands"],
+      "bodyweight_only": ["yoga_mat"],
+      "none": [],
+      "unknown": []
+    },
+    "confidence_scoring": "start 0.5 on first submission, +0.15 per confirmation, +0.2 for coach-verified, cap 1.0",
+    "missing_features": ["photo storage", "photo → equipment recognition", "quantified weights (dumbbell max kg)", "last_verified_at timestamp", "duplicate detection", "version history", "coach moderation queue"]
+  },
+  "equipment": {
+    "home_options": ["no equipment", "yoga mat", "resistance bands", "pull-up bar", "dumbbells", "adjustable dumbbells", "kettlebells", "barbell", "squat rack", "bench", "cable machine", "treadmill", "bike/turbo trainer", "rowing machine", "assault bike", "skipping rope", "medicine ball", "TRX/suspension trainer", "foam roller", "mobility tools"],
+    "hotel_bodyweight_only_when": ["no hotel_doc", "gym_available=False", "gym_type in [none, bodyweight_only]", "gym_type in [empty, unknown] with empty equipment dict"]
+  },
+  "workout_locations": ["Home Workout", "Commercial Gym Workout", "Hotel Gym Workout", "Bodyweight Layover Workout", "Flight Recovery Mobility", "Pre-Flight Mobility", "Post-Flight Mobility", "Turnaround Recovery", "Outdoor Run", "Pool Swim", "Bike Session", "Rest Day"],
+  "session_type_meta": {
+    "easy_run": {"duration_min": 40, "focus": "long_run", "location": "Outdoor Run", "intensity": "RPE 4–5"},
+    "long_run": {"duration_min": 75, "focus": "long_run", "location": "Outdoor Run", "intensity": "RPE 4–6", "key_session": true},
+    "tempo": {"duration_min": 45, "focus": "tempo", "location": "Outdoor Run", "intensity": "RPE 7"},
+    "intervals": {"duration_min": 45, "focus": "intervals", "location": "Outdoor Run", "intensity": "RPE 8–9"},
+    "strength_support": {"duration_min": 40, "focus": "full", "location": "Home Workout"},
+    "push_strength": {"duration_min": 45, "focus": "push", "location": "Home Workout"},
+    "pull_strength": {"duration_min": 45, "focus": "pull", "location": "Home Workout"},
+    "leg_strength": {"duration_min": 50, "focus": "legs", "location": "Home Workout"},
+    "upper_strength": {"duration_min": 45, "focus": "push", "location": "Home Workout"},
+    "lower_strength": {"duration_min": 50, "focus": "legs", "location": "Home Workout"},
+    "conditioning": {"duration_min": 30, "focus": "conditioning", "location": "Home Workout"},
+    "swim": {"duration_min": 45, "focus": "swim", "location": "Pool Swim"},
+    "easy_bike": {"duration_min": 60, "focus": "bike", "location": "Bike Session"},
+    "long_bike": {"duration_min": 90, "focus": "bike", "location": "Bike Session", "key_session": true},
+    "brick": {"duration_min": 60, "focus": "brick", "location": "Bike Session"},
+    "mobility": {"duration_min": 20, "focus": "mobility", "location": "Home Workout"},
+    "recovery": {"duration_min": 25, "focus": "recovery", "location": "Outdoor Run", "optional": true}
+  },
+  "exercise_schema": {
+    "collections_present": {
+      "exercises": {"status": "AMBIGUOUS", "note": "legacy schema — reads still happen from server.py"},
+      "exercises_v2": {"status": "IMPLEMENTED", "note": "current — used by feature_v2_resolver"}
+    },
+    "exercises_v2_fields": ["id", "exercise_name", "category", "subcategory", "movement_pattern", "body_area", "equipment_type[]", "training_type", "difficulty_level", "tags[]", "coaching_points[]", "common_mistakes[]", "client_facing_instructions", "primary_video_url", "backup_video_url", "notes", "alternatives[]", "regressions[]", "progressions[]", "status", "approval", "approved_image_status", "approved_video_status"],
+    "status_pipeline": ["Draft", "Needs Review", "Artwork Needed", "Coaching Points Needed", "Video Needed", "Ready for Approval", "Approved", "Live", "Needs Update", "Rejected", "Archived"],
+    "approval_values": ["pending", "approved", "rejected"]
+  },
+  "progression": {
+    "engine": "feature_progression.compute_status",
+    "trigger": "on last workout completion of the ISO week",
+    "statuses": {
+      "progressing_well": "adherence >= 80% AND avg_rpe in [6, 8.5] — bump load ~5% next week",
+      "maintain": "adherence 60-79% AND avg_rpe 7-9 — hold load",
+      "reduce_load": "adherence <60% OR avg_rpe >=9 OR key_missed>=1 with adherence<80 — drop ~10%",
+      "deload": "very_high_rpe_count>=2 AND n_completed>=3 — cut 40% volume"
+    },
+    "adherence_multiplier": {"lt_50pct": 0.0, "lt_75pct": 0.5, "gte_75pct": 1.0},
+    "strength_overload_matrix_goals": ["build_muscle", "get_stronger", "lose_fat", "general_fitness"],
+    "strength_overload_matrix_missing_goals": ["event", "health_markers", "aviation_consistency", "improve_energy", "return_to_training"],
+    "load_memory": "NOT_IMPLEMENTED — LLM does not see actual loads used last week"
+  },
+  "readiness": {
+    "check_in_fields": ["energy", "sleep", "soreness", "stress", "weight_kg", "notes"],
+    "extracted_signals": {
+      "energy_delta": "IMPLEMENTED",
+      "sleep_score": "IMPLEMENTED",
+      "soreness_score": "IMPLEMENTED",
+      "stress_score": "IMPLEMENTED",
+      "rpe_trend": "IMPLEMENTED — from workouts last 14d",
+      "adherence_pct": "IMPLEMENTED — last 14d",
+      "missed_sessions": "IMPLEMENTED",
+      "pain_flags": "IMPLEMENTED — regex → PAIN_REGION_AVOID",
+      "motivation_flag": "IMPLEMENTED — low/steady/high",
+      "focus_shift_request": "IMPLEMENTED — keyword patterns",
+      "life_change_flag": "IMPLEMENTED",
+      "sleep_quality_trend": "IMPLEMENTED — mean last 3",
+      "auto_deload_trigger": "IMPLEMENTED — adherence<0.5 AND avg_rpe_7d>=8"
+    }
+  },
+  "injury_rules": {
+    "pain_region_avoid": {
+      "shoulder": ["overhead_press", "military_press", "handstand", "kipping_pullup"],
+      "knee": ["deep_squat", "pistol_squat", "box_jump", "high_impact_run"],
+      "lower_back": ["deadlift", "hinge", "loaded_carry", "heavy_squat"],
+      "hip": ["deep_squat", "long_lunges"],
+      "ankle": ["high_impact_run", "box_jump", "deep_squat"],
+      "wrist": ["push_up", "handstand", "front_squat"],
+      "elbow": ["chin_up", "heavy_pull", "close_grip_press"],
+      "neck": ["overhead_press", "front_squat", "loaded_carry"],
+      "hamstring": ["deadlift", "sprint_intervals"],
+      "calf": ["sprint_intervals", "high_impact_run"],
+      "foot": ["high_impact_run", "box_jump"],
+      "achilles": ["sprint_intervals", "high_impact_run"]
+    },
+    "enforcement": "LLM_ONLY — no deterministic post-filter",
+    "override": "coach_notes.cautions is BINDING via prompt Rule 9"
+  },
+  "ai_prompts": [
+    {"name": "ROSTER_SYSTEM", "file": "server.py:4429", "model": "Gemini", "purpose": "roster PDF parse", "timeout_s": null, "fallback": "7-day placeholder"},
+    {"name": "WORKOUT_SYSTEM", "file": "server.py:7064", "model": "Claude Sonnet 4.5", "purpose": "monthly plan generation", "timeout_s": 75, "fallback": "feature_workout_fallback.build_template_plan"},
+    {"name": "REALITY_SYSTEM", "file": "server.py:5893", "model": "Claude Sonnet 4.5", "purpose": "Today's Reality A/B/C options"},
+    {"name": "ASSESSMENT_INTERVIEWER_SYSTEM", "file": "server.py:1191", "model": "Claude Sonnet 4.5", "purpose": "Atlas onboarding interview"},
+    {"name": "DNA_SYSTEM", "file": "server.py:1280", "model": "Claude Sonnet 4.5", "purpose": "DNA synthesis"},
+    {"name": "EXERCISE_CONTENT_SYSTEM", "file": "server.py:8265", "model": "Claude Sonnet 4.5", "purpose": "coaching-point authorship"},
+    {"name": "ATLAS_EXERCISE_IMAGE_SYSTEM", "file": "server.py:8429", "model": "Claude", "purpose": "image prompt generation"},
+    {"name": "QUESTIONS_SYSTEM", "file": "server.py:8937", "model": "Claude Sonnet 4.5", "purpose": "personalised 6-question check-in"},
+    {"name": "SCRIPT_SYSTEM", "file": "server.py:9018", "model": "Claude Sonnet 4.5", "purpose": "coach video script"},
+    {"name": "MEAL_SYSTEM", "file": "server.py:9406", "model": "Claude Sonnet 4.5 vision", "purpose": "meal photo analysis"},
+    {"name": "CHECKIN_SYSTEM", "file": "server.py:11041", "model": "Claude Sonnet 4.5", "purpose": "weekly review synthesis"},
+    {"name": "MSG_DRAFT_SYSTEM", "file": "feature_coach_v1.py:61", "model": "Claude", "purpose": "coach message draft"},
+    {"name": "HABIT_SEED_SYSTEM", "file": "feature_habits.py:59", "model": "Claude", "purpose": "starter habits"},
+    {"name": "HABIT_REVIEW_SYSTEM", "file": "feature_habits.py:79", "model": "Claude", "purpose": "habit review"},
+    {"name": "SOCIAL_SYSTEM", "file": "feature_social_studio.py:142", "model": "Claude", "purpose": "social content draft"},
+    {"name": "EXERCISE_STYLE_MALE / EXERCISE_STYLE_FEMALE", "file": "feature_exercise_content.py:48,76", "model": "Nano Banana (gemini-3.1-flash-image-preview)", "purpose": "exercise demo images"}
+  ],
+  "databases": {
+    "total_collections": 92,
+    "training_relevant": ["users", "coaching_dna", "dna_history", "assessments", "rosters", "roster_jobs", "roster_parse_failures", "roster_audit_log", "schedule_events", "workouts", "workouts_archive", "workout_sets", "workout_exercise_swaps", "move_history", "events", "hotels", "exercises", "exercises_v2", "exercise_content_images", "exercise_content_log", "exercise_videos", "exercise_video_blobs", "progression_snapshots", "check_ins", "checkins", "daily_pulse", "daily_briefings", "coach_tasks", "coach_alerts", "coach_change_log", "coach_notes_history", "coach_reset_audit", "coach_scripts", "programmes", "programme_timeline", "reality_events"],
+    "duplicated_or_ambiguous": [
+      {"collections": ["exercises", "exercises_v2"], "note": "two libraries in production"},
+      {"collections": ["check_ins", "checkins"], "note": "likely historical typo — both appear in code"},
+      {"vocab": ["HOTEL_EQUIPMENT_FIELDS (server.py)", "HOTEL_EQUIPMENT_KEYS (feature_hotel_system)"], "note": "two hotel equipment vocabularies"}
+    ]
+  },
+  "apis": {
+    "counts": {"server.py": 176, "feature_files": 314, "total": 490},
+    "by_prefix": {"coach": 57, "workouts": 12, "roster": 11, "exercises": 10, "checkins": 8, "schedule": 7, "hotels": 7, "events": 7, "auth": 7, "reality": 5, "progress": 5, "assessment": 5, "profile": 4, "personal-records": 4, "calendar": 4, "videos": 3, "nutrition": 3, "messages": 3},
+    "notable": [
+      "POST /api/roster/upload-parse",
+      "POST /api/roster/pending/{rid}/confirm",
+      "POST /api/coach/clients/{cid}/roster/upload-parse (Iter 109)",
+      "POST /api/coach/clients/{cid}/roster/pending/{rid}/confirm (Iter 109)",
+      "POST /api/workouts/regenerate",
+      "POST /api/workouts/{wid}/complete",
+      "POST /api/reality/submit",
+      "POST /api/reality/apply",
+      "PUT /api/coach/clients/{cid}/coach-notes",
+      "GET /api/programme/status",
+      "GET /api/coach/clients/{cid}/roster/months"
+    ]
+  },
+  "jobs": {
+    "background_workers": [
+      {"name": "roster_parse_worker", "trigger": "POST /roster/upload-parse", "mode": "asyncio.create_task", "queued": false},
+      {"name": "plan_generation_worker", "trigger": "POST /roster/pending/{rid}/confirm", "mode": "asyncio.create_task", "queued": false},
+      {"name": "progression_snapshot", "trigger": "POST /workouts/{wid}/complete", "mode": "synchronous", "queued": false},
+      {"name": "generation_heartbeat", "trigger": "inside plan_generation_worker", "mode": "periodic updates to roster_jobs"}
+    ],
+    "cron_jobs": "NOT_IMPLEMENTED",
+    "queued_infra": "NOT_IMPLEMENTED (all in-process async tasks)"
+  },
+  "coach_directives": {
+    "coach_notes_slots": ["preferences", "cautions", "goal_override", "weekly_shape", "notes"],
+    "binding": true,
+    "enforcement": "prompt Rule 9 — cautions NEVER violated; goal_override wins over profile.goal_type; wins over Coaching DNA",
+    "extraction": "apply_coach_note_overrides regex-extracts goal_type, training_days_per_week, equipment"
+  },
+  "approval_states": {
+    "workout_flags": ["approved", "coach_locked", "coach_locked_by", "needs_coach_review", "completed", "source", "variants"],
+    "workout_visibility": "workouts VISIBLE to client immediately after generation; approval affects surfaced UI status but not calendar rendering",
+    "coach_locked_precedence": "highest — never overwritten by regeneration"
+  },
+  "regeneration_triggers": [
+    "POST /workouts/regenerate (dates / week / month)",
+    "POST /roster/pending/{rid}/confirm",
+    "POST /coach/clients/{cid}/roster/pending/{rid}/confirm",
+    "Coach direct edits via feature_coach_workout_editor / feature_coach_workout_swap"
+  ],
+  "regeneration_protected": ["coach_locked=True", "completed=True", "variants (merged)", "coach_notes text (preserved)", "approved (preserved)"],
+  "regeneration_overwritten": ["title", "exercises", "warmup", "duration_min", "focus", "day_load", "location", "rationale", "alternatives", "key_session", "event_phase"],
+  "fallback_logic": {
+    "llm_returned_empty": "feature_workout_fallback.build_template_plan runs; workouts stamped source='template', needs_coach_review=True; coach_task opened",
+    "gemini_roster_parse_failed": "7-day placeholder starting week_start, day_type='Home Day', confidence=0.2",
+    "hotel_unknown": "bodyweight-safe path; reason string surfaced to client",
+    "resolver_error": "falls through with raw LLM output — unapproved names possible",
+    "reality_llm_failed": "no fallback engine — client sees error"
+  },
+  "capabilities": {
+    "Goals (8 keys)": "IMPLEMENTED",
+    "Multiple concurrent goals": "NOT_IMPLEMENTED",
+    "Programme phases": "IMPLEMENTED",
+    "Periodisation": "IMPLEMENTED",
+    "Strength progression matrix": "IMPLEMENTED",
+    "Cardio progression": "PARTIAL",
+    "Running (endurance events)": "IMPLEMENTED",
+    "Cycling structured intervals": "NOT_IMPLEMENTED",
+    "Swimming drill/interval builder": "NOT_IMPLEMENTED",
+    "Race distances (9 types)": "IMPLEMENTED",
+    "Tapering (race-anchored)": "IMPLEMENTED",
+    "Aviation roster parsing (Etihad + Emirates)": "IMPLEMENTED",
+    "Aviation roster parsing (other airlines)": "PARTIAL — LLM fallback only",
+    "Duty timing → training envelope": "IMPLEMENTED",
+    "Time zones / jet lag in training": "NOT_IMPLEMENTED",
+    "Layover detection (>=18h)": "IMPLEMENTED",
+    "Turnaround detection (<18h)": "IMPLEMENTED",
+    "Recovery-first days": "IMPLEMENTED",
+    "Tiered flight recovery": "IMPLEMENTED",
+    "Hotel gym profiles": "IMPLEMENTED",
+    "Hotel gym cross-client reuse": "IMPLEMENTED",
+    "Hotel equipment quantified": "NOT_IMPLEMENTED",
+    "Hotel gym photo → equipment": "NOT_IMPLEMENTED",
+    "Hotel room bodyweight workouts": "IMPLEMENTED",
+    "Full/Hotel/Dumbbell/Bodyweight structured variants": "PARTIAL — alternatives string only",
+    "Exercise substitutions via approved library": "IMPLEMENTED",
+    "Injury restrictions (pain regions)": "PARTIAL — LLM-only",
+    "Injury restrictions (coach cautions)": "IMPLEMENTED",
+    "Weekly check-in signals": "IMPLEMENTED",
+    "Daily pulse": "PARTIAL",
+    "Today's Reality": "IMPLEMENTED",
+    "Missed session auto-reschedule": "NOT_IMPLEMENTED",
+    "Coach directives (structured notes)": "IMPLEMENTED",
+    "Coach edits protected on regeneration": "IMPLEMENTED",
+    "Programme approval": "PARTIAL",
+    "Programme regeneration": "IMPLEMENTED",
+    "A/B/C race hierarchy": "NOT_IMPLEMENTED"
+  },
+  "scorecard": {
+    "Overall Training Intelligence": 5,
+    "Goal Programming": 6,
+    "Periodisation": 6,
+    "Workout Construction": 5,
+    "Exercise Selection": 4,
+    "Strength Progression": 5,
+    "Endurance Programming": 5,
+    "Event Preparation": 6,
+    "Roster Intelligence": 7,
+    "Flight/Duty Intelligence": 6,
+    "Time-Zone Intelligence": 2,
+    "Recovery Intelligence": 6,
+    "Hotel Gym Intelligence": 5,
+    "Equipment Intelligence": 4,
+    "Hotel Room Adaptation": 6,
+    "Injury Handling": 4,
+    "Today's Reality": 7,
+    "Coach Control": 7,
+    "AI Reliability": 5,
+    "Data Architecture": 4,
+    "Testing": 3
+  },
+  "top_strengths": [
+    "Roster parsers (Etihad + Emirates) with explicit label engine",
+    "Deterministic parser-constraints safety net after LLM",
+    "Multi-active-roster merge (Iter 109) preserves history",
+    "Race-anchored endurance periodisation with KM curves",
+    "Strength overload matrix keyed on goal × phase × adherence",
+    "Traffic-light variants (green/amber/red) on every workout",
+    "Live State pipeline extracting pain / motivation / focus-shift",
+    "Coach Notes system as first-class BINDING override",
+    "Reality flow with 13 action kinds and 3 ranked options",
+    "Approved-exercise resolver preventing unapproved names reaching clients"
+  ],
+  "top_weaknesses": [
+    "No load memory — LLM cannot see what was actually lifted last week",
+    "No time-zone / circadian modelling in training decisions",
+    "No true weekly-objective tracking — everything is calendar-anchored",
+    "Missed sessions are not rescheduled; only progression is dampened",
+    "Injury restrictions are LLM-enforced only; no deterministic post-filter",
+    "Hotel gym equipment is binary — no weight caps",
+    "Hotel gym photo → equipment recognition entirely missing",
+    "Multi-goal / A-B-C race hierarchy unsupported",
+    "Two exercise collections; two check-in collections; ambiguous hotel key sets",
+    "LLM chunk failures produce silent gaps in the calendar"
+  ],
+  "top_architectural_risks": [
+    "Silent LLM chunk drop — client can end with partial calendar",
+    "feature_v2_resolver failure falls through to raw LLM output (unapproved names)",
+    "Coach approved=True without coach_locked=True gets overwritten by regeneration",
+    "Hotel gym cross-contamination (one bad toggle affects all crew)",
+    "No transaction around delete_many + insert_one for workouts",
+    "_generate_month reads only newest active event — dual events silently drop",
+    "pain_flags written to global user.profile.live_state — race conditions possible",
+    "week_index derived from db.programmes — if a record is missing, phase resets",
+    "_apply_days_cap_and_min_content demotes real sessions silently",
+    "Post-race recovery phase has no dedicated shape"
+  ],
+  "v2_opportunities": [
+    "First-class weekly objectives collection scheduled around roster gaps",
+    "Load memory: persist prescribed AND performed loads; feed forward",
+    "Circadian / TZ / jet-lag engine that modifies training decisions",
+    "Multi-Goal / Race Hierarchy (A/B/C, physique + event concurrency)",
+    "Deterministic injury post-filter using exercises_v2.movement_pattern",
+    "Hotel gym photo → vision → equipment write-back with confidence + coach moderation",
+    "Hotel gym equipment quantified with stimulus-equivalence math",
+    "Structured equipment variants per session (Full Gym / Hotel Gym / DB / BW)",
+    "Missed-session rescheduler that preserves weekly objectives",
+    "Transactional workout writes; workout version history",
+    "Consolidate exercises + exercises_v2 into one library",
+    "Consolidate check_ins + checkins",
+    "Unify hotel equipment vocabularies",
+    "Add last_verified_at + confidence decay + version history to hotels",
+    "Per-airline label engines beyond Etihad/Emirates",
+    "Progression memory that shows LLM last-week loads",
+    "Cardio zones + optional HR data integration",
+    "Explicit deload budget tracking",
+    "Structured post-race recovery shape",
+    "Test harness for prompt behaviour (structural snapshot tests)"
+  ]
+}

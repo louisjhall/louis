@@ -766,76 +766,10 @@ export default function Home() {
 
           <View style={styles.quickRow}>
             <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
+            <QuickBtn icon="cloud-upload" label="ROSTER" onPress={() => router.push("/roster-upload")} testID="qs-roster" />
             <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
             <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
           </View>
-
-          {/* Iter 100 — NEXT 5 DAYS strip. Compact glanceable list of the
-              upcoming week showing day, roster context chip and workout
-              title. Tap → opens the workout (or the calendar day if it's
-              a rest / non-training day). */}
-          {(next7 || []).length > 1 ? (
-            <View style={styles.next5Wrap} testID="home-next5-days">
-              <View style={styles.next5Head}>
-                <Text style={styles.next5Title}>NEXT 5 DAYS</Text>
-                <Pressable testID="next5-open-calendar" onPress={() => router.push("/(client)/calendar")} hitSlop={8}>
-                  <Text style={styles.next5More}>SEE ALL →</Text>
-                </Pressable>
-              </View>
-              {next7.slice(1, 6).map((d: any) => {
-                const dt = new Date(d.__key + "T00:00:00");
-                const dow = dt.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase();
-                const dnum = dt.getDate();
-                const rosterDayObj = roster?.days?.find((rd: any) => rd?.date === d.__key);
-                return (
-                  <Pressable
-                    key={d.__key}
-                    testID={`next5-row-${d.__key}`}
-                    onPress={() => {
-                      if (!d.__rest && d.id) router.push(`/workout/${d.id}`);
-                      else router.push("/(client)/calendar");
-                    }}
-                    style={styles.next5Row}
-                  >
-                    <View style={styles.next5DateCol}>
-                      <Text style={styles.next5Dow}>{dow}</Text>
-                      <Text style={styles.next5Dnum}>{dnum}</Text>
-                    </View>
-                    <View style={{ flex: 1, gap: 4 }}>
-                      <Text
-                        style={[
-                          styles.next5WorkoutTitle,
-                          d.__rest && { color: theme.color.textMuted, fontWeight: "700" },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {d.title || (d.__rest ? "REST DAY" : "SESSION")}
-                      </Text>
-                      <View style={styles.next5MetaRow}>
-                        <RosterDayChip
-                          day={rosterDayObj || null}
-                          size="sm"
-                          testID={`next5-chip-${d.__key}`}
-                        />
-                        {d.duration_min ? (
-                          <Text style={styles.next5Meta}>{d.duration_min} min</Text>
-                        ) : null}
-                        {d.key_session ? (
-                          <View style={styles.next5KeyPill}>
-                            <Ionicons name="star" size={8} color={theme.color.brand} />
-                            <Text style={styles.next5KeyPillT}>KEY</Text>
-                          </View>
-                        ) : null}
-                      </View>
-                    </View>
-                    {!d.__rest && d.id ? (
-                      <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
-                    ) : null}
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
 
           <HabitTodayCard />
 

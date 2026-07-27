@@ -7222,8 +7222,25 @@ async def _generate_month(
     # cautions, goal override, weekly shape, free-form notes). BINDING —
     # takes precedence over inferred DNA where they conflict.
     try:
-        from feature_coach_notes import coach_notes_for_prompt
+        from feature_coach_notes import coach_notes_for_prompt, apply_coach_note_overrides
         coach_notes_payload = coach_notes_for_prompt(user)
+        # Iter 108 — extract structured signals (goal, freq, equipment) from
+        # coach notes and OVERRIDE the profile dict passed to the LLM so
+        # the model doesn't fall back to a mobility-heavy template when the
+        # client's profile.goal is empty but the coach note says "marathon".
+        profile = apply_coach_note_overrides(profile, user)
+        try:
+            _ov = {
+                "goal": profile.get("_coach_note_override_goal"),
+                "days": profile.get("_coach_note_override_days"),
+                "equipment": profile.get("_coach_note_override_equipment"),
+                "final_goal": profile.get("goal_type") or profile.get("goal"),
+                "final_days": profile.get("training_days_per_week"),
+            }
+            if any(_ov[k] for k in ("goal","days","equipment")):
+                logger.info("coach_note overrides applied for user=%s: %s", user.get("id"), _ov)
+        except Exception:
+            pass
     except Exception:
         logger.exception("coach_notes_for_prompt failed — continuing without coach notes")
         coach_notes_payload = None

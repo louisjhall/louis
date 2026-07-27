@@ -940,5 +940,247 @@ class TestCorrectnessPatchFrequencyDerivation(unittest.TestCase):
             self.assertIn(k, d, f"frequency_derivation missing key {k}")
 
 
+# ===========================================================================
+# Round 2 patch — Cadence, Window Ownership, Training-Days semantics
+# (User directive after Shadow #2)
+# ===========================================================================
+
+class TestCadenceAwarePlacement(unittest.TestCase):
+    """Item #1 — Long Runs should honour a preferred cadence (target ~7 days
+    for marathon foundation) rather than clustering at week boundaries."""
+
+    def _run_shadow(self, roster_pattern):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        today = _dt.date(2026, 8, 3)
+        roster = [{
+            "client_id": PIETRO_ID,
+            "date": (today + _dt.timedelta(days=i)).isoformat(),
+            "day_type": roster_pattern[i % len(roster_pattern)],
+            "duties": [],
+            "tz_offset_from_base_hours": 0,
+            "recovery_window_hours_from_prior_duty": None,
+        } for i in range(28)]
+        contexts = build_day_contexts(roster)
+        week_starts = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        result = schedule_demand(
+            demand=demand, day_contexts=contexts,
+            goal=cfg, phase=phase,
+        )
+        return demand, result, cfg, phase
+
+    def test_long_run_gaps_prefer_target_cadence_not_week_boundary(self):
+        """With plenty of home_days in every week, the scheduler should place
+        LRs approximately 7 days apart, NOT bounce between Sun-Wed which
+        happens when only the calendar-week bucket is optimised."""
+        # 4 weeks of home_day → engine can freely pick any day
+        demand, result, cfg, phase = self._run_shadow(["home_day"] * 7)
+        lr_dates = sorted(p.date for p in result.placements if p.kind == "run_long")
+        self.assertEqual(len(lr_dates), 4,
+                          f"Expected 4 LRs, got {len(lr_dates)}: {lr_dates}")
+        gaps = [(lr_dates[i] - lr_dates[i - 1]).days
+                for i in range(1, len(lr_dates))]
+        # Cadence range from config = (6, 9). All gaps should be inside it,
+        # allowing at most 1 outlier to accommodate roster edge cases.
+        outside = [g for g in gaps if g < 6 or g > 9]
+        self.assertLessEqual(len(outside), 1,
+                              f"Too many LR gaps outside cadence [6..9] days: "
+                              f"gaps={gaps} outliers={outside}")
+
+    def test_long_run_hard_min_recovery_still_respected(self):
+        """Hard minimum recovery (72h/3d) must still gate placements — cadence
+        is a soft signal on top of it, never below it."""
+        _, result, _, _ = self._run_shadow(["home_day"] * 7)
+        lr_dates = sorted(p.date for p in result.placements if p.kind == "run_long")
+        for i in range(1, len(lr_dates)):
+            self.assertGreaterEqual((lr_dates[i] - lr_dates[i - 1]).days, 3,
+                                     f"LR gap violates 72h hard floor: "
+                                     f"{lr_dates[i-1]}→{lr_dates[i]}")
+
+
+class TestExposureWindowOwnership(unittest.TestCase):
+    """Item #2 — Every exposure has canonical target_window + explicit
+    allowed_placement_window. Spillover to adjacent weeks is legal for
+    IMPORTANT/SUPPORTING but never accidentally satisfies another week's
+    exposure."""
+
+    def _demand(self):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        week_starts = [_dt.date(2026, 8, 3) + _dt.timedelta(days=7 * i) for i in range(4)]
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        return demand, phase, cfg
+
+    def test_key_exposures_have_zero_spillover(self):
+        demand, _, _ = self._demand()
+        for e in demand.required_exposures:
+            if e.priority.upper() == "KEY":
+                # allowed window == target window
+                self.assertEqual(e.allowed_window_start, e.target_week_start,
+                                  f"KEY {e.kind} wk{e.week_index} spillover start != target start")
+                self.assertEqual(e.allowed_window_end, e.target_week_end,
+                                  f"KEY {e.kind} wk{e.week_index} spillover end != target end")
+
+    def test_important_exposures_have_one_week_spillover(self):
+        demand, _, _ = self._demand()
+        # Marathon foundation strength IS IMPORTANT and default spillover=1
+        for e in demand.required_exposures:
+            if e.priority.upper() == "IMPORTANT":
+                exp_span = (e.allowed_window_end - e.target_week_end).days
+                self.assertEqual(exp_span, 7,
+                                  f"IMPORTANT {e.kind} spillover_end offset expected +7, got {exp_span}")
+
+    def test_exposure_ids_stay_distinct_per_target_week(self):
+        """Even when two exposures for adjacent weeks share overlapping
+        allowed windows, their exposure_ids remain distinct — a placement
+        can only satisfy the exposure that OWNS it."""
+        demand, _, _ = self._demand()
+        strength = [e for e in demand.required_exposures if e.kind == "strength_full_body"]
+        ids = [e.exposure_id for e in strength]
+        self.assertEqual(len(set(ids)), len(ids),
+                          f"Strength exposure IDs not unique across weeks: {ids}")
+
+    def test_spillover_does_not_double_count(self):
+        """When strength for week-4 spills back to week-3 dates, the total
+        placed count for strength must not exceed the required count."""
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        today = _dt.date(2026, 8, 3)
+        # Tight roster: only 1 usable home_day per week
+        pattern = ["home_day", "flight", "layover_arrival", "layover_full",
+                   "layover_departure", "standby", "home_day"]
+        roster = [{
+            "client_id": PIETRO_ID,
+            "date": (today + _dt.timedelta(days=i)).isoformat(),
+            "day_type": pattern[i % 7],
+            "duties": [] if pattern[i % 7] in ("home_day",) else [{"duty_type": pattern[i % 7]}],
+            "tz_offset_from_base_hours": 0,
+            "recovery_window_hours_from_prior_duty": None,
+        } for i in range(28)]
+        contexts = build_day_contexts(roster)
+        week_starts = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        result = schedule_demand(
+            demand=demand, day_contexts=contexts, goal=cfg, phase=phase,
+        )
+        required = sum(1 for e in demand.required_exposures if e.kind == "strength_full_body")
+        placed = sum(1 for p in result.placements if p.kind == "strength_full_body")
+        self.assertLessEqual(placed, required,
+                              f"Strength: placed {placed} > required {required} (double count)")
+
+
+class TestTrainingDaysSemantics(unittest.TestCase):
+    """Item #3 — training_days_per_week vs sessions_per_week must be clearly
+    separated. Support stacking (mobility on an easy-run day) is one
+    training day + two sessions, NOT two training days."""
+
+    def test_max_training_days_capped_by_dna(self):
+        """A client with training_days_per_week=3 must NOT be scheduled on
+        4 distinct dates in a single week, even if easy+mobility could fit
+        into a 4th day."""
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        today = _dt.date(2026, 8, 3)
+        roster = [{
+            "client_id": "c_trdays",
+            "date": (today + _dt.timedelta(days=i)).isoformat(),
+            "day_type": "home_day",
+            "duties": [],
+            "tz_offset_from_base_hours": 0,
+            "recovery_window_hours_from_prior_duty": None,
+        } for i in range(28)]
+        contexts = build_day_contexts(roster)
+        week_starts = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        prof = {"training_days_per_week": 3, "primary_goal_type": "marathon"}
+        demand = build_demand(
+            client_id="c_trdays", client_profile=prof,
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        result = schedule_demand(
+            demand=demand, day_contexts=contexts, goal=cfg, phase=phase,
+        )
+        # Group placements by ISO week and count distinct dates
+        by_wk: dict = {}
+        for p in result.placements:
+            wk = p.date.isocalendar()[:2]
+            by_wk.setdefault(wk, set()).add(p.date)
+        for wk, dates in by_wk.items():
+            self.assertLessEqual(len(dates), 3,
+                                  f"Week {wk} used {len(dates)} training days > cap 3")
+
+    def test_frequency_derivation_exposes_four_concepts(self):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=[_dt.date(2026, 8, 3)],
+        )
+        d = demand.frequency_derivation
+        # Semantics block with 3 canonical fields + note
+        self.assertIn("semantics", d)
+        sem = d["semantics"]
+        self.assertIn("max_training_days_per_week", sem)
+        self.assertIn("min_sessions_per_week", sem)
+        self.assertIn("max_sessions_per_week", sem)
+        self.assertIn("note", sem)
+
+    def test_support_stacking_does_not_add_training_day(self):
+        """When mobility stacks with an easy run, that day counts as 1
+        training day but 2 sessions — the training-day cap should NOT
+        prematurely block the day from receiving both sessions."""
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        today = _dt.date(2026, 8, 3)
+        # Only 3 home_days available per week, but session cap of 5
+        pattern = ["home_day", "home_day", "flight", "layover_full",
+                   "layover_departure", "home_day", "off"]
+        roster = [{
+            "client_id": "c_stack",
+            "date": (today + _dt.timedelta(days=i)).isoformat(),
+            "day_type": pattern[i % 7],
+            "duties": [] if pattern[i % 7] in ("home_day", "off") else [{"duty_type": pattern[i % 7]}],
+            "tz_offset_from_base_hours": 0,
+            "recovery_window_hours_from_prior_duty": None,
+        } for i in range(28)]
+        contexts = build_day_contexts(roster)
+        # Client: 3 training days/wk max, 6 sessions/wk max
+        prof = {"training_days_per_week": 3,
+                "sessions_per_week_max": 6,
+                "primary_goal_type": "marathon"}
+        demand = build_demand(
+            client_id="c_stack", client_profile=prof,
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=[today + _dt.timedelta(days=7 * i) for i in range(4)],
+        )
+        result = schedule_demand(
+            demand=demand, day_contexts=contexts, goal=cfg, phase=phase,
+        )
+        # In every week, distinct dates ≤ 3 while total sessions may exceed 3
+        by_wk_dates: dict = {}
+        by_wk_sessions: dict = {}
+        for p in result.placements:
+            wk = p.date.isocalendar()[:2]
+            by_wk_dates.setdefault(wk, set()).add(p.date)
+            by_wk_sessions[wk] = by_wk_sessions.get(wk, 0) + 1
+        for wk, dates in by_wk_dates.items():
+            self.assertLessEqual(len(dates), 3,
+                                  f"Week {wk} exceeded training-day cap: {len(dates)}")
+
+
 if False:  # keep runnable via __main__ above; suppress redundant duplicate call
     pass

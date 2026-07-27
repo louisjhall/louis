@@ -64,6 +64,19 @@ class RequiredExposure:
 
     exposure_id is stable across reschedules for the same client+goal+phase+
     objective+week+ordinal.
+
+    Window ownership (Correctness Patch #2):
+      * target_week_start / _end  → canonical week the exposure BELONGS to.
+      * allowed_window_start / _end → the interval a scheduler MAY use if the
+        canonical week has no viable slot. Spillover placements outside the
+        target week still consume THIS exposure's quota (they never
+        accidentally satisfy another exposure).
+
+    Cadence (Correctness Patch #1):
+      * preferred_cadence_days   → ideal gap since last placement of the same
+        objective_id. E.g. Long Run = 7 in marathon foundation.
+      * cadence_range_days       → (soft_min, soft_max) — softly discouraged
+        outside this band but still legal if hard-min recovery is respected.
     """
     exposure_id: str
     objective_id: str
@@ -77,6 +90,12 @@ class RequiredExposure:
     ordinal_within_week: int     # 1st long_run of the week = 1
     can_skip_if_missed: bool
     quota_source: str            # e.g. "running.marathon.aerobic_base"
+    target_week_start: Optional[_dt.date] = None
+    target_week_end: Optional[_dt.date] = None
+    allowed_window_start: Optional[_dt.date] = None
+    allowed_window_end: Optional[_dt.date] = None
+    preferred_cadence_days: Optional[int] = None
+    cadence_range_days: Optional[tuple[int, int]] = None
 
 
 @dataclass
@@ -145,10 +164,28 @@ def _apply_progression(base_duration_target: int, week_index: int,
 
 
 def _client_frequency_bounds(client_profile: dict, phase: PhaseSpec) -> tuple[int, int, dict]:
-    """Return (min, max, derivation) sessions/week the client can accept.
+    """Return (min_sessions, max_sessions, derivation) sessions/week the
+    client can accept.
 
-    Falls back to phase caps if profile is missing.
-    Never allows unlimited — missing DNA does NOT mean 'as many as you want'.
+    Semantics (Correctness Patch #3):
+      * `training_days_per_week`  = distinct DATES the client can train.
+                                    Support-stacking (e.g. mobility on the
+                                    same day as an easy run) does NOT
+                                    increase the training-days count.
+      * `sessions_per_week_*`     = total SESSION count (exposures) per week.
+                                    May exceed training_days_per_week when
+                                    stacking occurs.
+
+    Effective mapping used by the engine:
+      * `max_training_days_per_week`  ← `training_days_per_week` (fallback 5)
+      * `max_sessions_per_week`       ← `sessions_per_week_max` if provided,
+                                        else `training_days_per_week + 2`
+                                        (support-stacking slack) capped by
+                                        phase.
+      * `min_sessions_per_week`       ← `sessions_per_week_min` if provided,
+                                        else `training_days_per_week`.
+
+    Never allows unlimited — missing DNA falls back to explicit defaults.
     The `derivation` dict records every input + fallback used so it can be
     surfaced to the coach in the draft.
     """
@@ -166,36 +203,57 @@ def _client_frequency_bounds(client_profile: dict, phase: PhaseSpec) -> tuple[in
         "fallbacks_used": [],
     }
 
-    lo = raw_min
-    hi = raw_max
-    if lo is None:
-        lo = raw_tdpw
-        if lo is not None:
-            derivation["fallbacks_used"].append(
-                "sessions_per_week_min ← training_days_per_week")
-    if hi is None:
-        hi = raw_tdpw
-        if hi is not None:
-            derivation["fallbacks_used"].append(
-                "sessions_per_week_max ← training_days_per_week")
-    if lo is None:
-        lo = 3  # explicit floor — never unlimited
-        derivation["fallbacks_used"].append("sessions_per_week_min ← 3 (engine floor)")
-    if hi is None:
-        hi = 5  # explicit ceiling — never unlimited
-        derivation["fallbacks_used"].append("sessions_per_week_max ← 5 (engine ceiling)")
-    try:
-        lo = max(1, int(lo)); hi = max(lo, int(hi))
-    except Exception:
-        lo, hi = 3, 5
-        derivation["fallbacks_used"].append("frequency bounds ← 3–5 (invalid inputs)")
+    # Distinct-days constraint (max training days per week)
+    if raw_tdpw is None:
+        max_training_days = 5
+        derivation["fallbacks_used"].append("training_days_per_week ← 5 (engine default)")
+    else:
+        try:
+            max_training_days = max(1, int(raw_tdpw))
+        except Exception:
+            max_training_days = 5
+            derivation["fallbacks_used"].append("training_days_per_week invalid → 5")
 
-    # Phase-defined support cap
-    hi_before_phase_clip = hi
-    hi = min(hi, phase.hard_days_per_week_max + phase.strength_days_per_week_max + 3)  # +3 for supporting
-    if hi < hi_before_phase_clip:
+    # Sessions/week (may exceed training-days due to support-stacking)
+    if raw_min is not None:
+        try:
+            lo = max(1, int(raw_min))
+        except Exception:
+            lo = max_training_days
+            derivation["fallbacks_used"].append("sessions_per_week_min invalid → training_days_per_week")
+    else:
+        lo = max_training_days
+        derivation["fallbacks_used"].append("sessions_per_week_min ← training_days_per_week")
+
+    if raw_max is not None:
+        try:
+            hi = max(lo, int(raw_max))
+        except Exception:
+            hi = max_training_days
+            derivation["fallbacks_used"].append("sessions_per_week_max invalid → training_days_per_week")
+    else:
+        # No explicit sessions cap — treat sessions = training days.
+        # Support-stacking still fits under the same session budget; this
+        # preserves the meaning of `training_days_per_week` consistently.
+        hi = max_training_days
         derivation["fallbacks_used"].append(
-            f"sessions_per_week_max clipped by phase to {hi}")
+            "sessions_per_week_max ← training_days_per_week (no explicit cap)"
+        )
+
+    # Phase clip (never more than the sum of hard + strength + support)
+    phase_max_sessions = (phase.hard_days_per_week_max +
+                          phase.strength_days_per_week_max + 3)
+    hi_before_phase = hi
+    hi = min(hi, phase_max_sessions)
+    if hi < hi_before_phase:
+        derivation["fallbacks_used"].append(
+            f"sessions_per_week_max clipped by phase to {hi}"
+        )
+
+    derivation["effective_min_sessions_per_week"] = lo
+    derivation["effective_max_sessions_per_week"] = hi
+    derivation["effective_max_training_days_per_week"] = max_training_days
+    # Backward compat
     derivation["effective_min"] = lo
     derivation["effective_max"] = hi
     return lo, hi, derivation
@@ -303,6 +361,18 @@ def build_demand(
             if scale < 1.0 else "no scaling needed"
         ),
     })
+    # Expose the four canonical frequency concepts for the coach UI
+    freq_derivation["semantics"] = {
+        "max_training_days_per_week": freq_derivation.get(
+            "effective_max_training_days_per_week"),
+        "min_sessions_per_week": freq_derivation.get("effective_min_sessions_per_week"),
+        "max_sessions_per_week": freq_derivation.get("effective_max_sessions_per_week"),
+        "note": (
+            "training_days = distinct dates. sessions = total exposures. "
+            "Support stacking (mobility on an easy-run day) adds sessions "
+            "without adding training days."
+        ),
+    }
 
     for week_index, week_start in enumerate(week_start_dates):
         for q in quotas:
@@ -318,6 +388,27 @@ def build_demand(
 
             # Stable objective_id per (client, goal, phase, quota_kind)
             obj_id = _stable_id(client_id, cfg.key, phase_spec.phase_kind, q.kind)
+
+            # Per-quota cadence + spillover defaults
+            pref_cadence = q.preferred_cadence_days
+            if pref_cadence is None:
+                # Derive from exposures_per_week: 1/wk -> 7d, 2/wk -> 3-4d, ...
+                _, tgt, _ = q.exposures_per_week
+                pref_cadence = max(2, round(7.0 / max(tgt, 0.5)))
+            cadence_range = q.cadence_range_days
+            if cadence_range is None:
+                # +/- 25% around preferred cadence (min hard floor 2 days)
+                lo_c = max(2, int(round(pref_cadence * 0.7)))
+                hi_c = int(round(pref_cadence * 1.4))
+                cadence_range = (lo_c, hi_c)
+            spillover_wk = q.spillover_window_weeks
+            if spillover_wk is None:
+                spillover_wk = {"KEY": 0, "IMPORTANT": 1,
+                                 "SUPPORTING": 2, "OPTIONAL": 2}.get(q.priority.upper(), 1)
+
+            target_week_end = week_start + _dt.timedelta(days=6)
+            allowed_start = week_start - _dt.timedelta(days=7 * spillover_wk)
+            allowed_end = target_week_end + _dt.timedelta(days=7 * spillover_wk)
 
             for ordinal in range(1, n_this_week + 1):
                 # Duration with progression
@@ -341,6 +432,12 @@ def build_demand(
                     ordinal_within_week=ordinal,
                     can_skip_if_missed=q.can_skip_if_missed,
                     quota_source=f"{cfg.key}.{phase_spec.phase_kind}",
+                    target_week_start=week_start,
+                    target_week_end=target_week_end,
+                    allowed_window_start=allowed_start,
+                    allowed_window_end=allowed_end,
+                    preferred_cadence_days=int(pref_cadence),
+                    cadence_range_days=tuple(cadence_range),
                 ))
 
     caps = {
@@ -350,6 +447,8 @@ def build_demand(
         "consecutive_training_days_max": phase_spec.consecutive_training_days_max,
         "client_sessions_per_week_min": lo_freq,
         "client_sessions_per_week_max": hi_freq,
+        "client_training_days_per_week_max": freq_derivation.get(
+            "effective_max_training_days_per_week"),
     }
     return DemandPlan(
         required_exposures=exposures,
@@ -396,6 +495,11 @@ def schedule_demand(
     if preferred_weekdays is None:
         preferred_weekdays = set()
 
+    # Distinct-training-days cap per week (Correctness Patch #3 semantics)
+    max_training_days_per_week = int(
+        (demand.frequency_caps or {}).get("client_training_days_per_week_max") or 7
+    )
+
     # Build daily time-cap lookup (union of arg and day_ctx.available_time_min)
     dtcap: dict[_dt.date, int] = {}
     for ctx in day_contexts:
@@ -426,64 +530,138 @@ def schedule_demand(
     first_monday = all_dates[0] - _dt.timedelta(days=all_dates[0].weekday())
 
     for exp in ordered:
-        target_monday = first_monday + _dt.timedelta(days=7 * exp.week_index)
-        target_wk = week_key(target_monday)
-        candidate_weeks = [target_wk]
-        # Allow +/- 1 week only for non-KEY
-        if exp.priority.upper() != "KEY":
-            candidate_weeks += [
-                week_key(target_monday + _dt.timedelta(days=7)),
-                week_key(target_monday - _dt.timedelta(days=7)),
-            ]
+        # ---- Determine allowed placement window & target window ---------
+        if exp.target_week_start and exp.allowed_window_start:
+            target_start = exp.target_week_start
+            target_end = exp.target_week_end
+            allowed_start = exp.allowed_window_start
+            allowed_end = exp.allowed_window_end
+        else:
+            # Legacy fallback (should not happen with new build_demand)
+            target_start = first_monday + _dt.timedelta(days=7 * exp.week_index)
+            target_end = target_start + _dt.timedelta(days=6)
+            if exp.priority.upper() == "KEY":
+                allowed_start, allowed_end = target_start, target_end
+            else:
+                allowed_start = target_start - _dt.timedelta(days=7)
+                allowed_end = target_end + _dt.timedelta(days=7)
+
+        # Collect candidate days inside the ALLOWED window
+        candidate_days = [
+            ctx for ctx in day_contexts
+            if allowed_start <= ctx.date <= allowed_end
+        ]
+
+        # Reference cadence: last placement of same objective (across all weeks)
+        # for cadence scoring
+        cadence_target = exp.preferred_cadence_days or 7
+        cadence_soft_min, cadence_soft_max = (
+            exp.cadence_range_days if exp.cadence_range_days else (cadence_target - 1, cadence_target + 2)
+        )
+        last_same_obj = None
+        for p in plan.placements:
+            if p.objective_id == exp.objective_id:
+                if last_same_obj is None or p.date > last_same_obj:
+                    last_same_obj = p.date
+
+        def _cadence_penalty(candidate_date: _dt.date) -> int:
+            """Return an integer penalty (higher = worse) based on how far the
+            candidate is from the preferred cadence relative to the previous
+            same-objective placement. Zero-anchor case → no penalty."""
+            if last_same_obj is None:
+                # No prior placement of this objective yet — prefer candidates
+                # in the target window over spillover
+                if target_start <= candidate_date <= target_end:
+                    return 0
+                # Penalize spillover distance from target window
+                if candidate_date < target_start:
+                    return int((target_start - candidate_date).days) * 8
+                return int((candidate_date - target_end).days) * 8
+            gap = (candidate_date - last_same_obj).days
+            if gap <= 0:
+                return 500  # candidate is before or equal to last — bad
+            if cadence_soft_min <= gap <= cadence_soft_max:
+                # Inside soft range — small penalty proportional to deviation
+                return abs(gap - cadence_target)
+            # Outside soft range — larger penalty proportional to deviation
+            if gap < cadence_soft_min:
+                # Too close to previous → heavy penalty (clustering)
+                return (cadence_soft_min - gap) * 15
+            # gap > cadence_soft_max → too far → heavy penalty (rhythm gap)
+            return (gap - cadence_soft_max) * 12
+
+        def rank_key(ctx: DayContext) -> tuple:
+            pref_bump = 15 if ctx.date.weekday() in preferred_weekdays else 0
+            in_target_window = target_start <= ctx.date <= target_end
+            # Ordering priority (all minimised):
+            #   1. IN-target-window before spillover (0/1)
+            #   2. Cadence penalty (small = better)
+            #   3. -opportunity (higher opp = better)
+            #   4. burden (lower = better)
+            #   5. date (deterministic tiebreaker)
+            return (
+                0 if in_target_window else 1,
+                _cadence_penalty(ctx.date),
+                -(ctx.training_opportunity + pref_bump),
+                ctx.duty_burden_score,
+                ctx.date.toordinal(),
+            )
 
         placement_made = False
         rejections: list[tuple[_dt.date, str, str]] = []
 
-        for wk in candidate_weeks:
-            wk_days = days_by_week.get(wk, [])
-            # Rank days: high opportunity first, then preferred weekday bump,
-            # then lower burden. Rest days are excluded.
-            def rank_key(ctx: DayContext) -> tuple:
-                pref_bump = 15 if ctx.date.weekday() in preferred_weekdays else 0
-                return (
-                    -(ctx.training_opportunity + pref_bump),
-                    ctx.duty_burden_score,
-                    ctx.date.toordinal(),
-                )
-            ranked = sorted(wk_days, key=rank_key)
+        ranked = sorted(candidate_days, key=rank_key)
+        # Determine whether THIS exposure adds a NEW training day (a placement
+        # of a non-support kind that no other placement uses on that date).
+        from feature_v2_sport_configs import (
+            session_load_bucket, LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY,
+        )
+        exp_bucket = session_load_bucket(exp.kind)
+        exp_is_support = exp_bucket in (LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY)
 
-            for ctx in ranked:
-                if ctx.day_type in ("sickness", "sick", "sick_leave"):
-                    rejections.append((ctx.date, "sick_day", "client on sick leave"))
-                    continue
-                check = validate_placement(
-                    kind=exp.kind, date=ctx.date, plan=plan,
-                    goal=goal, phase=phase,
-                    day_ctx_burden=ctx.duty_burden_score,
-                    day_ctx_opportunity=ctx.training_opportunity,
+        for ctx in ranked:
+            if ctx.day_type in ("sickness", "sick", "sick_leave"):
+                rejections.append((ctx.date, "sick_day", "client on sick leave"))
+                continue
+            # Distinct-training-days cap: an anchor session on a NEW date
+            # counts as +1 training day. Support stacking on an already-used
+            # date does not.
+            wk = ctx.date.isocalendar()
+            distinct_days_in_wk = plan.distinct_training_dates_in_week(wk[0], wk[1])
+            date_already_used = any(p.date == ctx.date for p in plan.placements)
+            adds_new_day = (not date_already_used) and (not exp_is_support or not date_already_used)
+            # Support may open a new day too if no anchor exists, so keep the
+            # cap even for support (it's still an occupied training date).
+            if adds_new_day and distinct_days_in_wk >= max_training_days_per_week:
+                rejections.append((ctx.date, "weekly_training_days_cap",
+                                    f"Week already uses {distinct_days_in_wk} training days "
+                                    f"of client cap {max_training_days_per_week}"))
+                continue
+            check = validate_placement(
+                kind=exp.kind, date=ctx.date, plan=plan,
+                goal=goal, phase=phase,
+                day_ctx_burden=ctx.duty_burden_score,
+                day_ctx_opportunity=ctx.training_opportunity,
+                priority=exp.priority,
+                target_duration_min=exp.target_duration_min,
+                daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
+            )
+            if check.ok:
+                apply_placement(
+                    plan,
+                    exposure_id=exp.exposure_id,
+                    objective_id=exp.objective_id,
+                    kind=exp.kind,
+                    date=ctx.date,
                     priority=exp.priority,
+                    intensity_target=exp.intensity_target,
                     target_duration_min=exp.target_duration_min,
-                    daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
                 )
-                if check.ok:
-                    apply_placement(
-                        plan,
-                        exposure_id=exp.exposure_id,
-                        objective_id=exp.objective_id,
-                        kind=exp.kind,
-                        date=ctx.date,
-                        priority=exp.priority,
-                        intensity_target=exp.intensity_target,
-                        target_duration_min=exp.target_duration_min,
-                    )
-                    placement_made = True
-                    break
-                rejections.append((ctx.date, check.reason_code, check.human_reason))
-            if placement_made:
+                placement_made = True
                 break
+            rejections.append((ctx.date, check.reason_code, check.human_reason))
 
         if not placement_made:
-            # Build actionable Unfilled record
             top_alt = sorted(rejections, key=lambda r: str(r[0]))[:3]
             unfilled.append(Unfilled(
                 exposure_id=exp.exposure_id,
@@ -492,9 +670,10 @@ def schedule_demand(
                 priority=exp.priority,
                 reason_code="no_valid_slot",
                 human_reason=(
-                    f"Cannot place {exp.kind} (priority={exp.priority}) in the "
-                    f"target week — {len(rejections)} candidate day(s) tried, "
-                    f"all rejected."
+                    f"Cannot place {exp.kind} (priority={exp.priority}) "
+                    f"target week {target_start.isoformat()}..{target_end.isoformat()} "
+                    f"allowed window {allowed_start.isoformat()}..{allowed_end.isoformat()} "
+                    f"— {len(rejections)} candidate day(s) tried, all rejected."
                 ),
                 candidate_hint_dates=[
                     f"{d.isoformat()} — {code}: {reason}"

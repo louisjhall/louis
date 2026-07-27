@@ -435,6 +435,12 @@ async def engine_v2_kickoff(
                     "ordinal_within_week": e.ordinal_within_week,
                     "can_skip_if_missed": e.can_skip_if_missed,
                     "quota_source": e.quota_source,
+                    "target_week_start": e.target_week_start.isoformat() if e.target_week_start else None,
+                    "target_week_end": e.target_week_end.isoformat() if e.target_week_end else None,
+                    "allowed_window_start": e.allowed_window_start.isoformat() if e.allowed_window_start else None,
+                    "allowed_window_end": e.allowed_window_end.isoformat() if e.allowed_window_end else None,
+                    "preferred_cadence_days": e.preferred_cadence_days,
+                    "cadence_range_days": list(e.cadence_range_days) if e.cadence_range_days else None,
                 }
                 for e in demand.required_exposures
             ],

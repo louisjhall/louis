@@ -138,6 +138,16 @@ class QuotaRule:
     intensity_target:    canonical intensity descriptor for HOW layer
     progression:         { field, per_week_delta, cap }  optional
     can_skip_if_missed:  KEY = False; others may be True
+    preferred_cadence_days:  ideal gap between consecutive same-objective
+                             placements across the planning horizon (soft).
+                             Defaults to 7 (weekly) if None.
+    cadence_range_days:  soft (min_gap, max_gap) tolerated around the
+                         preferred cadence — used to score placements. Hard
+                         minimum is still `min_recovery_hours`.
+    spillover_window_weeks: how far outside the target ISO week a placement
+                            is allowed to spill. 0 for KEY (strict weekly),
+                            1 for IMPORTANT, 2 for SUPPORTING/OPTIONAL.
+                            Defaults are applied when None.
     """
     kind: str
     exposures_per_week: tuple[float, float, float]   # (min, target, max)
@@ -148,6 +158,9 @@ class QuotaRule:
     progression: dict[str, Any] = field(default_factory=dict)
     can_skip_if_missed: bool = True
     notes: str = ""
+    preferred_cadence_days: Optional[int] = None
+    cadence_range_days: Optional[tuple[int, int]] = None
+    spillover_window_weeks: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -263,6 +276,9 @@ _register(GoalConfig(
                           notes="Build gentle aerobic base"),
                 QuotaRule("run_long",         (0.5, 1, 1), "KEY",     72, (45, 60, 75), "z2", {},
                           can_skip_if_missed=False,
+                          preferred_cadence_days=7,
+                          cadence_range_days=(6, 9),
+                          spillover_window_weeks=0,
                           notes="Weekly long-run anchor; strict 72h recovery"),
                 QuotaRule("strength_full_body",(1, 2, 2), "IMPORTANT",48, (30, 40, 50), "rpe7", {},
                           notes="Injury-prevention support"),

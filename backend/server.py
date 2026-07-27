@@ -11841,6 +11841,7 @@ import feature_v2_p8_progression          # noqa: E402,F401  V2 Phase 8: Progres
 import feature_v2_p9_events               # noqa: E402,F401  V2 Phase 9: Event countdown + phase transitions
 import feature_v2_p10_reality             # noqa: E402,F401  V2 Phase 10: Readiness + Today's Reality chip resolver
 import feature_v2_p12_automation          # noqa: E402,F401  V2 Phase 12: Job runner + shadow mode + metrics
+import feature_coach_audit_bundle         # noqa: E402,F401  Serves the collated Coach Dashboard audit bundle at a stable URL
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history
 import feature_coach_workout_swap        # noqa: E402,F401  Phase 5: coach inline workout-swap picker (alternative presets)

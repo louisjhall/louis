@@ -337,18 +337,6 @@ export default function CoachDashboardV2Home() {
                 >
                   <Ionicons name="trash-outline" size={16} color="#ff6b6b" />
                 </Pressable>
-                <Pressable
-                  onPress={(e) => {
-                    e.stopPropagation?.();
-                    router.push(`/(coach)/engine-v2-draft/${c.client_id}` as any);
-                  }}
-                  style={styles.rowV2Btn}
-                  testID={`v2-draft-${c.client_id}`}
-                  accessibilityLabel={`Open Engine V2 Draft for ${c.name}`}
-                  hitSlop={10}
-                >
-                  <Ionicons name="flash-outline" size={16} color="#F0A800" />
-                </Pressable>
               </View>
             ))}
           </View>

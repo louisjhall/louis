@@ -28,6 +28,7 @@ import { PublishPanel } from "@/src/components/PublishPanel";
 import { InlineWorkoutEditor } from "@/src/components/InlineWorkoutEditor";
 import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
 import { V2ClientTabs, V2Tab } from "@/src/components/V2ClientTabs";
+import EngineV2DraftPanel from "@/src/components/EngineV2DraftPanel";
 
 type DayRow = {
   date: string;
@@ -301,6 +302,9 @@ export default function CoachWorkspaceScreen() {
         />
       ) : (
       <>
+      {/* Engine V2 Draft panel — primary programme-management surface for V2 clients */}
+      {data && <EngineV2DraftPanel clientId={String(clientId)} onPublished={loadMonth} />}
+
       {/* Programme summary panel — expandable header with goal + phase strip */}
       {data && <ProgrammeSummaryPanel clientId={String(clientId)} />}
 

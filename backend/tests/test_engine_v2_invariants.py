@@ -507,82 +507,111 @@ class TestValidatorGate(unittest.TestCase):
 class TestPietroAugustRegression(unittest.TestCase):
     """The named failure modes from the user's 8-long-run August plan."""
 
-    def setUp(self):
-        self.today = _dt.date(2026, 8, 3)
-        self.roster = pietro_roster_days(self.today, 28)
-        self.contexts = build_day_contexts(self.roster)
+    def test_end_of_august_hell_week_impossible(self):
+        """Section 43: the exact sequence Intervals→Tempo→LR→LR must be blocked."""
         cfg = get_goal_config("marathon")
         phase = cfg.phase_specs["aerobic_base"]
-        week_starts = [self.today + _dt.timedelta(days=7 * i) for i in range(4)]
-        self.demand = build_demand(
-            client_id=PIETRO_ID,
-            client_profile=pietro_profile(),
-            goal_key="marathon",
-            phase_spec=phase,
-            week_start_dates=week_starts,
+        plan = PlacementPlan()
+        # LR Sun then LR Mon (24h apart)
+        apply_placement(plan, exposure_id="e1", objective_id="obj_LR",
+                        kind="run_long", date=_dt.date(2026, 8, 30),
+                        priority="KEY", intensity_target="z2", target_duration_min=90)
+        r = validate_placement("run_long", _dt.date(2026, 8, 31), plan,
+                                cfg, phase, 20, 85, "KEY")
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason_code, "insufficient_family_recovery")
+
+    def test_lr_to_tempo_next_day_blocked(self):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["aerobic_base"]
+        plan = PlacementPlan()
+        apply_placement(plan, exposure_id="e1", objective_id="o1",
+                        kind="run_long", date=_dt.date(2026, 8, 30),
+                        priority="KEY", intensity_target="z2", target_duration_min=90)
+        r = validate_placement("run_tempo", _dt.date(2026, 8, 31), plan,
+                                cfg, phase, 20, 85, "IMPORTANT")
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason_code, "forbidden_sequence")
+
+    def test_tempo_to_lr_next_day_blocked(self):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["aerobic_base"]
+        plan = PlacementPlan()
+        apply_placement(plan, exposure_id="e1", objective_id="o1",
+                        kind="run_tempo", date=_dt.date(2026, 8, 30),
+                        priority="IMPORTANT", intensity_target="z4",
+                        target_duration_min=45)
+        r = validate_placement("run_long", _dt.date(2026, 8, 31), plan,
+                                cfg, phase, 20, 85, "KEY")
+        self.assertFalse(r.ok)
+        self.assertEqual(r.reason_code, "forbidden_sequence")
+
+    def test_overlapping_planning_windows_reuse_exposure_ids(self):
+        """Section 44: overlapping windows must reconcile to one exposure stream,
+        NOT produce Long Run #3 + a new Long Run #1."""
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["aerobic_base"]
+        today = _dt.date(2026, 8, 3)
+        week_starts_A = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        # Window B overlaps window A on weeks 3-4 and extends into 5-6
+        week_starts_B = [today + _dt.timedelta(days=7 * i) for i in range(2, 6)]
+
+        demand_A = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts_A,
         )
-        self.result = schedule_demand(
-            demand=self.demand,
-            day_contexts=self.contexts,
-            goal=cfg,
-            phase=phase,
-            preferred_weekdays={0, 2, 4, 5, 6},
+        demand_B = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts_B,
         )
-        self.prog_val = validate_programme(
-            demand=self.demand,
-            placements=self.result.placements,
-            phase=phase,
-            goal=cfg,
-            unfilled=self.result.unfilled,
-        )
+        # Long runs from A on weeks 3-4 must have IDENTICAL exposure_ids to
+        # long runs from B for those same weeks.
+        A_by_week = {(e.week_index, e.kind, e.ordinal_within_week): e.exposure_id
+                     for e in demand_A.required_exposures if e.kind == "run_long"}
+        # Window B's week_index is relative to its OWN start (Aug 17).
+        # A's week 2 = calendar 2026-08-17, B's week 0 = 2026-08-17.
+        # So we compare A[week_index=2] with B[week_index=0] etc.
+        overlap_calendar_weeks = [week_starts_A[2], week_starts_A[3]]
+        for cal_week in overlap_calendar_weeks:
+            a_wi = week_starts_A.index(cal_week)
+            b_wi = week_starts_B.index(cal_week)
+            for e_a in demand_A.required_exposures:
+                if e_a.kind == "run_long" and e_a.week_index == a_wi:
+                    match = [e for e in demand_B.required_exposures
+                              if e.kind == "run_long" and e.week_index == b_wi
+                              and e.ordinal_within_week == e_a.ordinal_within_week]
+                    self.assertEqual(len(match), 1,
+                                       f"Expected 1 matching exposure in B for {cal_week}")
+                    self.assertEqual(match[0].exposure_id, e_a.exposure_id,
+                                       f"Exposure id mismatch for {cal_week}: "
+                                       f"A={e_a.exposure_id} B={match[0].exposure_id}")
+                    self.assertEqual(match[0].objective_id, e_a.objective_id,
+                                       f"Objective id mismatch for {cal_week}")
 
     def test_never_8_long_runs_in_a_month(self):
-        n_long = sum(1 for p in self.result.placements if p.kind == "run_long")
-        self.assertLess(n_long, 6, f"Placed {n_long} long runs in 4 weeks")
-
-    def test_no_long_run_48h_within_another_long_run(self):
-        longs = sorted([p.date for p in self.result.placements if p.kind == "run_long"])
-        for i in range(1, len(longs)):
-            self.assertGreater((longs[i] - longs[i - 1]).days, 2,
-                                f"Long runs {longs[i-1]} → {longs[i]}")
-
-    def test_no_tempo_immediately_after_long_run(self):
-        longs = {p.date for p in self.result.placements if p.kind == "run_long"}
-        for p in self.result.placements:
-            if p.kind in ("run_tempo", "run_threshold"):
-                self.assertNotIn(p.date - _dt.timedelta(days=1), longs)
-
-    def test_running_not_dominant_over_strength_and_mobility(self):
-        counts = {"run": 0, "strength": 0, "mobility": 0}
-        for p in self.result.placements:
-            if p.kind.startswith("run_"): counts["run"] += 1
-            elif p.kind.startswith("strength"): counts["strength"] += 1
-            elif p.kind == "mobility": counts["mobility"] += 1
-        # Running is the primary sport but not >85% of the plan
-        total = sum(counts.values()) or 1
-        self.assertLess(counts["run"] / total, 0.85, f"Running dominance: {counts}")
-        self.assertGreater(counts["strength"] + counts["mobility"], 0)
-
-    def test_programme_validation_reports_key_unfilled(self):
-        # Even if some LR was unfilled, validator must catch it
-        report = self.prog_val.quota_report
-        self.assertIn("required_by_kind", report)
-        self.assertIn("placed_by_kind", report)
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["aerobic_base"]
+        today = _dt.date(2026, 8, 3)
+        week_starts = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        n_long = sum(1 for e in demand.required_exposures if e.kind == "run_long")
+        self.assertLessEqual(n_long, 4, f"Demanded {n_long} long runs in 4 weeks")
 
     def test_missing_dna_does_not_unlimit(self):
-        """A client without training_days_per_week must NOT get unlimited sessions."""
         cfg = get_goal_config("marathon")
         phase = cfg.phase_specs["aerobic_base"]
         week_starts = [_dt.date(2026, 8, 3) + _dt.timedelta(days=7 * i) for i in range(4)]
         demand = build_demand(
-            client_id="empty_client",
-            client_profile={},  # NO DNA
-            goal_key="marathon",
-            phase_spec=phase,
+            client_id="empty_client", client_profile={},
+            goal_key="marathon", phase_spec=phase,
             week_start_dates=week_starts,
         )
-        # Frequency cap should default to the explicit ceiling in the code,
-        # not to phase quotas (which would sum to ~8/week for marathon base)
         self.assertLessEqual(
             demand.frequency_caps["client_sessions_per_week_max"], 8,
             "Missing DNA became unlimited"

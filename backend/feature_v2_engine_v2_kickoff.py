@@ -235,11 +235,12 @@ async def engine_v2_kickoff(
         ).sort("date", -1).limit(1).to_list(1)
         if max_sd:
             roster_end = _dt.date.fromisoformat(max_sd[0]["date"])
-            # Floor to the last COMPLETE week inside the roster — never
-            # schedule exposures on weeks with no roster coverage.
+            # Match the last COMPLETE week inside the remaining roster —
+            # never plan on weeks with zero roster coverage. Allow as few as
+            # 1 week if that is all the roster provides.
             span_days = (roster_end - window_start).days + 1
             derived_weeks = max(1, span_days // 7)
-            window_weeks = min(12, max(4, derived_weeks))
+            window_weeks = min(12, derived_weeks)
         else:
             window_weeks = 4
     else:

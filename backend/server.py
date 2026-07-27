@@ -6671,6 +6671,24 @@ async def calendar_timeline(months_back: int = 2, months_ahead: int = 4, user: d
     }, {"_id": 0}).sort("date", 1).to_list(2000)
     wk_map = {w["date"]: w for w in workouts}
 
+    # Iter 109 — splice in Engine V2 synthetic workouts for engine_v2 clients
+    # so the calendar timeline reflects the published Live plan.
+    try:
+        from feature_v2_client_bridge import synth_workouts_for_user
+        v2_rows = await synth_workouts_for_user(
+            db, user["id"], start_iso=start_iso, end_iso=end_iso,
+        )
+        for r in v2_rows:
+            d = r.get("date")
+            if not d:
+                continue
+            # Prefer legacy row on date collision; V2-flagged clients don't
+            # have legacy workouts in practice but this keeps things safe.
+            if d not in wk_map:
+                wk_map[d] = r
+    except Exception:
+        logger.exception("calendar/timeline: V2 client bridge failed")
+
     # Build month buckets covering the whole range (including blank months for future upload)
     months: list[dict] = []
     cy, cm = _date.fromisoformat(start_iso).year, _date.fromisoformat(start_iso).month
@@ -7822,6 +7840,24 @@ async def workouts_week(user: dict = Depends(current_user)):
         rows = prune_pending(rows)
     except Exception:
         logger.exception("workouts/week: prune_pending failed — showing all")
+    # Iter 109 — Engine V2 clients read their published plan from plan_live_v2
+    # (placements + session_specs), not from the legacy `workouts` collection.
+    # Splice V2-derived rows in so the client home / calendar / workout screen
+    # all "just work" without frontend changes. Rows are read-only.
+    try:
+        from feature_v2_client_bridge import synth_workouts_for_user
+        v2_rows = await synth_workouts_for_user(db, user["id"])
+        if v2_rows:
+            # Legacy rows for the same date should not double up with a V2
+            # row (unlikely in practice — V2 clients have no legacy workouts —
+            # but defend against it anyway).
+            legacy_dates = {r.get("date") for r in rows if r.get("date")}
+            for r in v2_rows:
+                if r.get("date") not in legacy_dates:
+                    rows.append(r)
+            rows.sort(key=lambda r: r.get("date") or "")
+    except Exception:
+        logger.exception("workouts/week: V2 client bridge failed")
     # Iter 83 — Defence layer 2: read-time healing. Any workout that slipped
     # through the persistence guards with empty main exercises on a training
     # day gets healed on-read AND the DB row is updated so subsequent reads
@@ -7874,6 +7910,35 @@ async def workouts_week(user: dict = Depends(current_user)):
 
 @api.get("/workouts/{wid}")
 async def workout_get(wid: str, user: dict = Depends(current_user)):
+    # Iter 109 — Engine V2 synthetic id path (v2p:{live_id}:{exposure_id})
+    if wid.startswith("v2p:"):
+        try:
+            from feature_v2_client_bridge import synth_workout_by_wid
+            # Coaches viewing a client's V2 workout still need the correct
+            # owner in the query — accept the client id path when applicable.
+            target_uid = user["id"]
+            if user.get("role") == "coach":
+                # Coach fetches: we don't know which client without the URL —
+                # accept from Referer-less contexts by scanning any active
+                # plan_live_v2 that contains this exposure_id.
+                # (There's no cross-client leakage risk because the id embeds
+                # the live_id which is tied to a specific client.)
+                parts = wid.split(":", 2)
+                if len(parts) == 3:
+                    live_id = parts[1]
+                    live = await db.plan_live_v2.find_one(
+                        {"id": live_id, "active": True},
+                        {"_id": 0, "client_id": 1},
+                    )
+                    if live:
+                        target_uid = live["client_id"]
+            row = await synth_workout_by_wid(db, wid, target_uid)
+        except Exception:
+            logger.exception("workout_get: V2 synthetic lookup failed for %s", wid)
+            row = None
+        if not row:
+            raise HTTPException(404, "Not found")
+        return row
     w = await db.workouts.find_one({"id": wid}, {"_id": 0})
     if not w:
         raise HTTPException(404, "Not found")

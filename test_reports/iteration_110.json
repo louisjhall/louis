@@ -1,0 +1,81 @@
+{
+  "summary": "Iter 110 — V2 CLIENT bridge partially verified. Backend endpoints /workouts/week, /workouts/{v2p:…}, /calendar/timeline all correctly splice Pietro's active plan_live_v2 (edc0be3a-…) placements: Run Easy 35min/treadmill + Mobility 20min on 2026-07-28, Run Long 60min/outdoor/key_session on 2026-07-31, source='engine_v2', approved=True, coach_locked=True, blocks[] populated (warmup + main + cooldown), rationale='Run Long — foundation phase', long_steady block carries pace_target='MP+90s' and fuel_cue, warmup dict present as compat field. Negative v2p:non-existent:bogus returns 404. V1 regression: synth_workouts_for_user() returns [] when profile.v2_flags.engine_v2 is falsy (unit-tested directly against DB). 9/10 pytest cases pass (1 skipped: /api/v2/coach/clients 404 for the HTTP-flavour V1 check — the DB-level check covers regression). FRONTEND FINDINGS: Login → Home works, but the client HOME schedule (ClientCalendarPanel) still shows every day as REST because it consumes /api/calendar/range which is NOT bridged (verified via curl: 2026-07-25→2026-08-02 returns all rest, workout=None). Only /calendar/timeline (Calendar tab) and /workouts/week are bridged. Additionally, the workout detail screen for the V2 Run Long only renders title/location/duration/rationale — it does NOT render the blocks[] array (warmup Z1 / long_steady MP+90s+fuel_cue / cooldown Z1) because /app/frontend/app/workout/[id]/index.tsx has no rendering path for blocks[] (only view.warmup as list-of-{name,duration_sec} and view.exercises for strength). The bridge emits warmup as a dict, so `view.warmup?.length > 0` check fails silently and the whole block-detail area is blank.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/calendar/range",
+        "issue": "CLIENT HOME calendar (ClientCalendarPanel) consumes /calendar/range, which does NOT invoke feature_v2_client_bridge.synth_workouts_for_user. For Pietro (V2 client with active plan_live_v2), curl `/api/calendar/range?from=2026-07-25&to=2026-08-02` returns all days badge='rest' with workout=None. This is the very 'client dashboard shows nothing' bug the iteration was meant to solve. Fix: mirror the splice logic used in /workouts/week and /calendar/timeline inside feature_calendar_recovery.calendar_range (lines 418-422) — merge V2 synthetic rows into by_date when the legacy record is absent.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/calendar/timeline",
+        "issue": "When a V2 day has 2 placements (Run Easy + Mobility on 2026-07-28), only ONE surfaces in day.workout_id/workout_title because wk_map is keyed by date. Timeline currently returns Run Easy for 2026-07-28 (Mobility is dropped). The synth list is in [Run Easy, Mobility] order so the first wins. If the intention is to only show the 'primary' workout per day that's fine, but the review spec asked to verify 3 rows on the day — timeline only shows 2 total workout entries for July."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "app/workout/[id]/index.tsx",
+        "issue": "V2 running workout detail page does not render blocks[]. Only view.warmup (expected as list-of-{name,duration_sec}) and view.exercises are rendered. For V2 running sessions from the bridge, warmup is a DICT ({duration_min, hr_zone, cue}), so `view.warmup?.length > 0` is falsy and the whole warmup/main/cooldown detail area is blank. Users see only title, focus, duration, KEY SESSION chip and rationale — no pace_target MP+90s, no fuel_cue, no long_steady Z2 block. Fix: add a blocks[] renderer (map each block → duration_min + hr_zone + pace_target + cue + fuel_cue) OR reshape the bridge output so warmup/main/cooldown become individual `exercises`. Reference: /app/frontend/app/workout/[id]/index.tsx:381-393 (warmup renderer expects array) and /app/backend/feature_v2_client_bridge.py:139 (warmup returned as dict).",
+        "testID": "n/a (drawer has no testIDs for blocks)",
+        "priority": "HIGH"
+      },
+      {
+        "component": "src/components/ClientCalendarPanel.tsx",
+        "issue": "Client home schedule shows every day as REST for V2 Pietro. Root cause is backend (/calendar/range not bridged, see backend critical) not the component itself, but this is the surface where Pietro is complaining 'still shows nothing after publish'. Days 2026-07-28 and 2026-07-31 render 'REST / REST FROM TRAINING' rather than 'Run Easy 35 min' and 'Run Long 60 min'.",
+        "testID": "cal-day-2026-07-28 / cal-day-2026-07-31",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Client home → schedule",
+        "issue": "Home schedule panel is silent because /calendar/range doesn't splice V2 placements. The V2 bridge covers /workouts/week + /calendar/timeline + /workouts/{id} but the client home actually uses /calendar/range.",
+        "affected_testIDs": ["cal-day-2026-07-28", "cal-day-2026-07-31", "cal-day-2026-07-29", "cal-day-2026-07-30"]
+      },
+      {
+        "flow": "Workout detail (running)",
+        "issue": "Detail page loads (title/rationale/KEY SESSION render) but the actual session content (blocks with pace/HR/cue/fuel_cue) is not visible — pietro would open the card and see an empty body under 'Why this session?'.",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "workout detail page",
+        "issue": "Console: `Unexpected text node: . A text node cannot be a child of a <View>.` fires twice while loading the Run Long detail page. Non-blocking but indicates a stray whitespace/text sibling inside a <View>. Reference: /app/frontend/app/workout/[id]/index.tsx"
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter110_v2_client_bridge.py",
+    "/app/test_reports/pytest/iter110_v2_client_bridge.xml"
+  ],
+  "action_items": [
+    "PRIMARY FIX — Extend the V2 client bridge to /api/calendar/range. In /app/backend/feature_calendar_recovery.py:calendar_range (~line 418), after building `by_date`, call `synth_workouts_for_user(db, user['id'], start_iso=_iso(d_from), end_iso=_iso(d_to))` and merge into by_date where by_date[ds] is missing. Without this, Pietro's home schedule stays empty.",
+    "Render blocks[] on the running workout detail screen. Either (a) add a `view.blocks?.map(...)` renderer in /app/frontend/app/workout/[id]/index.tsx (below the rationale) that shows each block's type + duration_min + hr_zone + pace_target + cue + fuel_cue, OR (b) change feature_v2_client_bridge.synth_workout_from_placement to also expose warmup/main/cooldown as `exercises` entries so the existing exercise renderer picks them up. (a) is cleaner — the existing legacy strength renderer stays untouched.",
+    "Bridge output today sets `warmup: spec.payload.warmup` (a dict). The frontend's warmup block guard is `view.warmup?.length > 0` which is falsy for dicts. Coordinate the fix in step above so warmup is either a list-of-{name,duration_sec} (legacy shape) or is replaced entirely by blocks[] rendering.",
+    "OPTIONAL — On /calendar/timeline, if a day has multiple V2 placements (Run Easy + Mobility on 2026-07-28), decide whether to expose all in day cells (e.g. `workout_ids: [...], workout_titles: [...]`) or intentionally pick the key/highest-priority one. Currently the first synth row wins (Run Easy is shown, Mobility is silently dropped).",
+    "OPTIONAL — Fix the `Unexpected text node` warnings on workout/[id]/index.tsx (likely a stray whitespace between JSX children inside a <View>)."
+  ],
+  "critical_code_review_comments": [
+    "feature_v2_client_bridge.py is clean and focused (~230 lines) — good separation from server.py. It correctly guards on user.profile.v2_flags.engine_v2 or .v2_default so V1 clients stay unaffected.",
+    "The bridge is applied in 3 places (server.py: workouts_week, workout_get, calendar_timeline) but MISSING from feature_calendar_recovery.calendar_range — this is the actual endpoint the client home schedule consumes. If the review request had explicitly mentioned /calendar/range, this would have been caught earlier; the current design has 4 client-facing calendar/workout entrypoints and only 3 are bridged.",
+    "The synthetic workout row shape has warmup=dict (from spec.payload.warmup) but exercises=[] for running sessions. Downstream renderers expect either exercises populated (strength) or warmup as an array (legacy running structure). Consider a normalised 'render_blocks' field to decouple shape from routing choices."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter110_v2_client_bridge.py (new — 10 pytest cases; 9 passed, 1 skipped)"
+  ],
+  "success_rate": {
+    "backend": "90% (9/10 executed pass — 3 endpoints spec'd in the review request all correct; /calendar/range is not in the spec but IS the actual endpoint the client home uses and it is unbridged)",
+    "frontend": "40% — workout detail loads (title/rationale/KEY SESSION correct) but blocks are not rendered; home schedule is empty; Calendar tab loads but 2026-07 workout dots not visibly rendered on day cells (may still work — the timeline data is present, need coach eye on the calendar dot rendering)."
+  },
+  "seed_data_creation": "None. Read-only against existing plan_live_v2 (id=edc0be3a-9424-4bba-85eb-076b3818c945) for user c4c7c7dd-4303-4645-af2c-b70212495360 (Pietro).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "test_iter110_v2_client_bridge.py is the canonical regression for the V2 client-side bridge. It re-uses Pietro (c4c7c7dd-4303-4645-af2c-b70212495360) with active plan_live_v2 id=edc0be3a. The V1 HTTP regression skips whenever /api/v2/coach/clients is 404 — the DB-level assertion (test_bridge_returns_empty_for_v1) still runs and passes. After the main agent extends the bridge to /calendar/range, add a fourth test class TestPietroCalendarRange that hits /api/calendar/range?from=2026-07-25&to=2026-08-02 and asserts by_date['2026-07-28'].workout.title contains 'Run Easy' and by_date['2026-07-31'].workout.title contains 'Run Long' + workout.key_session=True. Also add a block-rendering assertion once workout detail is fixed.",
+  "rca_of_issue": "PRIMARY ROOT CAUSE — The 'CLIENT dashboard still shows nothing after publish' bug is NOT fully resolved because feature_v2_client_bridge is applied to /workouts/week, /workouts/{id}, and /calendar/timeline only. The client home schedule (ClientCalendarPanel at /app/frontend/src/components/ClientCalendarPanel.tsx:254) consumes /calendar/range, which is defined in /app/backend/feature_calendar_recovery.py:calendar_range and still queries only the legacy `workouts` collection via _workouts_between(). Verified end-to-end: curl `/api/calendar/range?from=2026-07-25&to=2026-08-02` with Pietro's token returns badge='rest' + workout=None for every day, and the UI shows REST × 9 days. Fix: add the same synth_workouts_for_user() call inside calendar_range and merge into by_date. SECONDARY — Even after that fix, tapping the workout will open the detail page but only show title/rationale because /app/frontend/app/workout/[id]/index.tsx has no blocks[] renderer AND treats warmup as an array — the bridge emits warmup as a dict. Add a blocks[] renderer OR extend the bridge to convert running blocks into legacy exercises entries."
+}

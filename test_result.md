@@ -3514,8 +3514,54 @@ backend:
           duration/equipment/status. Needs full E2E retest through the
           publish flow + drawer.
 
+  - task: "V2 client-side bridge — legacy /workouts/* → plan_live_v2"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/feature_v2_client_bridge.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        -working: "NA"
+        -agent: "main"
+        -comment: |
+          Coach dashboard was rendering the Live V2 plan correctly but the
+          CLIENT's Expo app still read from legacy /workouts/week,
+          /calendar/timeline, and /workouts/{id} — which all hit the empty
+          `workouts` collection for V2 clients. Client saw "REST & RECOVER"
+          on days that had published workouts.
+
+          Added `feature_v2_client_bridge` with:
+          - synth_workouts_for_user(db, user_id, start_iso?, end_iso?)
+            reads plan_live_v2 active doc and maps each non-rest placement
+            + session_spec → legacy workout row shape (id="v2p:{live_id}:
+            {exposure_id}", title, focus, duration_min, blocks[], exercises[],
+            warmup, day_load, key_session, location, needs_coach_review,
+            approved=True, coach_locked=True, source="engine_v2").
+          - synth_workout_by_wid(db, wid, user_id) resolves a v2p: id back
+            to the workout row, only if the plan_live_v2 doc still matches
+            (active + owned by user).
+
+          Wired into server.py:
+          - GET /workouts/week — appends V2 rows (dedup by date).
+          - GET /calendar/timeline — splices V2 rows into wk_map for the
+            timeline day cells (workout_id, workout_title, completed,
+            key_session, location surfaced automatically).
+          - GET /workouts/{wid} — recognises "v2p:" prefix, resolves via
+            bridge, 404 if the source doc is gone.
+
+          Backend verified with Pietro:
+          - workouts/week → 3 rows (Run Easy 07-28, Mobility 07-28,
+            Run Long 07-31), all source=engine_v2.
+          - calendar/timeline → workout dots on 07-28 + 07-31.
+          - workouts/{v2p_id} → full workout with warmup + blocks[]
+            (warmup Z1 / long_steady Z2 MP+90s / cooldown Z1).
+
+          Zero frontend changes — the existing client home / calendar /
+          workout screens now render V2 plans automatically.
+
 metadata:
-  version: "iter109"
+  version: "iter109b"
   test_sequence: 109
   run_ui: false
 

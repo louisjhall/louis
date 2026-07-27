@@ -18,9 +18,12 @@
  * Behaviour:
  *   - Autoplays instantly, unmuted (respects device silent mode via
  *     expo-video defaults — will play silently if the ringer is muted).
- *   - Tap to skip after ~1 second (returning users can bail fast).
- *   - Fades out gently on completion into whatever screen sits behind it,
- *     which was already loaded in parallel — no white flash, no spinner.
+ *   - Plays through to end (~10s), then fades out gently over 400ms into
+ *     whatever screen sits behind it (already loaded in parallel).
+ *   - No skip button, no tap interception — the intro is a short branded
+ *     moment, not a modal the user has to dismiss.
+ *   - Safety net: 12.5s watchdog force-finishes if `playToEnd` is swallowed
+ *     by a driver quirk, so a stuck video can never freeze the launch.
  *
  * Persistence:
  *   AsyncStorage keys:
@@ -33,7 +36,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Animated, Dimensions,
+  View, Text, StyleSheet, Animated, Dimensions,
   ActivityIndicator, Platform,
 } from "react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
@@ -44,7 +47,6 @@ const INTRO_SOURCE = require("@/assets/louis/intro.mp4");
 const KEY_LAST = "crewfit_intro_last_played_at";
 const KEY_PENDING = "crewfit_intro_pending_reason";
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
-const SKIP_AFTER_MS = 1000; // Tap-to-skip available after ~1s
 const FADE_OUT_MS = 400;
 
 // Module-level flag so we NEVER play the intro twice in the same JS runtime
@@ -87,7 +89,6 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
   // State machine: undecided → visible → dismissed
   const [decided, setDecided] = useState(false);
   const [visible, setVisible] = useState(false);
-  const [canSkip, setCanSkip] = useState(false);
   const [errored, setErrored] = useState(false);
   const opacity = useRef(new Animated.Value(1)).current;
 
@@ -100,8 +101,6 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
       if (play) {
         alreadyPlayedThisSession = true;
         setVisible(true);
-        // Enable tap-to-skip after a short intentional beat.
-        setTimeout(() => setCanSkip(true), SKIP_AFTER_MS);
       }
       setDecided(true);
     })();
@@ -125,7 +124,6 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
       {visible ? (
         <IntroOverlay
           opacity={opacity}
-          canSkip={canSkip}
           errored={errored}
           onError={() => setErrored(true)}
           onFinished={() => {
@@ -145,10 +143,9 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
 
 /* --------------------------------- overlay -------------------------------- */
 function IntroOverlay({
-  opacity, canSkip, errored, onFinished, onError,
+  opacity, errored, onFinished, onError,
 }: {
   opacity: Animated.Value;
-  canSkip: boolean;
   errored: boolean;
   onFinished: () => void;
   onError: () => void;
@@ -194,7 +191,7 @@ function IntroOverlay({
   return (
     <Animated.View
       style={[styles.bg, { opacity, width, height }]}
-      pointerEvents="box-none"
+      pointerEvents="none"
       testID="crewfit-intro-animation"
     >
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
@@ -215,19 +212,6 @@ function IntroOverlay({
           <Text style={styles.fallbackBrand}>CREW<Text style={{ color: theme.color.brand }}>FIT</Text></Text>
         </View>
       ) : null}
-
-      {/* Tap-anywhere-to-skip layer, enabled after ~1s */}
-      <Pressable
-        testID="crewfit-intro-skip"
-        onPress={() => { if (canSkip) finish(); }}
-        style={StyleSheet.absoluteFill}
-      >
-        {canSkip ? (
-          <View style={styles.skipPill} pointerEvents="none">
-            <Text style={styles.skipT}>SKIP</Text>
-          </View>
-        ) : null}
-      </Pressable>
     </Animated.View>
   );
 }
@@ -252,16 +236,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
   fallbackBrand: { color: "#fff", fontSize: 34, fontWeight: "900", letterSpacing: 4 },
-  skipPill: {
-    position: "absolute",
-    top: 60, right: 20,
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 4,
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-  },
-  skipT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 2.4 },
 });
 
 export default CrewFitIntroAnimation;

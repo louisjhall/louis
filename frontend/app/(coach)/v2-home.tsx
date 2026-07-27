@@ -12,7 +12,7 @@
  * If not enabled, offers a one-click enable and links back to V1 overview.
  */
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, TextInput } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, TextInput, Modal } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
@@ -85,6 +85,11 @@ export default function CoachDashboardV2Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addClientOpen, setAddClientOpen] = useState(false);
+  // Delete-client confirmation state
+  const [deleteTarget, setDeleteTarget] = useState<ClientRow | null>(null);
+  const [deleteEmail, setDeleteEmail] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +135,49 @@ export default function CoachDashboardV2Home() {
     } finally { setBusy(false); }
   }, []);
 
+  const openDeleteConfirm = useCallback((row: ClientRow) => {
+    setDeleteTarget(row);
+    setDeleteEmail("");
+    setDeleteError(null);
+  }, []);
+
+  const closeDeleteConfirm = useCallback(() => {
+    if (deleteBusy) return;
+    setDeleteTarget(null);
+    setDeleteEmail("");
+    setDeleteError(null);
+  }, [deleteBusy]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    const stored = (target.email || "").trim().toLowerCase();
+    const typed = deleteEmail.trim().toLowerCase();
+    if (!stored) {
+      setDeleteError("This client has no email on file — cannot verify deletion.");
+      return;
+    }
+    if (stored !== typed) {
+      setDeleteError("Typed email does not match this client's email.");
+      return;
+    }
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await api(
+        `/v2/coach/clients/${target.client_id}?confirm_email=${encodeURIComponent(stored)}`,
+        { method: "DELETE" }
+      );
+      setDeleteTarget(null);
+      setDeleteEmail("");
+      await load();
+    } catch (e: any) {
+      setDeleteError(e?.message || String(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [deleteTarget, deleteEmail, load]);
+
   const attentionByClient = useMemo(() => {
     const map: Record<string, AttentionRow[]> = {};
     for (const r of attention) {
@@ -167,7 +215,7 @@ export default function CoachDashboardV2Home() {
       <View style={styles.topRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.h1}>Coach Home</Text>
-          <Text style={styles.h1sub}>Welcome back{user?.name ? `, ${user.name.split(" ")[0]}` : ""}. Here's who needs you.</Text>
+          <Text style={styles.h1sub}>Welcome back{user?.name ? `, ${user.name.split(" ")[0]}` : ""}. Here&apos;s who needs you.</Text>
         </View>
         <Pressable onPress={disableV2} style={styles.chip} testID="disable-v2-btn">
           <Text style={styles.chipText}>Switch to V1</Text>
@@ -191,7 +239,7 @@ export default function CoachDashboardV2Home() {
         {attention.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyTitle}>Nothing needs your attention</Text>
-            <Text style={styles.emptyBody}>CrewFit is handling the current plan for every client. You'll be notified when review is needed.</Text>
+            <Text style={styles.emptyBody}>CrewFit is handling the current plan for every client. You&apos;ll be notified when review is needed.</Text>
           </View>
         ) : (
           Object.entries(attentionByClient).map(([cid, rows]) => (
@@ -266,20 +314,30 @@ export default function CoachDashboardV2Home() {
               <Text style={[styles.clientCol, styles.colStatus]}>STATUS</Text>
             </View>
             {clients.map((c) => (
-              <Pressable
-                key={c.client_id}
-                style={styles.clientRow}
-                onPress={() => router.push(`/coach/client/${c.client_id}/workspace` as any)}
-                testID={`client-row-${c.client_id}`}
-              >
-                <Text style={[styles.clientCol, styles.colClient, styles.clientName]} numberOfLines={1}>{c.name}</Text>
-                <Text style={[styles.clientCol, styles.colGoal]} numberOfLines={1}>{c.goal || "—"}</Text>
-                <Text style={[styles.clientCol, styles.colPhase]} numberOfLines={1}>{c.phase || "—"}</Text>
-                <Text style={[styles.clientCol, styles.colToday]} numberOfLines={1}>{c.today_label || "—"}</Text>
-                <View style={[styles.colStatus, { flexDirection: "row", alignItems: "center", gap: 6 }]}>
-                  <StatusPill kind={c.status_chip} count={c.attention_count} />
-                </View>
-              </Pressable>
+              <View key={c.client_id} style={styles.clientRowWrap}>
+                <Pressable
+                  style={styles.clientRow}
+                  onPress={() => router.push(`/coach/client/${c.client_id}/workspace` as any)}
+                  testID={`client-row-${c.client_id}`}
+                >
+                  <Text style={[styles.clientCol, styles.colClient, styles.clientName]} numberOfLines={1}>{c.name}</Text>
+                  <Text style={[styles.clientCol, styles.colGoal]} numberOfLines={1}>{c.goal || "—"}</Text>
+                  <Text style={[styles.clientCol, styles.colPhase]} numberOfLines={1}>{c.phase || "—"}</Text>
+                  <Text style={[styles.clientCol, styles.colToday]} numberOfLines={1}>{c.today_label || "—"}</Text>
+                  <View style={[styles.colStatus, { flexDirection: "row", alignItems: "center", gap: 6 }]}>
+                    <StatusPill kind={c.status_chip} count={c.attention_count} />
+                  </View>
+                </Pressable>
+                <Pressable
+                  onPress={(e) => { e.stopPropagation?.(); openDeleteConfirm(c); }}
+                  style={styles.rowDeleteBtn}
+                  testID={`delete-client-${c.client_id}`}
+                  accessibilityLabel={`Delete ${c.name}`}
+                  hitSlop={10}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#ff6b6b" />
+                </Pressable>
+              </View>
             ))}
           </View>
         )}
@@ -291,6 +349,67 @@ export default function CoachDashboardV2Home() {
         onClose={() => setAddClientOpen(false)}
         onCreated={() => { setAddClientOpen(false); load(); }}
       />
+      <Modal
+        visible={!!deleteTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={closeDeleteConfirm}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Delete client</Text>
+            <Text style={styles.modalBody}>
+              You&apos;re about to permanently delete{" "}
+              <Text style={styles.modalBodyStrong}>{deleteTarget?.name}</Text>
+              {" "}and every workout, roster, programme, decision record and
+              exception tied to them. This cannot be undone.
+            </Text>
+            <Text style={styles.modalLabel}>
+              Type the client&apos;s email to confirm:
+            </Text>
+            <Text style={styles.modalEmailHint}>
+              {deleteTarget?.email || "(no email on file — cannot delete)"}
+            </Text>
+            <TextInput
+              value={deleteEmail}
+              onChangeText={setDeleteEmail}
+              placeholder="client@example.com"
+              placeholderTextColor="#5a5a5a"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              editable={!deleteBusy}
+              style={styles.modalInput}
+              testID="delete-client-email-input"
+            />
+            {deleteError && <Text style={styles.modalError}>{deleteError}</Text>}
+            <View style={styles.modalRow}>
+              <Pressable
+                onPress={closeDeleteConfirm}
+                disabled={deleteBusy}
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+                testID="delete-client-cancel"
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmDelete}
+                disabled={deleteBusy || !deleteTarget?.email}
+                style={[
+                  styles.modalBtn,
+                  styles.modalBtnDanger,
+                  (deleteBusy || !deleteTarget?.email) && { opacity: 0.5 },
+                ]}
+                testID="delete-client-confirm"
+              >
+                <Text style={styles.modalBtnDangerText}>
+                  {deleteBusy ? "Deleting…" : "Delete permanently"}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -407,7 +526,16 @@ const styles = StyleSheet.create({
   },
   clientRow: {
     flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12,
+    flex: 1,
+  },
+  clientRowWrap: {
+    flexDirection: "row", alignItems: "stretch",
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
+  },
+  rowDeleteBtn: {
+    paddingHorizontal: 12, alignItems: "center", justifyContent: "center",
+    borderLeftWidth: 1, borderLeftColor: theme.color.border,
+    backgroundColor: "transparent",
   },
   clientCol: { color: theme.color.textDim, fontSize: 12, letterSpacing: 0.5 },
   clientName: { color: theme.color.textHi, fontWeight: "700", fontSize: 14 },
@@ -421,4 +549,39 @@ const styles = StyleSheet.create({
   statusPillText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
 
   errorText: { color: "#ff6666", padding: 16 },
+
+  // Delete confirmation modal
+  modalBackdrop: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.75)",
+    alignItems: "center", justifyContent: "center", padding: 20,
+  },
+  modalCard: {
+    width: "100%", maxWidth: 460, backgroundColor: theme.color.surface2,
+    borderRadius: 14, borderWidth: 1, borderColor: theme.color.border, padding: 22,
+  },
+  modalTitle: {
+    color: theme.color.textHi, fontSize: 20, fontWeight: "800", marginBottom: 10,
+  },
+  modalBody: { color: theme.color.textDim, fontSize: 13, lineHeight: 19, marginBottom: 16 },
+  modalBodyStrong: { color: theme.color.textHi, fontWeight: "700" },
+  modalLabel: {
+    color: theme.color.textDim, fontSize: 11, letterSpacing: 1, fontWeight: "700",
+    textTransform: "uppercase", marginBottom: 4,
+  },
+  modalEmailHint: {
+    color: theme.color.textHi, fontSize: 13, fontWeight: "600",
+    marginBottom: 8, fontFamily: "monospace",
+  },
+  modalInput: {
+    backgroundColor: theme.color.bg, borderWidth: 1, borderColor: theme.color.border,
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
+    color: theme.color.textHi, fontSize: 14, marginBottom: 6,
+  },
+  modalError: { color: "#ff6b6b", fontSize: 12, marginTop: 2, marginBottom: 4 },
+  modalRow: { flexDirection: "row", gap: 10, marginTop: 14, justifyContent: "flex-end" },
+  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, minWidth: 100, alignItems: "center" },
+  modalBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border },
+  modalBtnGhostText: { color: theme.color.textDim, fontWeight: "700" },
+  modalBtnDanger: { backgroundColor: "#c53030" },
+  modalBtnDangerText: { color: "#fff", fontWeight: "800", letterSpacing: 0.3 },
 });

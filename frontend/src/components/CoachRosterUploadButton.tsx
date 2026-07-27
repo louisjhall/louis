@@ -17,6 +17,7 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast as uxToast } from "@/src/lib/ux";
@@ -80,6 +81,7 @@ export function CoachRosterUploadButton({
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const pollRef = useRef<any>(null);
+  const router = useRouter();
 
   const stopPoll = useCallback(() => {
     if (pollRef.current) {
@@ -97,38 +99,6 @@ export function CoachRosterUploadButton({
     onComplete?.();
   }, [onComplete, stopPoll]);
 
-  const confirmPending = useCallback(async (rid: string) => {
-    try {
-      const r = await api<any>(
-        `/coach/clients/${clientId}/roster/pending/${rid}/confirm`,
-        { method: "POST", body: {} },
-      );
-      // Start polling the generation job so the coach sees progress.
-      const jid = r?.job_id;
-      if (!jid) {
-        finish("Roster saved for " + (clientName || "client"));
-        return;
-      }
-      setJob({ id: jid, status: "processing", stage: "generating", progress: 80, message: "Generating plan…" });
-      pollRef.current = setInterval(async () => {
-        try {
-          const p = await api<any>(`/roster/jobs/${jid}`);
-          setJob(p);
-          if (p?.status === "complete") {
-            finish("Plan ready for " + (clientName || "client"));
-          } else if (p?.status === "failed") {
-            stopPoll();
-            setBusy(false);
-            setError(p?.error || "Plan generation failed.");
-          }
-        } catch { /* ignore */ }
-      }, 2500);
-    } catch (e: any) {
-      setError(e?.message || "Couldn't confirm roster.");
-      setBusy(false);
-    }
-  }, [clientId, clientName, finish, stopPoll]);
-
   const startPoll = useCallback((jobId: string) => {
     stopPoll();
     pollRef.current = setInterval(async () => {
@@ -137,8 +107,15 @@ export function CoachRosterUploadButton({
         setJob(p);
         if (p?.status === "awaiting_confirmation" && p?.pending_roster_id) {
           stopPoll();
-          // Auto-confirm on behalf of the client.
-          await confirmPending(p.pending_roster_id);
+          setBusy(false);
+          setShowModal(false);
+          // Route the coach to the per-day verify screen with the
+          // on_behalf_of param so the same UI works for coach flow.
+          router.push({
+            pathname: "/roster/confirm/[id]" as any,
+            params: { id: p.pending_roster_id, on_behalf_of: clientId },
+          });
+          onComplete?.();
         } else if (p?.status === "failed") {
           stopPoll();
           setBusy(false);
@@ -148,7 +125,7 @@ export function CoachRosterUploadButton({
         }
       } catch { /* ignore, keep polling */ }
     }, 2000);
-  }, [clientName, confirmPending, finish, stopPoll]);
+  }, [clientId, clientName, finish, onComplete, router, stopPoll]);
 
   const pickAndUpload = useCallback(async () => {
     setError(null);

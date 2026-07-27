@@ -885,7 +885,11 @@ class RosterShiftBody(BaseModel):
 
 
 @api.post("/roster/pending/{rid}/shift")
-async def roster_pending_shift(rid: str, body: RosterShiftBody, user: dict = Depends(current_user)):
+async def roster_pending_shift(
+    rid: str, body: RosterShiftBody,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     """
     Iter 83 — Shift EVERY day's *content* (day_type, flights, layover meta,
     report/duty times, notes, load, confidence, home_or_away) forward or back
@@ -900,10 +904,11 @@ async def roster_pending_shift(rid: str, body: RosterShiftBody, user: dict = Dep
     padded with an Unknown/Needs Confirmation placeholder so the client can
     fill it in.
     """
+    uid = await _effective_user_id(user, on_behalf_of)
     if body.direction not in ("forward", "back"):
         raise HTTPException(400, "direction must be 'forward' or 'back'")
     r = await db.rosters.find_one(
-        {"id": rid, "user_id": user["id"], "status": "pending_confirmation"},
+        {"id": rid, "user_id": uid, "status": "pending_confirmation"},
         {"_id": 0},
     )
     if not r:
@@ -980,16 +985,21 @@ class RosterSwapBody(BaseModel):
 
 
 @api.post("/roster/pending/{rid}/swap")
-async def roster_pending_swap(rid: str, body: RosterSwapBody, user: dict = Depends(current_user)):
+async def roster_pending_swap(
+    rid: str, body: RosterSwapBody,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     """
     Iter 83 — Swap the CONTENT (day_type, flights, layover, times, notes,
     load, confidence) of two days on a pending roster while keeping their
     dates fixed. Used by the two-tap SWAP flow on the confirmation screen.
     """
+    uid = await _effective_user_id(user, on_behalf_of)
     if body.date_a == body.date_b:
         raise HTTPException(400, "Cannot swap a day with itself")
     r = await db.rosters.find_one(
-        {"id": rid, "user_id": user["id"], "status": "pending_confirmation"},
+        {"id": rid, "user_id": uid, "status": "pending_confirmation"},
         {"_id": 0},
     )
     if not r:
@@ -1037,12 +1047,30 @@ async def roster_pending_swap(rid: str, body: RosterSwapBody, user: dict = Depen
 # ---------------------------------------------------------------------------
 
 @api.post("/roster/pending/{rid}/confirm")
-async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
+async def roster_pending_confirm(
+    rid: str,
+    on_behalf_of: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
     """Activate the pending roster and kick off workout generation.
 
     Enforces: no low-confidence day may remain unreviewed. Returns a job_id
     the client polls via GET /roster/jobs/{job_id}.
+
+    Coach flow: when a coach calls this with ?on_behalf_of={client_id},
+    the entire downstream logic runs against the client's user record
+    but confirmed_by is stamped as 'coach' with the coach_id.
     """
+    coach_actor_id: Optional[str] = None
+    if user.get("role") == "coach" and on_behalf_of:
+        coach_actor_id = user["id"]
+        client_user = await db.users.find_one(
+            {"id": on_behalf_of, "role": "client"}, {"_id": 0}
+        )
+        if not client_user:
+            raise HTTPException(404, "Client not found")
+        user = client_user  # shadow — every subsequent user["id"] now = client_id
+
     pending = await db.rosters.find_one({"id": rid, "user_id": user["id"], "status": "pending_confirmation"}, {"_id": 0})
     if not pending:
         raise HTTPException(404, "Pending roster not found")
@@ -1136,10 +1164,34 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
             "status": "confirmed",
             "confirmed": True,
             "confirmed_at": now,
+            "confirmed_by": "coach" if coach_actor_id else "client",
+            **({"confirmed_by_coach_id": coach_actor_id} if coach_actor_id else {}),
             "updated_at": now,
         }},
     )
     roster = await db.rosters.find_one({"id": rid}, {"_id": 0})
+
+    # Purge V2 schedule_days from any roster that was just superseded so
+    # the workspace doesn't show ghost days from the previous version.
+    try:
+        stale_ids = await db.rosters.find(
+            {"user_id": user["id"], "id": {"$ne": rid},
+             "$or": [{"status": "superseded"}, {"is_active": False}]},
+            {"_id": 0, "id": 1}
+        ).to_list(50)
+        if stale_ids:
+            ids = [s["id"] for s in stale_ids]
+            await db.schedule_days.delete_many(
+                {"client_id": user["id"], "source_roster_id": {"$in": ids}}
+            )
+            await db.roster_duties.delete_many(
+                {"client_id": user["id"], "source_roster_id": {"$in": ids}}
+            )
+            await db.flight_sectors.delete_many(
+                {"client_id": user["id"], "source_roster_id": {"$in": ids}}
+            )
+    except Exception:
+        logger.exception("Failed to purge stale schedule_days from superseded rosters")
 
     # Phase 7A — client message + coach approval task (idempotent, non-fatal)
     try:

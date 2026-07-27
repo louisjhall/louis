@@ -96,7 +96,12 @@ function fmtDate(iso?: string | null) {
 }
 
 export default function RosterConfirm() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, on_behalf_of } = useLocalSearchParams<{ id: string; on_behalf_of?: string }>();
+  // When a coach opens this screen from the workspace, on_behalf_of=clientId.
+  // Every API URL below appends `?on_behalf_of=` so backend endpoints scope
+  // to the target client instead of the coach's own user_id.
+  const qs = on_behalf_of ? `?on_behalf_of=${encodeURIComponent(String(on_behalf_of))}` : "";
+  const qsAmp = on_behalf_of ? `&on_behalf_of=${encodeURIComponent(String(on_behalf_of))}` : "";
   const router = useRouter();
   const [pending, setPending] = useState<Pending | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,7 +117,7 @@ export default function RosterConfirm() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const p = await api<Pending>(`/roster/pending/${id}`);
+      const p = await api<Pending>(`/roster/pending/${id}${qs}`);
       setPending(p);
     } catch (e: any) {
       Alert.alert("Could not load roster", e?.message || "Please try uploading again.");
@@ -169,7 +174,7 @@ export default function RosterConfirm() {
     if (!pending || shifting) return;
     setShifting(true);
     try {
-      const updated = await api<Pending>(`/roster/pending/${pending.id}/shift`, {
+      const updated = await api<Pending>(`/roster/pending/${pending.id}/shift${qs}`, {
         method: "POST", body: { direction },
       });
       setPending(updated);
@@ -191,7 +196,7 @@ export default function RosterConfirm() {
         return;
       }
       try {
-        const updated = await api<Pending>(`/roster/pending/${pending.id}/swap`, {
+        const updated = await api<Pending>(`/roster/pending/${pending.id}/swap${qs}`, {
           method: "POST", body: { date_a: swapFromDate, date_b: date },
         });
         setPending(updated);
@@ -218,7 +223,7 @@ export default function RosterConfirm() {
           ? { ...d, day_type: newType, _confirmed_by_user: true, _needs_review: false }
           : d,
       );
-      const updated = await api<Pending>(`/roster/pending/${pending.id}`, {
+      const updated = await api<Pending>(`/roster/pending/${pending.id}${qs}`, {
         method: "PATCH",
         body: { days: days.map(({ _needs_review, ...d }) => d) },
       });
@@ -235,7 +240,7 @@ export default function RosterConfirm() {
   const confirmDayAsIs = async (date: string) => {
     if (!pending) return;
     try {
-      await api(`/roster/pending/${pending.id}/confirm-day`, {
+      await api(`/roster/pending/${pending.id}/confirm-day${qs}`, {
         method: "POST",
         body: { date },
       });
@@ -255,7 +260,7 @@ export default function RosterConfirm() {
     if (!pending) return;
     setSaving(true);
     try {
-      const updated = await api<Pending>(`/roster/pending/${pending.id}`, {
+      const updated = await api<Pending>(`/roster/pending/${pending.id}${qs}`, {
         method: "PATCH",
         body: {
           days: pending.days.map(({ _needs_review, ...d }) => d),
@@ -275,7 +280,7 @@ export default function RosterConfirm() {
     await save();
     setSubmitting(true);
     try {
-      const res = await api<any>(`/roster/pending/${pending.id}/confirm`, { method: "POST" });
+      const res = await api<any>(`/roster/pending/${pending.id}/confirm${qs}`, { method: "POST" });
       // If there's another pending roster (e.g. batch upload July + August),
       // jump straight to it instead of going through the generation flow.
       const nextId = pending._queue?.next_id;
@@ -321,7 +326,7 @@ export default function RosterConfirm() {
           style: "destructive",
           onPress: async () => {
             try {
-              await api(`/roster/pending/${pending?.id}`, { method: "DELETE" });
+              await api(`/roster/pending/${pending?.id}${qs}`, { method: "DELETE" });
             } catch {}
             router.replace("/roster-upload");
           },

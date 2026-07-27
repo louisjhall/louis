@@ -291,6 +291,28 @@ async def coach_pending_confirm(
     )
     roster = await db.rosters.find_one({"id": rid}, {"_id": 0})
 
+    # Purge V2 schedule_days from any roster that was just superseded so
+    # the workspace doesn't show ghost days from the previous version.
+    try:
+        stale_ids = await db.rosters.find(
+            {"user_id": client_id, "id": {"$ne": rid},
+             "$or": [{"status": "superseded"}, {"is_active": False}]},
+            {"_id": 0, "id": 1}
+        ).to_list(50)
+        if stale_ids:
+            ids = [s["id"] for s in stale_ids]
+            await db.schedule_days.delete_many(
+                {"client_id": client_id, "source_roster_id": {"$in": ids}}
+            )
+            await db.roster_duties.delete_many(
+                {"client_id": client_id, "source_roster_id": {"$in": ids}}
+            )
+            await db.flight_sectors.delete_many(
+                {"client_id": client_id, "source_roster_id": {"$in": ids}}
+            )
+    except Exception:
+        logger.exception("coach-confirm: failed to purge stale schedule_days")
+
     # Phase 7A hooks — client notification + coach approval task.
     try:
         from feature_programme_status import create_upload_confirmation_message, create_coach_approval_task

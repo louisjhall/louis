@@ -355,16 +355,57 @@ class TestSchedulerRespectsInvariants(unittest.TestCase):
             self.assertGreater(gap, 1,
                                 f"Two KEYs within {gap*24}h: {keys[i-1].kind}@{keys[i-1].date} → {keys[i].kind}@{keys[i].date}")
 
-    def test_weekly_hard_cap_respected(self):
+    def test_weekly_endurance_hard_cap_respected(self):
+        """ENDURANCE hard sessions (LR/tempo/threshold/intervals/vo2/race pace)
+        must respect the phase's hard-days cap. Strength does NOT count here
+        — strength has its own cap tested in test_weekly_strength_cap_respected.
+        """
+        from feature_v2_sport_configs import is_endurance_hard
         cfg = get_goal_config("marathon")
         cap = cfg.phase_specs["aerobic_base"].hard_days_per_week_max
         weekly_hard = {}
         for p in self.placements:
-            if is_hard_session(p.kind):
+            if is_endurance_hard(p.kind):
                 wk = week_key(p.date)
                 weekly_hard[wk] = weekly_hard.get(wk, 0) + 1
         for wk, n in weekly_hard.items():
-            self.assertLessEqual(n, cap, f"Week {wk}: {n} hard > cap {cap}")
+            self.assertLessEqual(n, cap, f"Week {wk}: {n} endurance hard > cap {cap}")
+
+    def test_weekly_strength_cap_respected(self):
+        """Strength sessions count against phase.strength_days_per_week_max
+        which is a separate weekly bucket from endurance-hard."""
+        from feature_v2_sport_configs import is_strength_session
+        cfg = get_goal_config("marathon")
+        cap = cfg.phase_specs["aerobic_base"].strength_days_per_week_max
+        weekly_strength_dates = {}
+        for p in self.placements:
+            if is_strength_session(p.kind):
+                wk = week_key(p.date)
+                weekly_strength_dates.setdefault(wk, set()).add(p.date)
+        for wk, dates in weekly_strength_dates.items():
+            self.assertLessEqual(len(dates), cap,
+                                 f"Week {wk}: {len(dates)} strength days > cap {cap}")
+
+    def test_strength_can_coexist_with_long_run_in_same_week(self):
+        """CRITICAL correctness: any week that has a Long Run MUST also be
+        able to contain at least one Strength session. Previously they shared
+        the same hard-cap bucket which made this architecturally impossible."""
+        from feature_v2_sport_configs import is_strength_session
+        weeks_with_lr = set()
+        weeks_with_strength = set()
+        for p in self.placements:
+            if p.kind == "run_long":
+                weeks_with_lr.add(week_key(p.date))
+            if is_strength_session(p.kind):
+                weeks_with_strength.add(week_key(p.date))
+        # Every LR week should also have at least one strength placement,
+        # unless the roster simply had no viable strength day (opportunity
+        # floor below IMPORTANT). At minimum, at least ONE LR week must show
+        # coexistence — otherwise the buckets are still incorrectly coupled.
+        coexisting = weeks_with_lr & weeks_with_strength
+        self.assertGreater(len(coexisting), 0,
+                            f"No week contains both LR and Strength — architectural coupling bug. "
+                            f"LR weeks: {weeks_with_lr}, Strength weeks: {weeks_with_strength}")
 
     def test_no_placement_on_sick_day(self):
         # (No sick in fixture — this is a safety check)
@@ -379,14 +420,20 @@ class TestSchedulerRespectsInvariants(unittest.TestCase):
             self.assertGreaterEqual(opp_by_date[p.date], 20,
                                      f"{p.kind}@{p.date} opp={opp_by_date[p.date]}")
 
-    def test_exposure_numbering_monotonic_per_objective(self):
+    def test_exposure_numbering_chronologically_monotonic(self):
+        """Placements sorted by DATE must have exposure_number = 1..N per
+        objective_id. This is the correctness fix: previously we only checked
+        the SET of numbers, missing cases where #2 predated #1 by date.
+        """
         per_obj = {}
         for p in self.placements:
-            per_obj.setdefault(p.objective_id, []).append(p.exposure_number)
-        for obj, seq in per_obj.items():
-            sorted_seq = sorted(seq)
-            self.assertEqual(sorted_seq, list(range(1, len(sorted_seq) + 1)),
-                              f"Objective {obj} numbering broken: {sorted_seq}")
+            per_obj.setdefault(p.objective_id, []).append(p)
+        for obj, group in per_obj.items():
+            by_date = sorted(group, key=lambda pl: pl.date)
+            seq = [pl.exposure_number for pl in by_date]
+            self.assertEqual(seq, list(range(1, len(seq) + 1)),
+                              f"Objective {obj}: by-date exposure sequence "
+                              f"{seq} is not 1..N (chronological)")
 
 
 class TestConstructionSportTyped(unittest.TestCase):
@@ -620,3 +667,278 @@ class TestPietroAugustRegression(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ===========================================================================
+# Engine V2 Correctness Patch — new invariants (Items 1-9 of user directive)
+# ===========================================================================
+
+class TestCorrectnessPatchDailyTimeCap(unittest.TestCase):
+    """Item #3 + #4 — total daily minutes must not exceed availability, even
+    with support (mobility/activation) stacking."""
+
+    def _build(self, profile: dict, max_home_min: int = 60):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        today = _dt.date(2026, 8, 3)
+        # 4 weeks of home_day only — plenty of opportunity, but strict daily cap.
+        roster = [{
+            "client_id": PIETRO_ID,
+            "date": (today + _dt.timedelta(days=i)).isoformat(),
+            "day_type": "home_day",
+            "duties": [],
+            "tz_offset_from_base_hours": 0,
+            "recovery_window_hours_from_prior_duty": None,
+        } for i in range(28)]
+        contexts = build_day_contexts(roster)
+        # Clip contexts by profile just as kickoff does
+        from feature_v2_roster_context import DayContext as _DC
+        clipped = [
+            _DC(
+                date=c.date, day_type=c.day_type,
+                duty_burden_score=c.duty_burden_score,
+                training_opportunity=c.training_opportunity,
+                available_time_min=min(c.available_time_min, max_home_min),
+                recommended_intensity_ceiling=c.recommended_intensity_ceiling,
+                recovery_state=c.recovery_state,
+                recent_hard_days_48h=c.recent_hard_days_48h,
+                upcoming_hard_days_48h=c.upcoming_hard_days_48h,
+                consecutive_duty_days=c.consecutive_duty_days,
+                sleep_opportunity=c.sleep_opportunity,
+                tz_shift_last_48h=c.tz_shift_last_48h,
+                layover_length_hours=c.layover_length_hours,
+                duty_duration_min_today=c.duty_duration_min_today,
+                reasons=c.reasons + (f"clipped:{max_home_min}",),
+            ) for c in contexts
+        ]
+        week_starts = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=profile,
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        daily_cap = {c.date: max_home_min for c in clipped}
+        result = schedule_demand(
+            demand=demand, day_contexts=clipped,
+            goal=cfg, phase=phase,
+            daily_time_cap_by_date=daily_cap,
+        )
+        return demand, result, phase, cfg
+
+    def test_daily_total_never_exceeds_60min_when_max_home_60(self):
+        """Pietro's exact case — daily prescribed minutes must stay under 60."""
+        prof = dict(pietro_profile())
+        prof["max_home_minutes"] = 60
+        prof["training_days_per_week"] = 5
+        prof["sessions_per_week_min"] = 4
+        prof["sessions_per_week_max"] = 5
+        _, result, _, _ = self._build(prof, max_home_min=60)
+        # Aggregate by date
+        totals: dict = {}
+        for p in result.placements:
+            totals[p.date] = totals.get(p.date, 0) + int(p.target_duration_min)
+        for d, total in totals.items():
+            self.assertLessEqual(total, 60,
+                                  f"{d} total minutes {total} > cap 60 "
+                                  f"(placements: {[p.kind + ':' + str(p.target_duration_min) for p in result.placements if p.date == d]})")
+
+    def test_no_random_triple_stacking(self):
+        """No day may contain three placements when the cap is tight (60 min)."""
+        prof = dict(pietro_profile())
+        prof["max_home_minutes"] = 60
+        _, result, _, _ = self._build(prof, max_home_min=60)
+        by_date: dict = {}
+        for p in result.placements:
+            by_date.setdefault(p.date, []).append(p.kind)
+        for d, kinds in by_date.items():
+            # With a 60-min cap and typical 35-45 min main sessions, 3 sessions
+            # would blow the cap. Anything more than 2 is suspicious.
+            self.assertLessEqual(len(kinds), 2,
+                                  f"{d} has {len(kinds)} placements (60min cap): {kinds}")
+
+    def test_mobility_may_stack_when_it_fits(self):
+        """With a generous 120min home cap, mobility SHOULD stack with an
+        anchor session — the engine should not artificially refuse."""
+        prof = dict(pietro_profile())
+        prof["max_home_minutes"] = 120
+        prof["training_days_per_week"] = 5
+        _, result, _, _ = self._build(prof, max_home_min=120)
+        by_date: dict = {}
+        for p in result.placements:
+            by_date.setdefault(p.date, []).append(p)
+        # Expect at least one day where mobility is present alongside another session
+        stacking = 0
+        for d, pls in by_date.items():
+            kinds = {p.kind for p in pls}
+            if "mobility" in kinds and len(kinds) > 1:
+                stacking += 1
+        self.assertGreater(stacking, 0,
+                            "With 120min cap, mobility must be able to stack "
+                            "with another session on at least one day")
+
+
+class TestCorrectnessPatchUnfilledSemantics(unittest.TestCase):
+    """Item #1 — required IMPORTANT/KEY quotas that go unplaced MUST create
+    validator errors and prevent draft_status=ready_for_review."""
+
+    def _tight_roster_result(self, max_home_min: int = 45):
+        """Force many rejections by making home_days extremely tight (45min)
+        so strength (target 40) barely fits and mobility gets crowded out."""
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        today = _dt.date(2026, 8, 3)
+        # Mix: only 1 usable home_day per week
+        pattern = (["home_day"] + ["flight"] + ["layover_arrival"] +
+                   ["layover_departure"] + ["standby"] + ["turnaround"] +
+                   ["home_day"])
+        roster = [{
+            "client_id": PIETRO_ID,
+            "date": (today + _dt.timedelta(days=i)).isoformat(),
+            "day_type": pattern[i % 7],
+            "duties": [] if pattern[i % 7] in ("home_day", "off") else [{"duty_type": pattern[i % 7]}],
+            "tz_offset_from_base_hours": 0,
+            "recovery_window_hours_from_prior_duty": None,
+        } for i in range(28)]
+        contexts = build_day_contexts(roster)
+        from feature_v2_roster_context import DayContext as _DC
+        clipped = [_DC(
+            date=c.date, day_type=c.day_type,
+            duty_burden_score=c.duty_burden_score,
+            training_opportunity=c.training_opportunity,
+            available_time_min=min(c.available_time_min, max_home_min),
+            recommended_intensity_ceiling=c.recommended_intensity_ceiling,
+            recovery_state=c.recovery_state,
+            recent_hard_days_48h=c.recent_hard_days_48h,
+            upcoming_hard_days_48h=c.upcoming_hard_days_48h,
+            consecutive_duty_days=c.consecutive_duty_days,
+            sleep_opportunity=c.sleep_opportunity,
+            tz_shift_last_48h=c.tz_shift_last_48h,
+            layover_length_hours=c.layover_length_hours,
+            duty_duration_min_today=c.duty_duration_min_today,
+            reasons=c.reasons + (f"clipped:{max_home_min}",),
+        ) for c in contexts]
+        week_starts = [today + _dt.timedelta(days=7 * i) for i in range(4)]
+        prof = dict(pietro_profile())
+        prof["max_home_minutes"] = max_home_min
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=prof,
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=week_starts,
+        )
+        schedule = schedule_demand(
+            demand=demand, day_contexts=clipped, goal=cfg, phase=phase,
+            daily_time_cap_by_date={c.date: max_home_min for c in clipped},
+        )
+        prog_val = validate_programme(
+            demand=demand, placements=schedule.placements,
+            phase=phase, goal=cfg, unfilled=schedule.unfilled,
+        )
+        return demand, schedule, prog_val
+
+    def test_unplaced_important_creates_validator_error(self):
+        demand, schedule, prog_val = self._tight_roster_result(max_home_min=45)
+        # If any IMPORTANT stayed unfilled, there MUST be a matching error.
+        important_unfilled = [u for u in schedule.unfilled if u.priority.upper() == "IMPORTANT"]
+        if important_unfilled:
+            self.assertFalse(prog_val.ok,
+                              "IMPORTANT unfilled must fail programme validation")
+            codes = [i.code for i in prog_val.issues]
+            self.assertIn("important_unfilled", codes,
+                          f"Missing 'important_unfilled' error; got codes={codes}")
+
+    def test_no_ready_when_important_missing(self):
+        """The exact bug from Pietro shadow — validator returned ok=True when
+        4 IMPORTANT strength sessions were unfilled. This must NOT happen."""
+        demand, schedule, prog_val = self._tight_roster_result(max_home_min=45)
+        placed_kinds = {p.kind for p in schedule.placements}
+        required_kinds = {e.kind for e in demand.required_exposures
+                          if e.priority.upper() == "IMPORTANT"}
+        missing_important = required_kinds - placed_kinds
+        if missing_important:
+            self.assertFalse(prog_val.ok,
+                              f"programme_validation.ok=True even though IMPORTANT kinds missing: {missing_important}")
+
+    def test_supporting_unfilled_is_only_warning(self):
+        """Missing SUPPORTING (mobility) should NOT block ready_for_review —
+        emit warning only."""
+        # Build a scenario where mobility can't be placed but LR + strength can.
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        # Only 2 home days over 28 → LR fits, strength fits, mobility
+        # (SUPPORTING, +/- 1 wk allowed) may or may not fit. We'll construct
+        # unfilled manually.
+        from feature_v2_demand_v2 import Unfilled
+        # Empty demand + one supporting unfilled → should be warning
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=pietro_profile(),
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=[_dt.date(2026, 8, 3)],
+        )
+        fake_unfilled = [Unfilled(
+            exposure_id="u1", objective_id="obj_x", kind="mobility",
+            priority="SUPPORTING",
+            reason_code="opportunity_below_floor",
+            human_reason="opportunity too low",
+        )]
+        prog_val = validate_programme(
+            demand=demand, placements=[], phase=phase, goal=cfg,
+            unfilled=fake_unfilled,
+        )
+        # There will be quota_deficit errors for run_long (KEY) and others,
+        # but the supporting unfilled itself should be a WARNING.
+        support_issue = [i for i in prog_val.issues if i.code == "supporting_unfilled"]
+        self.assertEqual(len(support_issue), 1)
+        self.assertEqual(support_issue[0].severity, "warning")
+
+
+class TestCorrectnessPatchDNAGaps(unittest.TestCase):
+    """Item #7 — DNA fallbacks must be surfaced structurally."""
+
+    def test_missing_session_bounds_surface_as_gap(self):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        prof = dict(pietro_profile())
+        # Wipe the exact fields Pietro was missing
+        prof.pop("sessions_per_week_min", None)
+        prof.pop("sessions_per_week_max", None)
+        prof.pop("preferred_training_days", None)
+        prof.pop("preferred_session_length", None)
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=prof,
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=[_dt.date(2026, 8, 3)],
+        )
+        fields_flagged = {g["field"] for g in demand.dna_gaps}
+        self.assertIn("preferred_training_days", fields_flagged)
+        self.assertIn("preferred_session_length", fields_flagged)
+        # sessions_per_week bounds are flagged as info (derived from training_days_per_week)
+        self.assertIn("sessions_per_week_min/max", fields_flagged)
+
+
+class TestCorrectnessPatchFrequencyDerivation(unittest.TestCase):
+    """Item #8 — the engine must produce a single, coherent, inspectable
+    frequency calculation instead of leaving contradictory values scattered."""
+
+    def test_derivation_reports_all_inputs_and_scaling(self):
+        cfg = get_goal_config("marathon")
+        phase = cfg.phase_specs["foundation"]
+        prof = dict(pietro_profile())
+        demand = build_demand(
+            client_id=PIETRO_ID, client_profile=prof,
+            goal_key="marathon", phase_spec=phase,
+            week_start_dates=[_dt.date(2026, 8, 3), _dt.date(2026, 8, 10),
+                               _dt.date(2026, 8, 17), _dt.date(2026, 8, 24)],
+        )
+        d = demand.frequency_derivation
+        # Every required key
+        for k in ["inputs", "effective_min", "effective_max",
+                  "raw_quota_targets_per_week", "raw_quota_total_per_week",
+                  "client_effective_min_per_week", "client_effective_max_per_week",
+                  "phase_hard_days_per_week_max", "phase_key_days_per_week_max",
+                  "phase_strength_days_per_week_max", "scaling_factor",
+                  "scale_reason"]:
+            self.assertIn(k, d, f"frequency_derivation missing key {k}")
+
+
+if False:  # keep runnable via __main__ above; suppress redundant duplicate call
+    pass

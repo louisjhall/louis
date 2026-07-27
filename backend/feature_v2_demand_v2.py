@@ -87,6 +87,8 @@ class DemandPlan:
     goal_key: str = ""
     phase_kind: str = ""
     weeks: int = 0
+    frequency_derivation: dict[str, Any] = field(default_factory=dict)
+    dna_gaps: list[dict[str, Any]] = field(default_factory=list)
 
     def sort_by_priority(self) -> list[RequiredExposure]:
         rank = {"KEY": 0, "IMPORTANT": 1, "SUPPORTING": 2, "OPTIONAL": 3}
@@ -142,29 +144,61 @@ def _apply_progression(base_duration_target: int, week_index: int,
     return max(1, min(cap, out))
 
 
-def _client_frequency_bounds(client_profile: dict, phase: PhaseSpec) -> tuple[int, int]:
-    """(min, max) sessions/week the client can accept.
+def _client_frequency_bounds(client_profile: dict, phase: PhaseSpec) -> tuple[int, int, dict]:
+    """Return (min, max, derivation) sessions/week the client can accept.
+
     Falls back to phase caps if profile is missing.
     Never allows unlimited — missing DNA does NOT mean 'as many as you want'.
+    The `derivation` dict records every input + fallback used so it can be
+    surfaced to the coach in the draft.
     """
     prof = client_profile or {}
-    lo = prof.get("sessions_per_week_min")
-    hi = prof.get("sessions_per_week_max")
+    raw_min = prof.get("sessions_per_week_min")
+    raw_max = prof.get("sessions_per_week_max")
+    raw_tdpw = prof.get("training_days_per_week")
+
+    derivation: dict[str, Any] = {
+        "inputs": {
+            "sessions_per_week_min": raw_min,
+            "sessions_per_week_max": raw_max,
+            "training_days_per_week": raw_tdpw,
+        },
+        "fallbacks_used": [],
+    }
+
+    lo = raw_min
+    hi = raw_max
     if lo is None:
-        lo = prof.get("training_days_per_week")
+        lo = raw_tdpw
+        if lo is not None:
+            derivation["fallbacks_used"].append(
+                "sessions_per_week_min ← training_days_per_week")
     if hi is None:
-        hi = prof.get("training_days_per_week")
+        hi = raw_tdpw
+        if hi is not None:
+            derivation["fallbacks_used"].append(
+                "sessions_per_week_max ← training_days_per_week")
     if lo is None:
-        lo = 3      # explicit floor — never unlimited
+        lo = 3  # explicit floor — never unlimited
+        derivation["fallbacks_used"].append("sessions_per_week_min ← 3 (engine floor)")
     if hi is None:
-        hi = 5      # explicit ceiling — never unlimited
+        hi = 5  # explicit ceiling — never unlimited
+        derivation["fallbacks_used"].append("sessions_per_week_max ← 5 (engine ceiling)")
     try:
         lo = max(1, int(lo)); hi = max(lo, int(hi))
     except Exception:
         lo, hi = 3, 5
-    # Never exceed phase's own hard-day + key-day + supporting cap
-    hi = min(hi, phase.hard_days_per_week_max + 3)  # +3 for supporting
-    return lo, hi
+        derivation["fallbacks_used"].append("frequency bounds ← 3–5 (invalid inputs)")
+
+    # Phase-defined support cap
+    hi_before_phase_clip = hi
+    hi = min(hi, phase.hard_days_per_week_max + phase.strength_days_per_week_max + 3)  # +3 for supporting
+    if hi < hi_before_phase_clip:
+        derivation["fallbacks_used"].append(
+            f"sessions_per_week_max clipped by phase to {hi}")
+    derivation["effective_min"] = lo
+    derivation["effective_max"] = hi
+    return lo, hi, derivation
 
 
 # ---------------------------------------------------------------------------
@@ -190,15 +224,61 @@ def build_demand(
     quotas = list(phase_spec.quotas)
 
     # ------ Client frequency preferences ---------------------------------
-    lo_freq, hi_freq = _client_frequency_bounds(client_profile, phase_spec)
+    lo_freq, hi_freq, freq_derivation = _client_frequency_bounds(client_profile, phase_spec)
+
+    # ------ Compute DNA gaps ---------------------------------------------
+    prof = client_profile or {}
+    dna_gaps: list[dict[str, Any]] = []
+    if prof.get("sessions_per_week_min") is None and prof.get("sessions_per_week_max") is None:
+        if prof.get("training_days_per_week") is not None:
+            dna_gaps.append({
+                "field": "sessions_per_week_min/max",
+                "severity": "info",
+                "fallback": f"training_days_per_week={prof.get('training_days_per_week')}",
+                "message": "Session count bounds derived from training_days_per_week",
+            })
+        else:
+            dna_gaps.append({
+                "field": "sessions_per_week_min/max",
+                "severity": "needs_review",
+                "fallback": "engine defaults 3–5",
+                "message": "Engine used defaults 3-5 because DNA did not capture "
+                           "session-count bounds — coach should confirm.",
+            })
+    if not prof.get("preferred_training_days"):
+        dna_gaps.append({
+            "field": "preferred_training_days",
+            "severity": "info",
+            "fallback": "no day-of-week preference applied",
+            "message": "No preferred training days captured — scheduler will use "
+                       "opportunity-based ranking only.",
+        })
+    if prof.get("preferred_session_length") in (None, 0, ""):
+        dna_gaps.append({
+            "field": "preferred_session_length",
+            "severity": "info",
+            "fallback": "phase quota duration used",
+            "message": "No preferred session length captured — engine uses "
+                       "phase-defined quota durations.",
+        })
+    if prof.get("max_home_minutes") in (None, 0, "") and prof.get("time_home_min") in (None, 0, ""):
+        dna_gaps.append({
+            "field": "max_home_minutes",
+            "severity": "info",
+            "fallback": "roster-context default cap",
+            "message": "No home daily cap captured — engine uses roster-derived "
+                       "available_time_min per day.",
+        })
 
     # ------ Enumerate required exposures --------------------------------
     exposures: list[RequiredExposure] = []
     notes: list[str] = []
     total_target_per_week = 0
+    quota_targets: dict[str, float] = {}
     for q in quotas:
         _, target_per_week, _ = q.exposures_per_week
         total_target_per_week += target_per_week
+        quota_targets[q.kind] = target_per_week
 
     # Scale factor if the sum of quota targets exceeds client's weekly max
     scale = 1.0
@@ -208,6 +288,21 @@ def build_demand(
             f"Quota total {total_target_per_week:.1f}/wk exceeds client max "
             f"{hi_freq}/wk — scaled by {scale:.2f}"
         )
+
+    freq_derivation.update({
+        "raw_quota_targets_per_week": quota_targets,
+        "raw_quota_total_per_week": total_target_per_week,
+        "client_effective_min_per_week": lo_freq,
+        "client_effective_max_per_week": hi_freq,
+        "phase_hard_days_per_week_max": phase_spec.hard_days_per_week_max,
+        "phase_key_days_per_week_max": phase_spec.key_days_per_week_max,
+        "phase_strength_days_per_week_max": phase_spec.strength_days_per_week_max,
+        "scaling_factor": round(scale, 3),
+        "scale_reason": (
+            f"raw {total_target_per_week:.1f}/wk > client cap {hi_freq}/wk"
+            if scale < 1.0 else "no scaling needed"
+        ),
+    })
 
     for week_index, week_start in enumerate(week_start_dates):
         for q in quotas:
@@ -251,6 +346,7 @@ def build_demand(
     caps = {
         "hard_per_week_max": phase_spec.hard_days_per_week_max,
         "key_per_week_max": phase_spec.key_days_per_week_max,
+        "strength_per_week_max": phase_spec.strength_days_per_week_max,
         "consecutive_training_days_max": phase_spec.consecutive_training_days_max,
         "client_sessions_per_week_min": lo_freq,
         "client_sessions_per_week_max": hi_freq,
@@ -262,6 +358,8 @@ def build_demand(
         goal_key=cfg.key,
         phase_kind=phase_spec.phase_kind,
         weeks=len(week_start_dates),
+        frequency_derivation=freq_derivation,
+        dna_gaps=dna_gaps,
     )
 
 
@@ -276,6 +374,7 @@ def schedule_demand(
     phase: PhaseSpec,
     preferred_weekdays: Optional[set[int]] = None,
     existing_placements: Optional[list[Placement]] = None,
+    daily_time_cap_by_date: Optional[dict[_dt.date, int]] = None,
 ) -> ScheduleResult:
     """Place each required exposure onto the best-fit day it can validate on.
 
@@ -287,9 +386,23 @@ def schedule_demand(
       4. If none pass in target week, escalate to +/- 1 week window.
       5. If still no fit → Unfilled with candidate_hint_dates showing the
          top 3 candidates + why each failed.
+      6. After ALL placements are made, renumber `exposure_number` per
+         objective_id in strictly chronological order (1..N by date). This
+         guarantees the display sequence matches the calendar order.
+
+    daily_time_cap_by_date: hard daily total-minutes cap per date. Falls back
+        to each day_context's `available_time_min` if not provided.
     """
     if preferred_weekdays is None:
         preferred_weekdays = set()
+
+    # Build daily time-cap lookup (union of arg and day_ctx.available_time_min)
+    dtcap: dict[_dt.date, int] = {}
+    for ctx in day_contexts:
+        dtcap[ctx.date] = int(ctx.available_time_min)
+    if daily_time_cap_by_date:
+        for d, v in daily_time_cap_by_date.items():
+            dtcap[d] = min(dtcap.get(d, v), int(v))
 
     # Bootstrap plan (preserves any existing placements coach has already made)
     plan = PlacementPlan(placements=list(existing_placements or []))
@@ -349,6 +462,8 @@ def schedule_demand(
                     day_ctx_burden=ctx.duty_burden_score,
                     day_ctx_opportunity=ctx.training_opportunity,
                     priority=exp.priority,
+                    target_duration_min=exp.target_duration_min,
+                    daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
                 )
                 if check.ok:
                     apply_placement(
@@ -390,6 +505,18 @@ def schedule_demand(
                 validation_notes.append(
                     f"KEY exposure {exp.kind} in week {exp.week_index} could not be placed"
                 )
+
+    # ---- Chronological renumbering per objective_id -----------------------
+    # exposure_id remains the immutable identity from build_demand; but the
+    # exposure_number displayed on the calendar must be 1..N in DATE order
+    # for each objective family. This is what the validators + UI depend on.
+    per_obj: dict[str, list[Placement]] = {}
+    for p in plan.placements:
+        per_obj.setdefault(p.objective_id, []).append(p)
+    for obj_id, group in per_obj.items():
+        group_sorted = sorted(group, key=lambda p: (p.date, p.exposure_id))
+        for new_n, pl in enumerate(group_sorted, start=1):
+            pl.exposure_number = new_n
 
     return ScheduleResult(
         placements=plan.placements,

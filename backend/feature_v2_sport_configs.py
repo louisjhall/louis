@@ -152,15 +152,33 @@ class QuotaRule:
 
 @dataclass(frozen=True)
 class PhaseSpec:
-    """A single training phase within a goal's periodisation."""
+    """A single training phase within a goal's periodisation.
+
+    Weekly cap semantics (as of Engine V2 correctness patch):
+      * hard_days_per_week_max      → weeks-scoped cap on ENDURANCE hard load
+                                      (run/bike/swim tempo/threshold/intervals +
+                                      long/race-pace/brick sessions).
+                                      Strength does NOT count against this.
+      * key_days_per_week_max       → cap on sessions with intensity_class=KEY
+                                      (long_run, race_pace, brick_key). Strength
+                                      is normally NOT KEY unless the goal is
+                                      pure strength.
+      * strength_days_per_week_max  → dedicated weekly cap for strength sessions
+                                      (strength_full_body / _upper / _lower / _push /
+                                      _pull / _hypertrophy / _power). Defaults
+                                      to 2 which is standard for endurance
+                                      goals; pure-strength goals override.
+      * consecutive_training_days_max → hard ceiling on training-day streaks.
+    """
     phase_kind: str                                  # foundation, aerobic_base, build, ...
     weeks_target: int                                # how long by default
     weeks_min: int                                   # can compress to
     weeks_max: int                                   # can stretch to
     quotas: tuple[QuotaRule, ...]
-    hard_days_per_week_max: int                      # global hard-day cap
-    key_days_per_week_max: int                       # global KEY-day cap (LR, race pace, threshold)
+    hard_days_per_week_max: int                      # ENDURANCE hard cap
+    key_days_per_week_max: int                       # KEY session cap
     consecutive_training_days_max: int
+    strength_days_per_week_max: int = 2              # SEPARATE strength cap
     concurrent_notes: str = ""                       # e.g. "avoid heavy legs day before LR"
 
 
@@ -1210,6 +1228,122 @@ def session_recovery_hours(kind: str, goal_key: str, default: int = 24) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Load bucket + classification helpers (Engine V2 correctness patch)
+# ---------------------------------------------------------------------------
+# The scheduler needs to distinguish endurance-hard load from strength load —
+# they are different physiological systems and count against SEPARATE weekly
+# caps. `session_load_bucket` is the single source of truth for that.
+#
+# Buckets:
+#   "endurance_key"   → KEY endurance (long_run, race_pace, marathon_pace,
+#                        bike_long, brick_bike_run)
+#   "endurance_hard"  → HARD endurance (tempo, threshold, intervals, vo2)
+#   "strength_hard"   → HARD strength (full_body, upper, lower, push, pull,
+#                        hypertrophy, power) — pure-strength goals may treat
+#                        these as their KEY sessions.
+#   "moderate"        → easy runs, easy bike, easy swim, strength maintenance
+#                        / support, strides
+#   "easy"            → mobility, activation
+#   "recovery"        → recovery, travel_recovery, run_recovery, bike_recovery,
+#                        swim_recovery
+#   "rest"            → rest / off
+LOAD_BUCKET_ENDURANCE_KEY   = "endurance_key"
+LOAD_BUCKET_ENDURANCE_HARD  = "endurance_hard"
+LOAD_BUCKET_STRENGTH_HARD   = "strength_hard"
+LOAD_BUCKET_MODERATE        = "moderate"
+LOAD_BUCKET_EASY            = "easy"
+LOAD_BUCKET_RECOVERY        = "recovery"
+LOAD_BUCKET_REST            = "rest"
+
+
+def session_load_bucket(kind: str) -> str:
+    """Classify a session kind by load bucket for weekly-cap accounting."""
+    meta = session_kind_meta(kind)
+    modality = meta.get("modality")
+    intensity = meta.get("intensity_class")
+    hard = bool(meta.get("hard"))
+    if kind == "rest" or intensity == INTENSITY_REST:
+        return LOAD_BUCKET_REST
+    if modality == MODALITY_STRENGTH:
+        return LOAD_BUCKET_STRENGTH_HARD if hard else LOAD_BUCKET_MODERATE
+    if modality == MODALITY_BRICK:
+        # bricks are endurance load
+        return LOAD_BUCKET_ENDURANCE_KEY if intensity == INTENSITY_KEY else LOAD_BUCKET_ENDURANCE_HARD
+    if intensity == INTENSITY_KEY:
+        return LOAD_BUCKET_ENDURANCE_KEY
+    if hard:
+        return LOAD_BUCKET_ENDURANCE_HARD
+    if intensity == INTENSITY_RECOVERY:
+        return LOAD_BUCKET_RECOVERY
+    if modality in (MODALITY_MOBILITY, MODALITY_ACTIVATION):
+        return LOAD_BUCKET_EASY
+    return LOAD_BUCKET_MODERATE
+
+
+def is_strength_session(kind: str) -> bool:
+    """True if the session is strength (bucket=strength_hard OR modality strength)."""
+    meta = session_kind_meta(kind)
+    return meta.get("modality") == MODALITY_STRENGTH
+
+
+def is_endurance_hard(kind: str) -> bool:
+    """True if the session counts against the endurance hard-day cap."""
+    return session_load_bucket(kind) in (
+        LOAD_BUCKET_ENDURANCE_KEY, LOAD_BUCKET_ENDURANCE_HARD,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Daily time cap by day type (single source of truth)
+# ---------------------------------------------------------------------------
+# Effective daily training time depends on day type + client profile. Layers:
+#   * Roster context (feature_v2_roster_context) already computes an
+#     `available_time_min` per day.
+#   * The client profile may set `max_home_minutes`, `time_layover_min`,
+#     `time_home_min` — these CLIP the day's available time by day_type.
+#   * The scheduler then treats "daily total prescribed minutes" as a hard
+#     ceiling against this clipped value.
+#
+# This helper gives a lower-bound daily cap when only the day_type + profile
+# are known (used by both the scheduler and validators).
+_DAY_TYPE_HOME_LIKE = {
+    "home_day", "home", "off", "rest", "day_off",
+    "leave", "vacation", "annual_leave", "sick", "sickness", "sick_leave",
+}
+_DAY_TYPE_LAYOVER_LIKE = {
+    "layover_arrival", "layover_departure", "layover_full", "layover",
+    "hotel", "turnaround", "standby",
+}
+
+
+def profile_daily_cap_for_day_type(profile: dict, day_type: str,
+                                    default_cap: int = 120) -> int:
+    """Return the client's daily training minute cap for the given day_type.
+
+    Uses profile.max_home_minutes / profile.time_home_min for home-like days
+    and profile.time_layover_min for layover-like days. Returns `default_cap`
+    if nothing applies.
+    """
+    prof = profile or {}
+    dt = (day_type or "").lower()
+    if dt in _DAY_TYPE_HOME_LIKE:
+        v = prof.get("max_home_minutes") or prof.get("time_home_min")
+        if v:
+            try:
+                return int(v)
+            except Exception:
+                return default_cap
+    if dt in _DAY_TYPE_LAYOVER_LIKE:
+        v = prof.get("time_layover_min")
+        if v:
+            try:
+                return int(v)
+            except Exception:
+                return default_cap
+    return default_cap
+
+
+# ---------------------------------------------------------------------------
 # Invariant checks — run on import to catch config-authoring mistakes early
 # ---------------------------------------------------------------------------
 
@@ -1257,6 +1391,11 @@ __all__ = [
     "resolve_phase_plan", "required_exposures_for_phase",
     "session_kind_meta", "is_hard_session", "is_key_intensity",
     "session_family", "is_forbidden_sequence", "session_recovery_hours",
+    "session_load_bucket", "is_strength_session", "is_endurance_hard",
+    "profile_daily_cap_for_day_type",
+    "LOAD_BUCKET_ENDURANCE_KEY", "LOAD_BUCKET_ENDURANCE_HARD",
+    "LOAD_BUCKET_STRENGTH_HARD", "LOAD_BUCKET_MODERATE",
+    "LOAD_BUCKET_EASY", "LOAD_BUCKET_RECOVERY", "LOAD_BUCKET_REST",
     "MODALITY_RUN", "MODALITY_CYCLE", "MODALITY_SWIM", "MODALITY_STRENGTH",
     "MODALITY_MOBILITY", "MODALITY_RECOVERY", "MODALITY_ACTIVATION", "MODALITY_BRICK",
     "INTENSITY_KEY", "INTENSITY_HARD", "INTENSITY_MODERATE", "INTENSITY_EASY",

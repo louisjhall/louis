@@ -312,12 +312,25 @@ async def engine_v2_kickoff(
             if key in _wd:
                 preferred_weekdays.add(_wd[key])
 
+    # Build the per-date daily time-cap map — profile clip AND roster
+    # available_time_min act as ceiling for TOTAL daily training minutes.
+    from feature_v2_sport_configs import profile_daily_cap_for_day_type
+    _dt_by_date = {d["date"]: (d.get("day_type") or "") for d in sd_rows}
+    daily_time_cap_by_date: dict[_dt.date, int] = {}
+    for ctx_day in day_contexts:
+        dt = _dt_by_date.get(ctx_day.date.isoformat(), ctx_day.day_type)
+        prof_cap = profile_daily_cap_for_day_type(
+            profile, dt, default_cap=ctx_day.available_time_min,
+        )
+        daily_time_cap_by_date[ctx_day.date] = min(prof_cap, ctx_day.available_time_min)
+
     schedule = schedule_demand(
         demand=demand,
         day_contexts=day_contexts,
         goal=goal,
         phase=current_phase,
         preferred_weekdays=preferred_weekdays,
+        daily_time_cap_by_date=daily_time_cap_by_date,
     )
 
     # ---- 7. HOW — build session specs per placement -------------------
@@ -370,7 +383,14 @@ async def engine_v2_kickoff(
 
     # ---- 9. Persist Draft V2 -------------------------------------------
     draft_id = new_id()
-    draft_status = "ready_for_review" if prog_val.ok else "validation_failed"
+    # Draft status semantics:
+    #   ready_for_review   → no errors, may still have warnings
+    #   needs_review       → one or more validator errors (unfilled IMPORTANT,
+    #                         cap breaches, exposure numbering, etc.)
+    if prog_val.ok:
+        draft_status = "ready_for_review"
+    else:
+        draft_status = "needs_review"
 
     await db.plan_drafts_v2.insert_one({
         "id": draft_id,
@@ -419,7 +439,12 @@ async def engine_v2_kickoff(
                 for e in demand.required_exposures
             ],
             "frequency_caps": demand.frequency_caps,
+            "frequency_derivation": demand.frequency_derivation,
+            "dna_gaps": demand.dna_gaps,
             "notes": demand.notes,
+        },
+        "daily_time_caps_min": {
+            d.isoformat(): v for d, v in daily_time_cap_by_date.items()
         },
         "placements": [
             {
@@ -489,6 +514,8 @@ async def engine_v2_kickoff(
             "validation_errors": sum(1 for i in prog_val.issues if i.severity == "error"),
             "validation_warnings": sum(1 for i in prog_val.issues if i.severity == "warning"),
         },
+        "frequency_derivation": demand.frequency_derivation,
+        "dna_gaps": demand.dna_gaps,
         "quota_report": prog_val.quota_report,
         "validation_summary": [
             {"code": i.code, "severity": i.severity, "message": i.message}

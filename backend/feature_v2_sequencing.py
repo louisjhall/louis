@@ -28,7 +28,11 @@ from feature_v2_sport_configs import (
     GoalConfig, PhaseSpec, QuotaRule,
     is_hard_session, is_key_intensity, session_family,
     is_forbidden_sequence, session_recovery_hours,
-    session_kind_meta,
+    session_kind_meta, session_load_bucket, is_strength_session,
+    is_endurance_hard,
+    LOAD_BUCKET_STRENGTH_HARD, LOAD_BUCKET_ENDURANCE_HARD,
+    LOAD_BUCKET_ENDURANCE_KEY, LOAD_BUCKET_REST,
+    LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY, LOAD_BUCKET_MODERATE,
 )
 
 
@@ -74,12 +78,27 @@ class PlacementPlan:
         return min(cands, key=lambda p: p.date) if cands else None
 
     def hard_days_in_week(self, iso_year: int, iso_week: int) -> int:
+        """Count ENDURANCE hard placements in a given ISO week.
+
+        Strength placements do NOT contribute here — they count against the
+        dedicated `strength_days_per_week_max` bucket (see
+        `strength_days_in_week`).
+        """
         n = 0
         for p in self.placements:
             iso = p.date.isocalendar()
-            if iso[0] == iso_year and iso[1] == iso_week and is_hard_session(p.kind):
+            if iso[0] == iso_year and iso[1] == iso_week and is_endurance_hard(p.kind):
                 n += 1
         return n
+
+    def strength_days_in_week(self, iso_year: int, iso_week: int) -> int:
+        """Count distinct DATES with a strength placement in the ISO week."""
+        dates = set()
+        for p in self.placements:
+            iso = p.date.isocalendar()
+            if iso[0] == iso_year and iso[1] == iso_week and is_strength_session(p.kind):
+                dates.add(p.date)
+        return len(dates)
 
     def key_days_in_week(self, iso_year: int, iso_week: int) -> int:
         n = 0
@@ -114,6 +133,18 @@ class PlacementPlan:
                 n = max(n, p.exposure_number)
         return n + 1
 
+    def scheduled_minutes_on(self, d: _dt.date) -> int:
+        """Sum of `target_duration_min` across placements on `d`."""
+        return sum(int(p.target_duration_min or 0) for p in self.placements if p.date == d)
+
+    def distinct_training_dates_in_week(self, iso_year: int, iso_week: int) -> int:
+        dates = set()
+        for p in self.placements:
+            iso = p.date.isocalendar()
+            if iso[0] == iso_year and iso[1] == iso_week:
+                dates.add(p.date)
+        return len(dates)
+
 
 @dataclass
 class PlacementCheck:
@@ -141,19 +172,33 @@ def validate_placement(
     day_ctx_burden: int,
     day_ctx_opportunity: int,
     priority: str,
+    target_duration_min: int = 0,
+    daily_time_cap_min: Optional[int] = None,
     min_opportunity_by_priority: Optional[dict[str, int]] = None,
+    allow_support_stacking: bool = True,
 ) -> PlacementCheck:
     """Would placing `kind` on `date` violate any of:
-       * hard-day cap for the ISO week
+       * ENDURANCE hard-day cap for the ISO week
+       * STRENGTH days cap for the ISO week (separate bucket)
        * key-day cap for the ISO week
        * min recovery hours for this session family
-       * forbidden sequence with the previous/next placement
+       * forbidden sequence with the previous/next placement (goal-configured)
        * consecutive training days cap
        * opportunity floor for this priority
-       * duplicate placement on same date (unless mobility + activation etc.)
+       * duplicate placement on same date (same family)
+       * TOTAL DAILY MINUTES exceeding daily_time_cap_min
+       * daily "hardness" (two hard sessions on the same day)
+    Support (mobility / activation / recovery) sessions MAY stack on the same
+    day as another session if:
+        * allow_support_stacking is True
+        * the combined day minutes stay within daily_time_cap_min
+        * they are NOT the same family
     """
     meta = session_kind_meta(kind)
-    hard = bool(meta.get("hard"))
+    bucket = session_load_bucket(kind)
+    endurance_hard = bucket in (LOAD_BUCKET_ENDURANCE_KEY, LOAD_BUCKET_ENDURANCE_HARD)
+    strength_hard = bucket == LOAD_BUCKET_STRENGTH_HARD
+    is_support = bucket in (LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY)  # mobility/activation/recovery
     key = is_key_intensity(kind)
     family = session_family(kind)
 
@@ -162,19 +207,37 @@ def validate_placement(
         "KEY": 55, "IMPORTANT": 35, "SUPPORTING": 25, "OPTIONAL": 20,
     }
     floor = floors.get(priority.upper(), 25)
-    if day_ctx_opportunity < floor and kind != "rest":
-        return PlacementCheck(
-            False, "opportunity_below_floor",
-            f"Opportunity {day_ctx_opportunity} < floor {floor} for {priority}",
-        )
+    # Support sessions stacking on a day that ALREADY has a placement do NOT
+    # need to clear the day's opportunity floor — the anchor session already did.
+    same_day_existing = plan.by_date(date)
+    stacking_on_existing = bool(same_day_existing) and is_support and allow_support_stacking
+    if not stacking_on_existing:
+        if day_ctx_opportunity < floor and kind != "rest":
+            return PlacementCheck(
+                False, "opportunity_below_floor",
+                f"Opportunity {day_ctx_opportunity} < floor {floor} for {priority}",
+            )
 
-    # ---- Weekly caps
+    # ---- Weekly caps ------------------------------------------------------
     wk = week_key(date)
-    if hard:
+    if endurance_hard:
         if plan.hard_days_in_week(*wk) >= phase.hard_days_per_week_max:
             return PlacementCheck(
-                False, "weekly_hard_cap",
-                f"Week already has {phase.hard_days_per_week_max} hard days",
+                False, "weekly_endurance_hard_cap",
+                f"Week already has {phase.hard_days_per_week_max} endurance hard days",
+            )
+    if strength_hard:
+        # Check strength cap only if THIS date is not already a strength day
+        # (multiple strength placements on same date is disallowed by same-day
+        # family conflict below anyway, but this keeps the count clean).
+        strength_days = plan.strength_days_in_week(*wk)
+        already_strength_today = any(
+            is_strength_session(p.kind) for p in same_day_existing
+        )
+        if not already_strength_today and strength_days >= phase.strength_days_per_week_max:
+            return PlacementCheck(
+                False, "weekly_strength_cap",
+                f"Week already has {phase.strength_days_per_week_max} strength days",
             )
     if key:
         if plan.key_days_in_week(*wk) >= phase.key_days_per_week_max:
@@ -183,9 +246,8 @@ def validate_placement(
                 f"Week already has {phase.key_days_per_week_max} key day(s)",
             )
 
-    # ---- Same-day conflict — reject if another placement of the same family
-    same_day = plan.by_date(date)
-    for p in same_day:
+    # ---- Same-day conflicts ----------------------------------------------
+    for p in same_day_existing:
         if session_family(p.kind) == family:
             return PlacementCheck(
                 False, "same_day_family_conflict",
@@ -197,14 +259,53 @@ def validate_placement(
                 False, "same_day_two_keys",
                 f"KEY {p.kind} already placed on {date}",
             )
-        # Two HARD sessions on the same day — refuse
-        if hard and is_hard_session(p.kind):
+        # Two ENDURANCE-HARD sessions on the same day — refuse
+        if endurance_hard and is_endurance_hard(p.kind):
             return PlacementCheck(
-                False, "same_day_two_hards",
-                f"HARD {p.kind} already placed on {date}",
+                False, "same_day_two_endurance_hards",
+                f"Endurance hard {p.kind} already placed on {date}",
+            )
+        # Endurance-hard + strength-hard same day is aggressive — refuse unless
+        # phase explicitly allows it via concurrent_notes containing "same_day_ok"
+        if endurance_hard and is_strength_session(p.kind):
+            return PlacementCheck(
+                False, "same_day_endurance_and_strength",
+                f"Strength {p.kind} already placed on {date}",
+            )
+        if strength_hard and is_endurance_hard(p.kind):
+            return PlacementCheck(
+                False, "same_day_endurance_and_strength",
+                f"Endurance hard {p.kind} already placed on {date}",
+            )
+        # Two strength-hard sessions same day → refuse
+        if strength_hard and is_strength_session(p.kind):
+            return PlacementCheck(
+                False, "same_day_two_strengths",
+                f"Strength {p.kind} already placed on {date}",
+            )
+        # Non-support session stacking on top of another non-support is heavy.
+        # Only support (mobility/activation/recovery) may stack alongside.
+        if not is_support and bucket == LOAD_BUCKET_MODERATE:
+            # e.g. a run_easy stacking with another run_easy family is already
+            # blocked above; but stacking a run_easy on a day that already has
+            # a KEY or HARD anchor is allowed provided daily minutes fit.
+            pass
+
+    # ---- Daily total minutes cap ------------------------------------------
+    if daily_time_cap_min is not None and kind != "rest":
+        already = plan.scheduled_minutes_on(date)
+        prospective = int(target_duration_min or 0)
+        if prospective <= 0:
+            # If target unknown, use a conservative estimate: 30 min for support,
+            # else the day's cap itself so it fails-safe when cap is tight.
+            prospective = 30 if is_support else max(30, int(daily_time_cap_min * 0.75))
+        if already + prospective > int(daily_time_cap_min):
+            return PlacementCheck(
+                False, "daily_time_cap_exceeded",
+                f"Daily minutes would be {already + prospective} > cap {daily_time_cap_min}",
             )
 
-    # ---- Min recovery from same family
+    # ---- Min recovery from same family ------------------------------------
     min_rec = session_recovery_hours(kind, goal.key, default=24)
     last = plan.last_of_family(family, before=date)
     if last:
@@ -214,7 +315,6 @@ def validate_placement(
                 False, "insufficient_family_recovery",
                 f"{gap_h}h since previous {family} < required {min_rec}h",
             )
-    # Also check the NEXT of family (in case we're placing between two)
     nxt = plan.next_of_family(family, after=date)
     if nxt:
         gap_h = (nxt.date - date).days * 24
@@ -224,27 +324,24 @@ def validate_placement(
                 f"Next {family} in {gap_h}h < required {min_rec}h",
             )
 
-    # ---- Forbidden sequences (D-1 and D+1)
+    # ---- Forbidden sequences (D-1 and D+1) --------------------------------
     for offset in (-1, +1):
         neighbour_date = date + _dt.timedelta(days=offset)
         for p in plan.by_date(neighbour_date):
             if offset == -1:
-                # p happened yesterday → check (p.kind → kind)
                 if is_forbidden_sequence(p.kind, kind, goal.key):
                     return PlacementCheck(
                         False, "forbidden_sequence",
                         f"{p.kind} on {p.date} → {kind} on {date} forbidden",
                     )
             else:
-                # p tomorrow → check (kind → p.kind)
                 if is_forbidden_sequence(kind, p.kind, goal.key):
                     return PlacementCheck(
                         False, "forbidden_sequence",
                         f"{kind} on {date} → {p.kind} on {p.date} forbidden",
                     )
 
-    # ---- Two-day-out KEY spacing safeguard
-    # If placing a KEY, ensure no KEY within 48h either side (regardless of family).
+    # ---- Two-day-out KEY spacing safeguard --------------------------------
     if key:
         for offset in (-2, -1, +1, +2):
             neighbour = date + _dt.timedelta(days=offset)
@@ -257,7 +354,7 @@ def validate_placement(
                             f"KEY {p.kind} on {p.date} within 48h",
                         )
 
-    # ---- Consecutive-training-days cap
+    # ---- Consecutive-training-days cap ------------------------------------
     if plan.consecutive_training_days_around(date) > phase.consecutive_training_days_max:
         return PlacementCheck(
             False, "consecutive_training_days_cap",

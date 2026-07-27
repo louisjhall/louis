@@ -334,12 +334,25 @@ function HistoryPanel({ clientId }: { clientId: string }) {
 
 function GoalsPanel({ clientId }: { clientId: string }) {
   const [detail, setDetail] = useState<any>(null);
+  const [dna, setDna] = useState<any>(null);
+  const [event, setEvent] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      setDetail(await api<any>(`/coach/clients/${clientId}`));
+      // Coach client detail (profile snapshot) + explicit DNA/events endpoints.
+      // Everything the Goals panel shows must come from the client's DNA —
+      // NOT from a coach-set V2 override.
+      const [d, ev] = await Promise.all([
+        api<any>(`/coach/clients/${clientId}`),
+        api<any>(`/coach/clients/${clientId}/event`).catch(() => null),
+      ]);
+      setDetail(d);
+      // The DNA record itself (assessments answers or dedicated dna doc)
+      // — profile is a projection; assessments hold the raw source of truth.
+      setDna(d?.client?.profile || {});
+      setEvent(ev?.event || d?.event || null);
     } catch (e: any) { setErr(e?.message || String(e)); }
     finally { setLoading(false); }
   }, [clientId]);
@@ -348,39 +361,60 @@ function GoalsPanel({ clientId }: { clientId: string }) {
   if (loading) return <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>;
   if (err)     return <View style={styles.center}><Text style={styles.err}>{err}</Text></View>;
 
-  const c = detail?.client || {};
-  const ev = detail?.event;
-  const profile = c.profile || {};
-  const goalTaxonomy = profile.primary_goal || profile.goal || c.primary_goal || null;
-  const notes = profile.goal_notes || c.goal_notes;
+  const profile = dna || {};
+
+  // Resolve the primary goal from DNA — same precedence as the V2 kickoff
+  // engine: profile.main_goal → profile.primary_goal_id → profile.primary_goal
+  // → profile.goal → profile.event_type_pref → event.event_type
+  const goalRaw =
+    profile.main_goal ||
+    profile.primary_goal_id ||
+    profile.primary_goal ||
+    profile.goal ||
+    profile.event_type_pref ||
+    event?.event_type ||
+    null;
+  const goalLabel = goalRaw ? humanise(String(goalRaw)) : null;
+  const goalNotes = profile.goal_notes || profile.main_goal_notes || detail?.client?.goal_notes;
 
   return (
     <ScrollView contentContainerStyle={styles.body} testID="v2-goals-panel">
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>PRIMARY GOAL</Text>
-        {goalTaxonomy ? (
-          <Text style={styles.pillStatus}>{humanise(String(goalTaxonomy))}</Text>
+        <Text style={styles.sectionTitle}>PRIMARY GOAL (FROM DNA)</Text>
+        {goalLabel ? (
+          <>
+            <Text style={styles.pillStatus}>{goalLabel}</Text>
+            <Text style={styles.metricLabel}>
+              source: {profile.main_goal ? "profile.main_goal" :
+                       profile.primary_goal_id ? "profile.primary_goal_id" :
+                       profile.primary_goal ? "profile.primary_goal" :
+                       profile.event_type_pref ? "profile.event_type_pref" :
+                       "events collection"}
+            </Text>
+          </>
         ) : (
-          <Text style={styles.notes}>No primary goal captured yet.</Text>
+          <Text style={styles.notes}>No primary goal captured in DNA yet. Ask the client to complete onboarding.</Text>
         )}
-        {notes && <Text style={styles.notes}>{notes}</Text>}
+        {goalNotes && <Text style={styles.notes}>{goalNotes}</Text>}
       </View>
 
-      {ev ? (
+      {event ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>TARGET EVENT</Text>
-          <Text style={styles.pillStatus}>{ev.title || ev.name || "Event"}</Text>
+          <Text style={styles.sectionTitle}>TARGET EVENT (FROM DNA)</Text>
+          <Text style={styles.pillStatus}>{humanise(event.event_type || event.title || event.name || "Event")}</Text>
           <Text style={styles.notes}>
-            {ev.event_date || "?"}
-            {ev.phase_info?.phase ? ` · ${humanise(ev.phase_info.phase)}` : ""}
-            {typeof ev.phase_info?.weeks_out === "number" ? ` · ${ev.phase_info.weeks_out}w out` : ""}
+            {event.event_date || "?"}
+            {event.phase_info?.phase ? ` · ${humanise(event.phase_info.phase)}` : ""}
+            {typeof event.phase_info?.weeks_out === "number" ? ` · ${event.phase_info.weeks_out}w out` : ""}
+            {event.priority ? ` · Priority ${event.priority}` : ""}
           </Text>
-          {ev.notes && <Text style={styles.notes}>{ev.notes}</Text>}
+          {event.distance && <Text style={styles.notes}>Distance: {event.distance}</Text>}
+          {event.notes && <Text style={styles.notes}>{event.notes}</Text>}
         </View>
       ) : (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>TARGET EVENT</Text>
-          <Text style={styles.notes}>No active target event.</Text>
+          <Text style={styles.sectionTitle}>TARGET EVENT (FROM DNA)</Text>
+          <Text style={styles.notes}>No active target event in DNA.</Text>
         </View>
       )}
 
@@ -388,11 +422,13 @@ function GoalsPanel({ clientId }: { clientId: string }) {
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>TRAINING DNA</Text>
         <DnaRow label="Progression" val={profile.progression_speed} />
-        <DnaRow label="Days / week" val={profile.days_per_week} />
-        <DnaRow label="Session length" val={profile.preferred_session_length} />
-        <DnaRow label="Equipment" val={(profile.equipment || []).slice(0, 6).join(", ")} />
-        <DnaRow label="Injuries" val={(profile.injuries || []).join(", ")} />
-        <DnaRow label="Constraints" val={(profile.constraints || []).join(", ")} />
+        <DnaRow label="Days / week" val={profile.days_per_week || profile.training_days_per_week} />
+        <DnaRow label="Session length" val={profile.preferred_session_length || profile.max_home_minutes} />
+        <DnaRow label="Home base" val={profile.home_base} />
+        <DnaRow label="Airline" val={profile.airline} />
+        <DnaRow label="Equipment" val={_toList(profile.equipment || profile.home_equipment).slice(0, 6).join(", ")} />
+        <DnaRow label="Injuries" val={_toList(profile.injuries).join(", ")} />
+        <DnaRow label="Constraints" val={_toList(profile.constraints).join(", ")} />
       </View>
     </ScrollView>
   );
@@ -421,6 +457,24 @@ function fmtDateTime(iso?: string): string {
 
 function humanise(s: string): string {
   return String(s || "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Defensive normaliser — coerces DNA fields that may be array, string,
+// comma-separated string, null, or an object with a `.values` array into
+// a flat string array. Prevents "join is not a function" crashes.
+function _toList(v: any): string[] {
+  if (v == null) return [];
+  if (Array.isArray(v)) return v.map(String).filter(Boolean);
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (!t || /^(none|n\/a|no|null)$/i.test(t)) return [];
+    return t.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+  }
+  if (typeof v === "object") {
+    if (Array.isArray((v as any).values)) return (v as any).values.map(String);
+    return Object.entries(v).filter(([, x]) => x).map(([k]) => k);
+  }
+  return [String(v)];
 }
 
 /* ---------------------------------------------------------------- STYLES */

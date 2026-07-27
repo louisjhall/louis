@@ -357,6 +357,51 @@ async def coach_pending_confirm(
 
     async def _worker():
         heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
+
+        # ---- Engine V2 branch --------------------------------------------
+        # For clients with engine_v2=True, skip the legacy V1 generation
+        # entirely and run the Engine V2 kickoff instead. The Engine V2
+        # Draft screen reads plan_drafts_v2 — it does NOT fall back to
+        # workout_assignments.
+        v2_flags = ((client.get("profile") or {}).get("v2_flags") or {})
+        if v2_flags.get("engine_v2"):
+            try:
+                from feature_v2_engine_v2_kickoff import (
+                    engine_v2_kickoff, EngineV2KickoffBody,
+                )
+                res = await engine_v2_kickoff(
+                    client_id=client_id,
+                    body=EngineV2KickoffBody(planning_window_weeks=4),
+                    coach={"id": coach["id"], "email": coach.get("email")},
+                )
+                logger.info(
+                    "coach-confirm: Engine V2 kickoff for %s → draft=%s status=%s "
+                    "placements=%s unfilled=%s",
+                    client_id, res.get("draft_id"), res.get("status"),
+                    (res.get("counts") or {}).get("placements"),
+                    (res.get("counts") or {}).get("unfilled"),
+                )
+                await _set_job(
+                    job_id,
+                    status="complete", stage="complete", progress=100,
+                    message="Engine V2 draft generated",
+                    completed_at=now_iso(),
+                    engine="v2",
+                    draft_id=res.get("draft_id"),
+                    draft_status=res.get("status"),
+                )
+            except Exception as e:
+                logger.exception("coach-confirm: Engine V2 kickoff failed: %s", e)
+                await _set_job(
+                    job_id, status="needs_review", stage="generating", progress=95,
+                    error=f"Engine V2 kickoff failed: {e}",
+                    message="Engine V2 generation failed — coach review required",
+                )
+            finally:
+                heartbeat_task.cancel()
+            return
+
+        # ---- Legacy V1 branch (unchanged behaviour for V1 clients) --------
         programme_ctx = None
         try:
             from feature_programme_quality import programme_context_for_llm

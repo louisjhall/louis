@@ -1236,6 +1236,47 @@ async def roster_pending_confirm(
 
     async def _worker():
         heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
+
+        # ---- Engine V2 branch --------------------------------------------
+        # V2-flagged clients bypass legacy V1 generation entirely — Engine V2
+        # is the source of truth for their next Draft.
+        v2_flags = ((user.get("profile") or {}).get("v2_flags") or {})
+        if v2_flags.get("engine_v2"):
+            try:
+                from feature_v2_engine_v2_kickoff import (
+                    engine_v2_kickoff, EngineV2KickoffBody,
+                )
+                # No coach dep in the client flow — use a synthetic actor
+                res = await engine_v2_kickoff(
+                    client_id=user["id"],
+                    body=EngineV2KickoffBody(planning_window_weeks=4),
+                    coach={"id": "client_self_confirm", "email": user.get("email")},
+                )
+                logger.info(
+                    "confirm-build: Engine V2 kickoff for %s → draft=%s status=%s",
+                    user["id"], res.get("draft_id"), res.get("status"),
+                )
+                await _set_job(
+                    job_id,
+                    status="complete", stage="complete", progress=100,
+                    message="Engine V2 draft generated",
+                    completed_at=now_iso(),
+                    engine="v2",
+                    draft_id=res.get("draft_id"),
+                    draft_status=res.get("status"),
+                )
+            except Exception as e:
+                logger.exception("confirm-build: Engine V2 kickoff failed: %s", e)
+                await _set_job(
+                    job_id, status="needs_review", stage="generating", progress=95,
+                    error=f"Engine V2 kickoff failed: {e}",
+                    message="Engine V2 generation failed — coach review required",
+                )
+            finally:
+                heartbeat_task.cancel()
+            return
+
+        # ---- Legacy V1 branch (unchanged behaviour for V1 clients) --------
         # Programme quality context — reused across generation, validation, persistence.
         programme_ctx = None
         try:

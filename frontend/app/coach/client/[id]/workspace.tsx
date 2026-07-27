@@ -20,6 +20,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { CommandBar } from "@/src/components/CommandBar";
 
 type DayRow = {
   date: string;
@@ -227,6 +228,16 @@ export default function CoachWorkspaceScreen() {
           </View>
         )}
       </View>
+
+      {/* Command bar — works for both V1 and V2 clients (directives + notes) */}
+      {data && (
+        <CommandBar
+          clientId={String(clientId)}
+          month={month}
+          draftId={data?.programme?.draft_id}
+          onApplied={loadMonth}
+        />
+      )}
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>

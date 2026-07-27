@@ -1,7 +1,7 @@
 # Coach Dashboard V2 — Implementation Progress
 
-**Version:** Iter 111 · 2026-07-27
-**Status:** Iteration 1 complete · Iteration 2 & 3 pending
+**Version:** Iter 112 · 2026-07-27
+**Status:** Iteration 1 complete · Iteration 2 in progress (Command Bar shipped)
 **Feature flag:** `users.profile.v2_flags.coach_dashboard_v2_enabled` (per-coach)
 
 Companion documents:
@@ -96,13 +96,38 @@ Verified in browser: coach opts in, lands on V2 Home, sees 4 clients, filters + 
 Per the brief §70, deferred with acknowledgement:
 
 ### Iteration 2 (planned next)
-- Command bar (natural-language → structured ChangeSet proposal — §31, §32)
+- ~~Command bar (natural-language → structured ChangeSet proposal — §31, §32)~~ ✅ SHIPPED Iter 112
 - Structured directive editor (Add Directive flow — §33, §34, §35)
 - Programme summary panel (expandable — §20)
 - History timeline (audit style — §43)
 - Previous-performance context in workout drawer (§18)
 - Signal-to-action narrative in the workspace (§37, §38)
 - Progress bar for async generation (Roster uploaded → parsed → schedule → generating → ready — §24, §25)
+
+### Command Bar (shipped Iter 112)
+
+**Backend** (`feature_v2_coach_command_bar.py`, ~250 LOC):
+- `POST /api/v2/coach/clients/{cid}/command-bar/parse` — free text + workspace context → Claude Sonnet 4.5 → structured proposals JSON (never mutates)
+- `POST /api/v2/coach/clients/{cid}/command-bar/apply` — accepted proposals become `coach_directives` or `change_sets` with `triggered_by=ai_command_bar`
+- `GET  /api/v2/coach/clients/{cid}/command-bar/history` — coach's past prompts
+- LLM prompt is grounded on: coach voice only (never "AI"), 6-proposal cap, only assignments actually in the current month
+- Every apply writes a DecisionRecord with `rule_or_prompt.id="command_bar"`
+- Emits metrics `command_bar_parsed` + `command_bar_applied`
+
+**Frontend** (`src/components/CommandBar.tsx`, ~200 LOC):
+- Collapsed pill at top of workspace: "Ask CrewFit to adjust this plan…"
+- Expands to multi-line input + Propose button + 5 example chips
+- Proposal preview list with per-item checkbox + icon per kind
+- "Apply to Draft" / "Cancel" — never touches LIVE
+- Auto-refreshes the workspace after apply
+- Works for both V1 and V2 clients (directive/note proposals valid for V1)
+
+**Verified live**:
+- Parse: `"No running until Sunday because his knee is sore."` → Claude returned `add_directive(avoid_movement, until_changed, target_date=2026-07-06)` — screenshot captured
+- Apply: created `coach_directives` row with `source=command_bar` + DecisionRecord in `decision_records`
+- Pytest `test_v2_command_bar.py` — apply flow + flag gate — PASS
+
+
 
 ### Iteration 3 (planned later)
 - Cross-client portfolio scorecard (§23 of gap map)

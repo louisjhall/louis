@@ -3107,3 +3107,82 @@ agent_communication:
            on actual DB state (no reliance on `jobs.kind=draft_build`).
       Also fixed AddClient double-stringify bug from earlier session.
 
+
+##====================================================================
+## V2 Kickoff — Goal-aware rewrite (marathon detection + rationale)
+##====================================================================
+
+backend:
+  - task: "V2 kickoff rewritten to detect real goal + event from client DNA"
+    implemented: true
+    working: true
+    file: "backend/feature_v2_coach_kickoff.py (rewritten)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Original kickoff hardcoded 'general.longevity' regardless of
+          what the client had actually told us. Rewrite:
+            1. Resolves goal from client.profile.primary_goal_id /
+               profile.main_goal_key / profile.event_type_pref (with
+               GOAL_ALIASES to map "marathon" → "running.marathon" etc.)
+            2. Reads the next active target event from db.events
+            3. Sets programme end_date to event_date when present
+            4. Chooses phase blueprint by taxonomy family:
+                 running    → foundation → aerobic_base → build →
+                              specific_prep → taper → race_week
+                 triathlon  → similar with brick blocks
+                 strength   → foundation → hypertrophy → strength → peak
+                 body_comp  → foundation → hypertrophy → strength →
+                              recovery
+                 general    → foundation → maintenance
+            5. Distributes phase weeks proportionally to the actual
+               prep window (no more hardcoded 8w)
+            6. Writes a FULL rationale decision_record so the coach can
+               read exactly why the plan is built the way it is
+            7. Returns rich response: goal source, event details,
+               weeks_out, phase_plan with per-phase rationale, and the
+               human-readable rationale string
+          Verified live on Pietro Sangermano (client with marathon
+          on 2027-01-17): kickoff now produces running.marathon /
+          25-week prep / 6 phases (2+8+8+4+2+1) / 15 objectives /
+          8 assignments in first 8w. Full rationale written to
+          decision_records:
+          "Goal=running.marathon (source=profile.primary_goal_id);
+           target event: marathon on 2027-01-17; window=25w;
+           phases: foundation (2w) → aerobic_base (8w) → build (8w) →
+           specific_prep (4w) → taper (2w) → race_week (1w);
+           client cap: 5 sessions/wk, equipment=['dumbbells', 'treadmill'];
+           P3→15 objectives, P5→8 sessions, P6→8 implementations."
+
+test_plan:
+  current_focus:
+    - "kickoff resolves marathon from profile.primary_goal_id"
+    - "kickoff picks event_date as programme end when future event exists"
+    - "phase blueprint matches taxonomy family (running/triathlon/strength/body_comp/general)"
+    - "phase weeks sum exactly to total prep window"
+    - "rationale is persisted as a decision_record on scope_kind=programme"
+    - "kickoff returns rich audit payload (goal source, event, phase_plan, rationale)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Honest correction. Prior kickoff was too generic — it defaulted
+      to general.longevity even though Pietro's DNA clearly stated
+      Marathon on 2027-01-17. Rewrite now reads goal from profile
+      *and* the active event, chooses the correct phase blueprint,
+      sizes phases to the actual event window, and writes a full
+      rationale decision_record so the coach can see WHY the plan
+      looks the way it does. Also fixes silent objectives-count
+      undercount from previous run (15 objectives now vs 6 before).
+      Still open: (1) 2 out of 36 objective exposures failed to build
+      an implementation — P6 slot template coverage gap. (2) "Why this?"
+      drawer scope-query still needs to include programme_id +
+      objective_id, not just assignment_id.
+

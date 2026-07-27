@@ -1,0 +1,44 @@
+{
+  "summary": "Frontend UI test of Coach Dashboard V2 Iteration 3 (Priority 4 Publish Panel + Priority 5 Inline Workout Editor). Flow 1 = PASS (workspace at /coach/client/{id}/workspace loads for Louis; header, month selector, pipeline status ribbon, command bar, and Add directive button render for V2 client Alex Rivera). Flows 2 and 3 = EMPTY_STATE — the seeded V2 client d6e0be44-d3a5-407f-bc04-7cc7ef96179a has NO roster days and NO workout_assignments for the current month, therefore no programme.draft_id and no plan cards to click; the `publish-changes-btn` is correctly hidden by the code guard `data.programme?.present && data.programme?.draft_id` and `open-workout-*` cards do not exist. Attempted the seeding steps suggested by E1 (PATCH flags → succeeded; POST goal via /v2/coach/clients/{id}/goals → succeeded with the correct `goal_id_taxonomy=strength.general, priority=A` payload — the request example in the prompt used the wrong schema) but a goal alone does not create a programme.draft_id — that requires the programme-builder pipeline (roster upload → schedule → plan generation → workout_implementations) which is out of scope for a frontend testing agent. Flow 4 (no-AI-wording sweep) = PASS — grepped the rendered workspace DOM for AI/artificial/bot/generated/algorithm/machine learning → 0 hits; source-grep of PublishPanel.tsx/InlineWorkoutEditor.tsx/workspace.tsx → only 2 hits, both in code comments describing the guardrail, none reach the UI. Code review of both new components confirms every testID contract from the request is implemented correctly. Backend was verified reachable (login 200, workspace endpoints 200). NO regressions detected; NO red-screen errors; only expected Expo-web warnings (shadow*/textShadow* deprecation, useNativeDriver, expo-notifications on web).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Flow 2 / Flow 3 happy path",
+        "issue": "Cannot exercise PublishPanel or InlineWorkoutEditor in the UI because the seeded V2 client (d6e0be44-d3a5-407f-bc04-7cc7ef96179a / Alex Rivera) has no roster days, no workout_assignments, and no programme.draft_id. Publish button is (correctly) hidden by its own guard, and there is no workout card to open the drawer via. Not a UI bug — a seed-data gap. Main agent needs to seed a V2 programme + draft + at least one workout_assignment with a draft_implementation_id (the same shape the backend pytest fixture builds in test_v2_coach_publish_and_editor.py) for a full UI happy-path pass.",
+        "affected_testIDs": ["publish-changes-btn","publish-scroll","publish-btn","publish-close","open-workout-*","drawer-edit","inline-editor","inline-editor-done"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/tmp/ws_final.png",
+    "/tmp/step3_workspace.png",
+    "/app/backend/tests/test_v2_coach_publish_and_editor.py"
+  ],
+  "action_items": [
+    "Seed the V2 client d6e0be44-d3a5-407f-bc04-7cc7ef96179a (or a new fixture client) with: (a) an active roster for the current month, (b) a programmes_v2 doc with live_plan_version>=0 and draft_plan_version>=1, (c) a plan_drafts_v2 (or equivalent) doc whose id will surface as programme.draft_id in workspace payload, (d) at least 2 workout_assignments — one modified vs live and one added — each with draft_implementation_id populated. Once seeded, re-request the frontend testing agent for a full UI pass of Flow 2 + Flow 3.",
+    "Doc nit: the E1 review request lists a goal payload of {kind, title, category, target_metric, target_date, priority:1}. The actual GoalBody Pydantic model expects {goal_id_taxonomy: str, priority: 'A'|'B'|'C', target_date, target_metric?, weight?, notes?}. Update the coach onboarding docs so future test agents don't get 422s.",
+    "Optional post-launch tightening (not blocking): the workspace payload currently returns programme.present=false when no roster exists even though a superseded programme with published version 3 is visible in the pipeline ribbon (`Published v3` chip renders). Worth verifying that ribbon isn't stale UI state from a different client's data — appears to be pipeline-status-only, not tied to programme.present."
+  ],
+  "critical_code_review_comments": [
+    "PublishPanel.tsx — testID contract fully matches the spec (publish-scroll, publish-close, publish-btn, publish-notes-input); ChangeSet Accept/Reject/Skip buttons are pressable but do NOT carry testIDs — consider `cs-${cs.id}-accept|reject|skip` so testers can target individual proposed changes deterministically.",
+    "PublishPanel.tsx — assignment rows also lack testIDs on the per-row checkbox (`adCheck`). Adding `data-testid=\"publish-row-${a.id}\"` would let the testing agent verify selective publish without brittle CSS traversal.",
+    "InlineWorkoutEditor.tsx — the `commitMeta` diff logic compares against the ORIGINAL `impl` prop (frozen at drawer-open time). After a successful PATCH, `local` is replaced by `fresh` but `impl` never updates, so subsequent no-op blurs will still see field !== impl.title and re-issue redundant PATCH calls until dirty becomes false again. Not a correctness bug (backend is idempotent) but chatty. Consider seeding a `baseline` ref from `fresh` after each commit.",
+    "InlineWorkoutEditor.tsx — no explicit testID on the Focus and Location-note inputs (`editor-focus`, `editor-location`). Spec doesn't require them but adding them completes the coverage.",
+    "workspace.tsx — the `publish-changes-btn` visibility is correctly gated by `data.programme?.present && data.programme?.draft_id`. Behavior verified in empty-state today: button absent as expected.",
+    "No-AI-wording guardrail holds end-to-end — 0 rendered DOM hits for AI|artificial|bot|generated|algorithm|machine learning across the workspace shell, and only 2 comment-only mentions in the two new component files."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (backend-only tests were run in iter 104; 26/26 pass)",
+    "frontend": "Flow 1 PASS, Flow 4 PASS, Flow 2+3 blocked by EMPTY_STATE (not a defect — needs seed data)"
+  },
+  "seed_data_creation": "During test I called PATCH /v2/coach/clients/{id}/flags (enabled state_foundation/goals_phases/scheduling_v2/construction_v2) and POST /v2/coach/clients/{id}/goals (created strength.general, priority=A, target 2026-12-31, id e30ab5d0-5927-4694-bb6c-44865dcd2bd8). NO programme/draft/roster/workouts were created — that requires either the plan-builder pipeline or direct DB seeding, both outside a testing agent's scope. Leaving the goal in place so main agent can build on top of it (or delete if a clean fixture is preferred).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The Coach Dashboard V2 workspace at /coach/client/{clientId}/workspace loads correctly for Louis when logged in (localStorage key `cf_token`; AsyncStorage 2.2.0 uses localStorage on web). To reach the workspace directly during automation, POST /api/auth/login → localStorage.setItem('cf_token', token) → navigate. Client Alex Rivera (d6e0be44-d3a5-407f-bc04-7cc7ef96179a) is V2-enabled but has NO seeded plan yet. To unblock a full Flow 2/3 UI test, main agent should either (a) run a script mirroring test_v2_coach_publish_and_editor.py's fixture directly against MongoDB, or (b) build the client's programme through the same coach-facing endpoints the plan builder uses (state_foundation → goals → programmes → schedule → plan_versions → workout_assignments). Once done, this agent can retest and screenshot both panels in view + edit mode.",
+  "rca_of_issue": "N/A — no defect. The empty state is a data-availability limitation on the shared test fixture, not a bug in the UI code."
+}

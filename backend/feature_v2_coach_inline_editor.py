@@ -109,18 +109,22 @@ async def impl_patch_meta(
 
     upd: dict = {"updated_at": now_iso()}
     payload = body.model_dump(exclude_unset=True)
+    had_change = False
     for k in ("title", "duration_min", "focus", "rationale", "location_label",
               "coach_notes"):
         if k in payload and payload[k] is not None:
             upd[k] = payload[k]
+            had_change = True
     if "key_session" in payload:
         upd["key_session"] = bool(payload["key_session"])
+        had_change = True
     if "needs_coach_review" in payload:
         upd["needs_coach_review"] = bool(payload["needs_coach_review"])
+        had_change = True
     upd["last_edited_by"] = coach["id"]
     upd["last_edited_at"] = now_iso()
 
-    if len(upd) == 3:  # only timestamps set → nothing to change
+    if not had_change:
         return impl
 
     await db.workout_implementations.update_one(
@@ -135,7 +139,7 @@ async def impl_patch_meta(
     )
     try:
         await emit_metric("impl_meta_edited", client_id=client_id, coach_id=coach["id"],
-                          labels={"fields": len(upd) - 3})
+                          labels={"fields": sum(1 for k in upd if k not in ('updated_at','last_edited_by','last_edited_at'))})
     except Exception:
         pass
     return await db.workout_implementations.find_one(

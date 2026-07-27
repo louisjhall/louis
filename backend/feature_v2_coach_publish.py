@@ -373,9 +373,12 @@ async def plan_publish(
 
     # Promote each assignment: live_implementation_id ← draft_implementation_id, status='live'
     promoted_ids: list[str] = []
+    real_promotions = 0     # count of actual live_impl swaps (excludes idempotent already-live)
+    skipped_no_draft: list[str] = []
     for a in assignments:
         draft_impl = a.get("draft_implementation_id")
         if not draft_impl:
+            skipped_no_draft.append(a["id"])
             continue
         if a.get("live_implementation_id") == draft_impl:
             # already live – idempotent
@@ -388,6 +391,7 @@ async def plan_publish(
         }
         await db.workout_assignments.update_one({"id": a["id"]}, {"$set": upd})
         promoted_ids.append(a["id"])
+        real_promotions += 1
 
     # Accept change_sets
     accepted_ids = list(body.accept_change_set_ids or [])
@@ -421,9 +425,23 @@ async def plan_publish(
         return {
             "published_count": 0,
             "rejected_count": len(rejected_ids),
+            "skipped_assignment_ids": skipped_no_draft,
             "version_id": None,
             "version": None,
             "note": "Nothing to publish. Rejections applied.",
+        }
+
+    # Skip empty version row when nothing actually changed in DB
+    # (all assignments were already live AND no change-sets to accept).
+    if real_promotions == 0 and not accepted_ids:
+        return {
+            "published_count": len(promoted_ids),
+            "accepted_change_sets": 0,
+            "rejected_count": len(rejected_ids),
+            "skipped_assignment_ids": skipped_no_draft,
+            "version_id": None,
+            "version": None,
+            "note": "Selected assignments already live. No new version needed.",
         }
 
     # New plan_version + snapshot
@@ -522,6 +540,7 @@ async def plan_publish(
         "version": version_no,
         "approval_id": ap_id,
         "draft_status": new_status,
+        "skipped_assignment_ids": skipped_no_draft,
     }
 
 

@@ -72,8 +72,10 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
     ).length;
   }, [exc]);
 
+  // Publish is allowed when goal-config permits AND no KEY/IMPORTANT exception
+  // is still unresolved. programme_validation.ok being false is fine as long
+  // as every blocking exception has been resolved (matches backend semantics).
   const canPublish =
-    exc?.programme_validation_ok &&
     unresolvedBlockers === 0 &&
     exc?.goal_config_status?.status !== "MISSING" &&
     (exc?.goal_config_status?.status === "COMPLETE" || ackPartial);
@@ -167,7 +169,9 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
           <Text style={styles.sub}>
             {cs?.status === "COMPLETE" ? "✅ Config Complete" : cs?.status === "PARTIAL" ? "⚠ Config Partial" : "❌ Config Missing"}
             {"  ·  "}
-            {ok ? "✅ Ready" : `❌ ${unresolvedBlockers} to review`}
+            {unresolvedBlockers === 0
+              ? "✅ Ready to publish"
+              : `❌ ${unresolvedBlockers} to review`}
           </Text>
         </View>
       </View>

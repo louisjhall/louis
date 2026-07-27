@@ -1,0 +1,199 @@
+{
+  "$schema_version": "1.0",
+  "generated_at": "2026-07-27",
+  "source_of_truth": "CREWFIT_COACH_DASHBOARD_CURRENT_STATE_AUDIT.md",
+  "convention": {
+    "status_values": ["implemented", "partial", "ambiguous", "duplicated", "not_implemented", "placeholder", "deprecated_v2"],
+    "route_prefix_group": "/(coach)/*",
+    "route_prefix_deep": "/coach/*",
+    "backend_api_prefix": "/api",
+    "notes": "This inventory is descriptive only — it does not prescribe V2. Cross-reference with the audit sections for context."
+  },
+
+  "top_level_routes": {
+    "group_shell": [
+      { "route": "(coach)/overview",       "purpose": "Landing / activity feed",              "status": "partial",       "audit_ref": "1.1",  "loc_estimate": 620,  "notes": "Not an attention queue; scroll-based activity list." },
+      { "route": "(coach)/clients",        "purpose": "Client list",                          "status": "implemented",   "audit_ref": "1.1",  "loc_estimate": 240 },
+      { "route": "(coach)/approvals",      "purpose": "Approvals list",                       "status": "partial",       "audit_ref": "23",   "loc_estimate": 210,  "notes": "Roster-centric, not workout/exception centric." },
+      { "route": "(coach)/checkins",       "purpose": "Cross-client check-in inbox",          "status": "implemented",   "audit_ref": "15",   "loc_estimate": 195 },
+      { "route": "(coach)/messages",       "purpose": "Cross-client messages",                "status": "implemented",   "audit_ref": "15",   "loc_estimate": 180 },
+      { "route": "(coach)/calendar",       "purpose": "Cross-client calendar",                "status": "ambiguous",     "audit_ref": "13",   "loc_estimate": 220,  "notes": "Overlaps per-client calendar." },
+      { "route": "(coach)/exercises",      "purpose": "Exercise browser",                     "status": "implemented",   "audit_ref": "41" },
+      { "route": "(coach)/library",        "purpose": "Content library",                      "status": "implemented" },
+      { "route": "(coach)/library-legacy", "purpose": "Legacy library",                       "status": "duplicated",    "audit_ref": "53",   "notes": "Duplicate of /library." },
+      { "route": "(coach)/videos",         "purpose": "Video library",                        "status": "implemented" },
+      { "route": "(coach)/analytics",      "purpose": "Coach-side analytics",                 "status": "partial",       "audit_ref": "19" },
+      { "route": "(coach)/changelog",      "purpose": "Global change log",                    "status": "partial",       "audit_ref": "16",   "notes": "Overlaps client timeline tab." },
+      { "route": "(coach)/profile",        "purpose": "Coach's own profile",                  "status": "implemented" }
+    ],
+    "deep_links": [
+      { "route": "coach/client/[id]",             "purpose": "Mega client profile — 11 tabs", "status": "partial", "audit_ref": "2", "loc_estimate": 2008, "notes": "Kitchen-sink page. Overview conditionally renders every tab's data." },
+      { "route": "coach/client-months/[id]",      "purpose": "Programme by Month workspace",  "status": "partial", "audit_ref": "7", "loc_estimate": 866 },
+      { "route": "coach/workout/edit/[wid]",      "purpose": "Workout editor",                "status": "implemented", "audit_ref": "17" },
+      { "route": "coach/checkin/[id]",            "purpose": "Individual check-in review",    "status": "implemented" },
+      { "route": "coach/scripts/[id]",            "purpose": "Weekly script editor",          "status": "partial", "audit_ref": "14", "notes": "Role unclear — not obviously wired to a coach workflow." },
+      { "route": "coach/teleprompter/[id]",       "purpose": "Teleprompter for coach video",  "status": "implemented" },
+      { "route": "coach/habit-review/[id]",       "purpose": "Habit review",                  "status": "implemented" },
+      { "route": "coach/exercise-content",        "purpose": "Exercise content admin tool",   "status": "implemented", "loc_estimate": 949 },
+      { "route": "coach/hotels",                  "purpose": "Hotel gym editor",              "status": "deprecated_v2", "audit_ref": "V2 §19", "notes": "V2 architecture removes hotels from the training path." },
+      { "route": "coach/nutrition",               "purpose": "Nutrition tool",                "status": "implemented" },
+      { "route": "coach/brand-images",            "purpose": "Brand images admin",            "status": "implemented" },
+      { "route": "coach/demand-queue",            "purpose": "Coach demand queue",            "status": "partial", "audit_ref": "45", "notes": "Useful base for V2 exception queue." },
+      { "route": "coach/draft/[id]",              "purpose": "Draft item viewer",             "status": "partial", "notes": "Role unclear — appears to be a stub." },
+      { "route": "coach/ui-issues",               "purpose": "UI issues admin",               "status": "placeholder" },
+      { "route": "coach/admin/coaches",           "purpose": "Coach admin",                   "status": "implemented" },
+      { "route": "coach/admin/live-controls",     "purpose": "Live admin controls",           "status": "placeholder" }
+    ]
+  },
+
+  "client_profile_tabs": {
+    "route": "coach/client/[id]",
+    "loc": 2008,
+    "tabs": [
+      { "id": "overview",  "unique_job": "Superset landing",       "overlap_with": ["notes","calendar","roster","programme","timeline","workouts","checkins","messages","profile"], "verdict": "overgrown" },
+      { "id": "notes",     "unique_job": "Coach-facing structured coach_notes + free text", "overlap_with": ["overview","admin"], "verdict": "keep (structured directives target for V2)" },
+      { "id": "calendar",  "unique_job": "7-day calendar with roster/workout markers", "overlap_with": ["roster","workouts","programme"], "verdict": "duplicated" },
+      { "id": "roster",    "unique_job": "Day-by-day roster list with day_type + hotel", "overlap_with": ["calendar","programme","client-months"], "verdict": "keep primary; retire from other tabs" },
+      { "id": "programme", "unique_job": "Programme summary (goal, phase, next 7d)", "overlap_with": ["overview","calendar","workouts"], "verdict": "keep primary; retire from overview" },
+      { "id": "timeline",  "unique_job": "Historical activity feed", "overlap_with": ["(coach)/changelog"], "verdict": "consolidate" },
+      { "id": "workouts",  "unique_job": "Workout list for this client + edit links", "overlap_with": ["calendar","programme","client-months"], "verdict": "duplicated" },
+      { "id": "checkins",  "unique_job": "Check-in history + habits", "overlap_with": ["overview","(coach)/checkins"], "verdict": "keep primary" },
+      { "id": "messages",  "unique_job": "Message history", "overlap_with": ["overview","(coach)/messages"], "verdict": "consolidate under global inbox" },
+      { "id": "profile",   "unique_job": "Client profile fields", "overlap_with": [], "verdict": "keep primary" },
+      { "id": "admin",     "unique_job": "Debug / raw controls (hosts coaching functions)", "overlap_with": ["notes","admin/live-controls"], "verdict": "split — coaching-adjacent controls should escape 'admin'" }
+    ]
+  },
+
+  "duplicated_screens_data_matrix": [
+    { "data": "roster_days",       "surfaces": ["overview","calendar","roster","programme","client-months"] },
+    { "data": "workouts",          "surfaces": ["overview","calendar","programme","workouts","client-months","workout/edit/[wid]"] },
+    { "data": "check_ins",         "surfaces": ["overview","checkins","(coach)/checkins","checkin/[id]"] },
+    { "data": "messages",          "surfaces": ["overview","messages","(coach)/messages"] },
+    { "data": "coach_notes",       "surfaces": ["notes","admin","overview (implicit)"] },
+    { "data": "habits",            "surfaces": ["overview","checkins"] },
+    { "data": "programme_summary", "surfaces": ["overview","programme","client-months (header)"] }
+  ],
+
+  "reusable_components": [
+    { "name": "ScheduleRow",             "path": "src/components/coach/ScheduleRow.tsx",             "used_in": ["client-months","client/[id]/roster","client/[id]/programme"], "status": "keep" },
+    { "name": "DayCard",                 "path": "src/components/coach/DayCard.tsx",                 "used_in": ["calendar","client/[id]/calendar"],                            "status": "duplicated_of ScheduleRow" },
+    { "name": "WorkoutSummaryPill",      "path": "src/components/coach/WorkoutSummaryPill.tsx",      "used_in": ["overview","programme","workouts","client-months"],             "status": "keep" },
+    { "name": "CheckInBadge",            "path": "src/components/coach/CheckInBadge.tsx",            "used_in": ["overview","checkins"],                                          "status": "keep" },
+    { "name": "CoachRosterUploadButton", "path": "src/components/CoachRosterUploadButton.tsx",       "used_in": ["client/[id]/admin"],                                            "status": "keep (Iter 109)" }
+  ],
+
+  "backend_endpoints_by_domain": {
+    "roster": [
+      "GET  /api/coach/clients/{cid}/roster/months",
+      "GET  /api/coach/clients/{cid}/roster/months/{key}",
+      "POST /api/coach/clients/{cid}/roster/upload",
+      "POST /api/roster/confirm",
+      "GET  /api/roster/jobs/{job_id}",
+      "GET  /api/roster/status",
+      "POST /api/roster/regenerate/{month_key}",
+      "POST /api/roster/versions/supersede"
+    ],
+    "workouts": [
+      "GET   /api/coach/clients/{cid}/workouts",
+      "GET   /api/coach/workouts/{wid}",
+      "PATCH /api/coach/workouts/{wid}",
+      "POST  /api/coach/workouts/{wid}/regenerate",
+      "POST  /api/coach/workouts/{wid}/approve",
+      "POST  /api/coach/workouts/{wid}/lock",
+      "POST  /api/coach/workouts/{wid}/swap"
+    ],
+    "check_ins": [
+      "GET  /api/coach/checkins",
+      "GET  /api/coach/checkins/{id}",
+      "POST /api/coach/checkins/{id}/reply"
+    ],
+    "programme": [
+      "GET  /api/coach/clients/{cid}/programme",
+      "POST /api/coach/clients/{cid}/programme/regenerate",
+      "POST /api/coach/clients/{cid}/programme/approve",
+      "GET  /api/coach/clients/{cid}/programme/timeline"
+    ],
+    "notes_directives": [
+      "GET  /api/coach/clients/{cid}/notes",
+      "PATCH /api/coach/clients/{cid}/notes",
+      "POST /api/coach/clients/{cid}/reset"
+    ],
+    "approvals_queue": [
+      "GET  /api/coach/tasks",
+      "POST /api/coach/tasks/{id}/resolve"
+    ],
+    "v2_ready_to_wire": [
+      "PATCH /api/v2/coach/clients/{cid}/flags",
+      "POST  /api/v2/coach/clients/{cid}/drafts",
+      "POST  /api/v2/coach/clients/{cid}/drafts/{did}/approvals",
+      "POST  /api/v2/coach/clients/{cid}/plan/build",
+      "POST  /api/v2/coach/clients/{cid}/plan/build-implementations",
+      "GET   /api/v2/coach/clients/{cid}/exceptions",
+      "POST  /api/v2/coach/clients/{cid}/jobs (kind=draft_build)"
+    ]
+  },
+
+  "status_vocabulary_current": [
+    { "term": "needs_coach_review", "collection": "workouts",  "type": "bool",   "meaning": "Coach hasn't reviewed this LLM output",              "consistency": "partial" },
+    { "term": "approved",           "collection": "workouts",  "type": "bool",   "meaning": "Coach approved — does NOT gate client visibility",   "consistency": "partial" },
+    { "term": "coach_locked",       "collection": "workouts",  "type": "bool",   "meaning": "Regeneration must skip this workout",                "consistency": "consistent" },
+    { "term": "completed",          "collection": "workouts",  "type": "bool",   "meaning": "Client marked done",                                 "consistency": "consistent" },
+    { "term": "is_active",          "collection": "rosters",   "type": "bool",   "meaning": "This roster feeds the plan",                         "consistency": "consistent" },
+    { "term": "status",             "collection": "rosters",   "type": "enum",   "meaning": "pending_confirmation | confirmed | superseded",      "consistency": "ambiguous with is_active" },
+    { "term": "source",             "collection": "workouts",  "type": "enum",   "meaning": "coaching_system | template | manual",                "consistency": "used inconsistently as review-state proxy" },
+    { "term": "variants",           "collection": "workouts",  "type": "array",  "meaning": "green/amber/red duration variants",                  "consistency": "clean" }
+  ],
+
+  "notification_surfaces": [
+    { "surface": "(coach)/approvals",   "shows": ["pending coach_tasks (roster-generated)"], "audit_ref": "8.3" },
+    { "surface": "(coach)/checkins",    "shows": ["new client check-ins"], "audit_ref": "15" },
+    { "surface": "(coach)/messages",    "shows": ["new client messages"],  "audit_ref": "15" },
+    { "surface": "coach/demand-queue",  "shows": ["exercise-content request tasks"], "audit_ref": "45" },
+    { "surface": "coach/client/[id] overview tab", "shows": ["mixed activity (roster changes, workouts, check-ins)"], "audit_ref": "2" }
+  ],
+
+  "missing_capabilities_relative_to_v2": [
+    "attention_queue_across_clients",
+    "attention_queue_within_client",
+    "batch_approval_ui",
+    "draft_vs_live_split",
+    "programme_version_history_browsable",
+    "why_this_tooltip_on_assignments",
+    "structured_coach_directive_editor",
+    "progression_memory_view_per_exercise",
+    "command_bar_natural_language",
+    "roster_change_domain_event_push",
+    "signal_to_action_narrative",
+    "coach_alert_on_auto_deload",
+    "trend_visualisation_per_signal",
+    "cross_client_portfolio_snapshot",
+    "sla_and_response_time_dashboard",
+    "load_test_baseline_p95"
+  ],
+
+  "metrics_needed_but_not_captured": [
+    "time_to_first_action_after_client_open",
+    "clicks_per_approval",
+    "clicks_per_regenerate",
+    "cross_tab_hop_count_per_session",
+    "approval_backlog_size",
+    "median_backlog_age_hours",
+    "p95_dashboard_load_ms",
+    "p95_client_profile_load_ms",
+    "client_count_per_coach_hour",
+    "reality_change_frequency_per_client_week"
+  ],
+
+  "safety_and_permissions": {
+    "role_gates": [
+      { "gate": "require_role('coach')", "coverage": "consistent on all /api/coach/* endpoints" }
+    ],
+    "audit_logging_present": ["coach_actions_log", "workout_change_log (partial)"],
+    "audit_logging_missing": ["per-tab open events","per-field-edit trail","assignment move audit","draft build lineage"]
+  },
+
+  "known_dead_or_stub_screens": [
+    "coach/ui-issues", "coach/draft/[id]", "coach/admin/live-controls",
+    "(coach)/library-legacy"
+  ]
+}

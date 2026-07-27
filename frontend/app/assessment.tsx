@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
+import { queueIntroForNextMount } from "@/src/components/CrewFitIntroAnimation";
 import { DateField } from "@/src/components/DateField";
 
 /* -------------------------------------------------------------------------- */
@@ -107,7 +108,13 @@ export default function Assessment() {
     );
   }
 
-  if (dna) return <DNAReveal dna={dna} onContinue={() => router.replace("/(client)/home" as any)} />;
+  if (dna) return <DNAReveal dna={dna} onContinue={async () => {
+    // Iter 105 — Queue the CrewFit brand animation to fire ONCE right as
+    // the user lands on their personalised dashboard for the first time.
+    // This replaces the normal 12-hour cold-launch play for this session.
+    try { await queueIntroForNextMount("onboarded"); } catch { /* ignore */ }
+    router.replace("/(client)/home" as any);
+  }} />;
   if (finalising) return <FinalisingAnimation />;
 
   return (

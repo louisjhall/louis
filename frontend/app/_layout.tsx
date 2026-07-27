@@ -18,6 +18,7 @@ import { PreviewBanner } from "@/src/components/PreviewBanner";
 import { BetaDisclaimerGate } from "@/src/components/BetaDisclaimerGate";
 import { TrainingSetupGate } from "@/src/components/TrainingSetupGate";
 import { RootErrorBoundary } from "@/src/components/RootErrorBoundary";
+import { CrewFitIntroAnimation } from "@/src/components/CrewFitIntroAnimation";
 import { initSentry } from "@/src/lib/sentry";
 
 // One-shot at module load; safe no-op when EXPO_PUBLIC_SENTRY_DSN is unset.
@@ -87,12 +88,14 @@ export default function RootLayout() {
           <AuthProvider>
             <AppConfigProvider>
               <PreviewWiring>
-                <StatusBar barStyle="light-content" backgroundColor="#000000" />
-                <PreviewBanner />
-                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
-                <BetaDisclaimerGate />
-                <TrainingSetupGate />
-                <ToastHost />
+                <CrewFitIntroAnimation>
+                  <StatusBar barStyle="light-content" backgroundColor="#000000" />
+                  <PreviewBanner />
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+                  <BetaDisclaimerGate />
+                  <TrainingSetupGate />
+                  <ToastHost />
+                </CrewFitIntroAnimation>
               </PreviewWiring>
             </AppConfigProvider>
           </AuthProvider>

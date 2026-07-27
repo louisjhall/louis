@@ -118,7 +118,10 @@ type DutyChip = {
   tone: "brand" | "amber" | "muted" | "green";
 };
 
-function buildDutyChip(rd: DayCard["roster_day"] | null): DutyChip {
+function buildDutyChip(
+  rd: DayCard["roster_day"] | null,
+  workout?: DayCard["workout"] | null,
+): DutyChip {
   const raw = String(rd?.day_type || "").toLowerCase();
   const map: Record<string, DutyChip> = {
     long_haul:      { label: "Long-Haul Flight", icon: "airplane", tone: "brand" },
@@ -138,6 +141,8 @@ function buildDutyChip(rd: DayCard["roster_day"] | null): DutyChip {
     medical:        { label: "Medical",          icon: "medkit",   tone: "amber" },
     home_day:       { label: "Home",             icon: "home",     tone: "muted" },
     home:           { label: "Home",             icon: "home",     tone: "muted" },
+    turnaround:     { label: "Turnaround",       icon: "repeat",   tone: "brand" },
+    "t/r":          { label: "Turnaround",       icon: "repeat",   tone: "brand" },
     rest:           { label: "Rest",             icon: "leaf",     tone: "green" },
     off:            { label: "Off",              icon: "leaf",     tone: "green" },
     day_off:        { label: "Day Off",          icon: "leaf",     tone: "green" },
@@ -153,6 +158,20 @@ function buildDutyChip(rd: DayCard["roster_day"] | null): DutyChip {
       icon: "briefcase",
       tone: "muted",
     };
+  }
+  // Iter 106 — when the roster day has no explicit day_type, derive context
+  // from the workout itself. Layover-branded workouts (Iter 102 renamer)
+  // must not render as HOME just because rd.day_type is empty.
+  const wt = String(workout?.title || "").toLowerCase();
+  const wf = String(workout?.focus || "").toLowerCase();
+  if (wt.includes("layover") || wf.includes("layover")) {
+    return { label: "Layover", icon: "bed", tone: "amber" };
+  }
+  if (wt.includes("turnaround") || wt.includes("t/r")) {
+    return { label: "Turnaround", icon: "repeat", tone: "brand" };
+  }
+  if (wt.includes("flight") || wt.includes("flying")) {
+    return { label: "Flying", icon: "airplane", tone: "brand" };
   }
   // No roster loaded for this date — treat as Home so the row isn't blank.
   return { label: "Home", icon: "home", tone: "muted" };
@@ -443,7 +462,10 @@ function DayRow({
 
   // Iter 95f — proper duty-context chip.
   // Every day gets at least one chip so clients see where/what they are.
-  const dutyChip = buildDutyChip(rd);
+  // Iter 106 — pass the workout so we can infer LAYOVER / TURNAROUND from
+  // the workout title when the roster day has no explicit day_type set
+  // (which was causing layover cards to display a wrong HOME icon).
+  const dutyChip = buildDutyChip(rd, card.workout);
   const flightChip = flightNo ? { label: `Flight ${flightNo}`, icon: "airplane" as const, tone: "brand" as const } : null;
   const layoverChip = rd?.layover_city
     ? { label: rd.layover_city, icon: "location" as const, tone: "muted" as const }

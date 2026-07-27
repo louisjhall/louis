@@ -252,24 +252,38 @@ async def _build_roster_facets(
 
             burden_score, burden_band = _duty_burden({**day, "duties": all_day_duties})
             opp_score, ceiling, avail = _training_opportunity(day, burden_score)
+
+            # Preserve granular day_type from the roster (home_day, standby,
+            # layover, flight, off, duty, sickness, leave, etc). If the
+            # parser didn't classify beyond duty vs rest, fall back to a
+            # coarse rest/flight bucket.
+            day_type_raw = (day.get("day_type") or day.get("classification") or "").lower()
+            if day_type_raw:
+                classification = day_type_raw
+            elif all_day_duties:
+                classification = "flight"
+            else:
+                classification = "rest"
+
             sdid = new_id()
             await db.schedule_days.insert_one({
                 "id": sdid,
                 "client_id": client_id,
                 "date": date_str,
-                "home_or_away": day.get("home_or_away") or "unknown",
+                "day_type": classification,      # top-level for direct read
+                "home_or_away": day.get("home_or_away") or ("home" if classification in ("home_day", "off", "rest", "leave", "sick", "sickness") else "away" if classification in ("layover", "hotel") else "unknown"),
                 "tz_offset_from_base_hours": day.get("tz_offset_from_base_hours") or 0,
                 "recovery_window_hours_to_next_duty": day.get("recovery_window_hours_to_next_duty"),
                 "recovery_window_hours_from_prior_duty": day.get("recovery_window_hours_from_prior_duty"),
                 "duties": duty_ids,
-                "overnight_location": day.get("overnight_location"),
+                "overnight_location": day.get("overnight_location") or day.get("layover_city") or day.get("layover_iata"),
                 "derived": {
                     "duty_burden_score": burden_score,
                     "duty_burden_band": burden_band,
                     "training_opportunity": opp_score,
                     "recommended_intensity_ceiling": ceiling,
                     "available_time_min": avail,
-                    "classification": day.get("classification") or ("rest" if not all_day_duties else "flight"),
+                    "classification": classification,
                 },
                 "source_roster_id": rid,
                 "parser_confidence": day.get("parser_confidence") or 0.9,

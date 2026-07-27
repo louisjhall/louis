@@ -1,0 +1,2045 @@
+{
+  "client": {
+    "id": "cbca8b09-1734-4442-9a55-1bb2f78f35c3",
+    "email": "pietrosangermano1992@hotmail.com",
+    "name": "Pietro Sangermano"
+  },
+  "dna_field_audit": [
+    {
+      "field": "main_goal",
+      "value": "Marathon",
+      "v2_usage": "USED by kickoff \u2014 appears as source string in decision_record"
+    },
+    {
+      "field": "primary_goal_id",
+      "value": "marathon",
+      "v2_usage": "USED (fallback in kickoff)"
+    },
+    {
+      "field": "event_type_pref",
+      "value": "marathon",
+      "v2_usage": "USED (fallback in kickoff)"
+    },
+    {
+      "field": "training_days_per_week",
+      "value": 5,
+      "v2_usage": "LOADED BUT IGNORED \u2014 printed in rationale only; P5 does NOT gate frequency on this"
+    },
+    {
+      "field": "max_home_minutes",
+      "value": 60,
+      "v2_usage": "LOADED BUT IGNORED by P6 \u2014 impls default to slot-template duration"
+    },
+    {
+      "field": "equipment",
+      "value": [
+        "dumbbells",
+        "treadmill"
+      ],
+      "v2_usage": "LOADED, printed in rationale; equipment_contexts collection is EMPTY so P6 cannot actually match"
+    },
+    {
+      "field": "injuries",
+      "value": "None",
+      "v2_usage": "LOADED, printed only; restrictions collection is EMPTY \u2014 no injury->exercise gating"
+    },
+    {
+      "field": "home_base",
+      "value": "AUH",
+      "v2_usage": "LOADED, printed only"
+    },
+    {
+      "field": "airline",
+      "value": "Etihad",
+      "v2_usage": "LOADED, printed only"
+    },
+    {
+      "field": "age",
+      "value": 35,
+      "v2_usage": "NEVER LOADED by any V2 engine"
+    },
+    {
+      "field": "sex",
+      "value": "male",
+      "v2_usage": "NEVER LOADED"
+    },
+    {
+      "field": "height_cm",
+      "value": 181.0,
+      "v2_usage": "NEVER LOADED"
+    },
+    {
+      "field": "weight_kg",
+      "value": 83.0,
+      "v2_usage": "NEVER LOADED"
+    },
+    {
+      "field": "flying_type",
+      "value": "mixed",
+      "v2_usage": "NEVER LOADED"
+    },
+    {
+      "field": "events row",
+      "value": "marathon on 2027-01-17",
+      "v2_usage": "USED \u2014 kickoff anchors programme end to event_date"
+    },
+    {
+      "field": "preferred_training_days",
+      "value": null,
+      "v2_usage": "MISSING FIELD in DNA schema"
+    },
+    {
+      "field": "sessions_per_week_min",
+      "value": null,
+      "v2_usage": "MISSING FIELD in DNA schema"
+    },
+    {
+      "field": "sessions_per_week_max",
+      "value": null,
+      "v2_usage": "MISSING FIELD in DNA schema"
+    },
+    {
+      "field": "assessments answers",
+      "value": "exists (1 doc)",
+      "v2_usage": "NEVER LOADED into V2 engines"
+    },
+    {
+      "field": "restrictions collection",
+      "value": 0,
+      "v2_usage": "NEVER POPULATED \u2014 restriction gating is dead code"
+    },
+    {
+      "field": "equipment_contexts collection",
+      "value": 0,
+      "v2_usage": "NEVER POPULATED \u2014 P6 has no per-location context"
+    },
+    {
+      "field": "progression_signals collection",
+      "value": 0,
+      "v2_usage": "EMPTY \u2014 no readiness feed to P5"
+    },
+    {
+      "field": "coach_directives collection",
+      "value": 0,
+      "v2_usage": "0 rows"
+    }
+  ],
+  "goal_resolution": {
+    "primary_goal_id_in_profile": "marathon",
+    "main_goal_in_profile": "Marathon",
+    "resolved_v2_taxonomy": "running.marathon",
+    "resolved_source_recorded": null
+  },
+  "programme": {
+    "id": "cc64f996-a5d3-430f-b03d-efe47e8b84a3",
+    "timeline_class": "developmental",
+    "start_date": "2026-07-27",
+    "end_date": "2026-09-20",
+    "live_plan_version": 0,
+    "draft_plan_version": 1
+  },
+  "phase_sequence": [
+    {
+      "id": "951703d4-15b0-4ec2-8e54-eb034bbe47a9",
+      "kind": "foundation",
+      "ordinal": 1,
+      "start": "2026-07-27",
+      "end": "2026-08-02",
+      "status": "active",
+      "purpose": "Movement quality, aerobic re-introduction, tissue prep."
+    },
+    {
+      "id": "6379e544-a124-46c5-bc7e-894150a9d6a4",
+      "kind": "aerobic_base",
+      "ordinal": 2,
+      "start": "2026-08-03",
+      "end": "2026-08-16",
+      "status": "upcoming",
+      "purpose": "Build aerobic ceiling with easy runs + first long runs."
+    },
+    {
+      "id": "78c30bf4-86f8-461b-a7b3-f4343e7b4c18",
+      "kind": "build",
+      "ordinal": 3,
+      "start": "2026-08-17",
+      "end": "2026-08-30",
+      "status": "upcoming",
+      "purpose": "Tempo + intervals; introduce marathon-pace efforts."
+    },
+    {
+      "id": "b22a6484-9f53-4ec6-8ee4-4700e596cd0d",
+      "kind": "specific_prep",
+      "ordinal": 4,
+      "start": "2026-08-31",
+      "end": "2026-09-06",
+      "status": "upcoming",
+      "purpose": "Long runs with marathon-pace segments; race-day dress rehearsal."
+    },
+    {
+      "id": "511fe843-5361-4170-9259-531af165ad3b",
+      "kind": "taper",
+      "ordinal": 5,
+      "start": "2026-09-07",
+      "end": "2026-09-13",
+      "status": "upcoming",
+      "purpose": "Volume down ~50%, keep intensity, sharpen."
+    },
+    {
+      "id": "9e13dcd5-56de-4064-8941-e6b236c97d18",
+      "kind": "race_week",
+      "ordinal": 6,
+      "start": "2026-09-14",
+      "end": "2026-09-20",
+      "status": "upcoming",
+      "purpose": "Race-week freshness; only easy shake-outs."
+    }
+  ],
+  "objectives": [
+    {
+      "id": "163f33e1-9c79-4d99-b5da-dcbe8d301879",
+      "kind": "long_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "951703d4-15b0-4ec2-8e54-eb034bbe47a9",
+      "exposure_count": 2
+    },
+    {
+      "id": "cb4a31da-dddc-4fa8-8d49-b822ec22db49",
+      "kind": "tempo_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "951703d4-15b0-4ec2-8e54-eb034bbe47a9",
+      "exposure_count": 1
+    },
+    {
+      "id": "e44fc29f-46d4-4565-867d-d0729083a607",
+      "kind": "intervals_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "951703d4-15b0-4ec2-8e54-eb034bbe47a9",
+      "exposure_count": 1
+    },
+    {
+      "id": "a4837ad5-9d91-494a-96a2-fb1b54d17b9b",
+      "kind": "easy_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "951703d4-15b0-4ec2-8e54-eb034bbe47a9",
+      "exposure_count": 1
+    },
+    {
+      "id": "54a86374-6629-4456-8edb-837149a3225d",
+      "kind": "strength_support",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "951703d4-15b0-4ec2-8e54-eb034bbe47a9",
+      "exposure_count": 1
+    },
+    {
+      "id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "kind": "long_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "6379e544-a124-46c5-bc7e-894150a9d6a4",
+      "exposure_count": 4
+    },
+    {
+      "id": "66317cfe-5c6c-41f7-8d3c-76880cdb8677",
+      "kind": "easy_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "6379e544-a124-46c5-bc7e-894150a9d6a4",
+      "exposure_count": 2
+    },
+    {
+      "id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "kind": "long_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "78c30bf4-86f8-461b-a7b3-f4343e7b4c18",
+      "exposure_count": 4
+    },
+    {
+      "id": "1d89b17b-19ec-44bb-bfe4-2d173a145ac9",
+      "kind": "tempo_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "78c30bf4-86f8-461b-a7b3-f4343e7b4c18",
+      "exposure_count": 2
+    },
+    {
+      "id": "b263091d-97aa-4ef9-a2c4-c11bef0f5adb",
+      "kind": "intervals_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "78c30bf4-86f8-461b-a7b3-f4343e7b4c18",
+      "exposure_count": 2
+    },
+    {
+      "id": "77b82adf-8a22-427c-b071-b3755fb2f2e5",
+      "kind": "long_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "b22a6484-9f53-4ec6-8ee4-4700e596cd0d",
+      "exposure_count": 2
+    },
+    {
+      "id": "b47fde33-0e37-439d-9ab4-c61ae41d0ace",
+      "kind": "tempo_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "b22a6484-9f53-4ec6-8ee4-4700e596cd0d",
+      "exposure_count": 1
+    },
+    {
+      "id": "fbff6c54-c4af-4f17-9269-8f34cb740aab",
+      "kind": "tempo_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "511fe843-5361-4170-9259-531af165ad3b",
+      "exposure_count": 1
+    },
+    {
+      "id": "a5b273ca-2987-4cc8-9158-8e8e8da4d6ed",
+      "kind": "easy_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "511fe843-5361-4170-9259-531af165ad3b",
+      "exposure_count": 1
+    },
+    {
+      "id": "43646b0e-dacb-478e-9041-64a2c7cc836d",
+      "kind": "easy_run",
+      "weekly_target": null,
+      "priority": null,
+      "phase_id": "9e13dcd5-56de-4064-8941-e6b236c97d18",
+      "exposure_count": 1
+    }
+  ],
+  "schedule_days": [
+    {
+      "date": "2026-07-01",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-02",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-07-03",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-07-04",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-05",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-07-06",
+      "day_type": "layover_departure",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_departure"
+    },
+    {
+      "date": "2026-07-07",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-08",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-09",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-10",
+      "day_type": "rest",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "rest"
+    },
+    {
+      "date": "2026-07-11",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-12",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-07-13",
+      "day_type": "layover_departure",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_departure"
+    },
+    {
+      "date": "2026-07-14",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-07-15",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-16",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-17",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-18",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-19",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-20",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-07-21",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-07-22",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-23",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-07-24",
+      "day_type": "layover_departure",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_departure"
+    },
+    {
+      "date": "2026-07-25",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-26",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-07-27",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-07-28",
+      "day_type": "layover_full",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_full"
+    },
+    {
+      "date": "2026-07-29",
+      "day_type": "layover_departure",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_departure"
+    },
+    {
+      "date": "2026-07-30",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-07-31",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-01",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-02",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-03",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-08-04",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-08-05",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-06",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-08-07",
+      "day_type": "flight",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "flight"
+    },
+    {
+      "date": "2026-08-08",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-09",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-10",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-08-11",
+      "day_type": "layover_departure",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_departure"
+    },
+    {
+      "date": "2026-08-12",
+      "day_type": "home",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home"
+    },
+    {
+      "date": "2026-08-13",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-08-14",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-15",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-16",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-17",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-08-18",
+      "day_type": "standby",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "standby"
+    },
+    {
+      "date": "2026-08-19",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-20",
+      "day_type": "layover_arrival",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_arrival"
+    },
+    {
+      "date": "2026-08-21",
+      "day_type": "layover_departure",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "layover_departure"
+    },
+    {
+      "date": "2026-08-22",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-08-23",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-24",
+      "day_type": "home_day",
+      "home_or_away": "home",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home_day"
+    },
+    {
+      "date": "2026-08-25",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-08-26",
+      "day_type": "direct flight",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "direct flight"
+    },
+    {
+      "date": "2026-08-27",
+      "day_type": "flight",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "flight"
+    },
+    {
+      "date": "2026-08-28",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-08-29",
+      "day_type": "turnaround",
+      "home_or_away": "unknown",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "turnaround"
+    },
+    {
+      "date": "2026-08-30",
+      "day_type": "home",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home"
+    },
+    {
+      "date": "2026-08-31",
+      "day_type": "home",
+      "home_or_away": "away",
+      "duties_count": 0,
+      "burden_score": 0,
+      "burden_band": "light",
+      "opportunity": 100,
+      "ceiling": "any",
+      "avail_min": 60,
+      "classification": "home"
+    }
+  ],
+  "assignments_vs_impls": [
+    {
+      "assignment_id": "a0465ab2-f5d6-4bcb-8ead-ed9598e8e62a",
+      "date": "2026-07-27",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "163f33e1-9c79-4d99-b5da-dcbe8d301879",
+      "impl_id": "69a98edb-77f5-4d15-95b9-ac79736b6971",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "afb640ce-dc11-4132-bd37-9f6883c8000b",
+      "date": "2026-07-28",
+      "status": "ready",
+      "kind": "tempo_run",
+      "objective_id": "cb4a31da-dddc-4fa8-8d49-b822ec22db49",
+      "impl_id": "8b8b037d-af0f-4170-8d56-fce3ebad3696",
+      "impl_exists": true,
+      "impl_title": "Tempo Run",
+      "impl_focus": "tempo_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "4585bdd7-2e18-4948-afd3-91aa0d0015c2",
+      "date": "2026-07-29",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "163f33e1-9c79-4d99-b5da-dcbe8d301879",
+      "impl_id": "3cbea25b-a712-428a-9e5f-e89c3ddbabb6",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "36b6f2ef-fdd1-4382-9914-175e942c8c2c",
+      "date": "2026-07-30",
+      "status": "proposed",
+      "kind": "intervals_run",
+      "objective_id": "e44fc29f-46d4-4565-867d-d0729083a607",
+      "impl_id": null,
+      "impl_exists": false,
+      "impl_title": null,
+      "impl_focus": null,
+      "impl_duration_min": null,
+      "impl_needs_review": null,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": null
+    },
+    {
+      "assignment_id": "d9acaaff-cb98-401b-a427-f88467867d24",
+      "date": "2026-07-31",
+      "status": "ready",
+      "kind": "easy_run",
+      "objective_id": "a4837ad5-9d91-494a-96a2-fb1b54d17b9b",
+      "impl_id": "fa5e3084-68d4-45bf-a40e-5e7938ef5ed6",
+      "impl_exists": true,
+      "impl_title": "Easy Run",
+      "impl_focus": "easy_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "9b79dcef-ad96-4342-998a-98520965bd58",
+      "date": "2026-08-01",
+      "status": "ready",
+      "kind": "strength_support",
+      "objective_id": "54a86374-6629-4456-8edb-837149a3225d",
+      "impl_id": "a6cec490-ddf4-4a80-beb1-50d6c29886c2",
+      "impl_exists": true,
+      "impl_title": "Strength Support",
+      "impl_focus": "strength_support",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 1,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "78cf320b-746b-4847-8e62-f143ad173878",
+      "date": "2026-08-03",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "5a0db832-b867-4eaa-a968-823ca7cb4b94",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "3b43a236-b9c2-49df-b489-eb9074e50b34",
+      "date": "2026-08-04",
+      "status": "ready",
+      "kind": "easy_run",
+      "objective_id": "66317cfe-5c6c-41f7-8d3c-76880cdb8677",
+      "impl_id": "fc3a0877-6eb5-4499-9b29-4abbafa3f91d",
+      "impl_exists": true,
+      "impl_title": "Easy Run",
+      "impl_focus": "easy_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "2e16134e-91d1-466b-a0f0-621bc92914e9",
+      "date": "2026-08-05",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "419ea1d0-1c14-47a9-a747-f7d6e3711b0c",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "19033b49-6441-4486-8caa-963b10944c78",
+      "date": "2026-08-06",
+      "status": "ready",
+      "kind": "easy_run",
+      "objective_id": "66317cfe-5c6c-41f7-8d3c-76880cdb8677",
+      "impl_id": "736c907f-966a-459c-b844-a903b857a75f",
+      "impl_exists": true,
+      "impl_title": "Easy Run",
+      "impl_focus": "easy_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "4cbbc82a-8e83-447f-a302-7380a52fa4a4",
+      "date": "2026-08-07",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "4288ecbd-bf82-4a1d-b563-e824e4447ae9",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "5ed66409-4e39-41bb-a5b4-fa1d6ee39ab3",
+      "date": "2026-08-09",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "b886f124-9dce-4d92-a85d-ec3e4e01895e",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "feae8a28-a287-41d3-b7d6-1b6fb6c2734a",
+      "date": "2026-08-17",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "e8537544-e71f-4d85-a0f0-9ce0ee3c6d2a",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "26a7cdb3-665c-4135-9ee9-832747d539f2",
+      "date": "2026-08-18",
+      "status": "ready",
+      "kind": "tempo_run",
+      "objective_id": "1d89b17b-19ec-44bb-bfe4-2d173a145ac9",
+      "impl_id": "bd785806-5da6-47fb-bc01-a143a050743d",
+      "impl_exists": true,
+      "impl_title": "Tempo Run",
+      "impl_focus": "tempo_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "fa58d354-1226-47fc-96aa-58da5fb18903",
+      "date": "2026-08-19",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "310b127b-20d4-47cc-bcf0-d09460d08e23",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "7ae467ef-1e1c-47eb-9847-ae559ecacd3c",
+      "date": "2026-08-20",
+      "status": "proposed",
+      "kind": "intervals_run",
+      "objective_id": "b263091d-97aa-4ef9-a2c4-c11bef0f5adb",
+      "impl_id": null,
+      "impl_exists": false,
+      "impl_title": null,
+      "impl_focus": null,
+      "impl_duration_min": null,
+      "impl_needs_review": null,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": null
+    },
+    {
+      "assignment_id": "3ac5185d-e24d-4774-b0ce-ddabda57d6a3",
+      "date": "2026-08-21",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "e6081055-c948-4f9f-9261-591ebe12cab9",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "d5354b1b-33fd-430d-863f-2dcbaa00451c",
+      "date": "2026-08-22",
+      "status": "ready",
+      "kind": "tempo_run",
+      "objective_id": "1d89b17b-19ec-44bb-bfe4-2d173a145ac9",
+      "impl_id": "c3954ded-b30a-43e3-9190-006f3d54f02b",
+      "impl_exists": true,
+      "impl_title": "Tempo Run",
+      "impl_focus": "tempo_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "38491a40-5a58-43f7-aad1-c3332203c806",
+      "date": "2026-08-23",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "f6a54dbb-9751-4bb6-8711-f059f9a21e9e",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "b1a3ee7d-8d46-48f2-80cc-73e3173a9262",
+      "date": "2026-08-24",
+      "status": "proposed",
+      "kind": "intervals_run",
+      "objective_id": "b263091d-97aa-4ef9-a2c4-c11bef0f5adb",
+      "impl_id": null,
+      "impl_exists": false,
+      "impl_title": null,
+      "impl_focus": null,
+      "impl_duration_min": null,
+      "impl_needs_review": null,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": null
+    },
+    {
+      "assignment_id": "8d0a3856-7dd5-441c-b907-a5fd0e311cff",
+      "date": "2026-08-31",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "77b82adf-8a22-427c-b071-b3755fb2f2e5",
+      "impl_id": "7b6a46b1-0001-49c7-b38d-83531a33fb43",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    }
+  ],
+  "assignments_missing_impl": [
+    {
+      "assignment_id": "36b6f2ef-fdd1-4382-9914-175e942c8c2c",
+      "date": "2026-07-30",
+      "status": "proposed",
+      "kind": "intervals_run",
+      "objective_id": "e44fc29f-46d4-4565-867d-d0729083a607",
+      "impl_id": null,
+      "impl_exists": false,
+      "impl_title": null,
+      "impl_focus": null,
+      "impl_duration_min": null,
+      "impl_needs_review": null,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": null
+    },
+    {
+      "assignment_id": "7ae467ef-1e1c-47eb-9847-ae559ecacd3c",
+      "date": "2026-08-20",
+      "status": "proposed",
+      "kind": "intervals_run",
+      "objective_id": "b263091d-97aa-4ef9-a2c4-c11bef0f5adb",
+      "impl_id": null,
+      "impl_exists": false,
+      "impl_title": null,
+      "impl_focus": null,
+      "impl_duration_min": null,
+      "impl_needs_review": null,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": null
+    },
+    {
+      "assignment_id": "b1a3ee7d-8d46-48f2-80cc-73e3173a9262",
+      "date": "2026-08-24",
+      "status": "proposed",
+      "kind": "intervals_run",
+      "objective_id": "b263091d-97aa-4ef9-a2c4-c11bef0f5adb",
+      "impl_id": null,
+      "impl_exists": false,
+      "impl_title": null,
+      "impl_focus": null,
+      "impl_duration_min": null,
+      "impl_needs_review": null,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": null
+    }
+  ],
+  "assignments_impl_zero_exercises": [
+    {
+      "assignment_id": "a0465ab2-f5d6-4bcb-8ead-ed9598e8e62a",
+      "date": "2026-07-27",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "163f33e1-9c79-4d99-b5da-dcbe8d301879",
+      "impl_id": "69a98edb-77f5-4d15-95b9-ac79736b6971",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "afb640ce-dc11-4132-bd37-9f6883c8000b",
+      "date": "2026-07-28",
+      "status": "ready",
+      "kind": "tempo_run",
+      "objective_id": "cb4a31da-dddc-4fa8-8d49-b822ec22db49",
+      "impl_id": "8b8b037d-af0f-4170-8d56-fce3ebad3696",
+      "impl_exists": true,
+      "impl_title": "Tempo Run",
+      "impl_focus": "tempo_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "4585bdd7-2e18-4948-afd3-91aa0d0015c2",
+      "date": "2026-07-29",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "163f33e1-9c79-4d99-b5da-dcbe8d301879",
+      "impl_id": "3cbea25b-a712-428a-9e5f-e89c3ddbabb6",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "d9acaaff-cb98-401b-a427-f88467867d24",
+      "date": "2026-07-31",
+      "status": "ready",
+      "kind": "easy_run",
+      "objective_id": "a4837ad5-9d91-494a-96a2-fb1b54d17b9b",
+      "impl_id": "fa5e3084-68d4-45bf-a40e-5e7938ef5ed6",
+      "impl_exists": true,
+      "impl_title": "Easy Run",
+      "impl_focus": "easy_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "78cf320b-746b-4847-8e62-f143ad173878",
+      "date": "2026-08-03",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "5a0db832-b867-4eaa-a968-823ca7cb4b94",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "3b43a236-b9c2-49df-b489-eb9074e50b34",
+      "date": "2026-08-04",
+      "status": "ready",
+      "kind": "easy_run",
+      "objective_id": "66317cfe-5c6c-41f7-8d3c-76880cdb8677",
+      "impl_id": "fc3a0877-6eb5-4499-9b29-4abbafa3f91d",
+      "impl_exists": true,
+      "impl_title": "Easy Run",
+      "impl_focus": "easy_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "2e16134e-91d1-466b-a0f0-621bc92914e9",
+      "date": "2026-08-05",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "419ea1d0-1c14-47a9-a747-f7d6e3711b0c",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "19033b49-6441-4486-8caa-963b10944c78",
+      "date": "2026-08-06",
+      "status": "ready",
+      "kind": "easy_run",
+      "objective_id": "66317cfe-5c6c-41f7-8d3c-76880cdb8677",
+      "impl_id": "736c907f-966a-459c-b844-a903b857a75f",
+      "impl_exists": true,
+      "impl_title": "Easy Run",
+      "impl_focus": "easy_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "4cbbc82a-8e83-447f-a302-7380a52fa4a4",
+      "date": "2026-08-07",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "4288ecbd-bf82-4a1d-b563-e824e4447ae9",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "5ed66409-4e39-41bb-a5b4-fa1d6ee39ab3",
+      "date": "2026-08-09",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "c4f3c646-fbe0-45e9-8dfe-e09f127bb09f",
+      "impl_id": "b886f124-9dce-4d92-a85d-ec3e4e01895e",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "feae8a28-a287-41d3-b7d6-1b6fb6c2734a",
+      "date": "2026-08-17",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "e8537544-e71f-4d85-a0f0-9ce0ee3c6d2a",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "26a7cdb3-665c-4135-9ee9-832747d539f2",
+      "date": "2026-08-18",
+      "status": "ready",
+      "kind": "tempo_run",
+      "objective_id": "1d89b17b-19ec-44bb-bfe4-2d173a145ac9",
+      "impl_id": "bd785806-5da6-47fb-bc01-a143a050743d",
+      "impl_exists": true,
+      "impl_title": "Tempo Run",
+      "impl_focus": "tempo_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "fa58d354-1226-47fc-96aa-58da5fb18903",
+      "date": "2026-08-19",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "310b127b-20d4-47cc-bcf0-d09460d08e23",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "3ac5185d-e24d-4774-b0ce-ddabda57d6a3",
+      "date": "2026-08-21",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "e6081055-c948-4f9f-9261-591ebe12cab9",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "d5354b1b-33fd-430d-863f-2dcbaa00451c",
+      "date": "2026-08-22",
+      "status": "ready",
+      "kind": "tempo_run",
+      "objective_id": "1d89b17b-19ec-44bb-bfe4-2d173a145ac9",
+      "impl_id": "c3954ded-b30a-43e3-9190-006f3d54f02b",
+      "impl_exists": true,
+      "impl_title": "Tempo Run",
+      "impl_focus": "tempo_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "38491a40-5a58-43f7-aad1-c3332203c806",
+      "date": "2026-08-23",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "e7de3afa-9655-41f6-b6bd-d55beeca43de",
+      "impl_id": "f6a54dbb-9751-4bb6-8711-f059f9a21e9e",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    },
+    {
+      "assignment_id": "8d0a3856-7dd5-441c-b907-a5fd0e311cff",
+      "date": "2026-08-31",
+      "status": "ready",
+      "kind": "long_run",
+      "objective_id": "77b82adf-8a22-427c-b071-b3755fb2f2e5",
+      "impl_id": "7b6a46b1-0001-49c7-b38d-83531a33fb43",
+      "impl_exists": true,
+      "impl_title": "Long Run",
+      "impl_focus": "long_run",
+      "impl_duration_min": 60,
+      "impl_needs_review": false,
+      "exercises_count": 0,
+      "blocks_count": 0,
+      "has_running_content": false,
+      "equipment_ctx": [
+        "bodyweight",
+        "mat",
+        "band"
+      ]
+    }
+  ],
+  "implementations_orphan": [],
+  "decision_records_by_layer": {
+    "WHEN": [
+      {
+        "scope_kind": "client",
+        "scope_id": "cbca8b09",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "client",
+        "scope_id": "cbca8b09",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "client",
+        "scope_id": "cbca8b09",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "assignment",
+        "scope_id": "a0465ab2",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "assignment",
+        "scope_id": "78cf320b",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "assignment",
+        "scope_id": "feae8a28",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "assignment",
+        "scope_id": "8d0a3856",
+        "outcome": "APPLIED",
+        "reason": null
+      },
+      {
+        "scope_kind": "assignment",
+        "scope_id": "4585bdd7",
+        "outcome": "APPLIED",
+        "reason": null
+      }
+    ],
+    "WHAT": [
+      {
+        "scope_kind": "programme",
+        "scope_id": "cc64f996",
+        "outcome": "APPLIED",
+        "reason": null
+      }
+    ],
+    "HOW": [
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "69a98edb",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "8b8b037d",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "3cbea25b",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "fa5e3084",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "a6cec490",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "5a0db832",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "fc3a0877",
+        "outcome": "READY",
+        "reason": null
+      },
+      {
+        "scope_kind": "workout_implementation",
+        "scope_id": "419ea1d0",
+        "outcome": "READY",
+        "reason": null
+      }
+    ],
+    "ORCHESTRATION": [
+      {
+        "scope_kind": "programme",
+        "scope_id": "cc64f996",
+        "outcome": "APPLIED",
+        "reason": null
+      }
+    ]
+  },
+  "counts": {
+    "assessments": 1,
+    "events": 1,
+    "goals_v2": 1,
+    "programmes_v2": 1,
+    "programme_phases_v2": 6,
+    "training_objectives": 15,
+    "objective_exposures": 26,
+    "rosters": 2,
+    "schedule_days": 62,
+    "roster_duties": 0,
+    "flight_sectors": 0,
+    "workout_assignments": 21,
+    "workout_implementations": 18,
+    "plan_drafts": 1,
+    "decision_records": 45,
+    "coach_directives": 0
+  }
+}

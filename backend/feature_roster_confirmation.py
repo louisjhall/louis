@@ -1111,6 +1111,25 @@ async def roster_pending_confirm(rid: str, user: dict = Depends(current_user)):
     except Exception:
         logger.exception("Phase 7A post-confirm hooks failed (non-fatal)")
 
+    # V2 bridge — materialise V2 schedule_days/duties/sectors from the
+    # confirmed V1 roster for V2-flagged clients so the V2 coach
+    # workspace picks up the new roster immediately.
+    try:
+        user_v2 = ((user.get("profile") or {}).get("v2_flags") or {})
+        if user_v2.get("v2_default") or user_v2.get("state_foundation_enabled") or user_v2.get("roster_facets_enabled"):
+            from feature_v2_p4_roster import _build_roster_facets
+            bridge_result = await _build_roster_facets(
+                client_id=user["id"], roster_id=rid, all_active=False,
+                actor_id=user["id"],
+            )
+            logger.info(
+                "client-confirm V2 bridge: user=%s roster=%s → %s days, %s duties, %s sectors",
+                user["id"], rid, bridge_result.get("schedule_days"),
+                bridge_result.get("duties"), bridge_result.get("sectors"),
+            )
+    except Exception:
+        logger.exception("client-confirm: V2 roster-facets bridge failed (non-fatal)")
+
     # Kick off workout generation using a fresh job doc so the same
     # progress-polling UI works unchanged.
     job_id = new_id()

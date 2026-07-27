@@ -299,6 +299,26 @@ async def coach_pending_confirm(
     except Exception:
         logger.exception("Phase 7A post-confirm hooks failed (non-fatal)")
 
+    # V2 bridge — for V2-flagged clients, immediately materialise
+    # schedule_days / roster_duties / flight_sectors from the confirmed
+    # V1 roster so the V2 coach workspace stops showing
+    # "V1 roster · read-only" and P5 can build a draft.
+    try:
+        client_v2 = ((client.get("profile") or {}).get("v2_flags") or {})
+        if client_v2.get("v2_default") or client_v2.get("state_foundation_enabled") or client_v2.get("roster_facets_enabled"):
+            from feature_v2_p4_roster import _build_roster_facets
+            bridge_result = await _build_roster_facets(
+                client_id=client_id, roster_id=rid, all_active=False,
+                actor_id=coach["id"],
+            )
+            logger.info(
+                "coach-confirm V2 bridge: client=%s roster=%s → %s days, %s duties, %s sectors",
+                client_id, rid, bridge_result.get("schedule_days"),
+                bridge_result.get("duties"), bridge_result.get("sectors"),
+            )
+    except Exception:
+        logger.exception("coach-confirm: V2 roster-facets bridge failed (non-fatal)")
+
     # Kick off workout generation (same worker shape as the client flow).
     job_id = new_id()
     await db.roster_jobs.insert_one({

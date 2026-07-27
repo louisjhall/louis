@@ -134,17 +134,34 @@ async def roster_facets_build(
 ) -> dict:
     """Regenerate V2 schedule_days/duties/sectors from V1 rosters for this client."""
     await require_client_and_flag(client_id, FLAG)
+    return await _build_roster_facets(
+        client_id=client_id,
+        roster_id=body.roster_id,
+        all_active=body.all_active,
+        actor_id=coach["id"],
+    )
 
+
+async def _build_roster_facets(
+    client_id: str,
+    roster_id: Optional[str] = None,
+    all_active: bool = True,
+    actor_id: str = "system",
+) -> dict:
+    """Reusable helper — regenerate V2 schedule_days/duties/sectors from V1
+    rosters. Safe to call from any post-confirmation worker without
+    needing coach auth (the caller is expected to have already
+    authenticated the coach or is running as system).
+    """
     q: dict = {"user_id": client_id}
-    if body.roster_id:
-        q["id"] = body.roster_id
-    elif body.all_active:
+    if roster_id:
+        q["id"] = roster_id
+    elif all_active:
         q["is_active"] = True
     rosters = await db.rosters.find(q, {"_id": 0}).to_list(50)
     if not rosters:
         return {"schedule_days": 0, "duties": 0, "sectors": 0, "note": "no rosters found"}
 
-    # Wipe existing V2 records for this client from these source rosters
     roster_ids = [r["id"] for r in rosters]
 
     # Snapshot prior schedule_days for change detection (per-date derived state)
@@ -213,7 +230,7 @@ async def roster_facets_build(
                     "sectors": sector_ids,
                     "notes": duty.get("notes") or "",
                     "created_at": now_iso(), "updated_at": now_iso(),
-                    "created_by": coach["id"],
+                    "created_by": actor_id,
                 })
                 duty_ids.append(dtid)
                 total_duties += 1
@@ -243,7 +260,7 @@ async def roster_facets_build(
                 "parser_confidence": day.get("parser_confidence") or 0.9,
                 "version": 1,
                 "updated_at": now_iso(),
-                "updated_by": coach["id"],
+                "updated_by": actor_id,
             })
             # Backfill schedule_day_id on duties
             if duty_ids:

@@ -18,6 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { useAuth } from "@/src/lib/auth";
+import { AddClientSheet } from "@/src/components/AddClientSheet";
 
 type AttentionRow = {
   client_id: string;
@@ -83,6 +84,7 @@ export default function CoachDashboardV2Home() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addClientOpen, setAddClientOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -222,6 +224,14 @@ export default function CoachDashboardV2Home() {
       <View style={styles.section}>
         <View style={styles.clientHeadRow}>
           <Text style={styles.sectionTitle}>CLIENTS</Text>
+          <Pressable
+            onPress={() => setAddClientOpen(true)}
+            style={styles.addClientBtn}
+            testID="add-client-btn"
+          >
+            <Ionicons name="person-add" size={14} color="#000" />
+            <Text style={styles.addClientBtnText}>Add client</Text>
+          </Pressable>
           <TextInput
             placeholder="Search…"
             placeholderTextColor={theme.color.textDim}
@@ -276,6 +286,11 @@ export default function CoachDashboardV2Home() {
       </View>
 
       {error && <Text style={styles.errorText}>{error}</Text>}
+      <AddClientSheet
+        visible={addClientOpen}
+        onClose={() => setAddClientOpen(false)}
+        onCreated={() => { setAddClientOpen(false); load(); }}
+      />
     </ScrollView>
   );
 }
@@ -365,9 +380,15 @@ const styles = StyleSheet.create({
   attnKind: { color: theme.color.textHi, fontSize: 13, fontWeight: "600" },
   attnReason: { color: theme.color.textDim, fontSize: 12, marginTop: 1 },
 
-  clientHeadRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
+  clientHeadRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
+  addClientBtn: {
+    marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: theme.color.brand, borderRadius: 6,
+    paddingHorizontal: 12, paddingVertical: 7,
+  },
+  addClientBtnText: { color: "#000", fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
   searchBox: {
-    marginLeft: "auto", backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, color: theme.color.textHi, minWidth: 180,
   },
   filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },

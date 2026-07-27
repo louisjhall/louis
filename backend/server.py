@@ -5314,7 +5314,19 @@ async def roster_job_acknowledge(job_id: str, user: dict = Depends(current_user)
 
 @api.get("/roster/jobs/{job_id}")
 async def roster_job_status(job_id: str, user: dict = Depends(current_user)):
-    j = await db.roster_jobs.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
+    # Bugfix: when a coach uploads a roster on behalf of a client, the job
+    # is stored with user_id = client_id and coach_id = coach.id. The
+    # coach must be allowed to poll that job — otherwise the compact
+    # roster upload button in the V2 workspace spins forever.
+    query: dict = {"id": job_id}
+    if user.get("role") == "coach":
+        query["$or"] = [
+            {"user_id": user["id"]},
+            {"coach_id": user["id"]},
+        ]
+    else:
+        query["user_id"] = user["id"]
+    j = await db.roster_jobs.find_one(query, {"_id": 0})
     if not j:
         raise HTTPException(404, "Job not found")
     return j
@@ -5325,7 +5337,13 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
     """Re-run ONLY the plan generation step for a job that timed out or failed.
     The client does not need to re-upload their roster."""
     import asyncio as _asyncio
-    j = await db.roster_jobs.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
+    # Bugfix: coach must be able to retry jobs they created on behalf of a client.
+    q: dict = {"id": job_id}
+    if user.get("role") == "coach":
+        q["$or"] = [{"user_id": user["id"]}, {"coach_id": user["id"]}]
+    else:
+        q["user_id"] = user["id"]
+    j = await db.roster_jobs.find_one(q, {"_id": 0})
     if not j:
         raise HTTPException(404, "Job not found")
     if j.get("status") in ("queued", "processing"):
@@ -5333,7 +5351,9 @@ async def roster_job_retry(job_id: str, user: dict = Depends(current_user)):
     roster_id = j.get("roster_id")
     if not roster_id:
         raise HTTPException(400, "This job did not save a roster — please re-upload the file.")
-    roster = await db.rosters.find_one({"id": roster_id, "user_id": user["id"]}, {"_id": 0})
+    # Roster is always stored under the CLIENT's user_id (even when coach uploaded).
+    client_user_id = j.get("user_id") or user["id"]
+    roster = await db.rosters.find_one({"id": roster_id, "user_id": client_user_id}, {"_id": 0})
     if not roster:
         raise HTTPException(404, "Original roster not found — please re-upload.")
 

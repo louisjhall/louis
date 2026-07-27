@@ -104,7 +104,7 @@ export function AddClientSheet({
 
       const r = await api<any>("/coach/clients/create", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: payload,
       });
       const created = r?.client || r;
       setCreatedCredentials({

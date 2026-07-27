@@ -4622,11 +4622,40 @@ def _roster_expiry(r: dict) -> dict:
 
 @api.get("/roster/current")
 async def roster_current(user: dict = Depends(current_user)):
-    r = await db.rosters.find_one({"user_id": user["id"], "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
-    if not r:
+    # Iter 109 — Phase A · A1
+    # The client dashboard used to only see the newest active roster. When a
+    # client uploaded July then August, July's days silently disappeared even
+    # though both rosters remained active (they cover non-overlapping months).
+    # We now return the newest roster as the "primary" but MERGE `days[]`
+    # from every currently-active roster the user owns, preserving each day's
+    # source roster id so the day-picker can route edits correctly.
+    rosters = await db.rosters.find(
+        {"user_id": user["id"], "is_active": True},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(60)
+    if not rosters:
         return {}
-    r["expiry"] = _roster_expiry(r)
-    return r
+    primary = rosters[0]
+    merged_days: dict[str, dict] = {}
+    for r in rosters:  # newest first
+        rid = r.get("id")
+        for d in (r.get("days") or []):
+            ds = str(d.get("date") or "")[:10]
+            if not ds or ds in merged_days:
+                continue
+            enriched = dict(d)
+            enriched.setdefault("_source_roster_id", rid)
+            merged_days[ds] = enriched
+    days_out = sorted(merged_days.values(), key=lambda x: x.get("date") or "")
+    out = dict(primary)
+    out["days"] = days_out
+    if days_out:
+        out["start_date"] = days_out[0].get("date") or primary.get("start_date")
+        out["end_date"] = days_out[-1].get("date") or primary.get("end_date")
+    out["day_count"] = len(days_out)
+    out["active_roster_ids"] = [r.get("id") for r in rosters if r.get("id")]
+    out["expiry"] = _roster_expiry(primary)
+    return out
 
 
 @api.get("/roster/history")
@@ -11799,6 +11828,7 @@ import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reas
 import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
+import feature_coach_roster_upload       # noqa: E402,F401  Phase A · A2: coach uploads roster on behalf of client
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)
 import feature_roster_versions           # noqa: E402,F401  Phase 3: multi-roster overlap resolution + version history
 import feature_coach_workout_swap        # noqa: E402,F401  Phase 5: coach inline workout-swap picker (alternative presets)

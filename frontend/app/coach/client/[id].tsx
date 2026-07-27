@@ -9,6 +9,7 @@ import { usePreview } from "@/src/lib/preview";
 import { theme, loadColor } from "@/src/lib/theme";
 import { StatusBadge, deriveStatus } from "@/src/components/StatusBadge";
 import { CoachNotesTab } from "@/src/components/CoachNotesTab";
+import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
 import { confirm as uxConfirm, toast as uxToast } from "@/src/lib/ux";
 
 const DAY_TYPES = [
@@ -699,6 +700,12 @@ export default function ClientDetail() {
             <Ionicons name="calendar" size={16} color="#fff" />
             <Text style={styles.actionText}>PROGRAMME BY MONTH</Text>
           </Pressable>
+          {/* Iter 109 · Phase A · A2 — Coach uploads roster on behalf of client */}
+          <CoachRosterUploadButton
+            clientId={client.id}
+            clientName={client.name || client.first_name || client.email}
+            onComplete={load}
+          />
           <Pressable testID="cd-script-btn" onPress={() => router.push(`/coach/scripts/${client.id}`)} style={[styles.actionBtn, { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border }]}>
             <Ionicons name="videocam" size={16} color={theme.color.text} />
             <Text style={[styles.actionText, { color: theme.color.text }]}>WEEKLY SCRIPT</Text>

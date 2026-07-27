@@ -23,6 +23,7 @@ import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { WorkoutQuickActions, type WorkoutQuickActionTarget } from "@/src/components/WorkoutQuickActions";
 import { ScheduleRow } from "@/src/components/ScheduleRow";
+import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
 
 // -------------------- Types --------------------
 
@@ -234,6 +235,13 @@ export default function CoachClientMonths() {
           <Text style={styles.headerTitle} numberOfLines={1}>SCHEDULE · {clientName.toUpperCase()}</Text>
           <Text style={styles.headerSub}>Schedule · roster + assigned plan by month</Text>
         </View>
+        {/* Iter 109 · Phase A · A2 — Coach uploads roster for this client */}
+        <CoachRosterUploadButton
+          clientId={id as string}
+          clientName={clientName}
+          onComplete={() => { loadMonths(); if (selectedKey) loadDetail(selectedKey); }}
+          compact
+        />
         <Pressable testID="cm-refresh" onPress={onRefresh} hitSlop={10}>
           <Ionicons name="refresh" size={20} color={theme.color.textMuted} />
         </Pressable>
@@ -251,7 +259,16 @@ export default function CoachClientMonths() {
         <View style={styles.emptyWrap}>
           <Ionicons name="calendar-outline" size={40} color={theme.color.textMuted} />
           <Text style={styles.emptyT}>No rosters uploaded yet</Text>
-          <Text style={styles.emptyS}>Once {clientName || "the client"} uploads a roster, months will appear here.</Text>
+          <Text style={styles.emptyS}>
+            Upload {clientName || "the client"}'s roster now to build their plan.
+          </Text>
+          <View style={{ marginTop: 12 }}>
+            <CoachRosterUploadButton
+              clientId={id as string}
+              clientName={clientName}
+              onComplete={() => { loadMonths(); if (selectedKey) loadDetail(selectedKey); }}
+            />
+          </View>
         </View>
       ) : (
         <>

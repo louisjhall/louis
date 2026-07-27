@@ -1,0 +1,46 @@
+{
+  "summary": "Iter 109 Phase A (Coach Dashboard rebuild) backend testing — 17/17 pytest cases pass (6 pre-existing unit + 11 new HTTP integration). Validated multi-roster merge fix ('July disappeared after August upload'), coach roster upload/confirm role guards + 404 semantics, overlap-aware supersede (non-overlapping months stay active), and copy hygiene (no AI/generated/bot wording in endpoint responses or CoachRosterUploadButton component).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "server.py",
+        "issue": "Still using deprecated FastAPI @app.on_event('startup')/@app.on_event('shutdown') handlers (server.py:10792, 10954). Not blocking but should migrate to lifespan events."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_roster_month_preservation.py",
+    "/app/backend/tests/test_coach_roster_upload.py",
+    "/app/backend/tests/test_iter109_coach_roster_http.py",
+    "/app/test_reports/pytest/iter109_phaseA_full.xml"
+  ],
+  "action_items": [
+    "None blocking for Phase A. Optional: migrate two remaining @app.on_event handlers in server.py to FastAPI lifespan events.",
+    "Recommend Phase B testing include the client-facing 62-days-visible smoke check for the real 'louis@hotmail.co.uk' fixture once a password is captured — this iteration validated the SAME code path via a fresh seeded client, so behavior is proven."
+  ],
+  "critical_code_review_comments": [
+    "feature_calendar_recovery._roster_days_between() correctly queries {is_active: True} across ALL active rosters and sorts DESC by created_at so 'newest wins' on date conflicts — matches the RCA in the PRD.",
+    "feature_coach_roster_upload.coach_pending_confirm() overlap-aware deactivation uses the correct date-range predicate (start_date<=end AND end_date>=start) — non-overlapping months stay active. Verified live.",
+    "Confirmed roster carries is_active=True, status='confirmed', confirmed_by='coach', confirmed_by_coach_id — schema-consistent with client flow.",
+    "Coach upload flow correctly stamps uploaded_by='coach' + uploaded_by_coach_id on the pending roster document (feature_coach_roster_upload.py:181-187)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter109_coach_roster_http.py (new — 11 HTTP integration tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 tests)",
+    "frontend": "not tested (backend-only request per E1)"
+  },
+  "seed_data_creation": "Ephemeral test client seeded via pymongo in each fixture run: iter109_<uuid>@test.crewfit.com with bcrypt-hashed password 'Iter109!', two active rosters (2026-07 and 2026-08, 31 days each), assigned to Louis Hall as coach. Cleaned up in fixture teardown (users, rosters, workouts, roster_jobs, personal_activities purged). One additional Sept pending roster is created + torn down inside the overlap-supersede test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The new test file test_iter109_coach_roster_http.py can be reused for regression. It uses EXPO_PUBLIC_BACKEND_URL to hit the public preview and uses MONGO_URL + DB_NAME to seed/cleanup a fresh client. If the multi-roster merge bug regresses, TestRosterCurrentMerge will fail immediately. TestOverlapSupersede is the most valuable regression guard for the coach-confirm path. Note the test intentionally does NOT invoke the LLM parse worker — that requires a real PDF and Gemini calls; we skip that in CI-safe mode and only smoke test the coach role/404 guards on upload-parse.",
+  "rca_of_issue": "N/A — this iteration was validation of a fix already in place (Phase A of Iter 109). Root cause of the original 'July disappeared' bug: feature_calendar_recovery._roster_days_between() previously did a single find_one({status: 'active'}) — but rosters carry status='confirmed' + is_active=True, not status='active'. Even had the field been correct, find_one returns ONE roster only. The fix in feature_calendar_recovery.py:262-287 now queries ALL {is_active: True} rosters sorted by created_at DESC and merges days into a single dict keyed by date, with newest-wins on conflict and _source_roster_id stamped on each day for downstream long-press editing. Coach upload flow (feature_coach_roster_upload.py) reinforces this by only superseding rosters whose date range OVERLAPS the new one, preserving non-overlapping months side-by-side."
+}

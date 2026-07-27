@@ -249,21 +249,41 @@ async def _workouts_between(user_id: str, d_from: _dt.date, d_to: _dt.date) -> l
 
 
 async def _roster_days_between(user_id: str, d_from: _dt.date, d_to: _dt.date) -> dict[str, dict]:
-    r = await db.rosters.find_one(
-        {"user_id": user_id, "status": "active"},
-        {"_id": 0}, sort=[("created_at", -1)],
-    )
-    if not r:
+    """Return merged roster days across ALL active rosters for this user.
+
+    Historically this only queried the "latest" roster (find_one) using
+    `status == "active"` — a field that isn't actually set anywhere in the
+    codebase (rosters carry `is_active=True` + `status="confirmed"`). As a
+    result the client dashboard silently lost visibility of any month that
+    lived on a *previous* roster upload. Now we merge every currently-active
+    roster's days by date so July + August (or any non-overlapping split
+    across two uploads) both show up.
+    """
+    rosters = await db.rosters.find(
+        {"user_id": user_id, "is_active": True},
+        {"_id": 0, "raw_response": 0},
+    ).sort("created_at", -1).to_list(60)
+    if not rosters:
         return {}
     out: dict[str, dict] = {}
-    for d in (r.get("days") or []):
-        ds = str(d.get("date") or "")[:10]
-        try:
-            dd = _dt.date.fromisoformat(ds)
-        except Exception:
-            continue
-        if d_from <= dd <= d_to:
-            out[ds] = d
+    for r in rosters:
+        rid = r.get("id")
+        for d in (r.get("days") or []):
+            ds = str(d.get("date") or "")[:10]
+            try:
+                dd = _dt.date.fromisoformat(ds)
+            except Exception:
+                continue
+            if not (d_from <= dd <= d_to):
+                continue
+            # Newest roster wins on conflict (rosters is sorted DESC by created_at).
+            if ds in out:
+                continue
+            # Preserve which roster this day came from — needed by clients
+            # that want to route long-press edits back to the correct roster.
+            enriched = dict(d)
+            enriched.setdefault("_source_roster_id", rid)
+            out[ds] = enriched
     return out
 
 

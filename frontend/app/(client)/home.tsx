@@ -287,7 +287,10 @@ export default function Home() {
       return;
     }
     setDayPickerTarget({
-      rosterId: roster.id,
+      // Iter 109 · A1 — merged /roster/current now spans multiple active
+      // rosters (e.g. July + August). Each day carries its own source
+      // roster id so PATCH /roster/{rid}/day routes to the right doc.
+      rosterId: rd._source_roster_id || roster.id,
       date: dateStr,
       currentDayType: rd?.day_type || null,
       currentLayoverCity: rd?.layover_city || null,

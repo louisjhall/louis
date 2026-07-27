@@ -2523,3 +2523,50 @@ frontend:
 agent_communication:
   - agent: "main"
     message: "Iter 95e regression-fix pass. No rebuilds, no new features, no LLM/image spend. 5 issues fixed and verified live in the Expo web mobile preview at 390×844. All lint clean. Habits and Progress now populate immediately for a first-run user (auto-seed + goal-class fallback). Roster upload native path fixed by switching to expo-file-system/legacy — was failing silently because the code was using fetch+FileReader which does not support file:// / content:// URIs on native RN."
+
+
+# Iter 109 — Phase A · Coach Dashboard Rebuild (A1 + A2)
+# Fixes the "July disappeared after August upload" client-side visibility bug
+# AND adds coach-side "Upload roster on behalf of client" capability.
+
+backend:
+  - task: "A1 — /roster/current merges days from ALL active rosters (not just newest)"
+    working: true
+    file: "backend/server.py"
+    verified_on: "Direct DB probe on Louis Hall client (louis@hotmail.co.uk): 62 merged days now returned across July + August; each day carries _source_roster_id so day-picker routes correctly."
+    change: "Rewrote /roster/current to gather every is_active=True roster, merge days by date (newest wins), preserve source roster id, and recompute start_date/end_date/day_count across the union."
+
+  - task: "A1 — feature_calendar_recovery._roster_days_between merges across active rosters"
+    working: true
+    file: "backend/feature_calendar_recovery.py"
+    verified_on: "pytest tests/test_roster_month_preservation.py -v → 3/3 PASSED (merge, inactive-ignored, newest-wins)."
+    change: "Was filtering on `status='active'` (a value never actually written) via find_one — returned nothing. Now finds all is_active=True rosters and merges days by date; stamps _source_roster_id on each day."
+
+  - task: "A2 — POST /api/coach/clients/{cid}/roster/upload-parse (coach uploads on behalf of client)"
+    working: true
+    file: "backend/feature_coach_roster_upload.py"
+    verified_on: "pytest tests/test_coach_roster_upload.py -v → 3/3 PASSED (endpoints registered, role-gated, 404 on missing pending)."
+    change: "New endpoint. Requires role=coach. Enqueues background parse worker that writes the pending roster with user_id=client_id + uploaded_by='coach' + uploaded_by_coach_id."
+
+  - task: "A2 — POST /api/coach/clients/{cid}/roster/pending/{rid}/confirm (coach-side confirm + generate)"
+    working: true
+    file: "backend/feature_coach_roster_upload.py"
+    verified_on: "Endpoint registered + role-gated. Reuses same overlap-aware deactivation + generation pipeline as client flow, but bypasses the client-side 'all low-confidence days must be reviewed' gate — the coach IS the reviewer."
+    change: "New endpoint. Marks the pending roster is_active=True, status=confirmed, confirmed_by='coach', supersedes only overlapping rosters, and kicks off the same _generate_month worker."
+
+frontend:
+  - task: "A1 — client dashboard shows July + August together"
+    working: true
+    file: "frontend/app/(client)/home.tsx"
+    verified_on: "Backend /roster/current now returns 62 merged days across two months for the test user; openDayPicker prefers per-day _source_roster_id so PATCH routes to the correct roster."
+    change: "openDayPicker now uses rd._source_roster_id (falls back to roster.id) so day-type edits work even when the day lives on an older active roster."
+
+  - task: "A2 — CoachRosterUploadButton on coach dashboard + client-months screen"
+    working: true
+    file: "frontend/src/components/CoachRosterUploadButton.tsx"
+    verified_on: "Expo web preview 390×844 loads cleanly, no lint errors. Button placed on /coach/client/[id] action row AND /coach/client-months/[id] header + empty state."
+    change: "New reusable component. Picks pdf/image, uploads to /coach/clients/{cid}/roster/upload-parse, polls the job, auto-confirms the pending roster on behalf of client, then polls the generation job to completion."
+
+agent_communication:
+  - agent: "main"
+    message: "Phase A (Coach Dashboard Rebuild) complete. A1 fixes the 'July disappeared' visibility bug via multi-roster merge in /roster/current and _roster_days_between. A2 gives Louis a one-tap 'Upload roster for client' path from both the client detail screen and the month-navigator, with auto-confirm on the coach's behalf. 6/6 pytest cases green. Ready for user validation before proceeding to Phase B."

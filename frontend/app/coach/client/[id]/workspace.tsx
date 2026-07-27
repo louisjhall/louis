@@ -21,6 +21,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { CommandBar } from "@/src/components/CommandBar";
+import { DirectiveEditor } from "@/src/components/DirectiveEditor";
+import { GenerationStatusBanner } from "@/src/components/GenerationStatusBanner";
+import { ProgrammeSummaryPanel } from "@/src/components/ProgrammeSummaryPanel";
 
 type DayRow = {
   date: string;
@@ -106,6 +109,7 @@ export default function CoachWorkspaceScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
+  const [directiveOpen, setDirectiveOpen] = useState(false);
 
   const loadMonths = useCallback(async () => {
     if (!clientId) return;
@@ -225,9 +229,23 @@ export default function CoachWorkspaceScreen() {
                 <Text style={styles.approveBtnText}>{busy ? "Approving…" : `Approve ${data.counts.ready} Ready`}</Text>
               </Pressable>
             )}
+            <Pressable
+              style={styles.directiveBtn}
+              onPress={() => setDirectiveOpen(true)}
+              testID="add-directive-btn"
+            >
+              <Ionicons name="flag-outline" size={14} color={theme.color.textHi} />
+              <Text style={styles.directiveBtnText}>Add directive</Text>
+            </Pressable>
           </View>
         )}
       </View>
+
+      {/* Programme summary panel — expandable header with goal + phase strip */}
+      {data && <ProgrammeSummaryPanel clientId={String(clientId)} />}
+
+      {/* Pipeline / async generation status */}
+      {data && <GenerationStatusBanner clientId={String(clientId)} month={month} />}
 
       {/* Command bar — works for both V1 and V2 clients (directives + notes) */}
       {data && (
@@ -288,6 +306,14 @@ export default function CoachWorkspaceScreen() {
           setDrawerAssignmentId(null);
           if (implId) router.push(`/coach/workout/edit/${implId}` as any);
         }}
+      />
+
+      {/* Directive editor */}
+      <DirectiveEditor
+        clientId={String(clientId)}
+        visible={directiveOpen}
+        onClose={() => setDirectiveOpen(false)}
+        onSaved={loadMonth}
       />
     </View>
   );
@@ -561,6 +587,12 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   approveBtnText: { color: "#000", fontWeight: "800", letterSpacing: 0.5 },
+  directiveBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    borderWidth: 1, borderColor: theme.color.border, borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 7, backgroundColor: "#00000030",
+  },
+  directiveBtnText: { color: theme.color.textHi, fontWeight: "700", fontSize: 12 },
 
   colHead: { flexDirection: "row", paddingHorizontal: 88, paddingTop: 12, paddingBottom: 6 },
   colHeadText: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },

@@ -1,7 +1,7 @@
 # Coach Dashboard V2 — Implementation Progress
 
-**Version:** Iter 112 · 2026-07-27
-**Status:** Iteration 1 complete · Iteration 2 in progress (Command Bar shipped)
+**Version:** Iter 113 · 2026-07-27
+**Status:** Iteration 1 complete · Iteration 2 4/7 shipped (Command Bar, Directive editor, Programme summary, Progressive generation UX)
 **Feature flag:** `users.profile.v2_flags.coach_dashboard_v2_enabled` (per-coach)
 
 Companion documents:
@@ -95,14 +95,40 @@ Verified in browser: coach opts in, lands on V2 Home, sees 4 clients, filters + 
 
 Per the brief §70, deferred with acknowledgement:
 
-### Iteration 2 (planned next)
+### Iteration 2 (in progress)
 - ~~Command bar (natural-language → structured ChangeSet proposal — §31, §32)~~ ✅ SHIPPED Iter 112
-- Structured directive editor (Add Directive flow — §33, §34, §35)
-- Programme summary panel (expandable — §20)
+- ~~Structured directive editor (Add Directive flow — §33, §34, §35)~~ ✅ SHIPPED Iter 113
+- ~~Programme summary panel (expandable — §20)~~ ✅ SHIPPED Iter 113
+- ~~Progress bar for async generation — §24, §25~~ ✅ SHIPPED Iter 113
 - History timeline (audit style — §43)
 - Previous-performance context in workout drawer (§18)
 - Signal-to-action narrative in the workspace (§37, §38)
-- Progress bar for async generation (Roster uploaded → parsed → schedule → generating → ready — §24, §25)
+
+### Iter 113 batch — Directive editor + Generation status + Programme summary
+
+**Backend** (`feature_v2_coach_directives.py`, ~350 LOC)
+- `POST   /api/v2/coach/clients/{cid}/dashboard-directives` — structured directive create (6 kinds × 6 scopes)
+- `GET    /api/v2/coach/clients/{cid}/dashboard-directives` — coach list (filter by status)
+- `PATCH  /api/v2/coach/clients/{cid}/dashboard-directives/{did}` — status/free_text/parameters edits
+- `GET    /api/v2/coach/clients/{cid}/generation/status?month=YYYY-MM` — pipeline snapshot: 8 canonical stages (roster_uploaded → roster_parsed → schedule_created → planning_programme → generating_workouts → validating → ready_for_review → published) with per-stage state + detail; joins V1 rosters, V2 schedule_days, jobs, implementations, exceptions, drafts, plan_versions
+- `GET    /api/v2/coach/clients/{cid}/programme/summary` — aggregate: goal + phase strip + active phase + event countdown + 14-day adherence + per-discipline planning-objective quotas
+- Every directive create writes a DecisionRecord + `directive_created` metric
+
+**Frontend**
+- `src/components/DirectiveEditor.tsx` (~220 LOC) — modal editor with 6 kind rows, kind-specific parameter inputs, 6 scope chips, custom date range, reason/notes textarea, Save/Cancel
+- `src/components/GenerationStatusBanner.tsx` (~150 LOC) — dots-and-rails pipeline visualisation, polls every 3.5 s, auto-collapses to a one-line pill, auto-hides when idle
+- `src/components/ProgrammeSummaryPanel.tsx` (~140 LOC) — collapsible panel with title (goal), sub-row (active phase · event countdown · adherence %), phase strip (chip row with current phase highlighted), expanded body (event card, per-discipline objective quotas, timeline classification)
+- `workspace.tsx` — mounted all three above the command bar, added "Add directive" button in the ribbon next to Approve Ready
+
+**Verified live (screenshot captured)**
+- Directive editor: modal opens; 6 kind rows selectable, PATTERN input, 6 SCOPE chips, REASON textarea, Save creates `coach_directives` row + DecisionRecord
+- Generation status: Louis Hall V1 client shows "Roster uploaded ✓ · 31 days parsed ✓" · remaining stages pending
+- Programme summary: correctly returns `present=false` for V1 client (no V2 programme yet); would render goal + phase strip + adherence for V2 clients
+
+**Tests** — 3 new pytests, all pass:
+- directive create/list/patch flow
+- generation_status returns 8 canonical stages in canonical order
+- programme_summary returns `present=false` when no V2 programme exists
 
 ### Command Bar (shipped Iter 112)
 

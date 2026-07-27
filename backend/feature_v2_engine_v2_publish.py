@@ -475,7 +475,7 @@ async def endpoint_engine_v2_publish(
     if not latest:
         raise HTTPException(404, "No Engine V2 draft found.")
     if latest["id"] != body.draft_id:
-        raise HTTPException(409, {
+        raise HTTPException(422, {
             "code": "stale_draft",
             "message": "A newer draft has been generated since this one was loaded.",
             "current_draft_id": latest["id"],

@@ -13,16 +13,20 @@
  * don't cover the composer.
  */
 import React from "react";
-import { Pressable, StyleSheet, View, Text, AppState, Platform } from "react-native";
+import { Pressable, StyleSheet, View, Text, Image, AppState, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from "react-native-reanimated";
 import { useRouter, usePathname } from "expo-router";
-import { LouisAvatar } from "@/src/components/LouisAvatar";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 
+// Iter 122b — use the bundled local asset directly so the photo always
+// resolves (matches DailyBriefingModal + WeeklyReviewCard). This avoids
+// any dependency on remote CDN / CORS / user network for the coach bubble.
+const LOUIS_IMG = require("../../assets/louis/louis_avatar.png");
+
 const BUBBLE_SIZE = 56;
-const TAB_BAR_APPROX = 62; // tab bar content height (matches PremiumTabBar)
+const TAB_BAR_APPROX = 62;
 
 
 function useUnreadMessages() {
@@ -80,7 +84,11 @@ export function CoachChatBubble() {
           style={styles.pressable}
         >
           <View style={styles.avatarWrap}>
-            <LouisAvatar size={BUBBLE_SIZE - 6} showRing />
+            <Image
+              source={LOUIS_IMG}
+              style={styles.avatarImg}
+              resizeMode="cover"
+            />
           </View>
           {unread > 0 ? (
             <View style={styles.badge} testID="coach-chat-bubble-badge">
@@ -121,7 +129,14 @@ const styles = StyleSheet.create({
       default: {},
     }),
   },
-  avatarWrap: { alignItems: "center", justifyContent: "center" },
+  avatarWrap: {
+    width: BUBBLE_SIZE - 6, height: BUBBLE_SIZE - 6,
+    borderRadius: (BUBBLE_SIZE - 6) / 2,
+    overflow: "hidden",
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.surface2,
+  },
+  avatarImg: { width: "100%", height: "100%" },
   badge: {
     position: "absolute", top: -4, right: -4,
     minWidth: 20, height: 20, paddingHorizontal: 5,

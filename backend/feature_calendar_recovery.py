@@ -474,6 +474,15 @@ async def calendar_range(
                     "recovered_from_date": w.get("recovered_from_date"),
                     "recovered_to_date": w.get("recovered_to_date"),
                     "hard": _is_hard(w),
+                    # Iter 112 — Engine V2 rationale/priority surfacing.
+                    # These fields are only present on V2 rows produced by
+                    # feature_v2_client_bridge; legacy V1 rows leave them
+                    # undefined so the frontend rationale line stays hidden.
+                    "source": w.get("source"),
+                    "rationale": w.get("rationale") or None,
+                    "priority": w.get("v2_priority") or None,
+                    "intensity_target": w.get("v2_intensity_target") or None,
+                    "exposure_number": w.get("v2_exposure_number") or None,
                 }
                 if w else None
             ),

@@ -45,6 +45,12 @@ type DayCard = {
     recovered_from_date?: string;
     recovered_to_date?: string;
     hard?: boolean;
+    // Iter 112 — Engine V2 rationale / intensity / priority surfacing.
+    source?: string;                // "engine_v2" | undefined
+    rationale?: string | null;
+    priority?: string | null;       // "KEY" | "IMPORTANT" | "SUPPORT"
+    intensity_target?: string | null;
+    exposure_number?: number | null;
   } | null;
   roster_day?: {
     day_type?: string;
@@ -529,8 +535,35 @@ function DayRow({
             <Text style={styles.meta} numberOfLines={1}>
               {card.workout.location || dutyChip.label}
               {card.workout.estimated_minutes ? ` · ${card.workout.estimated_minutes}min` : ""}
+              {card.workout.intensity_target ? `  ·  ${String(card.workout.intensity_target).toUpperCase()}` : ""}
               {card.workout.key_session ? "  ·  KEY" : ""}
             </Text>
+            {/* Iter 112 — Engine V2 "why this?" rationale + priority pill.
+                Only rendered when the workout came from Engine V2 (source
+                marker). Legacy V1 workouts keep their existing quiet layout. */}
+            {card.workout.source === "engine_v2" && card.workout.rationale ? (
+              <View style={styles.v2Reason}>
+                <Ionicons name="sparkles-outline" size={11} color={theme.color.brand} />
+                <Text style={styles.v2ReasonText} numberOfLines={2}>
+                  {card.workout.rationale}
+                </Text>
+              </View>
+            ) : null}
+            {card.workout.source === "engine_v2" && card.workout.priority ? (
+              <View style={styles.v2PillRow}>
+                <View
+                  style={[
+                    styles.v2Pill,
+                    (String(card.workout.priority).toUpperCase() === "KEY") && { borderColor: theme.color.brand },
+                  ]}
+                >
+                  <Text style={styles.v2PillText}>
+                    {String(card.workout.priority).toUpperCase()}
+                    {card.workout.exposure_number ? ` · #${card.workout.exposure_number}` : ""}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
           </>
         ) : rd && !_isRestish(rd) ? (
           <Text style={styles.titleRest}>REST FROM TRAINING</Text>
@@ -671,6 +704,28 @@ const styles = StyleSheet.create({
   title: { color: theme.color.text, fontSize: 14, fontWeight: "800", paddingHorizontal: 12, marginTop: 2 },
   titleRest: { color: theme.color.textMuted, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, marginTop: 2, letterSpacing: 1 },
   meta: { color: theme.color.textMuted, fontSize: 11, paddingHorizontal: 12, marginTop: 3 },
+  // Iter 112 — V2 rationale + priority pill styles
+  v2Reason: {
+    flexDirection: "row", alignItems: "flex-start", gap: 6,
+    paddingHorizontal: 12, marginTop: 6, paddingRight: 12,
+  },
+  v2ReasonText: {
+    color: theme.color.text, fontSize: 11, lineHeight: 15, flex: 1,
+    fontStyle: "italic", opacity: 0.9,
+  },
+  v2PillRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+    paddingHorizontal: 12, marginTop: 6,
+  },
+  v2Pill: {
+    borderWidth: 1, borderColor: theme.color.border,
+    borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3,
+    backgroundColor: theme.color.surface2,
+  },
+  v2PillText: {
+    color: theme.color.textMuted, fontSize: 10, fontWeight: "700",
+    letterSpacing: 0.8,
+  },
   duty: { color: theme.color.textMuted, fontSize: 11, paddingHorizontal: 12, marginTop: 3, fontStyle: "italic" },
 
   actChip: {

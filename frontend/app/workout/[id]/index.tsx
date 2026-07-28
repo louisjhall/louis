@@ -210,6 +210,24 @@ export default function WorkoutDetail() {
               <Text style={[styles.metaChipT, { color: "#fff" }]}>KEY SESSION</Text>
             </View>
           )}
+          {/* Iter 112 — Engine V2 intensity + exposure chips (client-facing).
+              Show when the workout was placed by Engine V2 so the client
+              can see the "why" at a glance. Legacy V1 workouts do not have
+              these fields so the chips stay hidden. */}
+          {w.source === "engine_v2" && w.v2_intensity_target ? (
+            <View style={styles.metaChipRow}>
+              <Ionicons name="pulse" size={11} color={theme.color.textMuted} />
+              <Text style={styles.metaChipT}>
+                {String(w.v2_intensity_target).toUpperCase()}
+              </Text>
+            </View>
+          ) : null}
+          {w.source === "engine_v2" && w.v2_exposure_number ? (
+            <View style={styles.metaChipRow}>
+              <Ionicons name="repeat" size={11} color={theme.color.textMuted} />
+              <Text style={styles.metaChipT}>#{w.v2_exposure_number}</Text>
+            </View>
+          ) : null}
           {w.event_phase && <Text style={[styles.metaChip, { color: theme.color.brand, borderColor: theme.color.brand }]}>{String(w.event_phase).toUpperCase().replace("_", " ")}</Text>}
         </View>
 

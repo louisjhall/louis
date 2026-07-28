@@ -1,0 +1,45 @@
+{
+  "summary": "Iter 112 — VERIFIED end-to-end. Backend: GET /api/calendar/range?from=2026-07-25&to=2026-08-02 as Pietro returns exactly what the spec asks for. 2026-07-28 workout: title='Run Easy', source='engine_v2', rationale='Run Easy — foundation phase', priority='IMPORTANT', intensity_target='z2', exposure_number=1. 2026-07-31 workout: title='Run Long', source='engine_v2', rationale='Run Long — foundation phase', priority='KEY', intensity_target='z2', exposure_number=1. GET /api/workouts/v2p:edc0be3a-…:{run_long_id} still returns source='engine_v2', v2_intensity_target='z2', v2_exposure_number=1, v2_priority='KEY', rationale, and 3 blocks (Warmup / Long Steady / Cooldown). Frontend (390x844) as Pietro: home ClientCalendarPanel Tue 28 Jul card renders 'PLANNED · Run Easy · treadmill · 35min · Z2 · Run Easy — foundation phase (italic w/ sparkles) · IMPORTANT · #1 pill'. Fri 31 Jul card renders 'KEY SESSION · Run Long · outdoor · 60min · Z2 · KEY · Run Long — foundation phase · KEY · #1 pill'. Workout detail /workout/v2p:…:… renders the meta-chip row exactly as specced: location(outdoor), 60min, RUNNING focus, KEY SESSION star chip, plus new Z2 pulse chip and #1 repeat chip — in that order. WHY THIS SESSION rationale card + SESSION block list (Warmup Z1, Long Steady Z2 MP+90s + fuel cue, Cooldown Z1) still render, no regressions. V1 regression: logged in as client@crewfit.com (V1 client, has no workouts in DB); /calendar/range returns zero V2 leaks and zero rationale/priority pollution. NOTE the same benign console warning 'Unexpected text node: . A text node cannot be a child of a <View>.' still fires once on the detail page — pre-existing, flagged in iter110/111, non-blocking.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "/app/frontend/app/workout/[id]/index.tsx",
+        "issue": "Non-blocking console error 'Unexpected text node: . A text node cannot be a child of a <View>.' still fires once when the Run Long detail page mounts. Pre-existing since iter110 — not a regression introduced by iter112."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iter112_after_login.png",
+    "/app/test_reports/iter112_window.png",
+    "/app/test_reports/iter112_2026-07-28.png",
+    "/app/test_reports/iter112_2026-07-31.png",
+    "/app/test_reports/iter112_run_long_detail.png",
+    "/app/test_reports/iter112_run_long_scrolled.png"
+  ],
+  "action_items": [
+    "OPTIONAL — chase down the pre-existing 'Unexpected text node' console warning on /app/frontend/app/workout/[id]/index.tsx (stray whitespace/text child inside a <View>). Non-blocking, carries over from iter110."
+  ],
+  "critical_code_review_comments": [
+    "feature_calendar_recovery.py line 481-485 cleanly forwards V2 metadata (source, rationale, v2_priority, v2_intensity_target, v2_exposure_number) into the /calendar/range payload with `or None` guards so V1 rows leave these undefined — no risk of polluting legacy clients.",
+    "ClientCalendarPanel.tsx guards both rationale and priority pill rendering behind `card.workout.source === 'engine_v2'` — V1 rows can never accidentally show either UI. Priority pill styling is understated (border + textMuted) which matches the design brief of a soft badge.",
+    "workout/[id]/index.tsx uses the correct field names for the detail chips: `w.source === 'engine_v2'` gates on the top-level source flag and pulls from `w.v2_intensity_target` / `w.v2_exposure_number` which is what feature_v2_client_bridge.py:158-160 emits. No V1 leak surface.",
+    "The intensity chip on the home meta line uses `card.workout.intensity_target` (unprefixed, from /calendar/range) while the detail chip uses `w.v2_intensity_target` (prefixed, from /workouts/{id}). The two backend endpoints emit different keys — this is intentional and both were verified via curl, but it's a minor naming inconsistency worth flagging for future consolidation."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% — /calendar/range and /workouts/{id} both return the full V2 metadata set for both 2026-07-28 and 2026-07-31 workouts. V1 client shows zero leaks.",
+    "frontend": "100% — home cards render rationale + priority pill + Z2 meta for both dates. Detail page shows Z2 pulse chip + #1 repeat chip alongside KEY SESSION star chip. SESSION blocks + rationale card still render cleanly."
+  },
+  "seed_data_creation": "None. Read-only against Pietro's existing plan_live_v2 (id=edc0be3a-9424-4bba-85eb-076b3818c945).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter112 V2 badge surfacing (rationale line + priority pill on home; intensity/exposure chips on detail) is fully live and verified. If a follow-up iteration adjusts the field naming (currently /calendar/range emits unprefixed `intensity_target`/`exposure_number`/`priority` while /workouts/{id} emits `v2_intensity_target`/`v2_exposure_number`/`v2_priority`), remember that ClientCalendarPanel.tsx reads unprefixed and workout/[id]/index.tsx reads prefixed — a rename would need to happen in both consumers plus feature_calendar_recovery.py and feature_v2_client_bridge.py. Test creds: Pietro pietrosangermano1992@hotmail.com / Pietro2026 (V2), client@crewfit.com / Client123! (V1 with zero workouts, good V1-regression control).",
+  "rca_of_issue": "N/A — everything specified in iter112 is verified working. The lone open item (pre-existing 'Unexpected text node' console warning on the workout detail page) is not a regression from this iter and is already tracked in iter110/111 action items."
+}

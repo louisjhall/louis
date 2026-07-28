@@ -631,6 +631,62 @@ def _brick_bike_run(dur: int) -> dict:
 # The main dispatch
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Warmup drill packs (Iter 113)
+# ---------------------------------------------------------------------------
+# V2 running / cycling warmups used to arrive as a single duration+cue block
+# which lost the "specific movement drills" UX from the legacy engine. This
+# module attaches a short, context-appropriate `drills` list onto the warmup
+# payload without touching duration budgets or Engine V2 spacing rules. The
+# frontend renders these as an itemised list under the WARMUP block.
+
+_RUN_DRILLS_STANDARD: list[dict] = [
+    {"name": "Ankle circles",         "duration_sec": 20, "cue": "Each foot"},
+    {"name": "Leg swings (front/back)","duration_sec": 30, "cue": "Each leg"},
+    {"name": "Leg swings (side)",     "duration_sec": 30, "cue": "Each leg"},
+    {"name": "Walking lunges",        "duration_sec": 45, "cue": "Loose hips"},
+    {"name": "High knees",            "duration_sec": 20, "cue": "Cadence prep"},
+    {"name": "Butt kicks",            "duration_sec": 20, "cue": "Heel to glute"},
+]
+
+_RUN_DRILLS_INTERVAL: list[dict] = _RUN_DRILLS_STANDARD + [
+    {"name": "A-skips",  "duration_sec": 30, "cue": "Snappy, tall posture"},
+    {"name": "Strides",  "duration_sec": 20, "reps": 4, "rest_sec": 60,
+     "cue": "4 × 20s at fast-but-relaxed"},
+]
+
+_CYCLE_DRILLS_STANDARD: list[dict] = [
+    {"name": "Easy spin",         "duration_sec": 120, "cue": "Loose legs"},
+    {"name": "Cadence pyramid",   "duration_sec": 60,
+     "cue": "20s @ 90rpm → 100rpm → 110rpm"},
+    {"name": "Standing pedal",    "duration_sec": 30, "cue": "Out of saddle"},
+]
+
+_CYCLE_DRILLS_INTERVAL: list[dict] = _CYCLE_DRILLS_STANDARD + [
+    {"name": "Openers", "duration_sec": 30, "reps": 3, "rest_sec": 30,
+     "cue": "3 × 30s hard efforts"},
+]
+
+
+def _attach_warmup_drills(payload: dict, modality: str, kind: str) -> dict:
+    """Attach a `drills` array to the warmup block. Non-destructive."""
+    wu = payload.get("warmup") if isinstance(payload, dict) else None
+    if not isinstance(wu, dict):
+        return payload
+    if wu.get("drills"):
+        return payload  # respect any explicit drills the builder produced
+    interval_ish = kind in (
+        "run_intervals", "run_vo2", "run_tempo", "run_threshold",
+        "run_marathon_pace", "run_race_pace", "run_strides",
+        "cycle_intervals", "cycle_vo2", "cycle_threshold",
+    )
+    if modality == "run":
+        wu["drills"] = _RUN_DRILLS_INTERVAL if interval_ish else _RUN_DRILLS_STANDARD
+    elif modality == "cycle":
+        wu["drills"] = _CYCLE_DRILLS_INTERVAL if interval_ish else _CYCLE_DRILLS_STANDARD
+    return payload
+
+
 def build_session_spec(
     *,
     kind: str,
@@ -662,6 +718,7 @@ def build_session_spec(
             return _unbuildable(kind, duration_min, "no running builder registered")
         env = _pick_running_environment(day_type, equipment_ctx)
         payload = builder(duration_min, phase_kind)
+        payload = _attach_warmup_drills(payload, "run", kind)
         return SessionSpec(
             spec_kind="running", kind=kind, duration_min=duration_min,
             intensity_target=intensity_target, environment=env,
@@ -676,6 +733,7 @@ def build_session_spec(
             return _unbuildable(kind, duration_min, "no cycling builder")
         env = _pick_cycling_environment(day_type, equipment_ctx)
         payload = builder(duration_min, phase_kind)
+        payload = _attach_warmup_drills(payload, "cycle", kind)
         return SessionSpec(
             spec_kind="cycling", kind=kind, duration_min=duration_min,
             intensity_target=intensity_target, environment=env,

@@ -32,8 +32,14 @@ def _humanise(s: Optional[str]) -> str:
 
 def _spec_to_blocks(spec: dict) -> list[dict]:
     """Convert a SessionSpec payload into the legacy `blocks[]` shape the
-    client workout screens already know how to render (P0-1/P1-3)."""
+    client workout screens already know how to render (P0-1/P1-3).
+
+    Iter 113 — for running/cycling warmups, ensures a `drills` list is
+    attached (either straight from the payload, or backfilled from the
+    default packs so already-published plans benefit without a republish).
+    """
     spec_kind = spec.get("spec_kind") or ""
+    kind = spec.get("kind") or ""
     payload = spec.get("payload") or {}
     blocks: list[dict] = []
 
@@ -48,7 +54,7 @@ def _spec_to_blocks(spec: dict) -> list[dict]:
             "duration_min": dur,
         }
         for k in ("hr_zone", "pace_target", "power_target", "cadence",
-                  "effort_rpe", "cue", "fuel_cue"):
+                  "effort_rpe", "cue", "fuel_cue", "drills"):
             v = blk.get(k)
             if v is not None:
                 item[k] = v
@@ -61,7 +67,11 @@ def _spec_to_blocks(spec: dict) -> list[dict]:
         blocks.append(item)
 
     if spec_kind in ("running", "cycling", "swimming", "brick"):
-        _push("warmup", payload.get("warmup"))
+        # Iter 113 — backfill warmup drills if the builder didn't attach any.
+        wu = payload.get("warmup")
+        if isinstance(wu, dict) and not wu.get("drills"):
+            _backfill_warmup_drills(wu, spec_kind, kind)
+        _push("warmup", wu)
         main = payload.get("main") or {}
         _push(main.get("type") or "main", main)
         _push("cooldown", payload.get("cooldown"))
@@ -77,6 +87,47 @@ def _spec_to_blocks(spec: dict) -> list[dict]:
             })
 
     return blocks
+
+
+# Iter 113 — drill packs mirroring feature_v2_construction_v2 so historical
+# plans (built before the construction-side attachment landed) still surface
+# specific warmup drills to the client without needing a republish.
+_RUN_DRILLS_STANDARD_BF: list[dict] = [
+    {"name": "Ankle circles",         "duration_sec": 20, "cue": "Each foot"},
+    {"name": "Leg swings (front/back)","duration_sec": 30, "cue": "Each leg"},
+    {"name": "Leg swings (side)",     "duration_sec": 30, "cue": "Each leg"},
+    {"name": "Walking lunges",        "duration_sec": 45, "cue": "Loose hips"},
+    {"name": "High knees",            "duration_sec": 20, "cue": "Cadence prep"},
+    {"name": "Butt kicks",            "duration_sec": 20, "cue": "Heel to glute"},
+]
+_RUN_DRILLS_INTERVAL_BF: list[dict] = _RUN_DRILLS_STANDARD_BF + [
+    {"name": "A-skips",  "duration_sec": 30, "cue": "Snappy, tall posture"},
+    {"name": "Strides",  "duration_sec": 20, "reps": 4, "rest_sec": 60,
+     "cue": "4 × 20s at fast-but-relaxed"},
+]
+_CYCLE_DRILLS_STANDARD_BF: list[dict] = [
+    {"name": "Easy spin",         "duration_sec": 120, "cue": "Loose legs"},
+    {"name": "Cadence pyramid",   "duration_sec": 60,
+     "cue": "20s @ 90rpm → 100rpm → 110rpm"},
+    {"name": "Standing pedal",    "duration_sec": 30, "cue": "Out of saddle"},
+]
+_CYCLE_DRILLS_INTERVAL_BF: list[dict] = _CYCLE_DRILLS_STANDARD_BF + [
+    {"name": "Openers", "duration_sec": 30, "reps": 3, "rest_sec": 30,
+     "cue": "3 × 30s hard efforts"},
+]
+
+
+def _backfill_warmup_drills(wu: dict, spec_kind: str, kind: str) -> None:
+    interval_ish = kind in (
+        "run_intervals", "run_vo2", "run_tempo", "run_threshold",
+        "run_marathon_pace", "run_race_pace", "run_strides",
+        "cycle_intervals", "cycle_vo2", "cycle_threshold",
+    )
+    if spec_kind == "running":
+        wu["drills"] = _RUN_DRILLS_INTERVAL_BF if interval_ish else _RUN_DRILLS_STANDARD_BF
+    elif spec_kind == "cycling":
+        wu["drills"] = _CYCLE_DRILLS_INTERVAL_BF if interval_ish else _CYCLE_DRILLS_STANDARD_BF
+    # swimming / brick — leave alone (poolside drills need dedicated packs)
 
 
 def _spec_to_exercises(spec: dict) -> list[dict]:

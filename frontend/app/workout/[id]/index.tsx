@@ -453,6 +453,43 @@ export default function WorkoutDetail() {
                       Fuel: {b.fuel_cue}
                     </Text>
                   ) : null}
+                  {/* Iter 113 — drill-level warmup exercises for running /
+                      cycling warmups. Kept lightweight so it doesn't visually
+                      compete with the strength EXERCISES list. */}
+                  {Array.isArray(b.drills) && b.drills.length > 0 ? (
+                    <View style={styles.v2DrillList}>
+                      {b.drills.map((d: any, j: number) => {
+                        const dsec = d.duration_sec || d.duration || 0;
+                        const reps = d.reps;
+                        const suffix = reps
+                          ? `${reps}× ${dsec}s${d.rest_sec ? ` / ${d.rest_sec}s rest` : ""}`
+                          : dsec
+                            ? `${dsec}s`
+                            : "";
+                        return (
+                          <View
+                            key={`drl-${i}-${j}`}
+                            style={styles.v2DrillRow}
+                            testID={`v2-drill-${i}-${j}`}
+                          >
+                            <Text style={styles.v2DrillName} numberOfLines={1}>
+                              {d.name || "Drill"}
+                            </Text>
+                            <View style={{ flexDirection: "row", alignItems: "center" }}>
+                              {d.cue ? (
+                                <Text style={styles.v2DrillCue} numberOfLines={1}>
+                                  {d.cue}
+                                </Text>
+                              ) : null}
+                              {suffix ? (
+                                <Text style={styles.v2DrillDur}>{suffix}</Text>
+                              ) : null}
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
                 </View>
               );
             })}
@@ -710,6 +747,27 @@ const styles = StyleSheet.create({
   warmupRow: { flexDirection: "row", justifyContent: "space-between", padding: 10, backgroundColor: theme.color.surface2, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, marginBottom: 4 },
   warmupName: { color: theme.color.text, fontSize: 13, fontWeight: "600" },
   warmupTime: { color: theme.color.brand, fontSize: 12, fontWeight: "700" },
+  // Iter 113 — drill-level list inside the SESSION Warmup block
+  v2DrillList: {
+    marginTop: 8, paddingTop: 8, gap: 4,
+    borderTopWidth: 1, borderTopColor: theme.color.border,
+  },
+  v2DrillRow: {
+    flexDirection: "row", justifyContent: "space-between",
+    alignItems: "center", paddingVertical: 3,
+  },
+  v2DrillName: {
+    color: theme.color.text, fontSize: 12, fontWeight: "600", flex: 1,
+    marginRight: 8,
+  },
+  v2DrillCue: {
+    color: theme.color.textMuted, fontSize: 11, marginRight: 8,
+    fontStyle: "italic", maxWidth: 130,
+  },
+  v2DrillDur: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "700",
+    minWidth: 40, textAlign: "right",
+  },
   exCard: { padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.sm },
   exPreviewRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   exName: { color: theme.color.text, fontSize: 15, fontWeight: "800" },

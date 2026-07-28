@@ -9,6 +9,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 import { RealityModal } from "@/src/components/RealityModal";
+import { ChangeSetupModal } from "@/src/components/ChangeSetupModal";
 import { ModePickerModal } from "@/src/components/ModePickerModal";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
@@ -38,6 +39,7 @@ export default function WorkoutDetail() {
   const [editing, setEditing] = useState(false);
   const [rpe, setRpe] = useState("");
   const [realityOpen, setRealityOpen] = useState(false);
+  const [changeSetupOpen, setChangeSetupOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   // Iter 94i — dismissed flag lets the client tap "Start Bodyweight Session"
   // and hide the fallback banner so the workout looks calm again. Server-side
@@ -231,6 +233,27 @@ export default function WorkoutDetail() {
           {w.event_phase && <Text style={[styles.metaChip, { color: theme.color.brand, borderColor: theme.color.brand }]}>{String(w.event_phase).toUpperCase().replace("_", " ")}</Text>}
         </View>
 
+        {/* Iter 119 — Change Setup adaptation badge. Shown when the client
+            has overridden the environment/equipment for this session via
+            plan_live_v2_implementations. Original programme identity
+            (exposure, date, priority) is unchanged. */}
+        {!isCoach && w.adapted_from_original ? (
+          <View style={styles.adaptedBadge} testID="workout-adapted-badge">
+            <Ionicons name="swap-horizontal" size={13} color={theme.color.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.adaptedLabel}>ADAPTED FROM ORIGINAL</Text>
+              <Text style={styles.adaptedText}>
+                {[
+                  String(w.environment || "").replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()),
+                  ...((w.equipment_used || []) as string[])
+                    .filter((e) => e && e !== "bodyweight")
+                    .map((e) => String(e).replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())),
+                ].filter(Boolean).join(" · ") || "Bodyweight"}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
         {!isCoach && !editing && variants && (
           <View style={styles.variantRow} testID="variant-row">
             {(Object.keys(VARIANT_LABELS) as VariantKey[]).map((k) => {
@@ -268,6 +291,25 @@ export default function WorkoutDetail() {
             <Text style={styles.overrideLabel}>PLAN ADJUSTED</Text>
             <Text style={styles.overrideText}>{w.override_reason || "Your day edit changed this workout."}</Text>
           </View>
+        ) : null}
+
+        {!isCoach && w.source === "engine_v2" ? (
+          <Pressable
+            testID="change-setup-btn"
+            onPress={() => setChangeSetupOpen(true)}
+            style={styles.realityBtn}
+          >
+            <View style={styles.realityBtnLeft}>
+              <View style={styles.realityIconWrapW}>
+                <Ionicons name="swap-horizontal" size={20} color={theme.color.brand} />
+              </View>
+              <View>
+                <Text style={styles.realityTitleW}>CHANGE SETUP</Text>
+                <Text style={styles.realitySubW}>Different environment or equipment today?</Text>
+              </View>
+            </View>
+            <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
+          </Pressable>
         ) : null}
 
         {!isCoach && (
@@ -608,6 +650,15 @@ export default function WorkoutDetail() {
         date={w?.date || null}
         onClose={() => setRealityOpen(false)}
         onApplied={() => { setRealityOpen(false); load(); }}
+        onDifferentSetup={() => { setRealityOpen(false); setChangeSetupOpen(true); }}
+      />
+      <ChangeSetupModal
+        visible={changeSetupOpen}
+        date={w?.date || ""}
+        sessionKind={w?.focus || w?.title || ""}
+        workoutId={id as string}
+        onClose={() => setChangeSetupOpen(false)}
+        onDone={() => { setChangeSetupOpen(false); load(); }}
       />
       <ModePickerModal
         visible={modeOpen}
@@ -662,6 +713,20 @@ const styles = StyleSheet.create({
   workoutBannerEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "900", fontFamily: theme.font.textSemi },
   workoutBannerTitle: { color: theme.color.text, fontSize: 22, letterSpacing: 0.4, fontWeight: "900", fontFamily: theme.font.display },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
+  adaptedBadge: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginTop: theme.space.sm,
+    paddingVertical: 8, paddingHorizontal: 10,
+    backgroundColor: theme.color.brandTint,
+    borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  adaptedLabel: {
+    color: theme.color.brand, fontSize: 9, letterSpacing: 1.6, fontWeight: "800",
+  },
+  adaptedText: {
+    color: theme.color.text, fontSize: 12, fontWeight: "700", marginTop: 1,
+  },
   // Iter 102 — Layover context block
   layoverCtx: {
     marginTop: theme.space.md,

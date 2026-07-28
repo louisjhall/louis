@@ -82,12 +82,13 @@ class SessionSpec:
 # ---------------------------------------------------------------------------
 
 def _pick_running_environment(day_type: str, equipment_ctx: set[str]) -> str:
-    # On layover / hotel / turnaround days, treadmill is often the only option
+    # Iter 118 — travel-safe default. On layover/hotel/turnaround days we
+    # NEVER assume the client's permanent treadmill is available. Only a
+    # temporary equipment override (merged into equipment_ctx by the caller)
+    # can upgrade to treadmill.
     if day_type in ("layover_arrival", "layover_departure", "turnaround",
                      "layover", "hotel", "layover_full"):
-        if "treadmill" in equipment_ctx:
-            return "treadmill"
-        return "outdoor"          # coach may resolve
+        return "flexible"          # client picks outdoor / treadmill later
     if "treadmill" in equipment_ctx and day_type in ("standby", "duty"):
         return "treadmill"
     return "outdoor"
@@ -111,11 +112,22 @@ def _pick_swim_environment(day_type: str, equipment_ctx: set[str]) -> str:
 
 
 def _pick_strength_environment(day_type: str, equipment_ctx: set[str]) -> str:
-    if "barbell" in equipment_ctx and "rack" in equipment_ctx:
-        return "gym"
+    # Iter 118 — travel-safe default. Layover days are NEVER assumed to have
+    # the client's home equipment available. Only a *temporary* equipment
+    # context (this_session / today / this_layover) can upgrade the layover
+    # session to a gym implementation. Permanent DNA equipment is ignored
+    # on layover / hotel days.
     if day_type in ("layover_arrival", "layover_departure", "turnaround",
                      "layover", "hotel", "layover_full"):
+        # A caller may have merged a temporary override into equipment_ctx
+        # before calling us. If we can see gym-grade items, allow gym.
+        if "barbell" in equipment_ctx and "rack" in equipment_ctx:
+            return "gym"
+        if equipment_ctx & {"dumbbells", "kettlebell", "cable_stack", "bench"}:
+            return "hotel_gym"
         return "hotel_room"
+    if "barbell" in equipment_ctx and "rack" in equipment_ctx:
+        return "gym"
     if equipment_ctx & {"dumbbells", "kettlebell", "cable_stack"}:
         return "home"
     return "bodyweight_only"
@@ -428,6 +440,9 @@ _STRENGTH_POOL: dict[str, list[dict]] = {
         {"name": "Cable Row", "equipment": ["cable_stack"]},
         {"name": "Inverted Row", "equipment": ["bodyweight", "bar"]},
         {"name": "Band Row", "equipment": ["band"]},
+        # Iter 119 — pure bodyweight fallback so hotel-room / bodyweight-only
+        # sessions can still hit a pulling pattern (no bar required).
+        {"name": "Prone Y-T-W Row (bodyweight)", "equipment": ["bodyweight"]},
     ],
     "vertical_pull": [
         {"name": "Pull-up", "equipment": ["pull_up_bar"]},
@@ -528,7 +543,14 @@ def _pick_exercise(pattern: str, equipment_ctx: set[str], avoid: set[str]) -> Op
                 break
         if not blocked:
             return ex
-    # Absolute fallback — bodyweight substitute
+    # Absolute fallback — prefer STRICT bodyweight-only substitutes first
+    # (Iter 119 — the loose "'bodyweight' in equipment" check used to leak
+    # exercises like Inverted Row that also require a bar, which is not
+    # available in a true bodyweight-only setup).
+    for ex in pool:
+        if set(ex["equipment"]) <= {"bodyweight"}:
+            return ex
+    # Last-ditch fallback — anything that lists bodyweight at all
     for ex in pool:
         if "bodyweight" in ex["equipment"]:
             return ex

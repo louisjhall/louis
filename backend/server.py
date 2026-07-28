@@ -11969,6 +11969,7 @@ import feature_v2_coach_client_admin     # noqa: E402,F401  V2 Phase 11: Coach D
 import feature_v2_engine_v2_kickoff       # noqa: E402,F401  V2 Engine V2: WHAT→WHEN→HOW→VALIDATE pipeline (feature-flagged Draft-only)
 import feature_v2_engine_v2_publish       # noqa: E402,F401  V2 Engine V2: Coach Dashboard Draft integration + Client Live read
 import feature_aviation_support_api        # noqa: E402,F401  Aviation Support Phase B: coach controls + client today
+import feature_v2_plan_live_adapt          # noqa: E402,F401  Iter 118 Change Setup — HOW-only adapt
 
 import feature_coach_audit_bundle         # noqa: E402,F401  Serves the collated Coach Dashboard audit bundle at a stable URL
 import feature_coach_live_feed           # noqa: E402,F401  Phase 2: main coach dashboard live feed (next-5-days cross-client)

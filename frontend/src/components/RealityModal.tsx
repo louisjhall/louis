@@ -43,12 +43,13 @@ export const REALITY_KINDS: Kind[] = [
 type Stage = "pick" | "loading" | "review" | "applying" | "done";
 
 export function RealityModal({
-  visible, date, onClose, onApplied,
+  visible, date, onClose, onApplied, onDifferentSetup,
 }: {
   visible: boolean;
   date: string | null;
   onClose: () => void;
   onApplied?: () => void;
+  onDifferentSetup?: () => void;
 }) {
   const [stage, setStage] = useState<Stage>("pick");
   const [selectedKind, setSelectedKind] = useState<Kind | null>(null);
@@ -133,6 +134,25 @@ export function RealityModal({
           {stage === "pick" && (
             <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
               <Text style={styles.dateLine}>{date || ""}</Text>
+              {/* Iter 118 — Different setup today shortcut. Routes to the
+                  Change Setup modal (HOW-only adaptation). Same underlying
+                  V2 adapt endpoint; no separate logic. */}
+              {onDifferentSetup ? (
+                <Pressable
+                  testID="reality-different-setup"
+                  onPress={onDifferentSetup}
+                  style={[styles.kindCard, { width: "100%", flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 10 }]}
+                >
+                  <View style={styles.kindIconWrap}>
+                    <Ionicons name="swap-horizontal" size={22} color={theme.color.brand} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.kindLabel}>Different setup today</Text>
+                    <Text style={styles.kindHint} numberOfLines={1}>Hotel room / gym / outdoor · change equipment</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} />
+                </Pressable>
+              ) : null}
               <View style={styles.grid}>
                 {REALITY_KINDS.map((k) => (
                   <Pressable

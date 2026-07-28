@@ -212,6 +212,10 @@ def synth_workout_from_placement(
         "v2_priority": placement.get("priority"),
         "equipment_used": equipment_used,
         "environment": env,
+        # Iter 119 — surface adaptation flag so the client workout screen
+        # can render the "Adapted from original" badge.
+        "adapted_from_original": bool(spec.get("adapted_from_original")),
+        "original_environment": spec.get("original_environment"),
     }
 
 
@@ -249,6 +253,24 @@ async def synth_workouts_for_user(
             continue
         eid = p.get("exposure_id") or ""
         spec = specs.get(eid) or {}
+        # Iter 118 — Change Setup override. If an active
+        # plan_live_v2_implementations row covers this (exposure, date),
+        # prefer its spec_snapshot over the original session_specs entry.
+        override = await db.plan_live_v2_implementations.find_one(
+            {"client_id": user_id, "exposure_id": eid,
+             "is_active": True,
+             "$or": [
+                 {"date": d},
+                 {"$and": [
+                     {"date_range_start": {"$lte": d}},
+                     {"date_range_end":   {"$gte": d}},
+                 ]},
+             ]},
+            {"_id": 0, "spec_snapshot": 1},
+            sort=[("created_at", -1)],
+        )
+        if override and override.get("spec_snapshot"):
+            spec = override["spec_snapshot"]
         row = synth_workout_from_placement(
             live_id=live_id, placement=p, spec=spec, user_id=user_id,
         )
@@ -275,6 +297,22 @@ async def synth_workout_by_wid(db, wid: str, user_id: str) -> Optional[dict]:
     for p in (live.get("placements") or []):
         if p.get("exposure_id") == exposure_id:
             spec = (live.get("session_specs") or {}).get(exposure_id) or {}
+            # Iter 118 — Change Setup override takes precedence.
+            override = await db.plan_live_v2_implementations.find_one(
+                {"client_id": user_id, "exposure_id": exposure_id,
+                 "is_active": True,
+                 "$or": [
+                     {"date": p.get("date")},
+                     {"$and": [
+                         {"date_range_start": {"$lte": p.get("date")}},
+                         {"date_range_end":   {"$gte": p.get("date")}},
+                     ]},
+                 ]},
+                {"_id": 0, "spec_snapshot": 1},
+                sort=[("created_at", -1)],
+            )
+            if override and override.get("spec_snapshot"):
+                spec = override["spec_snapshot"]
             return synth_workout_from_placement(
                 live_id=live_id, placement=p, spec=spec, user_id=user_id,
             )

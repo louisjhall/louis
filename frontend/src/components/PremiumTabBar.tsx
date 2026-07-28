@@ -20,19 +20,22 @@ import Animated, {
 } from "react-native-reanimated";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
+import { BaseIcon } from "@/src/components/BaseIcon";
 
 type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
-const TAB_META: Record<string, { label: string; icon: IconName; iconActive?: IconName }> = {
+// Iter 122 — client bottom navigation swaps MESSAGES → BASE (Aviation
+// crew community). Messages moves to the floating <CoachChatBubble />.
+const TAB_META: Record<string, { label: string; icon: IconName; iconActive?: IconName; custom?: "base" }> = {
   home:      { label: "TODAY",     icon: "lightning-bolt-outline",   iconActive: "lightning-bolt"          },
   calendar:  { label: "CALENDAR",  icon: "calendar-blank-outline",   iconActive: "calendar-blank"          },
   nutrition: { label: "NUTRITION", icon: "silverware-fork-knife",    iconActive: "silverware-fork-knife"   },
-  messages:  { label: "MESSAGES",  icon: "message-text-outline",     iconActive: "message-text"            },
+  base:      { label: "BASE",      icon: "account-group-outline",    iconActive: "account-group",   custom: "base" },
   profile:   { label: "PROFILE",   icon: "account-circle-outline",   iconActive: "account-circle"          },
 };
 
-// Iter 82 — unread badge on the MESSAGES tab. Polls /api/messages-unread/count
-// on focus + every 30s while the app is foregrounded.
+// Iter 82 — unread badge (relocated to floating CoachChatBubble in Iter 122).
+// Kept as a hook here for backward compatibility but no tab consumes it now.
 function useUnreadMessages() {
   const [count, setCount] = React.useState(0);
   const load = React.useCallback(async () => {
@@ -51,12 +54,12 @@ function useUnreadMessages() {
   }, [load]);
   return count;
 }
+void useUnreadMessages;  // preserved for future re-use
 
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const compact = width < 380; // small iPhones: tighten labels
-  const unreadMessages = useUnreadMessages();
 
   return (
     <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 10) }]}>
@@ -80,19 +83,18 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
             navigation.emit({ type: "tabLongPress", target: route.key });
           };
 
-          const badgeCount = route.name === "messages" ? unreadMessages : 0;
-
           return (
             <TabButton
               key={route.key}
               label={meta.label}
               icon={isFocused ? (meta.iconActive || meta.icon) : meta.icon}
+              custom={meta.custom}
               focused={isFocused}
               compact={compact}
               onPress={onPress}
               onLongPress={onLongPress}
               accessibilityLabel={options.tabBarAccessibilityLabel ?? meta.label}
-              badgeCount={badgeCount}
+              badgeCount={0}
               testID={`tab-${route.name}`}
             />
           );
@@ -103,11 +105,12 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
 }
 
 function TabButton({
-  label, icon, focused, compact, onPress, onLongPress, accessibilityLabel,
+  label, icon, custom, focused, compact, onPress, onLongPress, accessibilityLabel,
   badgeCount = 0, testID,
 }: {
   label: string;
   icon: IconName;
+  custom?: "base";
   focused: boolean;
   compact: boolean;
   onPress: () => void;
@@ -149,11 +152,19 @@ function TabButton({
       <Animated.View style={[styles.pill, animPillStyle]} />
       <Animated.View style={[styles.inner, animContentStyle]}>
         <View>
-          <MaterialCommunityIcons
-            name={icon}
-            size={focused ? 23 : 22}
-            color={focused ? theme.color.brand : theme.color.textDim}
-          />
+          {custom === "base" ? (
+            <BaseIcon
+              size={focused ? 23 : 22}
+              color={focused ? theme.color.brand : theme.color.textDim}
+              filled={focused}
+            />
+          ) : (
+            <MaterialCommunityIcons
+              name={icon}
+              size={focused ? 23 : 22}
+              color={focused ? theme.color.brand : theme.color.textDim}
+            />
+          )}
           {badgeCount_ > 0 ? (
             <View style={styles.badge} testID={`tab-badge-${label.toLowerCase()}`}>
               <Text style={styles.badgeText}>

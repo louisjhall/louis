@@ -1,6 +1,12 @@
 /**
  * LouisAvatar — circular avatar with graceful fallback to "LH" initials.
  *
+ * Iter 122b — Primary source is now the bundled local asset
+ * `assets/louis/louis_avatar.png` so the photo always resolves regardless
+ * of network / CORS. Remote `imageUrl` overrides still work if caller
+ * provides one (used for coach-provided custom photos in future). Initials
+ * remain the final fallback.
+ *
  * Usage:
  *   <LouisAvatar size={40} />
  *   <LouisAvatar size={56} showRing />
@@ -10,6 +16,9 @@ import React, { useState } from "react";
 import { View, Text, Image, StyleSheet } from "react-native";
 import { theme } from "@/src/lib/theme";
 import { LOUIS } from "@/src/lib/coachProfile";
+
+// Bundled local asset — same file used by DailyBriefingModal + WeeklyReviewCard.
+const LOUIS_LOCAL = require("../../assets/louis/louis_avatar.png");
 
 export function LouisAvatar({
   size = 40,
@@ -23,9 +32,12 @@ export function LouisAvatar({
   imageUrl?: string | null;
 }) {
   const [failed, setFailed] = useState(false);
-  const uri = imageUrl ?? LOUIS.avatarUrl;
   const label = (initials ?? LOUIS.initials).toUpperCase();
-  const canShowImage = !!uri && !failed;
+  // If a specific remote imageUrl was passed, honour it (e.g. a coach
+  // profile customisation). Otherwise use the reliable bundled asset.
+  const remoteSource = imageUrl ? { uri: imageUrl } : null;
+  const source = remoteSource || LOUIS_LOCAL;
+  const canShowImage = !failed;
 
   const containerStyle = [
     styles.wrap,
@@ -42,7 +54,7 @@ export function LouisAvatar({
     <View style={containerStyle} testID="louis-avatar">
       {canShowImage ? (
         <Image
-          source={{ uri }}
+          source={source}
           style={{ width: "100%", height: "100%" }}
           resizeMode="cover"
           onError={() => setFailed(true)}

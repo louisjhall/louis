@@ -818,6 +818,13 @@ function WorkPanel({
         Set {setIdx} of {targetSets}
         {isCardio ? "" : ` · ${targetReps} reps`}
       </Text>
+      {/* Iter 115b — Cardio target line (Z2 / MP+90s / cadence / RPE) that
+          the V2 adapter puts into ex.reps. The set/reps summary hides
+          reps for cardio (correct — "10 reps" makes no sense on a run) so
+          we render the coaching target here as a subtle second line. */}
+      {isCardio && ex?.reps ? (
+        <Text style={styles.exMetaCardio}>{String(ex.reps)}</Text>
+      ) : null}
 
       <View style={styles.mediaBox}>
         <WorkoutMediaCarousel
@@ -1301,6 +1308,10 @@ const styles = StyleSheet.create({
   },
   exName: { color: theme.color.text, fontSize: 26, fontWeight: "900", letterSpacing: -0.5 },
   exMeta: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, fontWeight: "700", letterSpacing: 1 },
+  exMetaCardio: {
+    color: theme.color.brand, fontSize: 13, marginTop: 4,
+    fontWeight: "700", letterSpacing: 0.5, textAlign: "center",
+  },
 
   mediaBox: {
     marginTop: 16, borderRadius: 14, overflow: "hidden",

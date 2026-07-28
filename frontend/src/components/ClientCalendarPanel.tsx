@@ -55,7 +55,19 @@ type DayCard = {
   roster_day?: {
     day_type?: string;
     layover_city?: string;
-    flights?: { number?: string; from?: string; to?: string }[];
+    flights?: {
+      // Backend v2 shape
+      flight_number?: string;
+      origin?: string;
+      destination?: string;
+      dep_time?: string;
+      arr_time?: string;
+      aircraft?: string;
+      // Legacy shape (kept for compat)
+      number?: string;
+      from?: string;
+      to?: string;
+    }[];
     load?: string;
   } | null;
   activities?: any[];
@@ -197,6 +209,10 @@ function _isRestish(rd: NonNullable<DayCard["roster_day"]>): boolean {
   return t === "rest" || t === "off" || t === "day_off" || t === "annual_leave" || t === "home" || t === "home_day";
 }
 
+// Iter 113 — DutyChipView retained (currently unused after we replaced the
+// small chip row with a proper duty info block, but still exported-shape for
+// possible future compact renderings, e.g. week/month summaries).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DutyChipView({ chip, small }: { chip: DutyChip; small?: boolean }) {
   const c = dutyChipColors(chip.tone);
   return (
@@ -462,7 +478,6 @@ function DayRow({
 }) {
   const bs = badgeStyle(card.badge);
   const rd = card.roster_day || null;
-  const flightNo = rd?.flights?.[0]?.number;
   const dl = niceDate(card.date);
   const acts = card.activities || [];
 
@@ -472,10 +487,35 @@ function DayRow({
   // the workout title when the roster day has no explicit day_type set
   // (which was causing layover cards to display a wrong HOME icon).
   const dutyChip = buildDutyChip(rd, card.workout);
-  const flightChip = flightNo ? { label: `Flight ${flightNo}`, icon: "airplane" as const, tone: "brand" as const } : null;
-  const layoverChip = rd?.layover_city
-    ? { label: rd.layover_city, icon: "location" as const, tone: "muted" as const }
-    : null;
+
+  // Iter 113 — proper duty info block. Previously the flight number,
+  // layover city and turnaround details were compressed into a tiny top-
+  // right icon dot which clients missed entirely. Now every roster day
+  // that has any real context shows a dedicated info row under the
+  // workout/rest title:
+  //   • flight legs: "EK770  NBO → AUH  07:05–13:15"
+  //   • layover city: "Layover · Nairobi (NBO)"
+  //   • standby / sim / training / early / night flags
+  const _flights = (rd?.flights || []).map((f) => {
+    const num = f.flight_number || f.number || "";
+    const org = f.origin || f.from || "";
+    const dst = f.destination || f.to || "";
+    const dep = f.dep_time || "";
+    const arr = f.arr_time || "";
+    const aircraft = f.aircraft || "";
+    const route = org && dst ? `${org} → ${dst}` : (org || dst);
+    const times = dep && arr ? `${dep}–${arr}` : (dep || arr);
+    // Compose "EK770  NBO → AUH  07:05–13:15"
+    const parts = [num, route, times].filter(Boolean).join("  ");
+    return { key: `${num}-${dep}-${org}`, text: parts, aircraft };
+  }).filter((x) => !!x.text);
+
+  const _rawDuty = String(rd?.day_type || "").toLowerCase();
+  const _hasLayover = !!rd?.layover_city;
+  const _hasDutyContext =
+    _flights.length > 0
+    || _hasLayover
+    || (!!_rawDuty && !_isRestish(rd || { day_type: _rawDuty }));
 
   const isMissed = card.badge === "missed";
   const canRecover = isMissed
@@ -571,13 +611,39 @@ function DayRow({
           <Text style={styles.titleRest}>REST</Text>
         )}
 
-        {/* Iter 95h — only surface a chip row when there's genuine extra
-            context beyond the top-right duty dot (i.e. a flight number or
-            layover city). Keeps the base card visually clean. */}
-        {(flightChip || layoverChip) ? (
-          <View style={styles.chipRow}>
-            {flightChip ? <DutyChipView chip={flightChip} small /> : null}
-            {layoverChip ? <DutyChipView chip={layoverChip} small /> : null}
+        {/* Iter 113 — proper duty context surface. Shows the full duty row
+            (label + flights + city + load) below the workout/rest title so
+            clients can see WHY a rest day exists, or the flight legs on a
+            flying day. Non-rest days always render this block. */}
+        {_hasDutyContext ? (
+          <View style={styles.dutyBox}>
+            <View style={styles.dutyHeaderRow}>
+              <Ionicons name={dutyChip.icon} size={13} color={dutyChipColors(dutyChip.tone).fg} />
+              <Text style={[styles.dutyHeader, { color: dutyChipColors(dutyChip.tone).fg }]}>
+                {dutyChip.label.toUpperCase()}
+              </Text>
+              {_hasLayover ? (
+                <Text style={styles.dutyCity} numberOfLines={1}>
+                  {"  ·  "}{rd?.layover_city}
+                </Text>
+              ) : null}
+              {rd?.load ? (
+                <View style={[styles.dutyLoadPill, { backgroundColor: loadColor(rd.load) }]}>
+                  <Text style={styles.dutyLoadPillT}>{String(rd.load).toUpperCase()}</Text>
+                </View>
+              ) : null}
+            </View>
+            {_flights.map((f) => (
+              <View key={f.key} style={styles.dutyFlightRow}>
+                <Ionicons name="airplane" size={11} color={theme.color.brand} />
+                <Text style={styles.dutyFlightT} numberOfLines={1}>
+                  {f.text}
+                </Text>
+                {f.aircraft ? (
+                  <Text style={styles.dutyFlightAircraft}>{f.aircraft}</Text>
+                ) : null}
+              </View>
+            ))}
           </View>
         ) : null}
 
@@ -704,6 +770,37 @@ const styles = StyleSheet.create({
   title: { color: theme.color.text, fontSize: 14, fontWeight: "800", paddingHorizontal: 12, marginTop: 2 },
   titleRest: { color: theme.color.textMuted, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, marginTop: 2, letterSpacing: 1 },
   meta: { color: theme.color.textMuted, fontSize: 11, paddingHorizontal: 12, marginTop: 3 },
+  // Iter 113 — duty info block (flights + layover city + load)
+  dutyBox: {
+    marginHorizontal: 12, marginTop: 8, paddingHorizontal: 10, paddingVertical: 8,
+    backgroundColor: theme.color.surface2, borderRadius: theme.radius.sm,
+    borderWidth: 1, borderColor: theme.color.border,
+    gap: 4,
+  },
+  dutyHeaderRow: {
+    flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4,
+  },
+  dutyHeader: {
+    fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
+  },
+  dutyCity: {
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
+  },
+  dutyLoadPill: {
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: "auto",
+  },
+  dutyLoadPillT: {
+    color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1,
+  },
+  dutyFlightRow: {
+    flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 2,
+  },
+  dutyFlightT: {
+    color: theme.color.text, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
+  },
+  dutyFlightAircraft: {
+    color: theme.color.textMuted, fontSize: 10, fontWeight: "700",
+  },
   // Iter 112 — V2 rationale + priority pill styles
   v2Reason: {
     flexDirection: "row", alignItems: "flex-start", gap: 6,

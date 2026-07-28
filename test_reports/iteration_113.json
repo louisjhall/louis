@@ -1,0 +1,31 @@
+{
+  "summary": "Iter 113 duty-context surface verified on Pietro's client dashboard (mobile viewport 390x844). All 7 visible dates render exactly as expected: 07-28 shows Run Easy + 'LAYOVER · NBO · BLUE' info block; 07-29 shows REST FROM TRAINING + info block with layover city + flight leg 'EK770 NBO → AUH 07:05-13:15  32A'; 07-30 shows REST FROM TRAINING + TURNAROUND header + two flight legs (332 and 333, aircraft 320); 07-31 / 08-01 / 08-02 (home_day) render workout with NO duty info block (clean look); 08-03 (STANDBY, rest) shows REST FROM TRAINING + STANDBY header with no flights and AMBER load pill. V2 rationale + IMPORTANT/KEY priority pill from iter112 continues to render on Run Easy, Strength Full Body, Run Long. No lint errors, no console errors introduced by this change (only pre-existing warnings: shadow*, textShadow*, pointerEvents deprecations, expo-notifications). 08-04 was NOT observed because the pre-existing NEXT 7 pager button does not advance the range on web (see minor issue below), but the same STANDBY roster context is proven by 08-03 which renders correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "ClientCalendarPanel day card (07-28 layover_full)", "issues": ["The duty header row uses flexWrap: 'wrap' and the load pill has marginLeft:'auto'. When layover_city is present without flights, the layover city and the load pill wrap onto their own lines producing a slightly loose 3-line stack (LAYOVER / · NBO / BLUE). Not a bug — content is fully readable — but a compact single-line render (or hiding the load pill when city is shown) would look tighter."]}
+    ],
+    "react_native_issues": [
+      {"component": "ClientCalendarPanel.tsx buildDutyChip map", "issue": "day_type='layover_departure' is not in the dutyChip label map, so it falls back to auto-Title-Case ('Layover Departure') and the info block header reads 'LAYOVER DEPARTURE' instead of the reviewer-expected 'LAYOVER · NBO'. Functionally correct and clearly readable, but the main-agent-specified label is not exact. Consider mapping layover_departure -> {label:'Layover', icon:'bed', tone:'amber'} (same as layover_full) for consistency. Reference: /app/frontend/src/components/ClientCalendarPanel.tsx:144-170"}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL: Add 'layover_departure' (and likely 'layover_arrival') entries to the buildDutyChip map in ClientCalendarPanel.tsx so the info block header renders as 'LAYOVER' (matching the review spec) instead of the auto-Title-Cased fallback 'LAYOVER DEPARTURE'.",
+    "PRE-EXISTING (not this iter): The 'NEXT 7' / 'PREV 7' pager buttons do not shift the calendar window on web — clicks fire on the Pressable but state doesn't advance. Blocked verification of 2026-08-04 STANDBY+Run Easy card via UI, though the same STANDBY block was proven on 2026-08-03. Worth a separate iter to debug Pressable click handling for these pager buttons on web (they use disabled + testID cal-prev-7 / cal-next-7)."
+  ],
+  "critical_code_review_comments": [
+    "ClientCalendarPanel.tsx is now 866 lines — approaching the 700-line ceiling. Recommend extracting DutyInfoBlock and DayRow into sibling files to keep the file focused on the panel/pagination logic.",
+    "Dead code: DutyChipView is exported-shape but flagged eslint-disable @typescript-eslint/no-unused-vars. Fine short-term but should be removed if no future compact rendering is planned.",
+    "buildDutyChip map does not cover layover_departure / layover_arrival / positioning / deadhead — worth completing the enumeration to avoid label drift for real roster payloads."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "seed_data_creation": "None — used existing Pietro seed (2026-07-28 onwards) as documented in /app/memory/test_credentials.md.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login flow for Pietro: (1) tap welcome-skip, (2) tap continue-atlas (Meet Atlas onboarding), (3) fill login-email-input + login-password-input, (4) tap signin-submit. Calendar day cards use testID cal-day-YYYY-MM-DD and render inside the home dashboard ScrollView. Backend /api/calendar/range?from=&to= returns the payload used by ClientCalendarPanel. NEXT7 pager click currently does not advance the window on web — retest agents should not rely on it and should widen the initial range via URL or extend PAGE_DAYS if 8+ days need to be verified simultaneously.",
+  "rca_of_issue": "N/A — iter113 changes verified working. Only minor label mismatch (layover_departure → 'LAYOVER DEPARTURE' rather than 'LAYOVER') because the day_type is not in the explicit dutyChip label map. Fix is a one-line map addition."
+}

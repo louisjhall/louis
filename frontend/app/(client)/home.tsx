@@ -26,7 +26,7 @@ import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
 import { RosterDayChip } from "@/src/components/RosterDayChip";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
-import { NotificationBell } from "@/src/components/NotificationBell";
+import { TodayFlightSupport } from "@/src/components/TodayFlightSupport";import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
 import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
@@ -167,6 +167,8 @@ export default function Home() {
   // Iter 94o — Personal activities (sport/hobby) must show on the home week
   // list alongside workouts. Loaded on refresh; merged into next7.
   const [activities, setActivities] = useState<any[]>([]);
+  // Iter 117 — /client/today snapshot for Aviation Support integration.
+  const [todaySnapshot, setTodaySnapshot] = useState<any | null>(null);
   // Iter 94s — scroll handling for calendar "Jump to Today"
   const scrollRef = useRef<ScrollView | null>(null);
   const calendarTopYRef = useRef<number>(0);
@@ -179,7 +181,7 @@ export default function Home() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live, acts] = await Promise.all([
+      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live, acts, today] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
@@ -192,6 +194,7 @@ export default function Home() {
         api<any>("/programme/focus").catch(() => null),
         api<any>("/profile/live-state").catch(() => null),
         api<any>("/personal-activities").catch(() => ({ activities: [] })),
+        api<any>("/client/today").catch(() => null),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -207,6 +210,10 @@ export default function Home() {
       setLiveStateReceipt(live?.receipt || null);
       setLiveStateData(live?.live_state || null);
       setActivities((acts?.activities || []) as any[]);
+      // Iter 117 — client Today snapshot for Aviation Support integration.
+      // Kept separate from training so a re-render doesn't affect programme
+      // state.
+      setTodaySnapshot(today || null);
       // Iter 94j — after a fresh load, if this brand-new client hasn't yet
       // answered the first-day-choice question, route them to the choice
       // screen. Only fires on Day 1 (needs_choice comes from the backend
@@ -807,6 +814,16 @@ export default function Home() {
           </View>
 
           <HabitTodayCard />
+
+          {/* Iter 117 — Aviation Support (Phase B). Rendered as a separate
+              section right after the Training / Rest block so pilots see
+              their operational interventions alongside training without
+              them being confused for programme workouts. Hidden unless
+              /client/today returned interventions. */}
+          <TodayFlightSupport
+            snapshot={todaySnapshot}
+            onRefresh={load}
+          />
 
           <TodayPersonalActivities key={activityRefreshKey} />
 

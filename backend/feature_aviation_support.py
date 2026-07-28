@@ -531,34 +531,39 @@ async def get_flight_support_by_date(
     if (profile.get("flight_support") or {}).get("disabled"):
         return {}
     # Role resolution priority:
-    #   1. profile.aviation_role (new explicit setting, editable by coach)
-    #   2. profile.job_title (existing free-text) matched to pilot / cabin_crew
-    #   3. profile.role or top-level role — but only if it's an aviation role
-    #      (the DB's top-level `role` is typically "client" / "coach" so we
-    #      ignore it unless it explicitly says pilot / cabin_crew).
-    #   4. Default: "pilot" (MVP; safe because non-pilot roles are ignored
-    #      by the selector's role check anyway).
+    #   1. profile.aviation_role (explicit setting, editable by coach)
+    #   2. profile.job_title confidently identifies pilot → "pilot"
+    #   3. profile.job_title confidently identifies cabin crew → "cabin_crew"
+    #   4. Otherwise → "role_unknown" (NEVER default to pilot; Phase B §9)
+    #
+    # A "role_unknown" outcome short-circuits selection so a non-pilot with
+    # missing role data cannot accidentally receive cockpit-specific
+    # protocols. The coach must set `profile.aviation_role` explicitly
+    # before any support is prescribed.
     def _resolve_role() -> str:
         av = (profile.get("aviation_role") or "").strip().lower()
         if av in ("pilot", "cabin_crew"):
             return av
         jt = (profile.get("job_title") or "").strip().lower()
         _pilot_kw = ("pilot", "captain", "first officer",
-                     "co-pilot", "co pilot", "fo", "cpt")
-        _cc_kw = ("cabin", "attendant", "steward", "purser",
-                  "flight attendant")
-        if any(k in jt for k in _pilot_kw):
-            return "pilot"
+                     "co-pilot", "co pilot", " fo ", "cpt",
+                     "capt.", "airline pilot", "commercial pilot")
+        _cc_kw = ("cabin crew", "cabin", "flight attendant",
+                  "attendant", "steward", "stewardess", "purser")
+        # Cabin crew keywords take priority so "cabin crew — pilot flying"
+        # oddities still classify correctly.
         if any(k in jt for k in _cc_kw):
             return "cabin_crew"
+        if any(k in jt for k in _pilot_kw):
+            return "pilot"
         top = ((profile.get("role") or "")
                 or (user_doc.get("role") if user_doc else "")).strip().lower()
         if top in ("pilot", "cabin_crew"):
             return top
-        return "pilot"
+        return "role_unknown"
 
     resolved_role = _resolve_role()
-    if resolved_role not in ("pilot",):  # cabin_crew handled in Phase C
+    if resolved_role != "pilot":  # cabin_crew (Phase C) + role_unknown → silent
         return {}
 
     # Load overrides once
@@ -669,9 +674,41 @@ def summarise_training_by_date_from_workouts(rows: list[dict]) -> dict[str, dict
     return out
 
 
+# ---------------------------------------------------------------------------
+# Public helpers
+# ---------------------------------------------------------------------------
+
+def resolve_aviation_role(user_doc: dict) -> str:
+    """Public role resolver — used by coach endpoints to show
+    'Aviation role required' when the client's role is ambiguous.
+
+    Returns one of: "pilot", "cabin_crew", "role_unknown".
+    """
+    profile = (user_doc or {}).get("profile") or {}
+    av = (profile.get("aviation_role") or "").strip().lower()
+    if av in ("pilot", "cabin_crew"):
+        return av
+    jt = (profile.get("job_title") or "").strip().lower()
+    _pilot_kw = ("pilot", "captain", "first officer",
+                 "co-pilot", "co pilot", " fo ", "cpt",
+                 "capt.", "airline pilot", "commercial pilot")
+    _cc_kw = ("cabin crew", "cabin", "flight attendant",
+              "attendant", "steward", "stewardess", "purser")
+    if any(k in jt for k in _cc_kw):
+        return "cabin_crew"
+    if any(k in jt for k in _pilot_kw):
+        return "pilot"
+    top = ((profile.get("role") or "")
+            or (user_doc.get("role") or "")).strip().lower()
+    if top in ("pilot", "cabin_crew"):
+        return top
+    return "role_unknown"
+
+
 __all__ = [
     "PROTOCOLS", "ProtocolSpec", "Intervention",
     "select_interventions_for_day",
     "get_flight_support_by_date",
     "summarise_training_by_date_from_workouts",
+    "resolve_aviation_role",
 ]

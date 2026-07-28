@@ -64,6 +64,17 @@ type DayRow = {
     variant_type?: string;
   }[];
   v1_workouts?: any[];
+  // Iter 117 — Aviation Support (Phase B) surfaced inline in Roster + Plan.
+  flight_support?: {
+    id: string;
+    title: string;
+    protocol_key: string;
+    family: string;
+    duration_min: number;
+    trigger_reason?: string;
+    is_bundle?: boolean;
+    completion_status?: string;
+  }[];
 };
 
 type Workspace = {
@@ -114,6 +125,8 @@ export default function CoachWorkspaceScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
+  // Iter 117 — Coach flight-support override sheet target.
+  const [fsSheet, setFsSheet] = useState<{ date: string; item: any } | null>(null);
   const [directiveOpen, setDirectiveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<V2Tab>("plan");
@@ -340,7 +353,8 @@ export default function CoachWorkspaceScreen() {
           )}
           {data.days.map((d) => (
             <DayRowView key={d.date} row={d} desktop={isDesktop}
-              onOpenWorkout={(aid) => setDrawerAssignmentId(aid)} />
+              onOpenWorkout={(aid) => setDrawerAssignmentId(aid)}
+              onOpenFlightSupport={(date, fs) => setFsSheet({ date, item: fs })} />
           ))}
 
           {/* Exceptions block */}
@@ -369,6 +383,14 @@ export default function CoachWorkspaceScreen() {
         clientId={String(clientId)}
         onClose={() => setDrawerAssignmentId(null)}
         onEdited={loadMonth}
+      />
+
+      {/* Iter 117 — Flight Support override sheet */}
+      <FlightSupportOverrideSheet
+        target={fsSheet}
+        clientId={String(clientId)}
+        onClose={() => setFsSheet(null)}
+        onDone={() => { setFsSheet(null); loadMonth(); }}
       />
 
       {/* Directive editor */}
@@ -433,8 +455,10 @@ function TabBar({ active, onChange }: { active: V2Tab; onChange: (t: V2Tab) => v
   );
 }
 
-function DayRowView({ row, desktop, onOpenWorkout }: {
-  row: DayRow; desktop: boolean; onOpenWorkout: (aid: string) => void;
+function DayRowView({ row, desktop, onOpenWorkout, onOpenFlightSupport }: {
+  row: DayRow; desktop: boolean;
+  onOpenWorkout: (aid: string) => void;
+  onOpenFlightSupport: (date: string, item: any) => void;
 }) {
   const dt = fmtDate(row.date);
   const burden = row.schedule?.duty_burden_band;
@@ -516,6 +540,39 @@ function DayRowView({ row, desktop, onOpenWorkout }: {
             </View>
           </View>
         ))}
+        {/* Iter 117 — Aviation Support inline. Visually secondary (border
+            + smaller card) so it can't be mistaken for programme training.
+            Coach can tap to open the FlightSupportOverrideSheet. */}
+        {row.flight_support && row.flight_support.length > 0 ? (
+          <View style={styles.fsWrap}>
+            <Text style={styles.fsLabel}>FLIGHT SUPPORT</Text>
+            {row.flight_support.map((fs) => (
+              <Pressable
+                key={fs.id}
+                onPress={() => onOpenFlightSupport(row.date, fs)}
+                style={styles.fsCard}
+                testID={`fs-open-${row.date}-${fs.protocol_key}`}
+              >
+                <Ionicons name="airplane-outline" size={11} color="#8e8e93" style={{ marginRight: 6 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fsTitleTxt} numberOfLines={1}>
+                    {fs.title}
+                    {fs.is_bundle ? " · bundle" : ""}
+                  </Text>
+                  {fs.trigger_reason ? (
+                    <Text style={styles.fsReasonTxt} numberOfLines={1}>{fs.trigger_reason}</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.fsDurTxt}>{fs.duration_min}m</Text>
+                {fs.completion_status === "completed" ? (
+                  <Ionicons name="checkmark-circle" size={12} color="#61c982" style={{ marginLeft: 4 }} />
+                ) : fs.completion_status === "skipped" ? (
+                  <Ionicons name="close-circle" size={12} color="#8e8e93" style={{ marginLeft: 4 }} />
+                ) : null}
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -917,6 +974,28 @@ const styles = StyleSheet.create({
   planTitle: { color: theme.color.textHi, fontSize: 13, fontWeight: "700" },
   exposureTxt: { color: theme.color.textDim, fontSize: 11, marginLeft: 4 },
   planMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
+  // Iter 117 — Aviation Support inline row in Roster + Plan
+  fsWrap: {
+    marginTop: 10, paddingTop: 8,
+    borderTopWidth: 1, borderTopColor: theme.color.border,
+    gap: 4,
+  },
+  fsLabel: {
+    color: theme.color.textDim, fontSize: 9, fontWeight: "800",
+    letterSpacing: 1.4,
+  },
+  fsCard: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 6, paddingHorizontal: 8,
+    borderRadius: 6, backgroundColor: "#00000022",
+    borderLeftWidth: 2, borderLeftColor: theme.color.brand,
+  },
+  fsTitleTxt: { color: theme.color.textHi, fontSize: 11, fontWeight: "600" },
+  fsReasonTxt: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
+  fsDurTxt: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "700", marginLeft: 6,
+    minWidth: 30, textAlign: "right",
+  },
   planRight: { marginLeft: 8 },
 
   statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
@@ -981,3 +1060,141 @@ const styles = StyleSheet.create({
   },
   editErrorText: { color: "#ff6666", fontSize: 11, flex: 1 },
 });
+
+
+/* ---- Iter 117 — Flight Support Override Sheet -------------------------- */
+
+function FlightSupportOverrideSheet({
+  target, clientId, onClose, onDone,
+}: {
+  target: { date: string; item: any } | null;
+  clientId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [protocols, setProtocols] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!target) return;
+    api<any>(`/v2/coach/protocols/flight-support?role=pilot`)
+      .then((r) => setProtocols(r?.protocols || []))
+      .catch(() => setProtocols([]));
+  }, [target]);
+
+  if (!target) return null;
+
+  const call = async (payload: any) => {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/v2/coach/clients/${clientId}/flight-support/override`, {
+        method: "POST", body: payload,
+      });
+      onDone();
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeOverride = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/v2/coach/clients/${clientId}/flight-support/override/remove`, {
+        method: "POST",
+        body: { date: target.date, protocol_key: target.item.protocol_key },
+      });
+      onDone();
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const currentKey = target.item.protocol_key;
+
+  return (
+    <Modal transparent visible onRequestClose={onClose} animationType="fade">
+      <Pressable style={styles.drawerBackdrop} onPress={onClose}>
+        <Pressable style={styles.drawer} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.drawerHeader}>
+            <Text style={styles.drawerTitle}>Flight Support · {target.date}</Text>
+            <Pressable onPress={onClose} testID="fs-sheet-close">
+              <Ionicons name="close" size={24} color={theme.color.textDim} />
+            </Pressable>
+          </View>
+          <ScrollView style={{ padding: 16 }}>
+            <Text style={styles.sectionTitle}>CURRENT</Text>
+            <View style={styles.planCard}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.planTitle}>{target.item.title}</Text>
+                <Text style={styles.planMeta}>{target.item.duration_min}m · {target.item.family}</Text>
+              </View>
+            </View>
+            {err ? (
+              <View style={styles.editErrorBanner}>
+                <Text style={styles.editErrorText}>{err}</Text>
+              </View>
+            ) : null}
+
+            <Text style={[styles.sectionTitle, { marginTop: 18 }]}>REPLACE WITH</Text>
+            {protocols.filter((p) => p.key !== currentKey).map((p) => (
+              <Pressable
+                key={p.key}
+                disabled={busy || target.item.is_bundle}
+                style={[styles.planCard, { opacity: busy ? 0.4 : 1 }]}
+                onPress={() => call({
+                  date: target.date, action: "replace",
+                  protocol_key: currentKey, replace_key: p.key,
+                })}
+                testID={`fs-replace-${p.key}`}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.planTitle}>{p.title}</Text>
+                  <Text style={styles.planMeta}>{p.duration_min}m · {p.family}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={theme.color.textDim} />
+              </Pressable>
+            ))}
+
+            <Text style={[styles.sectionTitle, { marginTop: 18 }]}>ACTIONS</Text>
+            <Pressable
+              disabled={busy}
+              style={[styles.primaryBtn, { backgroundColor: "#f57c43", alignSelf: "stretch", justifyContent: "center", marginTop: 8 }]}
+              onPress={() => call({
+                date: target.date, action: "disable",
+                protocol_key: currentKey,
+                reason: "Coach disabled",
+              })}
+              testID="fs-disable-one"
+            >
+              <Ionicons name="ban" size={14} color="#000" />
+              <Text style={styles.primaryBtnText}>DISABLE THIS INTERVENTION</Text>
+            </Pressable>
+            <Pressable
+              disabled={busy}
+              style={[styles.primaryBtn, { backgroundColor: "#ff6b6b", alignSelf: "stretch", justifyContent: "center", marginTop: 8 }]}
+              onPress={() => call({ date: target.date, action: "disable_day" })}
+              testID="fs-disable-day"
+            >
+              <Ionicons name="calendar-outline" size={14} color="#000" />
+              <Text style={styles.primaryBtnText}>DISABLE ALL SUPPORT FOR THIS DAY</Text>
+            </Pressable>
+            <Pressable
+              disabled={busy}
+              style={[styles.primaryBtn, { backgroundColor: "#3a3a3a", alignSelf: "stretch", justifyContent: "center", marginTop: 8 }]}
+              onPress={removeOverride}
+              testID="fs-remove-override"
+            >
+              <Ionicons name="refresh" size={14} color="#fff" />
+              <Text style={[styles.primaryBtnText, { color: "#fff" }]}>RESTORE ORIGINAL</Text>
+            </Pressable>
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}

@@ -763,6 +763,27 @@ async def workspace_month(
 
     days = [days_by_date[k] for k in sorted(days_by_date.keys())]
 
+    # Iter 117 — Aviation Support (Phase B). Inject per-day flight support
+    # into the workspace so the coach sees Roster + Training + Flight
+    # Support all in one place. Never affects the counts below.
+    try:
+        from feature_aviation_support_api import (
+            _flight_support_for_range, _bundle_interventions, _apply_completions,
+        )
+        fs_by_date = await _flight_support_for_range(client_id, sd_str, ed_str)
+        for d in days:
+            items = fs_by_date.get(d["date"], [])
+            if items:
+                bundled = _bundle_interventions(items)
+                bundled = await _apply_completions(client_id, bundled)
+                d["flight_support"] = bundled
+            else:
+                d["flight_support"] = []
+    except Exception:
+        # Aviation support must NEVER break the coach workspace.
+        for d in days:
+            d["flight_support"] = []
+
     # --- Counts (per §9)
     counts = {"ready": 0, "review": 0, "conflict": 0, "coach_edited": 0,
               "approved": 0, "live": 0, "locked": 0, "total": 0}

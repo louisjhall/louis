@@ -1,0 +1,30 @@
+{
+  "summary": "Iter 117 Aviation Support Phase B fully verified. All 19 unit + 12 HTTP integration tests in test_iter117_flight_support_phase_b.py + test_aviation_support.py pass (31/31). All 89 Engine V2 regression tests pass (engine_v2_invariants + engine_v2_publish_e2e + iter109_workspace_v2_publish_render). Direct E2E for Pietro verified: /client/today returns role=pilot with proper labels; coach toggle OFF returns flight_support:[] with auto_flight_support_enabled:false, ON restores; bundle completion propagates to sub_interventions[]; /v2/client/plan/live payload contains NO 'fs:', 'pilot_', or 'flight_support' strings. Frontend web preview loads cleanly (welcome/login screen), no red screen, only pre-existing shadow*/textShadow*/pointerEvents deprecation warnings (unchanged from previous iterations). Home wire-up (TodayFlightSupport imported+rendered right after HabitTodayCard), coach workspace overrides sheet, and role_unknown hint are correctly implemented in code review. Pietro currently has no duty on today's date so the section is hidden by design (items.length===0 short-circuit) — spec-compliant.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter117_flight_support_phase_b.py",
+    "/app/backend/tests/test_aviation_support.py",
+    "/app/test_reports/pytest/iter117_phase_b.xml",
+    "/app/test_reports/pytest/iter117_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_aviation_support_api.py: Clean module — proper role short-circuit, override idempotency (delete_many by (user,date,action[,protocol_key]) then insert), bundle propagation on completion, and MongoDB _id excluded via {\"_id\":0} projections. No hardcoded URLs. All endpoints use FastAPI Depends for role gating.",
+    "TodayFlightSupport.tsx: Correctly hides when items empty, shows role_unknown coach-hint when role missing, uses testID on complete/skip/toggle buttons. Buttons have adequate touch targets (paddingVertical 6 + text height >= ~30px, borderWidth 1 — acceptable for compact secondary actions but could be increased for accessibility if issues arise).",
+    "home.tsx: /client/today parallel-fetched with existing 12 endpoints via Promise.all (no network overhead added). Snapshot cached in state, refreshed via onRefresh callback after completion. No side-effects on training/programme state.",
+    "Import statement on home.tsx line 29 has TodayFlightSupport and NotificationBell concatenated on same line without newline — cosmetic only, doesn't affect functionality."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A — code review + smoke load only"},
+  "seed_data_creation": "None. Reused Pietro (c4c7c7dd-4303-4645-af2c-b70212495360) with existing rosters.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter 117 Aviation Support Phase B is complete and green. Test file /app/backend/tests/test_iter117_flight_support_phase_b.py should be re-run in future regression suites. All flight-support endpoints live under /api/v2/coach/* and /api/client/flight-support*. Pietro has no scheduled flight support on the current date (2026-07-28) because his active roster doesn't cover today with a duty. To exercise UI end-to-end manually, hit dates 2026-07-27 → 2026-07-30 via the calendar or workspace views.",
+  "rca_of_issue": "N/A — no bugs found."
+}

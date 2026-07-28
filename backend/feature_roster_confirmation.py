@@ -1193,6 +1193,24 @@ async def roster_pending_confirm(
     except Exception:
         logger.exception("Failed to purge stale schedule_days from superseded rosters")
 
+    # Iter 117 — Aviation Support (Phase B §15/§16) reconcile any coach
+    # overrides that pointed at now-obsolete protocol selections. This is
+    # non-destructive: overrides are marked `stale: true` so the coach can
+    # see them; they are never silently deleted.
+    try:
+        from feature_aviation_support_api import reconcile_overrides_after_roster_change
+        _changed_dates = [
+            str(d.get("date") or "")[:10]
+            for d in (roster.get("days") or [])
+            if d.get("date")
+        ]
+        if _changed_dates:
+            await reconcile_overrides_after_roster_change(
+                user["id"], _changed_dates,
+            )
+    except Exception:
+        logger.exception("Flight Support override reconciliation failed (non-fatal)")
+
     # Phase 7A — client message + coach approval task (idempotent, non-fatal)
     try:
         from feature_programme_status import create_upload_confirmation_message, create_coach_approval_task

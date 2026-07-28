@@ -1,0 +1,48 @@
+{
+  "summary": "Iter 116 Aviation Support Layer (Phase A) VERIFIED. All 19 unit tests in test_aviation_support.py pass (protocol library, selector rules). Wrote NEW HTTP integration suite /app/backend/tests/test_iter116_flight_support_http.py — 14/15 passed, 1 skipped (V1 client testcal2 login not available on this env). Confirmed per-date interventions for Pietro on 2026-07-25..2026-08-05 exactly match the roster context: 07-27 layover_arrival → Arrival Walk 10m + Arrival Mobility 5m (bundle:arrival:2026-07-27), 07-29 layover_departure long-haul → Pre-Flight Mobility 6m + Movement Break 5m, 07-30 turnaround → Turnaround Reset 5m, 07-31/08-01/08-02 home_day+training → [], 08-03 standby no training → Movement Break 5m, 08-04 standby+training → []. Engine V2 isolation confirmed: no fs:/v2p:fs:/v2p:aviation ids in /api/workouts/week, /api/v2/client/plan/live, or the calendar workout column. Global disable (profile.flight_support.disabled=true) → all empty. Cabin Crew job_title flip → all empty (Phase C not shipped). Frontend smoke via mobile 390x844 viewport confirmed the FLIGHT SUPPORT card renders with 'Not counted as training' hint, 'Pre-Flight Mobility', 'Movement Break', 'Turnaround Reset' titles + durations + trigger reasons visible in DOM for Pietro. NOTE: for 2026-07-28 the review request expected Layover Walk 20m but Pietro's Live plan actually has 'Run Easy' scheduled that date, so the over-prescribe guard (§17) correctly returns []; this is spec-compliant — the review-request example predates the current live-plan drift (see iter110 note). Also noted /api/v2/client/plan/live no longer exposes a top-level programme_status field (returns keys: ok/live_id/activated_at/goal_key/planning_window/placements/session_specs/effective_context/programme_validation) — not caused by this iter but flagging in case the review-request cross-check expected it. IMPORTANT: The disable/cabin-crew tests use pymongo (sync) to avoid motor's 'event loop closed' issue that bit the first pass; if that first pass ever leaves the disabled=true state behind, run the restore snippet in updated_files.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/v2/client/plan/live",
+        "issue": "Response no longer contains a top-level `programme_status` field for Pietro (only ok/live_id/activated_at/goal_key/planning_window/placements/session_specs/effective_context/programme_validation). The review-request cross-check for `programme_status == programme_live` cannot be asserted here. Not iter-116-caused, but worth confirming."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_aviation_support.py (19 unit tests — pre-existing, all green)",
+    "/app/backend/tests/test_iter116_flight_support_http.py (NEW — 14 passed, 1 skipped)",
+    "/app/test_reports/pytest/iter116_flight_support.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Verify /api/v2/client/plan/live is expected to no longer include `programme_status` — the review-request cross-check for `programme_live` cannot be executed without it (currently the top-level keys are ok/live_id/activated_at/goal_key/planning_window/placements/session_specs/effective_context/programme_validation).",
+    "INFO: Pietro's Live plan has drifted since the review-request was drafted — 2026-07-28 (layover_full) now carries a Run Easy workout, so the over-prescribe guard correctly yields flight_support=[] instead of the expected Layover Walk. Behaviour is spec-compliant; consider updating the review-request expectations or re-seeding Pietro's plan if you want to exercise the 'layover_full no training' path against real HTTP.",
+    "INFO: The V1 client regression test (testcal2@crewfit.com) was skipped because those credentials fail with HTTP 401 on the public preview. If a V1 client cred is available, plug it in and rerun the last test in test_iter116_flight_support_http.py."
+  ],
+  "critical_code_review_comments": [
+    "feature_aviation_support.py is 678 lines, well-structured, single-responsibility, has zero DB writes (only reads: users.find_one + flight_support_overrides.find). Public surface (PROTOCOLS, select_interventions_for_day, get_flight_support_by_date, summarise_training_by_date_from_workouts) is minimal and documented.",
+    "feature_calendar_recovery.py wraps the aviation call in a try/except that swallows ALL exceptions silently (lines 446-460). Good for isolation guarantee but any real bug in the module will be invisible in prod logs. Consider logging.exception() inside the except.",
+    "Intervention IDs are stable and date-scoped (`fs:<date>:<protocol_key>:<idx>`), correctly excluded from workouts/week and /v2/client/plan/live — verified via full recursive id-scan.",
+    "Role resolution priority in _resolve_role() (profile.aviation_role → profile.job_title → profile.role/top-level → default 'pilot') correctly returns 'cabin_crew' when job_title contains 'cabin', and the caller then short-circuits to return {} — verified by flipping Pietro's job_title.",
+    "Note: default role fallback is 'pilot' when none of the heuristics match; this means any client without an aviation profile who happens to have a roster with a `layover_*`/`turnaround`/`flight` day_type will receive interventions. That's probably fine for the aviation-vertical target but worth confirming for any non-aviation clients that happen to have a roster."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter116_flight_support_http.py (new; 15 tests)",
+    "Restored Pietro's profile.flight_support.disabled=False after fixture cleanup ran into motor 'event loop closed' during first draft. Restore snippet (already applied): db.users.update_one({'id':'c4c7c7dd-4303-4645-af2c-b70212495360'},{'$set':{'profile.flight_support.disabled':False,'profile.job_title':'Pilot'}})"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 unit tests + 14/14 executed HTTP tests; 1 skipped due to unavailable V1 creds)",
+    "frontend": "100% smoke — FLIGHT SUPPORT section renders with 'Not counted as training' hint, correct titles + durations + trigger reasons visible in DOM for Pietro on mobile 390x844."
+  },
+  "seed_data_creation": "None new. Used existing Pietro seed (client id c4c7c7dd-4303-4645-af2c-b70212495360) and testcal2 (V1 regression — skipped, creds don't work on this preview).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "For iter 116+ regressions run: `MONGO_URL=mongodb://localhost:27017 DB_NAME=crewfit_v1 EXPO_PUBLIC_BACKEND_URL=https://flight-fit-plans.preview.emergentagent.com pytest /app/backend/tests/test_iter116_flight_support_http.py /app/backend/tests/test_aviation_support.py -v`. If the disable-flag test crashes mid-way, re-run the restore snippet from updated_files. Pietro's real Live plan has a Run Easy on 2026-07-28 so the review-request expectation of a Layover Walk that day is stale — test asserts fs=[] on that specific date and passes because §17 over-prescribe guard fires. Pietro roster (verified live from db.rosters): 07-27 layover_arrival, 07-28 layover_full, 07-29 layover_departure, 07-30 turnaround, 07-31→08-02 home_day, 08-03/04 standby, 08-05 home_day.",
+  "rca_of_issue": "No bugs found in the iter 116 code. One test-authoring pitfall worth documenting: motor's AsyncIOMotorClient re-uses asyncio.get_event_loop() which becomes closed between pytest asyncio.run() calls, producing 'Event loop is closed' on the SECOND flip. Use pymongo (sync) for state flips inside a pytest session, or wrap the flips in a single asyncio.run() with try/finally so restore always runs. The first draft of test_iter116_flight_support_http.py hit this and left Pietro in disabled=true state until the restore snippet was manually run. The rewritten suite uses pymongo and is now robust."
+}

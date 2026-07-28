@@ -440,6 +440,25 @@ async def calendar_range(
     roster_by_date = await _roster_days_between(user["id"], d_from, d_to)
     acts_by_date = await _activities_between(user["id"], d_from, d_to)
 
+    # Iter 116 — Aviation Support Layer (Phase A). Deterministic, cheap,
+    # decoupled from Engine V2 quotas. Recomputed on every read so a coach
+    # override / roster edit is reflected without a background job.
+    flight_support_by_date: dict[str, list[dict]] = {}
+    try:
+        from feature_aviation_support import (
+            get_flight_support_by_date,
+            summarise_training_by_date_from_workouts,
+        )
+        _training_summary = summarise_training_by_date_from_workouts(
+            list(by_date.values()),
+        )
+        flight_support_by_date = await get_flight_support_by_date(
+            db, user["id"], roster_by_date, _training_summary,
+        )
+    except Exception:
+        # Aviation support must NEVER break /calendar/range for anyone.
+        pass
+
     # Iter 95f — respect the client's account start so historic roster
     # days don't get flagged as missed.
     account_start = _account_start_date(user)
@@ -497,6 +516,10 @@ async def calendar_range(
             ),
             "activities": acts,
             "client_copy": _client_copy_for_missed(w) if (w and badge == "missed") else None,
+            # Iter 116 — Aviation Support (Phase A). Separate from `workout`;
+            # NEVER affects Engine V2 quotas or adherence. Empty list for
+            # non-pilot roles or non-duty days.
+            "flight_support": flight_support_by_date.get(ds, []),
         }
         days.append(card)
         step += _dt.timedelta(days=1)

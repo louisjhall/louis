@@ -72,6 +72,26 @@ type DayCard = {
   } | null;
   activities?: any[];
   client_copy?: { title?: string; body?: string; recommendation?: string } | null;
+  // Iter 116 — Aviation Support Layer (Phase A).
+  // A separate, non-training list of short operational interventions. NEVER
+  // affects Engine V2 quotas or adherence. Empty for non-pilot roles or
+  // non-duty days.
+  flight_support?: {
+    id: string;
+    date: string;
+    protocol_key: string;
+    role: string;
+    title: string;
+    family: string;               // walk | mobility | activation | recovery | reset | movement_break | custom
+    intensity: string;
+    duration_min: number;
+    cues: string[];
+    equipment: string[];
+    blocks: any[];
+    bundle_key?: string | null;
+    bundle_title?: string | null;
+    trigger_reason?: string;
+  }[];
 };
 
 type RangePayload = {
@@ -103,6 +123,31 @@ function niceDate(iso: string): string {
     const d = new Date(`${iso}T00:00:00`);
     return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
   } catch { return iso; }
+}
+
+// Iter 116 — Flight Support family → icon + colour helpers.
+// Kept local so the palette can drift without leaking into other components.
+function fsFamilyIcon(family: string): string {
+  switch ((family || "").toLowerCase()) {
+    case "walk":            return "walk-outline";
+    case "mobility":        return "body-outline";
+    case "activation":      return "flash-outline";
+    case "recovery":        return "moon-outline";
+    case "reset":           return "refresh-outline";
+    case "movement_break":  return "pause-circle-outline";
+    default:                return "airplane-outline";
+  }
+}
+function fsFamilyColor(family: string): string {
+  switch ((family || "").toLowerCase()) {
+    case "walk":            return theme.color.brand;
+    case "mobility":        return theme.color.green;
+    case "activation":      return theme.color.amber;
+    case "recovery":        return "#8b5cf6";  // violet
+    case "reset":           return "#0ea5e9";  // sky
+    case "movement_break":  return theme.color.textMuted;
+    default:                return theme.color.textMuted;
+  }
 }
 function daysBetween(a: string, b: string): number {
   const da = new Date(`${a}T00:00:00`).getTime();
@@ -651,6 +696,49 @@ function DayRow({
           </View>
         ) : null}
 
+        {/* Iter 116 — Aviation Support Layer (Phase A). Rendered as a
+            separate labelled section so clients understand these are NOT
+            programme training. Cards are compact (icon + title + minutes).
+            Coach can override / disable individual interventions via
+            db.flight_support_overrides (Phase B). */}
+        {(card.flight_support && card.flight_support.length > 0) ? (
+          <View style={styles.fsBox}>
+            <View style={styles.fsHeader}>
+              <Ionicons name="airplane-outline" size={11} color={theme.color.textMuted} />
+              <Text style={styles.fsHeaderT}>FLIGHT SUPPORT</Text>
+              <Text style={styles.fsHeaderHint}>Not counted as training</Text>
+            </View>
+            {card.flight_support.map((it) => (
+              <View key={it.id} style={styles.fsRow}>
+                <View style={[styles.fsIconWrap, {
+                  backgroundColor: fsFamilyColor(it.family) + "22",
+                  borderColor: fsFamilyColor(it.family),
+                }]}>
+                  <Ionicons
+                    name={fsFamilyIcon(it.family) as any}
+                    size={12}
+                    color={fsFamilyColor(it.family)}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.fsTitle} numberOfLines={1}>
+                    {it.title}
+                    {it.bundle_title ? (
+                      <Text style={styles.fsBundleHint}>  ·  {it.bundle_title}</Text>
+                    ) : null}
+                  </Text>
+                  {it.trigger_reason ? (
+                    <Text style={styles.fsReason} numberOfLines={1}>
+                      {it.trigger_reason}
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={styles.fsDuration}>{it.duration_min}m</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
         {acts.map((a) => (
           <View key={a.id} style={styles.actChip}>
             <Ionicons name="tennisball" size={11} color={theme.color.brand} />
@@ -804,6 +892,48 @@ const styles = StyleSheet.create({
   },
   dutyFlightAircraft: {
     color: theme.color.textMuted, fontSize: 10, fontWeight: "700",
+  },
+  // Iter 116 — Aviation Support (Phase A) rendering
+  fsBox: {
+    marginHorizontal: 12, marginTop: 8, paddingHorizontal: 10, paddingVertical: 8,
+    backgroundColor: theme.color.surface2, borderRadius: theme.radius.sm,
+    borderWidth: 1, borderColor: theme.color.border,
+    borderLeftWidth: 3, borderLeftColor: theme.color.brand,
+    gap: 6,
+  },
+  fsHeader: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    borderBottomWidth: 1, borderBottomColor: theme.color.border,
+    paddingBottom: 6,
+  },
+  fsHeaderT: {
+    color: theme.color.text, fontSize: 10, fontWeight: "800", letterSpacing: 1.2,
+  },
+  fsHeaderHint: {
+    color: theme.color.textMuted, fontSize: 9, fontWeight: "600",
+    fontStyle: "italic", marginLeft: "auto",
+  },
+  fsRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+  },
+  fsIconWrap: {
+    width: 22, height: 22, borderRadius: 11,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1,
+  },
+  fsTitle: {
+    color: theme.color.text, fontSize: 12, fontWeight: "700",
+  },
+  fsBundleHint: {
+    color: theme.color.textMuted, fontSize: 10, fontWeight: "600",
+    fontStyle: "italic",
+  },
+  fsReason: {
+    color: theme.color.textMuted, fontSize: 10, marginTop: 1,
+  },
+  fsDuration: {
+    color: theme.color.brand, fontSize: 12, fontWeight: "700",
+    minWidth: 32, textAlign: "right",
   },
   // Iter 112 — V2 rationale + priority pill styles
   v2Reason: {

@@ -89,12 +89,14 @@ export default function Login() {
                     testID="login-exit-preview"
                     onPress={async () => {
                       try { await exitPreview(); } catch {}
-                      setEmail("louis@crewfit.net");
-                      setPassword("Louis123!");
+                      // Iter 122e — do not autofill real credentials in the
+                      // shipped bundle. Coach types their own password.
+                      setEmail("");
+                      setPassword("");
                     }}
                     style={styles.previewNoticeBtn}
                   >
-                    <Text style={styles.previewNoticeBtnT}>EXIT PREVIEW & FILL LOUIS LOGIN</Text>
+                    <Text style={styles.previewNoticeBtnT}>EXIT PREVIEW & RETURN TO LOGIN</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -187,7 +189,16 @@ export default function Login() {
                     }
                     setLoading(true);
                     try {
-                      const u = await login("louis@crewfit.net", "Louis123!");
+                      // Iter 122e — no hardcoded credentials in source. The
+                      // DEV shortcut reads them from EXPO_PUBLIC_DEV_LOGIN_*
+                      // env vars (never populated in production builds).
+                      const devEmail = process.env.EXPO_PUBLIC_DEV_LOGIN_EMAIL || "";
+                      const devPass  = process.env.EXPO_PUBLIC_DEV_LOGIN_PASSWORD || "";
+                      if (!devEmail || !devPass) {
+                        setErr("Dev login env vars not set.");
+                        return;
+                      }
+                      const u = await login(devEmail, devPass);
                       if (u.role === "coach") {
                         router.replace("/(coach)/v2-home");
                       } else {
@@ -201,7 +212,7 @@ export default function Login() {
                   }}
                   style={styles.devBtn}
                 >
-                  <Text style={styles.devBtnT}>◈ LOUIS (DEV ONLY)</Text>
+                  <Text style={styles.devBtnT}>◈ DEV LOGIN</Text>
                 </Pressable>
               )}
             </View>

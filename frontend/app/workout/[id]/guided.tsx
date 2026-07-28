@@ -78,6 +78,92 @@ function parseTargetReps(ex: any): number {
   return isNaN(n) ? 10 : n;
 }
 
+/**
+ * Iter 115 — Adapt V2 workouts (source="engine_v2") for the guided flow.
+ *
+ * V2 running / cycling / mobility workouts arrive with:
+ *   - warmup:   null (blocks[0] holds the warmup cue + drills)
+ *   - exercises: [] (V2 cardio has no gym-style exercise list)
+ *   - blocks[]: warmup + main + cooldown (+ segments) with hr_zone /
+ *               pace_target / duration_min / cue / drills
+ *
+ * The guided flow reads `workout.warmup` (drill list) and iterates
+ * `workout.exercises[]` — so without this adapter it either skips warmup
+ * entirely OR has zero exercises to run (guided screen stalls). We flatten
+ * blocks into guided-friendly shape without mutating the manual view path.
+ */
+function adaptWorkoutForGuided(w: any): any {
+  if (!w) return w;
+  const hasExercises = Array.isArray(w.exercises) && w.exercises.length > 0;
+  const hasWarmup = Array.isArray(w.warmup) && w.warmup.length > 0;
+  const blocks: any[] = Array.isArray(w.blocks) ? w.blocks : [];
+  const isV2 = w.source === "engine_v2" || w.v2_placement === true;
+  if (!isV2 && (hasExercises || hasWarmup)) return w; // legacy shape — untouched
+
+  const out: any = { ...w };
+
+  // 1) Warmup: extract drills from the first "warmup"-typed block.
+  if (!hasWarmup) {
+    const wuBlock = blocks.find((b) => String(b.type || "").toLowerCase() === "warmup");
+    const drills = Array.isArray(wuBlock?.drills) ? wuBlock.drills : [];
+    if (drills.length > 0) {
+      out.warmup = drills.map((d: any) => ({
+        name: d.name || "Drill",
+        duration_sec: d.duration_sec || d.duration || 30,
+        cue: d.cue,
+        reps: d.reps,
+        rest_sec: d.rest_sec,
+      }));
+    } else if (wuBlock?.duration_min) {
+      // Fall back to a single "Warm-up" block when no drills exist
+      out.warmup = [{
+        name: "Warm-up",
+        duration_sec: (wuBlock.duration_min || 5) * 60,
+        cue: wuBlock.cue || "",
+      }];
+    }
+  }
+
+  // 2) Exercises: for cardio / mobility V2 blocks, expand non-warmup blocks
+  //    into cardio-style "exercises" so the guided flow has something to
+  //    run. Each block becomes a single-set timed exercise with sensible
+  //    metadata for the meta line + haptics.
+  if (!hasExercises && blocks.length > 0) {
+    const nonWarmup = blocks.filter(
+      (b) => String(b.type || "").toLowerCase() !== "warmup"
+    );
+    if (nonWarmup.length > 0) {
+      out.exercises = nonWarmup.map((b: any) => {
+        const label = String(b.type || "block")
+          .replace(/_/g, " ")
+          .replace(/\b\w/g, (c: string) => c.toUpperCase());
+        const secs = (b.duration_min || 0) * 60 || (b.work_sec || 60);
+        const bits: string[] = [];
+        if (b.hr_zone)       bits.push(String(b.hr_zone).toUpperCase());
+        if (b.pace_target)   bits.push(String(b.pace_target));
+        if (b.power_target)  bits.push(String(b.power_target));
+        if (b.cadence)       bits.push(`cad ${b.cadence}`);
+        if (b.effort_rpe)    bits.push(`RPE ${b.effort_rpe}`);
+        const notes = [b.cue, b.fuel_cue ? `Fuel: ${b.fuel_cue}` : ""]
+          .filter(Boolean).join("  ·  ");
+        return {
+          name: label,
+          exercise_name_display: label,
+          sets: 1,
+          reps: bits.join(" · ") || `${b.duration_min || 1}min`,
+          duration_sec: secs,
+          rest_sec: 15,           // short micro-pause between blocks
+          logging_type: "cardio", // triggers autopilot cardio timer path
+          notes,
+          category: "cardio",
+        };
+      });
+    }
+  }
+
+  return out;
+}
+
 export default function GuidedFlow() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -141,7 +227,10 @@ export default function GuidedFlow() {
         getSoundOn(),
         getVoiceOn(),
       ]);
-      setWorkout(w);
+      // Iter 115 — V2 workouts arrive without warmup[] / exercises[] shape.
+      // The adapter is idempotent for legacy V1 workouts.
+      const wAdapted = adaptWorkoutForGuided(w);
+      setWorkout(wAdapted);
       setAutoCont(ac);
       setAutoRest(ar);
       setSoundOn(so);
@@ -260,6 +349,20 @@ export default function GuidedFlow() {
   }, [isAutopilot, phase, exIdx, setIdx, paused, currentEx?.name, workSec, saving]);
 
   const beginWorkout = useCallback((mode: "log" | "autopilot") => {
+    // Iter 115 — guard against a workout that arrived with no runnable
+    // content (e.g. an old plan or a mobility flow without drills). Bail
+    // back to the detail screen with a friendly message instead of showing
+    // a blank guided player.
+    const wuLen = Array.isArray(workout?.warmup) ? workout.warmup.length : 0;
+    const exLen = Array.isArray(workout?.exercises) ? workout.exercises.length : 0;
+    if (wuLen === 0 && exLen === 0) {
+      Alert.alert(
+        "Nothing to guide yet",
+        "This session doesn't have a runnable structure (warm-up / blocks). Open it in Manual Mode to review the plan.",
+        [{ text: "OK", onPress: () => router.back() }],
+      );
+      return;
+    }
     setLogMode(mode);
     // Force auto-continue after rest ON when the client picks autopilot so
     // the workout truly flows without any tapping needed.
@@ -267,13 +370,13 @@ export default function GuidedFlow() {
       setAutoCont(true);
       setAutoRest(true);
     }
-    if (Array.isArray(workout?.warmup) && workout.warmup.length > 0) {
+    if (wuLen > 0) {
       setPhase("warmup");
       setWarmupIdx(0);
     } else {
       setPhase("work");
     }
-  }, [workout]);
+  }, [workout, router]);
 
   const advanceAfterRest = () => {
     goToNextSetOrExercise();

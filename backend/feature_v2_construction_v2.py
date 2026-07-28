@@ -259,7 +259,83 @@ RUNNING_BUILDERS: dict[str, Any] = {
     "run_marathon_pace":lambda dur, ph: _running_race_pace(dur, True),
     "run_race_pace":    lambda dur, ph: _running_race_pace(dur, False),
     "run_strides":      lambda dur, ph: _running_strides(dur),
+    # Iter 121 — General Fitness / Fat Loss aerobic Z2 (cardio-modality-agnostic).
+    # By default outputs a run; construction may swap for bike/walk based on
+    # client_profile.cardio_preference.
+    "aerobic_z2":       lambda dur, ph: _running_easy(dur),
+    "walk_z2":          lambda dur, ph: _running_easy(dur),
 }
+
+
+# Iter 121 — Iter121 walk / conditioning builders
+
+def _walking_z2(duration_min: int) -> dict:
+    """Structured brisk walking session — a legitimate aerobic exposure for
+    General Fitness / Fat Loss clients who do not want to run."""
+    wu = max(3, int(duration_min * 0.10))
+    cd = max(3, int(duration_min * 0.08))
+    steady = max(10, duration_min - wu - cd)
+    return {
+        "warmup": {"duration_min": wu, "hr_zone": "z1",
+                   "cue": "Easy walk. Loose ankles + shoulders."},
+        "main":   {"type": "brisk_walk", "duration_min": steady,
+                   "hr_zone": "z2", "pace_target": "brisk / conversational",
+                   "cue": "Purposeful pace. Tall posture, arms swinging."},
+        "cooldown": {"duration_min": cd, "hr_zone": "z1",
+                     "cue": "Slow walk. Deep breathing."},
+    }
+
+
+def _conditioning_mixed_circuit(duration_min: int) -> dict:
+    """Deterministic mixed conditioning circuit. Bodyweight-safe by default;
+    scales up with dumbbells / kettlebell if available. Not a punishment
+    workout — moderate density, 3–4 short circuits."""
+    wu = 5
+    cd = 4
+    work = max(12, duration_min - wu - cd)
+    rounds = 3 if work < 20 else 4
+    return {
+        "warmup": {"duration_min": wu,
+                   "cue": "Dynamic mobility + light cardio.",
+                   "drills": [
+                       {"name": "Leg swings", "duration_sec": 30},
+                       {"name": "World's greatest stretch", "duration_sec": 45},
+                       {"name": "Jumping jacks", "duration_sec": 30},
+                   ]},
+        "main": {"type": "circuit",
+                 "duration_min": work,
+                 "rounds": rounds,
+                 "rest_between_rounds_sec": 60,
+                 "stations": [
+                     {"name": "Goblet Squat or Bodyweight Squat", "duration_sec": 40},
+                     {"name": "Push-up (kneeling ok)", "duration_sec": 30},
+                     {"name": "Kettlebell Swing or Hip Hinge Reach", "duration_sec": 30},
+                     {"name": "Alternating Reverse Lunge", "duration_sec": 40},
+                     {"name": "Plank Hold", "duration_sec": 30},
+                 ],
+                 "cue": "Moderate effort. Aim RPE 6-7. Not maximal."},
+        "cooldown": {"duration_min": cd,
+                     "cue": "Slow walk + easy breathing. Down-regulate."},
+    }
+
+
+def _conditioning_intervals(duration_min: int) -> dict:
+    """Short interval conditioning — bodyweight or kettlebell friendly."""
+    wu = 6
+    cd = 5
+    work = max(10, duration_min - wu - cd)
+    return {
+        "warmup": {"duration_min": wu, "cue": "Progressive movement prep + 2 easy rounds."},
+        "main": {"type": "intervals",
+                 "duration_min": work,
+                 "reps": 8, "work_sec": 40, "rest_sec": 20,
+                 "cue": "8 × 40s work / 20s rest. Alternate lower & upper stations.",
+                 "stations": [
+                     {"name": "Kettlebell Swing or Squat Jump"},
+                     {"name": "Push-up or Renegade Row"},
+                 ]},
+        "cooldown": {"duration_min": cd, "cue": "Walk + slow breathing."},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -558,12 +634,38 @@ def _pick_exercise(pattern: str, equipment_ctx: set[str], avoid: set[str]) -> Op
 
 
 def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
-                    avoid: set[str]) -> tuple[list[dict], list[str]]:
+                    avoid: set[str],
+                    exposure_number: int = 1,
+                    variety_preference: str = "moderate",
+                    locked_exercises: Optional[dict[str, str]] = None,
+                    ) -> tuple[list[dict], list[str]]:
+    """Iter 121 — variety-aware exercise selection.
+
+    Non-anchor accessory slots rotate through the compatible sub-pool using
+    `exposure_number` and `variety_preference` (LOW / MODERATE / HIGH).
+    Anchor slots (primary_squat, primary_hinge, primary_horizontal_push,
+    primary_horizontal_pull, primary_vertical_pull, primary_vertical_push,
+    power) always return the first compatible entry so progression can be
+    measured.  Coach can pin a name via `locked_exercises[slot_role]`.
+    """
+    # Lazy import to avoid a hard cycle at module import time.
+    from feature_v2_variety import pick_exercise_with_variety
+
     template = _STRENGTH_TEMPLATES.get(kind) or _STRENGTH_TEMPLATES.get("strength_full_body")
     exercises: list[dict] = []
     equipment_used: set[str] = set()
+    locked_exercises = locked_exercises or {}
     for slot in template or []:
-        ex = _pick_exercise(slot["pattern"], equipment_ctx, avoid)
+        ex = pick_exercise_with_variety(
+            pattern=slot["pattern"],
+            slot_role=slot["role"],
+            pool=_STRENGTH_POOL.get(slot["pattern"]) or [],
+            equipment_ctx=set(equipment_ctx),
+            exposure_number=exposure_number,
+            variety_preference=variety_preference,
+            avoid_patterns=set(avoid),
+            locked_name=locked_exercises.get(slot["role"]),
+        )
         if not ex:
             continue
         exercises.append({
@@ -572,7 +674,7 @@ def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
             "sets": slot["sets"],
             "reps": slot["reps"],
             "rest_sec": slot["rest_sec"],
-            "load_target": slot["rpe"],   # RPE-driven for now
+            "load_target": slot["rpe"],
             "equipment_used": ex["equipment"],
             "subs_allowed": [p["name"] for p in _STRENGTH_POOL.get(slot["pattern"], [])
                              if p["name"] != ex["name"]][:3],
@@ -719,10 +821,22 @@ def build_session_spec(
     equipment_ctx: set[str],
     avoid_patterns: set[str],
     intensity_ceiling: str = "any",
+    exposure_number: int = 1,
+    variety_preference: str = "moderate",
+    cardio_preference: str = "run",
+    locked_exercises: Optional[dict[str, str]] = None,
 ) -> SessionSpec:
     """Return a SessionSpec for the given placement. On failure to produce
     content, sets coach_review_required=True on the SessionSpec with a reason;
-    NEVER returns None so the state machine can transition to `failed`."""
+    NEVER returns None so the state machine can transition to `failed`.
+
+    Iter 121 additions:
+      - `exposure_number` + `variety_preference` drive deterministic exercise
+        rotation for non-anchor strength slots.
+      - `cardio_preference` resolves cardio-modality-agnostic quotas
+        (`aerobic_z2`) into run / bike / walk.
+      - `locked_exercises` allows coach to pin a specific exercise per slot.
+    """
     meta = session_kind_meta(kind)
     modality = meta.get("modality")
 
@@ -734,13 +848,41 @@ def build_session_spec(
             rationale="Programmed rest day",
         )
 
+    # Iter 121 — resolve cardio-modality-agnostic kinds using client preference.
+    # `aerobic_z2` is stored on placements as-is (WHAT preserved); construction
+    # decides HOW based on preference & equipment.
+    if kind in ("aerobic_z2",):
+        pref = (cardio_preference or "run").lower()
+        if pref == "bike" and "bike" in equipment_ctx:
+            resolved = "bike_easy"
+        elif pref == "walk":
+            resolved = "walk_z2"
+        else:
+            resolved = "run_easy"
+        # Rebuild meta for resolved kind
+        meta = session_kind_meta(resolved)
+        modality = meta.get("modality")
+        kind_effective = resolved
+    else:
+        kind_effective = kind
+
     if modality == MODALITY_RUN:
-        builder = RUNNING_BUILDERS.get(kind)
+        if kind_effective == "walk_z2":
+            env = _pick_running_environment(day_type, equipment_ctx)
+            payload = _walking_z2(duration_min)
+            return SessionSpec(
+                spec_kind="running", kind=kind, duration_min=duration_min,
+                intensity_target=intensity_target, environment=env,
+                equipment_used=["walking_shoes"],
+                payload=payload,
+                rationale=f"Aerobic Z2 walk — {phase_kind} phase (cardio pref: walk)",
+            )
+        builder = RUNNING_BUILDERS.get(kind_effective)
         if not builder:
             return _unbuildable(kind, duration_min, "no running builder registered")
         env = _pick_running_environment(day_type, equipment_ctx)
         payload = builder(duration_min, phase_kind)
-        payload = _attach_warmup_drills(payload, "run", kind)
+        payload = _attach_warmup_drills(payload, "run", kind_effective)
         return SessionSpec(
             spec_kind="running", kind=kind, duration_min=duration_min,
             intensity_target=intensity_target, environment=env,
@@ -750,12 +892,12 @@ def build_session_spec(
         )
 
     if modality == MODALITY_CYCLE:
-        builder = CYCLING_BUILDERS.get(kind)
+        builder = CYCLING_BUILDERS.get(kind_effective)
         if not builder:
             return _unbuildable(kind, duration_min, "no cycling builder")
         env = _pick_cycling_environment(day_type, equipment_ctx)
         payload = builder(duration_min, phase_kind)
-        payload = _attach_warmup_drills(payload, "cycle", kind)
+        payload = _attach_warmup_drills(payload, "cycle", kind_effective)
         return SessionSpec(
             spec_kind="cycling", kind=kind, duration_min=duration_min,
             intensity_target=intensity_target, environment=env,
@@ -766,7 +908,7 @@ def build_session_spec(
         )
 
     if modality == MODALITY_SWIM:
-        builder = SWIM_BUILDERS.get(kind)
+        builder = SWIM_BUILDERS.get(kind_effective)
         if not builder:
             return _unbuildable(kind, duration_min, "no swim builder")
         env = _pick_swim_environment(day_type, equipment_ctx)
@@ -780,8 +922,34 @@ def build_session_spec(
         )
 
     if modality == MODALITY_STRENGTH:
+        # Iter 121 — dispatch conditioning kinds to circuit builders.
+        if kind_effective in ("conditioning_mixed",):
+            env = _pick_strength_environment(day_type, equipment_ctx)
+            return SessionSpec(
+                spec_kind="conditioning", kind=kind, duration_min=duration_min,
+                intensity_target=intensity_target, environment=env,
+                equipment_used=sorted((equipment_ctx & {"dumbbells", "kettlebell", "mat"})
+                                        or {"bodyweight"}),
+                payload=_conditioning_mixed_circuit(duration_min),
+                rationale=f"Mixed conditioning circuit — {phase_kind} phase",
+            )
+        if kind_effective in ("conditioning_intervals",):
+            env = _pick_strength_environment(day_type, equipment_ctx)
+            return SessionSpec(
+                spec_kind="conditioning", kind=kind, duration_min=duration_min,
+                intensity_target=intensity_target, environment=env,
+                equipment_used=sorted((equipment_ctx & {"dumbbells", "kettlebell", "mat"})
+                                        or {"bodyweight"}),
+                payload=_conditioning_intervals(duration_min),
+                rationale=f"Conditioning intervals — {phase_kind} phase",
+            )
         env = _pick_strength_environment(day_type, equipment_ctx)
-        exercises, used_equip = _build_strength(kind, duration_min, equipment_ctx, avoid_patterns)
+        exercises, used_equip = _build_strength(
+            kind_effective, duration_min, equipment_ctx, avoid_patterns,
+            exposure_number=exposure_number,
+            variety_preference=variety_preference,
+            locked_exercises=locked_exercises or {},
+        )
         if not exercises:
             return _unbuildable(kind, duration_min,
                                 "no compatible exercises for current equipment/restrictions")

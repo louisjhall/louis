@@ -117,6 +117,14 @@ SESSION_KIND_REGISTRY: dict[str, dict[str, Any]] = {
     "preflight_activation":{"modality": MODALITY_ACTIVATION, "intensity_class": INTENSITY_EASY,  "hard": False, "family": "activation"},
     "rest":             {"modality": None, "intensity_class": INTENSITY_REST, "hard": False, "family": "rest"},
 
+    # ---- Iter 121 — General Fitness & Fat Loss additions ----
+    # Aerobic Z2 (cardio-modality-agnostic — construction resolves to run/bike/walk).
+    "aerobic_z2":       {"modality": MODALITY_RUN, "intensity_class": INTENSITY_EASY,     "hard": False, "family": "aerobic_z2"},
+    "walk_z2":          {"modality": MODALITY_RUN, "intensity_class": INTENSITY_EASY,     "hard": False, "family": "aerobic_z2"},
+    # Mixed conditioning — deterministic circuit, not run intervals.
+    "conditioning_mixed":{"modality": MODALITY_STRENGTH, "intensity_class": INTENSITY_MODERATE, "hard": True, "family": "conditioning"},
+    "conditioning_intervals":{"modality": MODALITY_STRENGTH, "intensity_class": INTENSITY_HARD, "hard": True, "family": "conditioning"},
+
     # ---- Triathlon-specific ----
     "brick_bike_run":   {"modality": MODALITY_BRICK, "intensity_class": INTENSITY_KEY, "hard": True,  "family": "tri_brick"},
     "brick_swim_bike":  {"modality": MODALITY_BRICK, "intensity_class": INTENSITY_HARD, "hard": True, "family": "tri_brick"},
@@ -883,62 +891,82 @@ _register(GoalConfig(
 
 
 # ---------------------------------------------------------------------------
-# STRENGTH — fat loss (recomposition, higher work rate)
+# STRENGTH — fat loss / body composition  (Iter 121 — first-class goal)
 # ---------------------------------------------------------------------------
+# Philosophy: strength is CENTRAL (muscle retention / development). Aerobic
+# and conditioning are SUPPORTING, not the primary calorie-burn driver.
+# Nutrition handles energy deficit. Intervals are OPTIONAL and low-priority
+# so a client in a deficit is not simultaneously loaded with strength volume
+# + intervals + conditioning.
 _register(GoalConfig(
     key="strength.fat_loss",
     family="strength",
     display_name="Fat Loss",
     default_prep_weeks=12, min_prep_weeks=4,
-    phase_sequence=("foundation", "conditioning_build", "peak", "deload"),
+    phase_sequence=("foundation", "build", "consolidation", "deload"),
     phase_specs={
         "foundation": PhaseSpec(
-            phase_kind="foundation", weeks_target=2, weeks_min=1, weeks_max=3,
-            hard_days_per_week_max=3, key_days_per_week_max=2, consecutive_training_days_max=4,
+            phase_kind="foundation", weeks_target=3, weeks_min=1, weeks_max=4,
+            hard_days_per_week_max=2, key_days_per_week_max=2,
+            consecutive_training_days_max=3, strength_days_per_week_max=3,
             quotas=(
+                # Strength anchor — non-skippable, KEY priority
+                QuotaRule("strength_full_body",(2, 2, 3), "KEY", 48, (30, 40, 55), "rpe6-7",
+                          can_skip_if_missed=False),
+                # Cardio is modality-agnostic — walking counts, biking counts
+                QuotaRule("aerobic_z2",       (1, 2, 3), "IMPORTANT", 24, (20, 30, 45), "z2"),
+                QuotaRule("mobility",         (1, 1, 2), "SUPPORTING",12, (10, 15, 25), "flow"),
+            ),
+            concurrent_notes="Foundation: build strength habits + easy aerobic. NO high-intensity conditioning yet.",
+        ),
+        "build": PhaseSpec(
+            phase_kind="build", weeks_target=6, weeks_min=4, weeks_max=10,
+            hard_days_per_week_max=3, key_days_per_week_max=2,
+            consecutive_training_days_max=4, strength_days_per_week_max=3,
+            quotas=(
+                # Strength remains KEY — muscle retention in a deficit
                 QuotaRule("strength_full_body",(2, 3, 3), "KEY", 48, (35, 45, 55), "rpe7",
                           can_skip_if_missed=False),
-                QuotaRule("run_easy",         (1, 2, 3), "IMPORTANT", 24, (25, 35, 45), "z2"),
-                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
+                QuotaRule("aerobic_z2",       (2, 2, 3), "IMPORTANT", 24, (25, 35, 45), "z2"),
+                # Conditioning is SUPPORTING — used sparingly, not weekly punishment
+                QuotaRule("conditioning_mixed",(0, 1, 1), "SUPPORTING", 48, (15, 20, 30), "moderate"),
+                QuotaRule("mobility",         (1, 1, 2), "SUPPORTING",12, (10, 15, 25), "flow"),
             ),
+            concurrent_notes="Build: emphasise strength progression. Conditioning entries capped at 1/wk to protect recovery in energy deficit.",
         ),
-        "conditioning_build": PhaseSpec(
-            phase_kind="conditioning_build", weeks_target=6, weeks_min=4, weeks_max=10,
-            hard_days_per_week_max=4, key_days_per_week_max=2, consecutive_training_days_max=5,
+        "consolidation": PhaseSpec(
+            phase_kind="consolidation", weeks_target=3, weeks_min=2, weeks_max=4,
+            hard_days_per_week_max=3, key_days_per_week_max=2,
+            consecutive_training_days_max=4, strength_days_per_week_max=3,
             quotas=(
-                QuotaRule("strength_full_body",(2, 3, 3), "KEY", 48, (40, 50, 60), "rpe7-8",
+                QuotaRule("strength_full_body",(2, 3, 3), "KEY", 48, (35, 45, 55), "rpe7-8",
                           can_skip_if_missed=False),
-                QuotaRule("run_easy",         (1, 2, 3), "IMPORTANT", 24, (25, 35, 50), "z2"),
-                QuotaRule("run_intervals",    (0.5, 1, 1), "IMPORTANT",48,(20, 30, 40), "z4-z5"),
-                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
-                QuotaRule("recovery",         (0, 1, 2), "OPTIONAL",   0, (20, 30, 45), "recovery"),
-            ),
-        ),
-        "peak": PhaseSpec(
-            phase_kind="peak", weeks_target=3, weeks_min=2, weeks_max=4,
-            hard_days_per_week_max=4, key_days_per_week_max=2, consecutive_training_days_max=5,
-            quotas=(
-                QuotaRule("strength_full_body",(2, 3, 3), "KEY", 48, (35, 45, 55), "rpe8",
-                          can_skip_if_missed=False),
-                QuotaRule("run_intervals",    (0.5, 1, 1), "KEY", 48, (20, 30, 40), "z5",
-                          can_skip_if_missed=False),
-                QuotaRule("run_tempo",        (0, 1, 1), "IMPORTANT",48,(20, 30, 40), "z4"),
-                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
+                QuotaRule("aerobic_z2",       (2, 2, 3), "IMPORTANT", 24, (25, 35, 45), "z2"),
+                QuotaRule("conditioning_mixed",(0, 1, 1), "SUPPORTING", 48, (15, 20, 30), "moderate"),
+                # Intervals appear here only as OPTIONAL — coach may add for
+                # advanced clients but the engine never forces them
+                QuotaRule("run_intervals",    (0, 0, 1), "OPTIONAL", 48, (15, 20, 30), "z4"),
+                QuotaRule("mobility",         (1, 1, 2), "SUPPORTING",12, (10, 15, 25), "flow"),
             ),
         ),
         "deload": PhaseSpec(
             phase_kind="deload", weeks_target=1, weeks_min=1, weeks_max=1,
-            hard_days_per_week_max=1, key_days_per_week_max=1, consecutive_training_days_max=3,
+            hard_days_per_week_max=1, key_days_per_week_max=1,
+            consecutive_training_days_max=2, strength_days_per_week_max=2,
             quotas=(
-                QuotaRule("strength_maintenance",(2, 3, 3), "IMPORTANT",48,(25, 35, 45), "rpe6"),
-                QuotaRule("mobility",         (2, 3, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
-                QuotaRule("recovery",         (1, 2, 2), "IMPORTANT",  0, (20, 30, 45), "recovery"),
+                QuotaRule("strength_maintenance",(1, 2, 3), "IMPORTANT",48,(25, 30, 45), "rpe6"),
+                QuotaRule("aerobic_z2",       (1, 2, 2), "SUPPORTING", 24, (20, 25, 35), "z2"),
+                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (10, 15, 25), "flow"),
+                QuotaRule("recovery",         (1, 2, 2), "IMPORTANT",  0, (15, 25, 40), "recovery"),
             ),
         ),
     },
-    session_family_recovery_hours={"strength_full": 48, "run_vo2": 48},
+    session_family_recovery_hours={"strength_full": 48, "conditioning": 48, "run_vo2": 48},
     forbidden_sequences=_STRENGTH_FORBIDDEN + (
+        ("conditioning", "strength_full"),
+        ("conditioning", "conditioning"),
         ("run_intervals", "strength_lower"),
+        ("run_intervals", "conditioning"),
     ),
 ))
 
@@ -1000,8 +1028,15 @@ _register(GoalConfig(
 
 
 # ---------------------------------------------------------------------------
-# GENERAL FITNESS — balanced default
+# GENERAL FITNESS — balanced default (Iter 121 — first-class goal)
 # ---------------------------------------------------------------------------
+# Philosophy: develop STRENGTH + AEROBIC + CONDITIONING + MOBILITY.
+# Cardio quotas are declared as `aerobic_z2` — cardio-modality-agnostic;
+# construction resolves this to run/bike/walk based on
+# client_profile.cardio_preference (default: run).  Deterministic.
+# Frequency scaling: the demand engine automatically clips total quotas
+# down to the client's max_sessions_per_week so 2/3/4/5/6 day clients get
+# proportionally fewer exposures without any hardcoded frequency branches.
 _register(GoalConfig(
     key="general.fitness",
     family="general",
@@ -1010,44 +1045,62 @@ _register(GoalConfig(
     phase_sequence=("foundation", "build", "consolidation", "deload"),
     phase_specs={
         "foundation": PhaseSpec(
-            phase_kind="foundation", weeks_target=2, weeks_min=1, weeks_max=3,
-            hard_days_per_week_max=2, key_days_per_week_max=1, consecutive_training_days_max=3,
+            phase_kind="foundation", weeks_target=3, weeks_min=1, weeks_max=4,
+            hard_days_per_week_max=2, key_days_per_week_max=1,
+            consecutive_training_days_max=3, strength_days_per_week_max=2,
             quotas=(
-                QuotaRule("strength_full_body",(1, 2, 2), "IMPORTANT",48, (30, 40, 50), "rpe7"),
-                QuotaRule("run_easy",         (1, 2, 3), "IMPORTANT", 24, (25, 35, 45), "z2"),
-                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
+                # Strength anchor — moderate loading, movement-pattern focus
+                QuotaRule("strength_full_body",(1, 2, 3), "KEY", 48, (30, 40, 50), "rpe6-7",
+                          can_skip_if_missed=False),
+                # Cardio modality-agnostic — construction can output run / bike / walk
+                QuotaRule("aerobic_z2",       (1, 2, 3), "IMPORTANT", 24, (20, 30, 45), "z2"),
+                QuotaRule("mobility",         (1, 1, 2), "SUPPORTING",12, (10, 15, 25), "flow"),
             ),
+            concurrent_notes="Foundation: familiarise with movement patterns; low variety, higher repetition of key movements",
         ),
         "build": PhaseSpec(
-            phase_kind="build", weeks_target=6, weeks_min=4, weeks_max=8,
-            hard_days_per_week_max=3, key_days_per_week_max=1, consecutive_training_days_max=4,
+            phase_kind="build", weeks_target=6, weeks_min=4, weeks_max=10,
+            hard_days_per_week_max=3, key_days_per_week_max=1,
+            consecutive_training_days_max=4, strength_days_per_week_max=3,
             quotas=(
-                QuotaRule("strength_full_body",(1, 2, 2), "IMPORTANT",48, (35, 45, 55), "rpe7-8"),
-                QuotaRule("run_easy",         (1, 2, 3), "IMPORTANT", 24, (25, 35, 50), "z2"),
-                QuotaRule("run_intervals",    (0, 0.5, 1), "IMPORTANT",48,(20, 30, 40), "z5"),
-                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
+                QuotaRule("strength_full_body",(1, 2, 3), "KEY", 48, (35, 45, 55), "rpe7",
+                          can_skip_if_missed=False),
+                QuotaRule("aerobic_z2",       (1, 2, 3), "IMPORTANT", 24, (25, 35, 50), "z2"),
+                # Conditioning enters here — SUPPORTING, capped
+                QuotaRule("conditioning_mixed",(0, 1, 1), "SUPPORTING", 48, (15, 20, 30), "moderate"),
+                QuotaRule("mobility",         (1, 1, 2), "SUPPORTING",12, (10, 15, 25), "flow"),
             ),
+            concurrent_notes="Build: progress load & aerobic duration; conditioning appears as supporting exposure",
         ),
         "consolidation": PhaseSpec(
             phase_kind="consolidation", weeks_target=3, weeks_min=2, weeks_max=4,
-            hard_days_per_week_max=3, key_days_per_week_max=1, consecutive_training_days_max=4,
+            hard_days_per_week_max=3, key_days_per_week_max=1,
+            consecutive_training_days_max=4, strength_days_per_week_max=3,
             quotas=(
-                QuotaRule("strength_full_body",(1, 2, 2), "IMPORTANT",48, (30, 40, 55), "rpe7"),
-                QuotaRule("run_easy",         (2, 2, 3), "IMPORTANT", 24, (25, 35, 45), "z2"),
-                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
+                QuotaRule("strength_full_body",(1, 2, 3), "KEY", 48, (35, 45, 55), "rpe7-8",
+                          can_skip_if_missed=False),
+                QuotaRule("aerobic_z2",       (1, 2, 3), "IMPORTANT", 24, (25, 35, 45), "z2"),
+                QuotaRule("conditioning_mixed",(0, 1, 1), "SUPPORTING", 48, (15, 20, 30), "moderate"),
+                QuotaRule("mobility",         (1, 1, 2), "SUPPORTING",12, (10, 15, 25), "flow"),
             ),
         ),
         "deload": PhaseSpec(
             phase_kind="deload", weeks_target=1, weeks_min=1, weeks_max=1,
-            hard_days_per_week_max=1, key_days_per_week_max=1, consecutive_training_days_max=2,
+            hard_days_per_week_max=1, key_days_per_week_max=1,
+            consecutive_training_days_max=2, strength_days_per_week_max=1,
             quotas=(
-                QuotaRule("mobility",         (2, 3, 3), "SUPPORTING",12, (15, 20, 25), "flow"),
-                QuotaRule("recovery",         (1, 2, 2), "IMPORTANT",  0, (20, 30, 45), "recovery"),
+                QuotaRule("strength_maintenance",(1, 1, 2), "SUPPORTING",48,(25, 30, 40), "rpe6"),
+                QuotaRule("aerobic_z2",       (1, 2, 2), "SUPPORTING", 24, (20, 25, 35), "z2"),
+                QuotaRule("mobility",         (1, 2, 3), "SUPPORTING",12, (10, 15, 25), "flow"),
+                QuotaRule("recovery",         (0, 1, 2), "OPTIONAL",   0, (15, 25, 40), "recovery"),
             ),
         ),
     },
-    session_family_recovery_hours={"strength_full": 48},
-    forbidden_sequences=_STRENGTH_FORBIDDEN,
+    session_family_recovery_hours={"strength_full": 48, "conditioning": 48},
+    forbidden_sequences=_STRENGTH_FORBIDDEN + (
+        ("conditioning", "strength_full"),  # spare recovery for main strength
+        ("conditioning", "conditioning"),
+    ),
 ))
 
 

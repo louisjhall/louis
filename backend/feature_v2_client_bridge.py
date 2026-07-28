@@ -286,4 +286,326 @@ __all__ = [
     "synth_workouts_for_user",
     "synth_workout_by_wid",
     "synth_workout_from_placement",
+    "user_is_v2",
+    "apply_reality_action_v2",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Reality actions on Engine V2 plans (Iter 114)
+# ---------------------------------------------------------------------------
+# The legacy `_apply_reality_action` in server.py mutates rows in the
+# `workouts` collection, which V2 clients don't have. This helper mirrors
+# the most common reality kinds against `plan_live_v2` (placements +
+# session_specs) so V2 clients can actually change their day from the
+# Today's Reality modal.
+
+async def user_is_v2(db, user: dict) -> bool:
+    flags = (user.get("profile") or {}).get("v2_flags") or {}
+    if flags.get("engine_v2") or flags.get("v2_default"):
+        return True
+    # Fallback: hydrate from DB if the passed-in user dict predates the
+    # flag being set on the profile.
+    doc = await db.users.find_one({"id": user.get("id")}, {"_id": 0, "profile.v2_flags": 1})
+    ff = ((doc or {}).get("profile") or {}).get("v2_flags") or {}
+    return bool(ff.get("engine_v2") or ff.get("v2_default"))
+
+
+def _humanise_change(k: str, kind: str) -> str:
+    return f"{k}={kind}"
+
+
+async def _v2_find_placement(db, user_id: str, date: str) -> Optional[tuple]:
+    """Return (live_doc, placement_index, placement, spec) for the placement
+    on `date`, or None if not found."""
+    live = await db.plan_live_v2.find_one(
+        {"client_id": user_id, "active": True}, {"_id": 0},
+    )
+    if not live:
+        return None
+    placements = live.get("placements") or []
+    for i, p in enumerate(placements):
+        if p.get("date") == date:
+            eid = p.get("exposure_id") or ""
+            spec = (live.get("session_specs") or {}).get(eid) or {}
+            return live, i, p, spec
+    return None
+
+
+def _build_v2_mobility_spec(reason: str) -> dict:
+    """Return a mobility session spec compatible with the client bridge
+    renderer (spec_kind='mobility' + payload.flow_blocks)."""
+    return {
+        "spec_kind": "mobility",
+        "kind": "mobility",
+        "duration_min": 20,
+        "intensity_target": "low",
+        "environment": "any",
+        "equipment_used": ["mat"],
+        "payload": {
+            "flow_blocks": [
+                {"name": "Diaphragmatic breathing", "duration_min": 3,
+                 "cue": "Slow nasal breaths, ribs wide"},
+                {"name": "Cat-cow",                 "duration_min": 3,
+                 "cue": "Sync breath with spine flow"},
+                {"name": "Hip 90/90",               "duration_min": 4,
+                 "cue": "Rotate side to side, tall spine"},
+                {"name": "T-spine openers",         "duration_min": 4,
+                 "cue": "Reach through and over, exhale open"},
+                {"name": "Couch stretch",           "duration_min": 4,
+                 "cue": "Each side, glutes engaged"},
+                {"name": "Guided decompress",       "duration_min": 2,
+                 "cue": "Legs up wall, box breathing"},
+            ],
+        },
+        "rationale": reason,
+    }
+
+
+def _build_v2_recovery_spec(reason: str, duration_min: int = 20) -> dict:
+    return {
+        "spec_kind": "recovery",
+        "kind": "recovery",
+        "duration_min": duration_min,
+        "intensity_target": "low",
+        "environment": "any",
+        "equipment_used": [],
+        "payload": {
+            "flow_blocks": [
+                {"name": "Easy walk or spin", "duration_min": duration_min,
+                 "cue": "Nose-only breathing, zone 1"},
+            ],
+        },
+        "rationale": reason,
+    }
+
+
+def _build_v2_walk_spec(reason: str, target_min: int = 30) -> dict:
+    return {
+        "spec_kind": "recovery",
+        "kind": "walk",
+        "duration_min": target_min,
+        "intensity_target": "low",
+        "environment": "outdoor",
+        "equipment_used": ["walking_shoes"],
+        "payload": {
+            "flow_blocks": [
+                {"name": "Steady walk", "duration_min": target_min,
+                 "cue": "Easy pace, relaxed shoulders"},
+            ],
+        },
+        "rationale": reason,
+    }
+
+
+def _scale_running_payload(payload: dict, factor: float) -> dict:
+    """Proportionally shrink/expand the main block of a running/cycling
+    session. Warmup and cooldown stay untouched (safety floor)."""
+    if not isinstance(payload, dict):
+        return payload
+    p = dict(payload)
+    main = p.get("main")
+    if isinstance(main, dict) and main.get("duration_min"):
+        new_main = dict(main)
+        new_main["duration_min"] = max(5, int(round(main["duration_min"] * factor)))
+        p["main"] = new_main
+    return p
+
+
+async def apply_reality_action_v2(db, user_id: str, action: dict) -> dict:
+    """Execute a single Reality action against the client's active
+    plan_live_v2 doc. Mirrors `_apply_reality_action` in server.py, returning
+    the same {kind, action, changed, before, after} change record."""
+    from datetime import datetime, timezone
+
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    kind = action.get("kind")
+    change: dict = {"kind": kind, "action": action, "changed": False,
+                    "before": None, "after": None}
+
+    if kind in ("keep", "ask_coach"):
+        # No mutation — coach alert (if any) is handled at the reality event
+        # level in the calling reality_apply endpoint.
+        return change
+
+    date = action.get("date")
+
+    if kind == "note":
+        if not date:
+            return change
+        found = await _v2_find_placement(db, user_id, date)
+        if not found:
+            return change
+        live, idx, p, _spec = found
+        note_text = action.get("text") or ""
+        current = p.get("coach_note") or ""
+        new_note = (current + ("\n" if current else "") + note_text).strip()
+        await db.plan_live_v2.update_one(
+            {"id": live["id"]},
+            {"$set": {f"placements.{idx}.coach_note": new_note,
+                      "updated_at": _now()}},
+        )
+        change.update({"changed": True,
+                       "before": {"coach_note": current},
+                       "after":  {"coach_note": new_note}})
+        return change
+
+    # All remaining kinds need a placement.
+    if kind in ("reduce", "extend", "replace", "convert_mobility",
+                "convert_recovery", "convert_walk", "skip"):
+        if not date:
+            return change
+        found = await _v2_find_placement(db, user_id, date)
+        if not found:
+            return change
+        live, idx, p, spec = found
+        eid = p.get("exposure_id") or ""
+        before = {
+            "kind": p.get("kind"),
+            "duration_min": spec.get("duration_min")
+                            or p.get("target_duration_min"),
+            "spec_kind": spec.get("spec_kind"),
+        }
+        new_placement = dict(p)
+        new_spec = dict(spec)
+
+        if kind == "reduce":
+            orig = int(spec.get("duration_min")
+                        or p.get("target_duration_min") or 40)
+            target = int(action.get("target_min")
+                          or max(15, int(orig * 0.6)))
+            factor = target / max(1, orig)
+            new_spec["duration_min"] = target
+            new_placement["target_duration_min"] = target
+            if new_spec.get("payload"):
+                new_spec["payload"] = _scale_running_payload(
+                    new_spec["payload"], factor,
+                )
+            # Downgrade KEY priority to IMPORTANT once shrunk
+            if str(new_placement.get("priority") or "").upper() == "KEY":
+                new_placement["priority"] = "IMPORTANT"
+            new_spec["rationale"] = (
+                (spec.get("rationale") or "") + f"  |  Reduced to {target}m via Today's Reality."
+            ).strip()
+        elif kind == "extend":
+            add = int(action.get("add_min") or 15)
+            orig = int(spec.get("duration_min")
+                        or p.get("target_duration_min") or 40)
+            new_duration = orig + add
+            new_spec["duration_min"] = new_duration
+            new_placement["target_duration_min"] = new_duration
+            if new_spec.get("payload"):
+                new_spec["payload"] = _scale_running_payload(
+                    new_spec["payload"], new_duration / max(1, orig),
+                )
+            new_spec["rationale"] = (
+                (spec.get("rationale") or "") + f"  |  +{add}m bonus via Today's Reality."
+            ).strip()
+        elif kind == "replace":
+            new_title = action.get("new_title")
+            if new_title:
+                new_placement["kind"] = str(new_title).lower().replace(" ", "_")
+                new_spec["kind"] = new_placement["kind"]
+            if action.get("target_min"):
+                nd = int(action["target_min"])
+                new_spec["duration_min"] = nd
+                new_placement["target_duration_min"] = nd
+            new_spec["rationale"] = (
+                (spec.get("rationale") or "") + f"  |  Replaced: {new_title or 'session'}."
+            ).strip()
+        elif kind == "convert_mobility":
+            reason = action.get("reason") or "Client reality: switched to mobility."
+            mob = _build_v2_mobility_spec(reason)
+            new_placement["kind"] = "mobility"
+            new_placement["target_duration_min"] = mob["duration_min"]
+            new_placement["priority"] = "SUPPORT"
+            new_spec = mob
+        elif kind == "convert_recovery":
+            reason = action.get("reason") or "Client reality: converted to recovery."
+            rec = _build_v2_recovery_spec(reason)
+            new_placement["kind"] = "recovery"
+            new_placement["target_duration_min"] = rec["duration_min"]
+            new_placement["priority"] = "SUPPORT"
+            new_spec = rec
+        elif kind == "convert_walk":
+            target = int(action.get("target_min") or 30)
+            reason = action.get("reason") or f"Client reality: converted to {target}m walk."
+            wsp = _build_v2_walk_spec(reason, target)
+            new_placement["kind"] = "walk"
+            new_placement["target_duration_min"] = target
+            new_placement["priority"] = "SUPPORT"
+            new_spec = wsp
+        elif kind == "skip":
+            new_placement["kind"] = "rest"
+            new_placement["target_duration_min"] = 0
+            new_placement["priority"] = "SUPPORT"
+            new_placement["skipped"] = True
+            new_placement["skip_reason"] = action.get("reason") or "Client reality: skip today."
+            # Clear the spec — rest days render as "Rest" without a card.
+            new_spec = {
+                "spec_kind": "rest",
+                "kind": "rest",
+                "duration_min": 0,
+                "environment": "any",
+                "equipment_used": [],
+                "payload": {},
+                "rationale": new_placement["skip_reason"],
+            }
+
+        # Write both placement + spec back atomically
+        await db.plan_live_v2.update_one(
+            {"id": live["id"]},
+            {"$set": {
+                f"placements.{idx}": new_placement,
+                f"session_specs.{eid}": new_spec,
+                "updated_at": _now(),
+            }},
+        )
+        after = {
+            "kind": new_placement.get("kind"),
+            "duration_min": new_spec.get("duration_min")
+                            or new_placement.get("target_duration_min"),
+            "spec_kind": new_spec.get("spec_kind"),
+        }
+        change.update({"changed": True, "before": before, "after": after})
+        return change
+
+    if kind in ("move", "bring_forward", "push_back"):
+        # V2 date-swap: exchange placement dates between two placements.
+        f, t = action.get("from_date"), action.get("to_date")
+        if not f or not t:
+            return change
+        live = await db.plan_live_v2.find_one(
+            {"client_id": user_id, "active": True}, {"_id": 0},
+        )
+        if not live:
+            return change
+        placements = list(live.get("placements") or [])
+        idx_from = idx_to = -1
+        for i, p in enumerate(placements):
+            if p.get("date") == f:
+                idx_from = i
+            if p.get("date") == t:
+                idx_to = i
+        if idx_from < 0:
+            return change
+        pf = dict(placements[idx_from])
+        pt = dict(placements[idx_to]) if idx_to >= 0 else None
+        pf["date"] = t
+        if pt:
+            pt["date"] = f
+            placements[idx_from], placements[idx_to] = pt, pf
+        else:
+            placements[idx_from] = pf
+        await db.plan_live_v2.update_one(
+            {"id": live["id"]},
+            {"$set": {"placements": placements, "updated_at": _now()}},
+        )
+        change.update({"changed": True,
+                       "before": {"from": f, "to": t},
+                       "after":  {"from": f, "to": t}})
+        return change
+
+    return change

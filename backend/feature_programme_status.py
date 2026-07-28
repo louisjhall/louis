@@ -68,6 +68,24 @@ async def _derive_programme_status(user: dict) -> str:
             return "roster_parsing"
         return "no_roster_uploaded"
 
+    # Iter 114 — Engine V2 clients store their published plan in
+    # `plan_live_v2`, NOT in the legacy `workouts` collection. If they have
+    # an active Live V2 doc, treat as programme_live immediately (regardless
+    # of how many legacy `workouts` docs exist — for V2 clients that count is
+    # zero by design).
+    flags = (user.get("profile") or {}).get("v2_flags") or {}
+    if flags.get("engine_v2") or flags.get("v2_default"):
+        live_v2 = await db.plan_live_v2.find_one(
+            {"client_id": uid, "active": True}, {"_id": 0, "id": 1},
+        )
+        if live_v2:
+            if active.get("programme_needs_update"):
+                return "programme_needs_update"
+            return "programme_live"
+        # V2-flagged but no live doc yet → still awaiting coach approval
+        # (same UX as the V1 waiting_for_programme_approval state).
+        return "waiting_for_programme_approval"
+
     # Confirmed roster exists — check if workouts are still hidden by
     # visible_from OR if approve-programme is required.
     now_val = now_iso()
@@ -101,6 +119,38 @@ async def _derive_today_plan_state(user: dict, programme_status: str) -> dict:
     uid = user["id"]
     dt = _today_iso()
     now_val = now_iso()
+
+    # Iter 114 — V2 client path: read today from plan_live_v2 (placements
+    # + session_specs) instead of the legacy workouts collection.
+    flags = (user.get("profile") or {}).get("v2_flags") or {}
+    if flags.get("engine_v2") or flags.get("v2_default"):
+        live_v2 = await db.plan_live_v2.find_one(
+            {"client_id": uid, "active": True},
+            {"_id": 0, "id": 1, "placements": 1, "session_specs": 1},
+        )
+        if live_v2:
+            live_id = live_v2.get("id")
+            for p in (live_v2.get("placements") or []):
+                if p.get("date") != dt:
+                    continue
+                kind = p.get("kind") or ""
+                eid = p.get("exposure_id") or ""
+                spec = (live_v2.get("session_specs") or {}).get(eid) or {}
+                spec_kind = spec.get("spec_kind") or ""
+                if kind == "rest":
+                    return {"state": "rest_day", "workout_id": None, "label": "Rest day"}
+                if spec_kind in ("mobility", "recovery", "activation", "travel_recovery"):
+                    state = "recovery_planned"
+                else:
+                    state = "session_planned"
+                return {
+                    "state": state,
+                    "workout_id": f"v2p:{live_id}:{eid}",
+                    "label": (kind or "Session").replace("_", " ").title(),
+                }
+            # V2 live plan exists but no placement for today — fall through
+            # to the roster-derived label branch below.
+
     # A visible workout for today?
     wk = await db.workouts.find_one(
         {"user_id": uid, "date": dt,

@@ -6274,6 +6274,19 @@ def _next_day(d: str) -> str:
 
 async def _apply_reality_action(user_id: str, action: dict) -> dict:
     """Execute a single Reality action against db.workouts. Returns a change record."""
+    # Iter 114 — Engine V2 clients: route to the V2 helper which mutates
+    # plan_live_v2 placements + session_specs. Legacy V1 clients continue
+    # through the block below untouched.
+    try:
+        from feature_v2_client_bridge import user_is_v2, apply_reality_action_v2
+        user_doc = await db.users.find_one(
+            {"id": user_id}, {"_id": 0, "id": 1, "profile.v2_flags": 1},
+        )
+        if user_doc and await user_is_v2(db, user_doc):
+            return await apply_reality_action_v2(db, user_id, action)
+    except Exception:
+        logger.exception("V2 reality action routing failed — falling back to V1")
+
     kind = action.get("kind")
     change: dict = {"kind": kind, "action": action, "changed": False, "before": None, "after": None}
 

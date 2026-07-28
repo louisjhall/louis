@@ -299,6 +299,9 @@ class HomeEquipmentBody(BaseModel):
     route_focus: Optional[str] = None     # "long_haul" | "short_haul" | "mixed" | "charter" | "cargo"
     aircraft_type: Optional[str] = None   # optional, e.g. "A380", "777"
     main_goal_key: Optional[str] = None   # structured goal key mapping to GOAL_MATRIX
+    # Iter 121b — V2 training-style preferences
+    variety_preference: Optional[str] = None  # "low" | "moderate" | "high"
+    cardio_preference: Optional[str] = None   # "walk" | "run" | "bike" | "rower" | "elliptical" | "swim" | "no_preference"
 
 class RosterExtractBody(BaseModel):
     file_base64: str

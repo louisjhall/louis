@@ -637,32 +637,41 @@ def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
                     avoid: set[str],
                     exposure_number: int = 1,
                     variety_preference: str = "moderate",
+                    training_experience: Optional[str] = None,
                     locked_exercises: Optional[dict[str, str]] = None,
                     ) -> tuple[list[dict], list[str]]:
-    """Iter 121 — variety-aware exercise selection.
+    """Iter 121b — block-based anchor rotation + Session A/B pattern remap.
 
-    Non-anchor accessory slots rotate through the compatible sub-pool using
-    `exposure_number` and `variety_preference` (LOW / MODERATE / HIGH).
-    Anchor slots (primary_squat, primary_hinge, primary_horizontal_push,
-    primary_horizontal_pull, primary_vertical_pull, primary_vertical_push,
-    power) always return the first compatible entry so progression can be
-    measured.  Coach can pin a name via `locked_exercises[slot_role]`.
+    - Anchor slot primaries stay stable within a "block" (4/6/12 exposures
+      by variety level) and refresh at block boundaries — measurable
+      progression + genuine variety.
+    - For HIGH-variety `strength_full_body`, push/pull axes alternate
+      between horizontal (Session A) and vertical (Session B) at each
+      block boundary.
+    - Beginners are clamped to at-most MODERATE.
     """
-    # Lazy import to avoid a hard cycle at module import time.
-    from feature_v2_variety import pick_exercise_with_variety
+    from feature_v2_variety import (
+        pick_exercise_with_variety, full_body_pattern_remap,
+    )
 
     template = _STRENGTH_TEMPLATES.get(kind) or _STRENGTH_TEMPLATES.get("strength_full_body")
+    remap = full_body_pattern_remap(exposure_number, variety_preference,
+                                     training_experience, kind)
     exercises: list[dict] = []
     equipment_used: set[str] = set()
     locked_exercises = locked_exercises or {}
     for slot in template or []:
+        # Session A/B remap: HIGH variety may swap horizontal↔vertical for
+        # the push/pull anchors so consecutive blocks feel different.
+        pattern = remap.get(slot["role"], slot["pattern"])
         ex = pick_exercise_with_variety(
-            pattern=slot["pattern"],
+            pattern=pattern,
             slot_role=slot["role"],
-            pool=_STRENGTH_POOL.get(slot["pattern"]) or [],
+            pool=_STRENGTH_POOL.get(pattern) or [],
             equipment_ctx=set(equipment_ctx),
             exposure_number=exposure_number,
             variety_preference=variety_preference,
+            training_experience=training_experience,
             avoid_patterns=set(avoid),
             locked_name=locked_exercises.get(slot["role"]),
         )
@@ -676,7 +685,7 @@ def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
             "rest_sec": slot["rest_sec"],
             "load_target": slot["rpe"],
             "equipment_used": ex["equipment"],
-            "subs_allowed": [p["name"] for p in _STRENGTH_POOL.get(slot["pattern"], [])
+            "subs_allowed": [p["name"] for p in _STRENGTH_POOL.get(pattern, [])
                              if p["name"] != ex["name"]][:3],
         })
         equipment_used.update(ex["equipment"])
@@ -823,6 +832,7 @@ def build_session_spec(
     intensity_ceiling: str = "any",
     exposure_number: int = 1,
     variety_preference: str = "moderate",
+    training_experience: Optional[str] = None,
     cardio_preference: str = "run",
     locked_exercises: Optional[dict[str, str]] = None,
 ) -> SessionSpec:
@@ -948,6 +958,7 @@ def build_session_spec(
             kind_effective, duration_min, equipment_ctx, avoid_patterns,
             exposure_number=exposure_number,
             variety_preference=variety_preference,
+            training_experience=training_experience,
             locked_exercises=locked_exercises or {},
         )
         if not exercises:

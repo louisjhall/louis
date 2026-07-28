@@ -264,12 +264,14 @@ def _first_exercise_names_across_exposures(fx_key: str, kind: str, exposures: in
 
 
 def test_high_variety_rotates_accessories():
-    """GF-B (variety=high) should see accessory changes across 6 exposures."""
+    """GF-B (variety=high) should see accessory changes across 6 exposures.
+    Iter 121b: with block-based anchor rotation, anchors are stable within
+    each 4-exposure block but refresh between blocks."""
     all_names = _first_exercise_names_across_exposures("GF-B", "strength_full_body", 6)
-    # Anchor slot #0 (primary_squat) must be stable across exposures
-    anchor_names = {names[0] for names in all_names if names}
-    assert len(anchor_names) == 1, (
-        f"anchor primary_squat should be stable, got {anchor_names}"
+    # Block 1 (exposures 1-4) anchors are stable
+    block1_anchors = {names[0] for names in all_names[:4] if names}
+    assert len(block1_anchors) == 1, (
+        f"anchor primary_squat should be stable within block 1, got {block1_anchors}"
     )
     # But at least one non-anchor slot should have varied across exposures
     all_join = {tuple(n) for n in all_names}
@@ -382,20 +384,34 @@ def test_multi_week_fat_loss_summary():
 
 
 def test_variety_demonstration_high_variety_client():
-    """Print evidence that Weeks 1..6 don't produce identical sessions for a
-    HIGH variety client while anchor movements stay stable."""
+    """Print evidence that 6 exposures produce visibly different sessions
+    for a HIGH variety client. Iter 121b: anchors stable within a block
+    (exposures 1-4) and refresh at the block boundary (exposures 5-6)."""
     all_names = _first_exercise_names_across_exposures("FL-B", "strength_full_body", 6)
     print("\n=== VARIETY DEMONSTRATION (FL-B, HIGH variety, strength_full_body) ===")
     for i, names in enumerate(all_names, start=1):
-        print(f"  Exposure #{i}: {names}")
-    # Anchor slot 0 stable
-    anchors = {n[0] for n in all_names if n}
-    assert len(anchors) == 1
-    print(f"  ANCHOR (slot 0) stable across all exposures: {anchors.pop()}")
-    # Accessories rotated (slots 1..N combined varied)
-    accessories = {tuple(n[1:]) for n in all_names if len(n) > 1}
-    assert len(accessories) >= 2, "accessories should have rotated for HIGH variety"
-    print(f"  ACCESSORIES rotated across exposures — {len(accessories)} distinct combinations")
+        block = "Block 1" if i <= 4 else "Block 2"
+        print(f"  Exposure #{i} [{block}]: {names}")
+    # Within block 1, anchor slot 0 is stable
+    block1_anchors = {n[0] for n in all_names[:4] if n}
+    assert len(block1_anchors) == 1
+    print(f"  BLOCK 1 anchor stable: {block1_anchors.pop()}")
+    # Block 2 refreshes the anchors
+    block2_anchors = {n[0] for n in all_names[4:] if n}
+    print(f"  BLOCK 2 anchor(s): {block2_anchors}")
+    # Session A/B remap AND anchor rotation should make block 2 visibly
+    # different from block 1
+    b1_first = tuple(all_names[0])
+    b2_first = tuple(all_names[4])
+    assert b1_first != b2_first, (
+        f"Block 2 first session should differ from Block 1 first session"
+    )
+    # Across all exposures, at least 2 distinct sessions
+    all_sessions = {tuple(n) for n in all_names}
+    assert len(all_sessions) >= 3, (
+        f"expected ≥3 distinct sessions across 6 exposures, got {len(all_sessions)}"
+    )
+    print(f"  DISTINCT sessions across 6 exposures: {len(all_sessions)}")
 
 
 # ============================================================================

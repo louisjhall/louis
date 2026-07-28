@@ -22,6 +22,24 @@ const LEVEL = ["beginner", "intermediate", "advanced"];
 const POS = ["Pilot", "Cabin Crew", "Ground Ops"];
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]; void DAYS;
 
+// Iter 121b — Variety preference controls how often exercises rotate.
+const VARIETY_OPTS: { key: string; label: string; sub: string }[] = [
+  { key: "low",      label: "Low",      sub: "Same exercises, focus on progression" },
+  { key: "moderate", label: "Moderate", sub: "Anchors stable, accessories rotate" },
+  { key: "high",     label: "High",     sub: "Rotate variants between blocks" },
+];
+
+// Iter 121b — Preferred cardio modality (used by aerobic_z2 quotas).
+const CARDIO_PREF_OPTS: { key: string; label: string }[] = [
+  { key: "no_preference", label: "No preference" },
+  { key: "walk",          label: "Walking" },
+  { key: "run",           label: "Running" },
+  { key: "bike",          label: "Cycling" },
+  { key: "rower",         label: "Rower" },
+  { key: "elliptical",    label: "Elliptical" },
+  { key: "swim",          label: "Swimming" },
+];
+
 // Aviation context — powers roster-aware coaching so the plan adapts
 // to your actual flying pattern. Keys mirror `feature_programme_quality`.
 const ROUTE_OPTS: { key: string; label: string }[] = [
@@ -74,6 +92,9 @@ export default function Onboarding() {
   const [height, setHeight] = useState(p.height_cm ? String(p.height_cm) : "");
   const [cal, setCal] = useState(String(p.calorie_target || 2400));
   const [pro, setPro] = useState(String(p.protein_target || 160));
+  // Iter 121b — variety + cardio preferences (consumed by V2 construction)
+  const [variety, setVariety] = useState<string>(p.variety_preference || "moderate");
+  const [cardioPref, setCardioPref] = useState<string>(p.cardio_preference || "no_preference");
   const [loading, setLoading] = useState(false);
 
   const toggle = (arr: string[], set: (v: string[]) => void, v: string) =>
@@ -108,6 +129,9 @@ export default function Onboarding() {
           weight_kg: weight ? parseFloat(weight) : null,
           calorie_target: parseInt(cal) || 2200,
           protein_target: parseInt(pro) || 150,
+          // Iter 121b — variety + cardio preferences plumbed to V2 engine.
+          variety_preference: variety,
+          cardio_preference: cardioPref,
         },
       });
       await refresh();
@@ -193,6 +217,48 @@ export default function Onboarding() {
             <Field label="EXTRA CONTEXT (OPTIONAL)"><TextInput testID="ob-goal" style={[styles.input, { minHeight: 60 }]} multiline value={goal} onChangeText={setGoal} placeholder="Stay strong on rotations, lose 4kg" placeholderTextColor={theme.color.textDim} /></Field>
             <Field label="INJURIES / LIMITATIONS"><TextInput testID="ob-inj" style={[styles.input, { minHeight: 50 }]} multiline value={injuries} onChangeText={setInjuries} placeholder="Left knee — avoid deep loaded lunges" placeholderTextColor={theme.color.textDim} /></Field>
             <Field label="EXERCISES YOU DISLIKE"><TextInput testID="ob-dislike" style={[styles.input, { minHeight: 50 }]} multiline value={dislike} onChangeText={setDislike} placeholder="No burpees" placeholderTextColor={theme.color.textDim} /></Field>
+          </Section>
+
+          {/* Iter 121b — training-style preferences */}
+          <Section label="TRAINING STYLE">
+            <Field label="VARIETY PREFERENCE">
+              <View style={styles.chipsWrap}>
+                {VARIETY_OPTS.map((v) => (
+                  <Pressable
+                    key={v.key}
+                    testID={`ob-variety-${v.key}`}
+                    onPress={() => setVariety(v.key)}
+                    style={[styles.chip, variety === v.key && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, variety === v.key && { color: "#fff" }]}>
+                      {v.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.helperNote}>
+                {VARIETY_OPTS.find((v) => v.key === variety)?.sub || ""}
+              </Text>
+            </Field>
+            <Field label="PREFERRED CARDIO">
+              <View style={styles.chipsWrap}>
+                {CARDIO_PREF_OPTS.map((c) => (
+                  <Pressable
+                    key={c.key}
+                    testID={`ob-cardio-pref-${c.key}`}
+                    onPress={() => setCardioPref(c.key)}
+                    style={[styles.chip, cardioPref === c.key && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, cardioPref === c.key && { color: "#fff" }]}>
+                      {c.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.helperNote}>
+                Applied to aerobic Z2 sessions — CrewFit builds the workout for your preferred modality.
+              </Text>
+            </Field>
           </Section>
 
           <Section label="BODY & TARGETS">

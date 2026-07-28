@@ -374,15 +374,77 @@ def build_demand(
         ),
     }
 
+    # Iter 121c — Priority-aware main-training-day cap.
+    # `training_days_per_week` is the ceiling for MAIN sessions (KEY + IMPORTANT).
+    # SUPPORTING / OPTIONAL are stackable — they are permitted to add on top
+    # of MAIN days up to a small auto stacking budget (default 2), which
+    # allows mobility / conditioning to attach to existing training days
+    # without creating a new independent training day. The scheduler is
+    # responsible for actually placing them onto compatible days; if no
+    # compatible day exists the placement is skipped.
+    main_day_cap = freq_derivation.get("effective_max_training_days_per_week") or hi_freq
+
+    # If the client set sessions_per_week_max explicitly HIGHER than
+    # training_days_per_week, honour that as extra stackable capacity.
+    # Otherwise grant a default auto stacking budget of 2.
+    auto_stack_budget = max(2, hi_freq - main_day_cap)
+
+    def _round(desired: float, lo: int, hi: int) -> int:
+        whole = int(desired)
+        frac = desired - whole
+        n = whole + (1 if frac >= 0.5 else 0)
+        return max(lo, min(hi, n))
+
+    # Split quotas by priority tier.
+    MAIN_PRIOS = {"KEY", "IMPORTANT"}
+    main_quotas = [q for q in quotas if q.priority.upper() in MAIN_PRIOS]
+    support_quotas = [q for q in quotas if q.priority.upper() not in MAIN_PRIOS]
+
+    def _per_quota_counts(qs, cap):
+        """Assign per-quota exposure counts respecting `cap` total.
+        KEY MIN is protected first, then TARGET is filled by declaration order.
+        """
+        counts: dict[str, int] = {}
+        remaining = cap
+        # Pass 1 — every quota's MIN is guaranteed (KEY MIN protected first)
+        for q in sorted(qs, key=lambda q: (0 if q.priority.upper() == "KEY" else 1)):
+            lo, target, hi = q.exposures_per_week
+            n_min = int(lo)
+            if n_min <= remaining:
+                counts[q.kind] = n_min
+                remaining -= n_min
+            else:
+                counts[q.kind] = n_min if q.priority.upper() == "KEY" else 0
+                if q.priority.upper() == "KEY":
+                    remaining = max(0, remaining - n_min)
+        # Pass 2 — fill up to TARGET within remaining budget
+        for q in qs:
+            lo, target, hi = q.exposures_per_week
+            already = counts.get(q.kind, 0)
+            headroom = min(int(hi), int(round(target))) - already
+            if headroom > 0 and remaining > 0:
+                add = min(headroom, remaining)
+                counts[q.kind] = already + add
+                remaining -= add
+        return counts, remaining
+
+    # 1) MAIN quotas fill up to training_days_per_week
+    main_counts, _ = _per_quota_counts(main_quotas, main_day_cap)
+    # 2) SUPPORT quotas fill the stacking budget (independent of main slack)
+    support_counts, _ = _per_quota_counts(support_quotas, auto_stack_budget)
+
+    per_quota_counts_by_kind: dict[str, int] = {**main_counts, **support_counts}
+    freq_derivation["priority_clip"] = {
+        "main_day_cap": main_day_cap,
+        "main_counts": main_counts,
+        "auto_stack_budget": auto_stack_budget,
+        "support_counts": support_counts,
+    }
+
     for week_index, week_start in enumerate(week_start_dates):
         for q in quotas:
             _lo, _target, _hi = q.exposures_per_week
-            desired = max(_lo, _target * scale)
-            # Compute integer exposure count for this week
-            whole = int(desired)
-            frac = desired - whole
-            n_this_week = whole + (1 if (frac >= 0.5) else 0)
-            n_this_week = max(int(_lo), min(int(_hi), n_this_week))
+            n_this_week = per_quota_counts_by_kind.get(q.kind, 0)
             if n_this_week <= 0:
                 continue
 

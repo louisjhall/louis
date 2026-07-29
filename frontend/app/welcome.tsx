@@ -26,16 +26,19 @@ export default function Welcome() {
   const videoH = Math.round(videoW * (16 / 9)); // 9:16 aspect
 
   const player = useVideoPlayer(LOUIS_WELCOME_VIDEO_SOURCE, (p) => {
-    // Autoplay muted — required by mobile autoplay policy. Users tap to
-    // unmute (see the sound-toggle button below the frame).
+    // Iter 123b — DO NOT autoplay. The CrewFit intro-logo splash is often
+    // still on screen during first mount; autoplaying here caused a
+    // visual/audio clash with the logo. Instead we show a play overlay on
+    // the video placeholder and only start playback when the user taps.
+    // Sound is off until the user opts in — same pattern as before.
     p.loop = false;
     p.muted = true;
-    p.play();
   });
 
   const [muted, setMuted] = useState(true);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [everStarted, setEverStarted] = useState(false);
   const fade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -71,6 +74,13 @@ export default function Welcome() {
       if (finished) {
         try { player.currentTime = 0; } catch { /* ignore */ }
         setFinished(false);
+      }
+      // Iter 123b — first tap is the user's explicit start signal, so play
+      // WITH sound. They can still mute afterwards via the icon.
+      if (!everStarted) {
+        try { player.muted = false; } catch { /* ignore */ }
+        setMuted(false);
+        setEverStarted(true);
       }
       player.play();
     }
@@ -138,7 +148,9 @@ export default function Welcome() {
           </View>
           <Text style={styles.videoName}>LOUIS HALL</Text>
           <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
-          {muted ? (
+          {!everStarted ? (
+            <Text style={styles.tapUnmute}>Tap the video to play</Text>
+          ) : muted ? (
             <Text style={styles.tapUnmute}>Tap the video to unmute</Text>
           ) : null}
         </Animated.View>

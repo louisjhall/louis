@@ -46,7 +46,7 @@ import { VideoView, useVideoPlayer } from "expo-video";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { theme } from "@/src/lib/theme";
 
-const INTRO_SOURCE = require("@/assets/louis/intro.mp4");
+const INTRO_SOURCE = require("@/assets/louis/crewfit-startup-minimalist-v2.mp4");
 const KEY_LAST = "crewfit_intro_last_played_at";
 const KEY_PENDING = "crewfit_intro_pending_reason";
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
@@ -146,18 +146,27 @@ function IntroGate({ onFinished }: { onFinished: () => void }) {
   const finishedRef = useRef(false);
   const [errored, setErrored] = useState(false);
 
+  // Iter 125 — Lifecycle logs for native diagnostic. Use [STARTUP_VIDEO] tag.
+  useEffect(() => {
+    console.log("[STARTUP_VIDEO] component mount");
+    return () => { console.log("[STARTUP_VIDEO] component unmounted"); };
+  }, []);
+
   // Player is created here — this component only exists in phase
   // "showing_intro", so the player is guaranteed not to overlap with
   // welcome.mp4's player.
   const player = useVideoPlayer(INTRO_SOURCE, (p) => {
+    console.log("[STARTUP_VIDEO] player created");
     p.loop = false;
-    p.muted = true;         // belt-and-braces; intro.mp4 has no audio track
+    p.muted = true;         // belt-and-braces; the file has no audio track
     p.play();
+    console.log("[STARTUP_VIDEO] play");
   });
 
   const finish = useCallback(() => {
     if (finishedRef.current) return;
     finishedRef.current = true;
+    console.log("[STARTUP_VIDEO] finish");
     // Best-effort stop; the player will be unmounted immediately after.
     try { player.pause(); } catch { /* ignore */ }
     onFinished();
@@ -172,6 +181,7 @@ function IntroGate({ onFinished }: { onFinished: () => void }) {
     // On player error, skip the intro rather than block the app.
     const errSub = player.addListener("statusChange", (e: any) => {
       if (e?.status === "error") {
+        console.log("[STARTUP_VIDEO] statusChange:error");
         setErrored(true);
         finish();
       }
@@ -187,7 +197,7 @@ function IntroGate({ onFinished }: { onFinished: () => void }) {
 
   return (
     <View style={[styles.bg, { width, height }]} testID="crewfit-intro-animation">
-      <VideoView
+      <VideoViewLogged
         player={player}
         style={StyleSheet.absoluteFill}
         contentFit="contain"
@@ -204,6 +214,15 @@ function IntroGate({ onFinished }: { onFinished: () => void }) {
       ) : null}
     </View>
   );
+}
+
+/** Wrapper that logs the native VideoView mount/unmount lifecycle. */
+function VideoViewLogged(props: React.ComponentProps<typeof VideoView>) {
+  useEffect(() => {
+    console.log("[STARTUP_VIDEO] VideoView mounted");
+    return () => { console.log("[STARTUP_VIDEO] VideoView unmounted"); };
+  }, []);
+  return <VideoView {...props} />;
 }
 
 const styles = StyleSheet.create({

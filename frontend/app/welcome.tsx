@@ -1,59 +1,21 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Dimensions, Animated, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { VideoView, useVideoPlayer } from "expo-video";
 import { theme } from "@/src/lib/theme";
 
 /* -------------------------------------------------------------------------- */
-/*  LouisVideoPlayer — mounted ONLY after the user taps play.                 */
-/*  This is the key to preventing the audio/video clash with the CrewFit      */
-/*  intro-logo splash: expo-video's useVideoPlayer buffers audio on some      */
-/*  Expo Go builds even without .play(), so we don't create the player at    */
-/*  all until an explicit user gesture.                                       */
+/*  ITER 125 – ISOLATION MODE                                                 */
+/*  The Louis welcome video player has been TEMPORARILY DISABLED for a        */
+/*  binary diagnostic test on the physical device: if the overlay disappears */
+/*  in this state, welcome.tsx was the source. If the overlay persists, the  */
+/*  Louis video surface is being created somewhere else in the app.          */
+/*                                                                            */
+/*  When re-enabled, the LouisVideoPlayer will be restored with the renamed  */
+/*  asset: coach-louis-welcome-v2.mp4                                        */
 /* -------------------------------------------------------------------------- */
-function LouisVideoPlayer({
-  width, height, onPlayingChange, onEnd, muted, onMutedRef,
-}: {
-  width: number; height: number;
-  onPlayingChange: (playing: boolean) => void;
-  onEnd: () => void;
-  muted: boolean;
-  onMutedRef: (fn: () => void) => void;
-}) {
-  // Lazy require — asset is only referenced when this sub-component actually
-  // mounts (i.e. after user taps play). Prevents any pre-buffering of audio
-  // during the cold-launch intro on Expo Go.
-  const player = useVideoPlayer(require("@/assets/louis/welcome.mp4"), (p) => {
-    p.loop = false;
-    p.muted = false;   // user tapped play → play with sound
-    p.play();
-  });
-  // Keep player mute in sync with external muted state
-  useEffect(() => {
-    try { player.muted = muted; } catch { /* ignore */ }
-  }, [player, muted]);
-  useEffect(() => {
-    onMutedRef(() => { try { player.muted = !player.muted; } catch { /* ignore */ } });
-  }, [player, onMutedRef]);
-  useEffect(() => {
-    const s1 = player.addListener("playToEnd", onEnd);
-    const s2 = player.addListener("playingChange", (e: any) => onPlayingChange(!!e?.isPlaying));
-    return () => { try { s1.remove(); } catch {} try { s2.remove(); } catch {} };
-  }, [player, onEnd, onPlayingChange]);
-  return (
-    <VideoView
-      player={player}
-      style={{ width, height }}
-      contentFit="cover"
-      nativeControls={false}
-      allowsFullscreen={false}
-      allowsPictureInPicture={false}
-    />
-  );
-}
 
 
 /* -------------------------------------------------------------------------- */
@@ -67,28 +29,12 @@ export default function Welcome() {
   const videoW = Math.min(width - 60, 300);
   const videoH = Math.round(videoW * (16 / 9));
 
-  // Iter 123c — DO NOT construct useVideoPlayer up-front. On some Expo Go
-  // builds the player buffers audio immediately on mount, clashing with the
-  // silent CrewFit intro-logo splash still on screen. We only mount the
-  // <LouisVideoPlayer> sub-component after the user taps the poster.
-  const [startedVideo, setStartedVideo] = useState(false);
-  const [muted, setMuted] = useState(false);   // once started we play WITH sound by default
-  const [playing, setPlaying] = useState(false);
-  const [finished, setFinished] = useState(false);
-  const toggleMuteRef = useRef<() => void>(() => {});
+  // ITER 125 ISOLATION MODE — Louis video runtime disabled. State
+  // variables kept simple: only fade + navigation remain in play.
   const fade = useRef(new Animated.Value(0)).current;
-
-  const onTapPoster = () => setStartedVideo(true);
-  const toggleMute = () => {
-    setMuted((m) => !m);
-    try { toggleMuteRef.current(); } catch { /* ignore */ }
-  };
-  const onPlayAgain = () => {
-    setFinished(false);
-    // Force remount of the player subtree to replay cleanly
-    setStartedVideo(false);
-    setTimeout(() => setStartedVideo(true), 50);
-  };
+  // Kept purely so the "Tap the video to play" label logic below still
+  // renders (it just always shows during isolation).
+  const startedVideo = false;
 
   useEffect(() => {
     // Prefetch — mark that user reached welcome. (Runs exactly once on mount.)
@@ -117,55 +63,27 @@ export default function Welcome() {
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
-        {/* Louis welcome video — tap-to-play. Player is NOT instantiated
-            until the user taps the poster, so no audio leaks under the
-            CrewFit intro-logo splash. */}
+        {/* ITER 125 ISOLATION — Louis video runtime is temporarily DISABLED
+            for physical-device overlap diagnosis. Only the static poster
+            renders. No useVideoPlayer, no VideoView, no native surface.
+            Tap does nothing while in isolation mode. */}
         <Animated.View style={[styles.videoCardWrap, { opacity: fade }]}>
           <View style={[styles.videoFrame, { width: videoW, height: videoH }]}>
-            {startedVideo ? (
-              <LouisVideoPlayer
-                width={videoW}
-                height={videoH}
-                muted={muted}
-                onPlayingChange={setPlaying}
-                onEnd={() => { setFinished(true); setPlaying(false); }}
-                onMutedRef={(fn) => { toggleMuteRef.current = fn; }}
-              />
-            ) : (
-              // Static poster before first tap — plain dark frame + play ring.
-              <View style={[StyleSheet.absoluteFill, styles.posterBg]} />
-            )}
+            {/* Static poster only. NO Louis video mount in isolation mode. */}
+            <View style={[StyleSheet.absoluteFill, styles.posterBg]} />
 
-            {/* Play overlay — visible until playing, and again on finish */}
-            {(!startedVideo || !playing || finished) ? (
-              <Pressable
-                style={StyleSheet.absoluteFill}
-                onPress={!startedVideo ? onTapPoster : (finished ? onPlayAgain : undefined)}
-                testID="welcome-video-tap"
-              >
-                <View style={styles.playOverlay} pointerEvents="none">
-                  <View style={styles.playRing}>
-                    <Ionicons name={finished ? "refresh" : "play"} size={26} color="#fff" />
-                  </View>
+            {/* Play overlay — visible but inert. */}
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => { console.log("[LOUIS_VIDEO] tap ignored (isolation mode)"); }}
+              testID="welcome-video-tap"
+            >
+              <View style={styles.playOverlay} pointerEvents="none">
+                <View style={styles.playRing}>
+                  <Ionicons name="play" size={26} color="#fff" />
                 </View>
-              </Pressable>
-            ) : null}
-
-            {/* Mute toggle (only meaningful once video has started) */}
-            {startedVideo ? (
-              <Pressable
-                testID="welcome-video-mute"
-                onPress={toggleMute}
-                hitSlop={10}
-                style={styles.muteBtn}
-              >
-                <Ionicons
-                  name={muted ? "volume-mute" : "volume-high"}
-                  size={16}
-                  color="#fff"
-                />
-              </Pressable>
-            ) : null}
+              </View>
+            </Pressable>
 
             {/* Corner badge */}
             <View style={styles.videoBadgeFloat}>

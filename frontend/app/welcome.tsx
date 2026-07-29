@@ -1,16 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Dimensions, Animated } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Dimensions, Animated, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { VideoView, useVideoPlayer } from "expo-video";
 import { theme } from "@/src/lib/theme";
-
-// Louis's welcome video. Bundled locally so it works offline, on native, and
-// through the web preview without CORS restrictions. Swap this require() to
-// update the video across the app — no rebuild of any URLs needed.
-const LOUIS_WELCOME_VIDEO_SOURCE = require("@/assets/louis/welcome.mp4");
 
 /* -------------------------------------------------------------------------- */
 /*  LouisVideoPlayer — mounted ONLY after the user taps play.                 */
@@ -28,7 +23,10 @@ function LouisVideoPlayer({
   muted: boolean;
   onMutedRef: (fn: () => void) => void;
 }) {
-  const player = useVideoPlayer(LOUIS_WELCOME_VIDEO_SOURCE, (p) => {
+  // Lazy require — asset is only referenced when this sub-component actually
+  // mounts (i.e. after user taps play). Prevents any pre-buffering of audio
+  // during the cold-launch intro on Expo Go.
+  const player = useVideoPlayer(require("@/assets/louis/welcome.mp4"), (p) => {
     p.loop = false;
     p.muted = false;   // user tapped play → play with sound
     p.play();
@@ -80,11 +78,6 @@ export default function Welcome() {
   const toggleMuteRef = useRef<() => void>(() => {});
   const fade = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    AsyncStorage.setItem("atlas_welcomed_started", "1").catch(() => {});
-    Animated.timing(fade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
-  }, [fade]);
-
   const onTapPoster = () => setStartedVideo(true);
   const toggleMute = () => {
     setMuted((m) => !m);
@@ -98,11 +91,12 @@ export default function Welcome() {
   };
 
   useEffect(() => {
-    // Prefetch — mark that user reached welcome
+    // Prefetch — mark that user reached welcome. (Runs exactly once on mount.)
     AsyncStorage.setItem("atlas_welcomed_started", "1").catch(() => {});
     // Fade the video card in for a smooth arrival.
     Animated.timing(fade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
-  }, [fade]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const proceed = async () => {
     await AsyncStorage.setItem("atlas_welcomed", "1").catch(() => {});
@@ -112,9 +106,14 @@ export default function Welcome() {
   return (
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
       <ScrollView contentContainerStyle={styles.body}>
-        {/* Brand */}
+        {/* Brand — official CrewFit logo lockup */}
         <View style={styles.brandRow}>
-          <Text style={styles.brand}>CREW<Text style={styles.brandRed}>FIT</Text></Text>
+          <Image
+            source={require("@/assets/images/crewfit-logo-full.png")}
+            style={styles.brandLogo}
+            resizeMode="contain"
+            accessibilityLabel="CrewFit logo"
+          />
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
@@ -292,6 +291,7 @@ const styles = StyleSheet.create({
   brandRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
   brand: { color: theme.color.text, fontSize: 20, fontWeight: "900", letterSpacing: 3 },
   brandRed: { color: theme.color.brand },
+  brandLogo: { width: 120, height: 32 },
   brandSub: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 3 },
 
   videoCard: {

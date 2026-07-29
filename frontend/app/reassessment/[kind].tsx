@@ -72,11 +72,11 @@ export default function ReassessmentMicro() {
     try {
       const r = await api<any>("/reassessment/short-form", {
         method: "POST",
-        body: JSON.stringify({
+        body: {
           kind: form.kind,
           prompt_id: prompt_id || null,
           answers,
-        }),
+        },
       });
       setDone(r.message || "Thanks — Louis has been notified.");
     } catch (e: any) {

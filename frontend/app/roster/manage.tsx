@@ -74,10 +74,10 @@ export default function RosterManagement() {
     try {
       const r = await api<any>("/roster/delete-and-restart", {
         method: "POST",
-        body: JSON.stringify({
+        body: {
           mode, reason: reason || null,
           confirm: true, typed_delete: typedDelete,
-        }),
+        },
       });
       setReceipt(r);
       setDeleteOpen(false);

@@ -48,10 +48,10 @@ export function ChangePasswordModal({
     try {
       const r = await api<any>("/auth/change-password", {
         method: "POST",
-        body: JSON.stringify({
+        body: {
           current_password: current,
           new_password: next,
-        }),
+        },
       });
       if (r?.token) {
         // Rotate token silently so the session keeps working.

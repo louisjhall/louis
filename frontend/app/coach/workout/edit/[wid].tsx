@@ -64,7 +64,7 @@ export default function CoachWorkoutEditor() {
   const persistMeta = async (patch: Record<string, any>) => {
     setSaving(true);
     try {
-      await api(`/coach/workouts/${wid}`, { method: "PATCH", body: JSON.stringify(patch) });
+      await api(`/coach/workouts/${wid}`, { method: "PATCH", body: patch });
       setW((prev: any) => ({ ...prev, ...patch, coach_edited: true }));
     } catch (e: any) {
       setError(e?.message || "Save failed");
@@ -74,7 +74,7 @@ export default function CoachWorkoutEditor() {
   const editExercise = async (idx: number, patch: Record<string, any>) => {
     setSaving(true);
     try {
-      await api(`/coach/workouts/${wid}/exercises/${idx}`, { method: "PATCH", body: JSON.stringify(patch) });
+      await api(`/coach/workouts/${wid}/exercises/${idx}`, { method: "PATCH", body: patch });
       setW((prev: any) => {
         const exs = [...(prev.exercises || [])];
         exs[idx] = { ...exs[idx], ...patch };
@@ -101,7 +101,7 @@ export default function CoachWorkoutEditor() {
     try {
       await api(`/coach/workouts/${wid}/exercises/${swapModal.exIdx}/swap`, {
         method: "POST",
-        body: JSON.stringify({ replacement_exercise_id, replacement_name, preserve_prescription: true }),
+        body: { replacement_exercise_id, replacement_name, preserve_prescription: true },
       });
       setSwapModal({ open: false, exIdx: null });
       await load();
@@ -114,7 +114,7 @@ export default function CoachWorkoutEditor() {
     try {
       const r = await api<any>(`/coach/workouts/${wid}/regenerate-preview`, {
         method: "POST",
-        body: JSON.stringify({ preset, custom_instruction: custom || null }),
+        body: { preset, custom_instruction: custom || null },
       });
       setRegenModal({ open: true, preset, custom, preview: r });
     } catch (e: any) { setError(e?.message || "Preview failed"); }
@@ -126,7 +126,7 @@ export default function CoachWorkoutEditor() {
     try {
       await api(`/coach/workouts/${wid}/regenerate`, {
         method: "POST",
-        body: JSON.stringify({ guidance: regenModal.preview?.guidance || regenModal.preset }),
+        body: { guidance: regenModal.preview?.guidance || regenModal.preset },
       });
       setRegenModal({ open: false, preset: "same_goal", custom: "", preview: null });
       await load();
@@ -330,7 +330,7 @@ export default function CoachWorkoutEditor() {
               try {
                 await api(`/coach/workouts/${wid}/exercises/add`, {
                   method: "POST",
-                  body: JSON.stringify({ exercise_id: exId, exercise_name: name }),
+                  body: { exercise_id: exId, exercise_name: name },
                 });
                 setSwapModal({ open: false, exIdx: null });
                 await load();

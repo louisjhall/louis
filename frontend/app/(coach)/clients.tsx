@@ -259,7 +259,7 @@ export default function Clients() {
               {data.preview_sandbox?.id ? (
                 <Pressable
                   testID="preview-sandbox-open-detail"
-                  onPress={() => router.push(`/coach/client/${data.preview_sandbox.id}` as any)}
+                  onPress={() => router.push(`/coach/client/${data.preview_sandbox.id}/workspace` as any)}
                   style={styles.previewBtnAlt}
                 >
                   <Ionicons name="open-outline" size={13} color={theme.color.brand} />
@@ -276,7 +276,7 @@ export default function Clients() {
             const days = cl.latest_roster?.days || [];
             const exp = cl.roster_expiry || {};
             return (
-              <Pressable key={cl.id} testID={`client-card-${cl.id}`} onPress={() => router.push(`/coach/client/${cl.id}`)} style={styles.card}>
+              <Pressable key={cl.id} testID={`client-card-${cl.id}`} onPress={() => router.push(`/coach/client/${cl.id}/workspace` as any)} style={styles.card}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
                   <ProfileAvatar userId={cl.id} name={cl.name} photoUrl={cl.profile_photo_url || null} size={44} ring={false} />
                   <View style={{ flex: 1 }}>

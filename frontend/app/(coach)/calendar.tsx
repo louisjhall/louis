@@ -104,7 +104,7 @@ export default function CoachCalendar() {
                 <Pressable
                   testID={`cal-client-${cl.client_id}`}
                   style={styles.clientCol}
-                  onPress={() => router.push(`/coach/client/${cl.client_id}` as any)}
+                  onPress={() => router.push(`/coach/client/${cl.client_id}/workspace` as any)}
                 >
                   <Text style={styles.clientName} numberOfLines={1}>{cl.client_name}</Text>
                   {!cl.has_roster && <Text style={styles.noRoster}>NO ROSTER</Text>}

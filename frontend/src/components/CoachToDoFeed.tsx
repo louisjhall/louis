@@ -101,7 +101,7 @@ export function CoachToDoFeed() {
         return;
       }
       const cid = (t as any).client_id || (t as any).user_id;
-      if (cid) router.push(`/coach/client/${cid}` as any);
+      if (cid) router.push(`/coach/client/${cid}/workspace` as any);
       return;
     }
     if (t.check_in_id) {

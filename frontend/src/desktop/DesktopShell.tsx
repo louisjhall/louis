@@ -9,8 +9,11 @@ import { LouisAvatar } from "@/src/components/LouisAvatar";
 import { LOUIS, isLouis } from "@/src/lib/coachProfile";
 
 const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?: boolean }[] = [
-  { path: "/(coach)/v2-home", label: "V2 Home (New)", icon: "sparkles-outline", testId: "desktop-nav-v2-home" },
-  { path: "/(coach)/overview", label: "Overview (V1)", icon: "home-outline", testId: "desktop-nav-overview" },
+  // Iter 128b — Coach nav consolidated. V2 IS the product; V1 legacy routes
+  // remain reachable via direct URL but are removed from the sidebar so
+  // there is ONE canonical coach experience. Do NOT delete V1 files/routes
+  // yet — migration safety net.
+  { path: "/(coach)/v2-home", label: "Home", icon: "home-outline", testId: "desktop-nav-home" },
   { path: "/(coach)/clients", label: "Clients", icon: "people-outline", testId: "desktop-nav-clients" },
   { path: "/(coach)/calendar", label: "Calendar", icon: "calendar-outline", testId: "desktop-nav-calendar" },
   { path: "/(coach)/approvals", label: "Approvals", icon: "checkmark-circle-outline", testId: "desktop-nav-approvals" },

@@ -76,7 +76,7 @@ export default function CoachAnalytics() {
                     <Pressable
                       key={c.client_id}
                       testID={`an-row-${c.client_id}`}
-                      onPress={() => router.push(`/coach/client/${c.client_id}` as any)}
+                      onPress={() => router.push(`/coach/client/${c.client_id}/workspace` as any)}
                       style={styles.compRow}
                     >
                       <Text style={styles.compName} numberOfLines={1}>{c.client_name}</Text>

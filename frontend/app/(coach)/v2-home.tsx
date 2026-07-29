@@ -12,13 +12,11 @@
  * If not enabled, offers a one-click enable and links back to V1 overview.
  */
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, TextInput, Modal } from "react-native";
+import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
 import { useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { useAuth } from "@/src/lib/auth";
-import { AddClientSheet } from "@/src/components/AddClientSheet";
 
 type AttentionRow = {
   client_id: string;
@@ -31,27 +29,10 @@ type AttentionRow = {
   counts?: { ready?: number; review?: number; conflict?: number };
 };
 
-type ClientRow = {
-  client_id: string;
-  name: string;
-  email?: string;
-  avatar_url?: string;
-  kind: "v1" | "v2";
-  goal?: string;
-  phase?: string;
-  today_label?: string;
-  attention_count: number;
-  status_chip: "ready" | "review" | "conflict" | "roster_changed" | "checkin";
-  chip_detail: string;
-};
-
-const FILTERS: { id: string; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "attention", label: "Needs Attention" },
-  { id: "programme_ready", label: "Programme Ready" },
-  { id: "roster_changed", label: "Roster Changed" },
-  { id: "quiet", label: "No Action" },
-];
+// Iter 128b — Client list widget removed from Home. Home is the operations
+// dashboard; the canonical Clients directory now lives exclusively at
+// /(coach)/clients (richer view with roster progress, filters, Preview,
+// Review, Add client). All V1/V2 legacy visual references stripped.
 
 const KIND_LABELS: Record<string, string> = {
   programme_ready: "Programme ready for approval",
@@ -78,18 +59,9 @@ export default function CoachDashboardV2Home() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [summary, setSummary] = useState<any>(null);
   const [attention, setAttention] = useState<AttentionRow[]>([]);
-  const [clients, setClients] = useState<ClientRow[]>([]);
-  const [filter, setFilter] = useState("all");
-  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [addClientOpen, setAddClientOpen] = useState(false);
-  // Delete-client confirmation state
-  const [deleteTarget, setDeleteTarget] = useState<ClientRow | null>(null);
-  const [deleteEmail, setDeleteEmail] = useState("");
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,21 +73,18 @@ export default function CoachDashboardV2Home() {
         setLoading(false);
         return;
       }
-      const [sum, att, cli] = await Promise.all([
+      const [sum, att] = await Promise.all([
         api("/v2/coach/dashboard/summary").catch(() => null),
         api("/v2/coach/dashboard/attention").catch(() => ({ attention: [] })),
-        api(`/v2/coach/dashboard/clients?filter=${filter}${search ? `&q=${encodeURIComponent(search)}` : ""}`)
-          .catch(() => ({ clients: [] })),
       ]);
       setSummary(sum);
       setAttention((att as any).attention || []);
-      setClients((cli as any).clients || []);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
     }
-  }, [filter, search]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -126,57 +95,6 @@ export default function CoachDashboardV2Home() {
       await load();
     } finally { setBusy(false); }
   }, [load]);
-
-  const disableV2 = useCallback(async () => {
-    setBusy(true);
-    try {
-      await api("/v2/coach/me/dashboard-flag", { method: "PATCH", body: { coach_dashboard_v2_enabled: false } });
-      setEnabled(false);
-    } finally { setBusy(false); }
-  }, []);
-
-  const openDeleteConfirm = useCallback((row: ClientRow) => {
-    setDeleteTarget(row);
-    setDeleteEmail("");
-    setDeleteError(null);
-  }, []);
-
-  const closeDeleteConfirm = useCallback(() => {
-    if (deleteBusy) return;
-    setDeleteTarget(null);
-    setDeleteEmail("");
-    setDeleteError(null);
-  }, [deleteBusy]);
-
-  const confirmDelete = useCallback(async () => {
-    if (!deleteTarget) return;
-    const target = deleteTarget;
-    const stored = (target.email || "").trim().toLowerCase();
-    const typed = deleteEmail.trim().toLowerCase();
-    if (!stored) {
-      setDeleteError("This client has no email on file — cannot verify deletion.");
-      return;
-    }
-    if (stored !== typed) {
-      setDeleteError("Typed email does not match this client's email.");
-      return;
-    }
-    setDeleteBusy(true);
-    setDeleteError(null);
-    try {
-      await api(
-        `/v2/coach/clients/${target.client_id}?confirm_email=${encodeURIComponent(stored)}`,
-        { method: "DELETE" }
-      );
-      setDeleteTarget(null);
-      setDeleteEmail("");
-      await load();
-    } catch (e: any) {
-      setDeleteError(e?.message || String(e));
-    } finally {
-      setDeleteBusy(false);
-    }
-  }, [deleteTarget, deleteEmail, load]);
 
   const attentionByClient = useMemo(() => {
     const map: Record<string, AttentionRow[]> = {};
@@ -194,16 +112,13 @@ export default function CoachDashboardV2Home() {
     return (
       <View style={[styles.root, styles.center]}>
         <View style={styles.optCard}>
-          <Text style={styles.optTitle}>Coach Dashboard V2</Text>
+          <Text style={styles.optTitle}>Coach Home</Text>
           <Text style={styles.optBody}>
-            Preview the new Attention + Roster + Plan workspace. Your existing V1 dashboard
-            stays fully available; you can switch back any time.
+            Enable the new Attention + Roster + Plan workspace to see everything
+            that needs your review in one place.
           </Text>
           <Pressable style={styles.primaryBtn} onPress={enableV2} disabled={busy} testID="enable-v2-btn">
-            <Text style={styles.primaryBtnText}>{busy ? "Enabling…" : "Enable V2 preview"}</Text>
-          </Pressable>
-          <Pressable onPress={() => router.replace("/(coach)/overview")} style={{ marginTop: 12 }}>
-            <Text style={styles.secondaryLink}>Back to V1 Overview</Text>
+            <Text style={styles.primaryBtnText}>{busy ? "Enabling…" : "Enable"}</Text>
           </Pressable>
         </View>
       </View>
@@ -217,8 +132,12 @@ export default function CoachDashboardV2Home() {
           <Text style={styles.h1}>Coach Home</Text>
           <Text style={styles.h1sub}>Welcome back{user?.name ? `, ${user.name.split(" ")[0]}` : ""}. Here&apos;s who needs you.</Text>
         </View>
-        <Pressable onPress={disableV2} style={styles.chip} testID="disable-v2-btn">
-          <Text style={styles.chipText}>Switch to V1</Text>
+        <Pressable
+          onPress={() => router.push("/(coach)/clients" as any)}
+          style={styles.chip}
+          testID="home-view-clients"
+        >
+          <Text style={styles.chipText}>View clients →</Text>
         </Pressable>
       </View>
 
@@ -268,148 +187,12 @@ export default function CoachDashboardV2Home() {
         )}
       </View>
 
-      {/* Client list */}
-      <View style={styles.section}>
-        <View style={styles.clientHeadRow}>
-          <Text style={styles.sectionTitle}>CLIENTS</Text>
-          <Pressable
-            onPress={() => setAddClientOpen(true)}
-            style={styles.addClientBtn}
-            testID="add-client-btn"
-          >
-            <Ionicons name="person-add" size={14} color="#000" />
-            <Text style={styles.addClientBtnText}>Add client</Text>
-          </Pressable>
-          <TextInput
-            placeholder="Search…"
-            placeholderTextColor={theme.color.textDim}
-            value={search}
-            onChangeText={setSearch}
-            style={styles.searchBox}
-            testID="client-search"
-          />
-        </View>
-        <View style={styles.filterRow}>
-          {FILTERS.map((f) => (
-            <Pressable
-              key={f.id}
-              onPress={() => setFilter(f.id)}
-              style={[styles.filterBtn, filter === f.id && styles.filterBtnActive]}
-              testID={`filter-${f.id}`}
-            >
-              <Text style={[styles.filterBtnText, filter === f.id && styles.filterBtnTextActive]}>{f.label}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        {clients.length === 0 ? (
-          <Text style={styles.emptyBody}>No clients match this filter.</Text>
-        ) : (
-          <View style={styles.clientTable}>
-            <View style={styles.clientTableHead}>
-              <Text style={[styles.clientCol, styles.colClient]}>CLIENT</Text>
-              <Text style={[styles.clientCol, styles.colGoal]}>GOAL</Text>
-              <Text style={[styles.clientCol, styles.colPhase]}>PHASE</Text>
-              <Text style={[styles.clientCol, styles.colToday]}>TODAY</Text>
-              <Text style={[styles.clientCol, styles.colStatus]}>STATUS</Text>
-            </View>
-            {clients.map((c) => (
-              <View key={c.client_id} style={styles.clientRowWrap}>
-                <Pressable
-                  style={styles.clientRow}
-                  onPress={() => router.push(`/coach/client/${c.client_id}/workspace` as any)}
-                  testID={`client-row-${c.client_id}`}
-                >
-                  <Text style={[styles.clientCol, styles.colClient, styles.clientName]} numberOfLines={1}>{c.name}</Text>
-                  <Text style={[styles.clientCol, styles.colGoal]} numberOfLines={1}>{c.goal || "—"}</Text>
-                  <Text style={[styles.clientCol, styles.colPhase]} numberOfLines={1}>{c.phase || "—"}</Text>
-                  <Text style={[styles.clientCol, styles.colToday]} numberOfLines={1}>{c.today_label || "—"}</Text>
-                  <View style={[styles.colStatus, { flexDirection: "row", alignItems: "center", gap: 6 }]}>
-                    <StatusPill kind={c.status_chip} count={c.attention_count} />
-                  </View>
-                </Pressable>
-                <Pressable
-                  onPress={(e) => { e.stopPropagation?.(); openDeleteConfirm(c); }}
-                  style={styles.rowDeleteBtn}
-                  testID={`delete-client-${c.client_id}`}
-                  accessibilityLabel={`Delete ${c.name}`}
-                  hitSlop={10}
-                >
-                  <Ionicons name="trash-outline" size={16} color="#ff6b6b" />
-                </Pressable>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
+      {/* Iter 128b — Client list intentionally removed from Home.
+          Home is the operations dashboard. The canonical Clients directory
+          lives at /(coach)/clients (richer profile, roster progress, filters,
+          Preview/Review, Add client). Keeping duplication out of Home. */}
 
       {error && <Text style={styles.errorText}>{error}</Text>}
-      <AddClientSheet
-        visible={addClientOpen}
-        onClose={() => setAddClientOpen(false)}
-        onCreated={() => { setAddClientOpen(false); load(); }}
-      />
-      <Modal
-        visible={!!deleteTarget}
-        transparent
-        animationType="fade"
-        onRequestClose={closeDeleteConfirm}
-      >
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Delete client</Text>
-            <Text style={styles.modalBody}>
-              You&apos;re about to permanently delete{" "}
-              <Text style={styles.modalBodyStrong}>{deleteTarget?.name}</Text>
-              {" "}and every workout, roster, programme, decision record and
-              exception tied to them. This cannot be undone.
-            </Text>
-            <Text style={styles.modalLabel}>
-              Type the client&apos;s email to confirm:
-            </Text>
-            <Text style={styles.modalEmailHint}>
-              {deleteTarget?.email || "(no email on file — cannot delete)"}
-            </Text>
-            <TextInput
-              value={deleteEmail}
-              onChangeText={setDeleteEmail}
-              placeholder="client@example.com"
-              placeholderTextColor="#5a5a5a"
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              editable={!deleteBusy}
-              style={styles.modalInput}
-              testID="delete-client-email-input"
-            />
-            {deleteError && <Text style={styles.modalError}>{deleteError}</Text>}
-            <View style={styles.modalRow}>
-              <Pressable
-                onPress={closeDeleteConfirm}
-                disabled={deleteBusy}
-                style={[styles.modalBtn, styles.modalBtnGhost]}
-                testID="delete-client-cancel"
-              >
-                <Text style={styles.modalBtnGhostText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={confirmDelete}
-                disabled={deleteBusy || !deleteTarget?.email}
-                style={[
-                  styles.modalBtn,
-                  styles.modalBtnDanger,
-                  (deleteBusy || !deleteTarget?.email) && { opacity: 0.5 },
-                ]}
-                testID="delete-client-confirm"
-              >
-                <Text style={styles.modalBtnDangerText}>
-                  {deleteBusy ? "Deleting…" : "Delete permanently"}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 }
@@ -423,21 +206,7 @@ function SummaryCell({ label, value, tint }: { label: string; value: any; tint?:
   );
 }
 
-function StatusPill({ kind, count }: { kind: ClientRow["status_chip"]; count: number }) {
-  const config: Record<string, { label: string; bg: string; fg: string }> = {
-    ready:          { label: count > 0 ? `${count} ready` : "Ready",       bg: "#183020", fg: "#61c982" },
-    review:         { label: count > 0 ? `${count} review`  : "Review",    bg: "#3b2d0d", fg: "#f5b543" },
-    conflict:       { label: "Conflict",                                    bg: "#3a1414", fg: "#ff6b6b" },
-    roster_changed: { label: "Roster changed",                              bg: "#0d2c3b", fg: "#5aa9e6" },
-    checkin:        { label: "Check-in",                                    bg: "#3a1a2d", fg: "#e07eaa" },
-  };
-  const c = config[kind] || config.ready;
-  return (
-    <View style={[styles.statusPill, { backgroundColor: c.bg }]}>
-      <Text style={[styles.statusPillText, { color: c.fg }]}>{c.label}</Text>
-    </View>
-  );
-}
+// StatusPill and ClientRow types removed with the client-list widget (iter 128b).
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.bg },

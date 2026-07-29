@@ -132,7 +132,7 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
   if (!state.has_roster) {
     return (
       <View style={styles.panel}>
-        <Text style={styles.title}>Engine V2 · Roster required</Text>
+        <Text style={styles.title}>Programme · Roster required</Text>
         <Text style={styles.sub}>Upload a roster to enable programme generation.</Text>
       </View>
     );
@@ -140,7 +140,7 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
   if (!state.has_active_draft) {
     return (
       <View style={styles.panel}>
-        <Text style={styles.title}>Engine V2 · No Draft</Text>
+        <Text style={styles.title}>Programme · No draft</Text>
         {state.has_active_live ? (
           <Text style={styles.sub}>
             Live plan {String(state.active_live_id || "").slice(0, 8)} is active. Build a new Draft to propose changes.
@@ -165,7 +165,7 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
     <View style={styles.panel}>
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Engine V2 Draft</Text>
+          <Text style={styles.title}>Programme Draft</Text>
           <Text style={styles.sub}>
             {cs?.status === "COMPLETE" ? "✅ Config Complete" : cs?.status === "PARTIAL" ? "⚠ Config Partial" : "❌ Config Missing"}
             {"  ·  "}
@@ -311,7 +311,7 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
               <View style={styles.ackRow}>
                 <Switch value={ackPartial} onValueChange={setAckPartial} />
                 <Text style={styles.ackLabel}>
-                  {"I acknowledge this goal's Engine V2 configuration is still being validated and I have reviewed this programme."}
+                  {"I acknowledge this goal's programme configuration is still being validated and I have reviewed this programme."}
                 </Text>
               </View>
             ) : null}

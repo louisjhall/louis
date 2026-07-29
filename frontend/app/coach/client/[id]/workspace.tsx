@@ -214,14 +214,9 @@ export default function CoachWorkspaceScreen() {
         <View style={{ flex: 1, marginLeft: 8 }}>
           <Text style={styles.clientName} numberOfLines={1}>{data?.client?.name || "…"}</Text>
           <View style={styles.subRow}>
-            {data?.client?.kind === "v1" && (
-              <View style={styles.kindPill}><Text style={styles.kindPillText}>Training Intelligence V1</Text></View>
-            )}
-            {data?.client?.kind === "v2" && (
-              <View style={[styles.kindPill, { backgroundColor: "#183020" }]}>
-                <Text style={[styles.kindPillText, { color: "#61c982" }]}>Training Intelligence V2</Text>
-              </View>
-            )}
+            {/* Iter 128b — V1/V2 kind pills removed from coach UX; those are
+                implementation concepts, not coach concepts. Kept the
+                programme meta so version + draft status still surface. */}
             {data?.programme?.present && (
               <Text style={styles.subMeta}>
                 {data.programme.timeline_class ? `${data.programme.timeline_class} · ` : ""}
@@ -231,6 +226,18 @@ export default function CoachWorkspaceScreen() {
             )}
           </View>
         </View>
+        {/* Client admin (Archive · Delete · Reset password · Coach assignment).
+            Lives in the legacy client page but is presented as "admin" from
+            the canonical workspace so there is one place a coach clicks. */}
+        <Pressable
+          onPress={() => router.push(`/coach/client/${clientId}` as any)}
+          style={styles.adminBtn}
+          testID="workspace-admin-btn"
+          accessibilityLabel="Client admin"
+        >
+          <Ionicons name="settings-outline" size={16} color={theme.color.textHi} />
+          <Text style={styles.adminBtnText}>ADMIN</Text>
+        </Pressable>
       </View>
 
       {/* Month selector + status ribbon */}
@@ -872,6 +879,23 @@ const styles = StyleSheet.create({
   },
   backBtn: { flexDirection: "row", alignItems: "center", padding: 4 },
   backTxt: { color: theme.color.textHi, marginLeft: 2 },
+  adminBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+  },
+  adminBtnText: {
+    color: theme.color.textHi,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    fontWeight: "800",
+  },
   clientName: { color: theme.color.textHi, fontSize: 22, fontWeight: "800" },
   subRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginTop: 2, gap: 8 },
   subMeta: { color: theme.color.textDim, fontSize: 12 },

@@ -61,18 +61,25 @@ export function CommandBar({
   month,
   draftId,
   onApplied,
+  defaultExpanded,
+  onClose,
 }: {
   clientId: string;
   month: string;
   draftId?: string;
   onApplied?: () => void;
+  /** Iter 128f — density pass. When true (toolbar-triggered mode), the
+   *  component opens expanded and the close button calls onClose instead
+   *  of collapsing to a permanent full-width row. */
+  defaultExpanded?: boolean;
+  onClose?: () => void;
 }) {
   const [text, setText] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(!defaultExpanded);
 
   const parse = useCallback(async () => {
     if (!text.trim()) return;
@@ -103,12 +110,13 @@ export function CommandBar({
       });
       setPreview(null);
       setText("");
-      setCollapsed(true);
+      if (defaultExpanded) { onClose?.(); }
+      else { setCollapsed(true); }
       onApplied?.();
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally { setBusy(false); }
-  }, [preview, selected, clientId, draftId, onApplied]);
+  }, [preview, selected, clientId, draftId, onApplied, defaultExpanded, onClose]);
 
   const clear = useCallback(() => {
     setPreview(null); setSelected({}); setError(null);
@@ -145,7 +153,10 @@ export function CommandBar({
               {busy && !preview ? <ActivityIndicator color="#000" /> :
                 <Text style={styles.sendBtnText}>Propose</Text>}
             </Pressable>
-            <Pressable onPress={() => { setCollapsed(true); clear(); setText(""); }} style={styles.iconBtn}>
+            <Pressable onPress={() => {
+              if (defaultExpanded) { clear(); setText(""); onClose?.(); }
+              else { setCollapsed(true); clear(); setText(""); }
+            }} style={styles.iconBtn}>
               <Ionicons name="close" size={18} color={theme.color.textDim} />
             </Pressable>
           </View>

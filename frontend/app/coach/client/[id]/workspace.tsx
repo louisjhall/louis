@@ -22,8 +22,11 @@ import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { CommandBar } from "@/src/components/CommandBar";
 import { DirectiveEditor } from "@/src/components/DirectiveEditor";
-import { GenerationStatusBanner } from "@/src/components/GenerationStatusBanner";
-import { ProgrammeSummaryPanel } from "@/src/components/ProgrammeSummaryPanel";
+import { ClientAdminDrawer } from "@/src/components/ClientAdminDrawer";
+// Iter 128f — density pass. Programme state now lives inline in the compact
+// EngineV2DraftPanel ribbon; the standalone GenerationStatusBanner and
+// ProgrammeSummaryPanel are no longer rendered in the Plan tab to reclaim
+// vertical space for the actual Roster/Plan grid.
 import { PublishPanel } from "@/src/components/PublishPanel";
 import { InlineWorkoutEditor } from "@/src/components/InlineWorkoutEditor";
 import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
@@ -125,10 +128,12 @@ export default function CoachWorkspaceScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [drawerAssignmentId, setDrawerAssignmentId] = useState<string | null>(null);
+  const [adminDrawerOpen, setAdminDrawerOpen] = useState(false);
   // Iter 117 — Coach flight-support override sheet target.
   const [fsSheet, setFsSheet] = useState<{ date: string; item: any } | null>(null);
   const [directiveOpen, setDirectiveOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<V2Tab>("plan");
 
   const loadMonths = useCallback(async () => {
@@ -205,111 +210,25 @@ export default function CoachWorkspaceScreen() {
 
   return (
     <View style={styles.root} testID="coach-workspace">
-      {/* Header */}
+      {/* Iter 128f — Compact client header (one row, ~44px).
+          State (LIVE / DRAFT / NO PLAN) lives in the EngineV2DraftPanel
+          ribbon below the tabs so it isn't duplicated up here. */}
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} style={styles.backBtn} testID="workspace-back">
-          <Ionicons name="chevron-back" size={20} color={theme.color.textHi} />
+          <Ionicons name="chevron-back" size={18} color={theme.color.textHi} />
           <Text style={styles.backTxt}>Back</Text>
         </Pressable>
-        <View style={{ flex: 1, marginLeft: 8 }}>
-          <Text style={styles.clientName} numberOfLines={1}>{data?.client?.name || "…"}</Text>
-          <View style={styles.subRow}>
-            {/* Iter 128b — V1/V2 kind pills removed from coach UX; those are
-                implementation concepts, not coach concepts. Kept the
-                programme meta so version + draft status still surface. */}
-            {data?.programme?.present && (
-              <Text style={styles.subMeta}>
-                {data.programme.timeline_class ? `${data.programme.timeline_class} · ` : ""}
-                v{data.programme.live_version_number || 0} live
-                {data.programme.draft_id ? " · draft available" : ""}
-              </Text>
-            )}
-          </View>
-        </View>
-        {/* Client admin (Archive · Delete · Reset password · Coach assignment).
-            Lives in the legacy client page but is presented as "admin" from
-            the canonical workspace so there is one place a coach clicks. */}
+        <Text style={styles.clientName} numberOfLines={1}>{data?.client?.name || "…"}</Text>
+        <View style={{ flex: 1 }} />
         <Pressable
-          onPress={() => router.push(`/coach/client/${clientId}` as any)}
+          onPress={() => setAdminDrawerOpen(true)}
           style={styles.adminBtn}
           testID="workspace-admin-btn"
           accessibilityLabel="Client admin"
         >
-          <Ionicons name="settings-outline" size={16} color={theme.color.textHi} />
+          <Ionicons name="settings-outline" size={14} color={theme.color.textHi} />
           <Text style={styles.adminBtnText}>ADMIN</Text>
         </Pressable>
-      </View>
-
-      {/* Month selector + status ribbon */}
-      <View style={styles.ribbon}>
-        <View style={styles.monthRow}>
-          <Pressable onPress={() => stepMonth(-1)} style={styles.monthBtn} testID="month-prev">
-            <Ionicons name="chevron-back" size={18} color={theme.color.textHi} />
-          </Pressable>
-          <Text style={styles.monthTitle}>{formatMonth(month)}</Text>
-          <Pressable onPress={() => stepMonth(1)} style={styles.monthBtn} testID="month-next">
-            <Ionicons name="chevron-forward" size={18} color={theme.color.textHi} />
-          </Pressable>
-          {months.length > 1 && (
-            <View style={styles.monthChipsWrap}>
-              {months.slice(0, 6).map((m) => (
-                <Pressable key={m} onPress={() => setMonth(m)} style={[styles.monthChip, m === month && styles.monthChipActive]}>
-                  <Text style={[styles.monthChipText, m === month && styles.monthChipTextActive]}>{formatMonth(m, true)}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
-        {data && (
-          <View style={styles.countRow}>
-            <CountPill label="Ready"        n={data.counts.ready}        kind="ready" />
-            <CountPill label="Review"       n={data.counts.review}       kind="review" />
-            <CountPill label="Conflict"     n={data.counts.conflict}     kind="conflict" />
-            <CountPill label="Approved"     n={data.counts.approved}     kind="approved" />
-            <CountPill label="Live"         n={data.counts.live}         kind="live" />
-            <CountPill label="Locked"       n={data.counts.locked}       kind="locked" />
-            {data.counts.ready > 0 && (
-              <Pressable style={styles.approveBtn} onPress={approveReady} disabled={busy} testID="approve-ready-btn">
-                <Text style={styles.approveBtnText}>{busy ? "Approving…" : `Approve ${data.counts.ready} Ready`}</Text>
-              </Pressable>
-            )}
-            <Pressable
-              style={styles.directiveBtn}
-              onPress={() => setDirectiveOpen(true)}
-              testID="add-directive-btn"
-            >
-              <Ionicons name="flag-outline" size={14} color={theme.color.textHi} />
-              <Text style={styles.directiveBtnText}>Add directive</Text>
-            </Pressable>
-            {!data.programme?.present && (
-              <Pressable
-                style={styles.publishBtn}
-                onPress={kickoffBuild}
-                disabled={busy}
-                testID="kickoff-build-btn"
-              >
-                <Ionicons name="flash" size={14} color="#000" />
-                <Text style={styles.publishBtnText}>{busy ? "Building…" : "Build plan"}</Text>
-              </Pressable>
-            )}
-            {data.programme?.present && data.programme?.draft_id && (
-              <Pressable
-                style={styles.publishBtn}
-                onPress={() => setPublishOpen(true)}
-                testID="publish-changes-btn"
-              >
-                <Ionicons name="rocket-outline" size={14} color="#000" />
-                <Text style={styles.publishBtnText}>Publish changes</Text>
-              </Pressable>
-            )}
-            <CoachRosterUploadButton
-              clientId={String(clientId)}
-              clientName={data.client?.name}
-              onComplete={loadMonth}
-              compact
-            />
-          </View>
-        )}
       </View>
 
       {/* V2 client tabs — Plan (default) + Check-ins / Messages / Progress / History / Goals */}
@@ -322,22 +241,73 @@ export default function CoachWorkspaceScreen() {
         />
       ) : (
       <>
-      {/* Engine V2 Draft panel — primary programme-management surface for V2 clients */}
+      {/* Iter 128f — One compact Plan toolbar (~44px) merges month
+          navigation with Directive / Ask CrewFit / Upload Roster and a
+          Ready-approval mini-pill when appropriate. Build/Publish live
+          in the EngineV2DraftPanel ribbon (below) so they aren't duplicated. */}
+      {data && (
+        <View style={styles.toolbar}>
+          <Pressable onPress={() => stepMonth(-1)} style={styles.monthBtn} testID="month-prev">
+            <Ionicons name="chevron-back" size={16} color={theme.color.textHi} />
+          </Pressable>
+          <Text style={styles.monthTitle}>{formatMonth(month)}</Text>
+          <Pressable onPress={() => stepMonth(1)} style={styles.monthBtn} testID="month-next">
+            <Ionicons name="chevron-forward" size={16} color={theme.color.textHi} />
+          </Pressable>
+          <View style={styles.toolbarDivider} />
+          <Pressable
+            style={styles.tbBtn}
+            onPress={() => setDirectiveOpen(true)}
+            testID="add-directive-btn"
+          >
+            <Ionicons name="flag-outline" size={13} color={theme.color.textHi} />
+            <Text style={styles.tbBtnText}>Directive</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.tbBtn, commandBarOpen && styles.tbBtnActive]}
+            onPress={() => setCommandBarOpen((v) => !v)}
+            testID="ask-crewfit-btn"
+          >
+            <Ionicons name="sparkles-outline" size={13} color={theme.color.brand} />
+            <Text style={[styles.tbBtnText, { color: theme.color.brand }]}>Ask CrewFit</Text>
+          </Pressable>
+          <CoachRosterUploadButton
+            clientId={String(clientId)}
+            clientName={data.client?.name}
+            onComplete={loadMonth}
+            compact
+          />
+          {data.counts?.ready > 0 && (
+            <Pressable
+              style={styles.approveMini}
+              onPress={approveReady}
+              disabled={busy}
+              testID="approve-ready-btn"
+            >
+              <Ionicons name="checkmark" size={13} color="#000" />
+              <Text style={styles.approveMiniText}>
+                {busy ? "…" : `Approve ${data.counts.ready} Ready`}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      {/* Iter 128f — Compact Engine V2 state ribbon (single row, collapsible).
+          Handles LIVE / DRAFT / NO PLAN / BUILDING states + quick actions
+          (Compare / Review / Publish / Rebuild) without a big permanent card. */}
       {data && <EngineV2DraftPanel clientId={String(clientId)} onPublished={loadMonth} />}
 
-      {/* Programme summary panel — expandable header with goal + phase strip */}
-      {data && <ProgrammeSummaryPanel clientId={String(clientId)} />}
-
-      {/* Pipeline / async generation status */}
-      {data && <GenerationStatusBanner clientId={String(clientId)} month={month} />}
-
-      {/* Command bar — works for both V1 and V2 clients (directives + notes) */}
-      {data && (
+      {/* Iter 128f — Ask CrewFit command bar. Hidden by default; opens on
+          toolbar button click and collapses back to its trigger on close. */}
+      {data && commandBarOpen && (
         <CommandBar
           clientId={String(clientId)}
           month={month}
           draftId={data?.programme?.draft_id}
           onApplied={loadMonth}
+          defaultExpanded
+          onClose={() => setCommandBarOpen(false)}
         />
       )}
 
@@ -351,7 +321,12 @@ export default function CoachWorkspaceScreen() {
           <Text style={styles.emptyBody}>Upload a roster from the client's profile, or ask them to upload one from their app.</Text>
         </View>
       ) : (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 80 }} testID="workspace-scroll">
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 60 }}
+          testID="workspace-scroll"
+          stickyHeaderIndices={isDesktop ? [0] : undefined}
+        >
           {isDesktop && (
             <View style={styles.colHead}>
               <Text style={[styles.colHeadText, { flex: 1 }]}>ROSTER / REAL LIFE</Text>
@@ -416,6 +391,11 @@ export default function CoachWorkspaceScreen() {
         visible={publishOpen}
         onClose={() => setPublishOpen(false)}
         onPublished={loadMonth}
+      />
+      <ClientAdminDrawer
+        visible={adminDrawerOpen}
+        onClose={() => setAdminDrawerOpen(false)}
+        clientId={String(clientId)}
       />
     </View>
   );
@@ -874,18 +854,19 @@ const styles = StyleSheet.create({
   emptyBody: { color: theme.color.textDim, textAlign: "center", maxWidth: 400 },
 
   header: {
-    flexDirection: "row", alignItems: "center", padding: 16, paddingBottom: 4,
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 14, paddingVertical: 8, gap: 6,
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
-  backBtn: { flexDirection: "row", alignItems: "center", padding: 4 },
-  backTxt: { color: theme.color.textHi, marginLeft: 2 },
+  backBtn: { flexDirection: "row", alignItems: "center", padding: 2, marginRight: 4 },
+  backTxt: { color: theme.color.textHi, marginLeft: 1, fontSize: 13 },
   adminBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 8,
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: theme.color.border,
     backgroundColor: theme.color.surface2,
@@ -896,19 +877,51 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
     fontWeight: "800",
   },
-  clientName: { color: theme.color.textHi, fontSize: 22, fontWeight: "800" },
+  clientName: { color: theme.color.textHi, fontSize: 17, fontWeight: "800" },
   subRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginTop: 2, gap: 8 },
   subMeta: { color: theme.color.textDim, fontSize: 12 },
   kindPill: { backgroundColor: "#22222c", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   kindPillText: { color: theme.color.textDim, fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
 
+  /* Iter 128f — compact plan toolbar (single row, ~44px). */
+  toolbar: {
+    flexDirection: "row", alignItems: "center", flexWrap: "wrap",
+    paddingHorizontal: 12, paddingVertical: 6, gap: 6,
+    backgroundColor: theme.color.surface2,
+    borderBottomWidth: 1, borderBottomColor: theme.color.border,
+  },
+  monthBtn: { padding: 4, borderRadius: 5, backgroundColor: "#00000030" },
+  monthTitle: {
+    color: theme.color.textHi, fontSize: 13, fontWeight: "700",
+    marginHorizontal: 4, minWidth: 100, textAlign: "center",
+  },
+  toolbarDivider: {
+    width: 1, height: 18, backgroundColor: theme.color.border,
+    marginHorizontal: 4,
+  },
+  tbBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 9, paddingVertical: 5, borderRadius: 6,
+    borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: "#00000030",
+  },
+  tbBtnActive: {
+    borderColor: theme.color.brand, backgroundColor: "rgba(219,58,74,0.10)",
+  },
+  tbBtnText: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
+  approveMini: {
+    marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: theme.color.brand, paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 6,
+  },
+  approveMiniText: { color: "#000", fontWeight: "800", fontSize: 11, letterSpacing: 0.3 },
+
+  /* Legacy (kept for callers we don't render now) */
   ribbon: {
     padding: 12, backgroundColor: theme.color.surface2,
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
   monthRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
-  monthBtn: { padding: 6, borderRadius: 6, backgroundColor: "#00000030" },
-  monthTitle: { color: theme.color.textHi, fontSize: 16, fontWeight: "700", marginHorizontal: 8, minWidth: 150 },
   monthChipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginLeft: 8 },
   monthChip: {
     backgroundColor: "#00000030", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
@@ -944,29 +957,33 @@ const styles = StyleSheet.create({
   },
   publishBtnText: { color: "#000", fontWeight: "800", fontSize: 12, letterSpacing: 0.3 },
   tabBar: {
-    flexDirection: "row", gap: 4, paddingHorizontal: 16, paddingVertical: 8,
+    flexDirection: "row", gap: 3, paddingHorizontal: 12, paddingVertical: 5,
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
     backgroundColor: theme.color.surface2, flexWrap: "wrap",
   },
   tabBtn: {
-    flexDirection: "row", alignItems: "center", gap: 5,
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6,
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5,
     borderWidth: 1, borderColor: "transparent",
   },
   tabBtnActive: {
     borderColor: theme.color.brand, backgroundColor: "#00000030",
   },
   tabBtnText: {
-    color: theme.color.textDim, fontSize: 12, fontWeight: "700",
+    color: theme.color.textDim, fontSize: 11.5, fontWeight: "700",
   },
   tabBtnTextActive: { color: theme.color.brand },
 
-  colHead: { flexDirection: "row", paddingHorizontal: 88, paddingTop: 12, paddingBottom: 6 },
+  colHead: {
+    flexDirection: "row", paddingHorizontal: 88, paddingTop: 8, paddingBottom: 6,
+    backgroundColor: theme.color.bg,
+    borderBottomWidth: 1, borderBottomColor: theme.color.border,
+  },
   colHeadText: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
 
   dayRow: {
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
-    paddingVertical: 10, paddingHorizontal: 12,
+    paddingVertical: 6, paddingHorizontal: 12,
   },
   dayRowDesktop: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
   dayRowMobile: { flexDirection: "column", gap: 8 },

@@ -1,12 +1,23 @@
 /**
- * GenerationStatusBanner — progressive pipeline stages for Roster→Plan build.
+ * GenerationStatusBanner — coach-product state ribbon.
  *
- * §24-25 of the build brief. Polls /generation/status while the pipeline
- * is running; auto-hides when idle and no recent errors.
+ * Iter 128e — replaces the permanent 8-stage pipeline card with a single
+ * product-state pill:
+ *
+ *   NO PLAN                — no draft, no live
+ *   BUILDING               — actively running kickoff (stages.*.state === "in_progress")
+ *   DRAFT NEEDS REVIEW     — latest plan_drafts_v2.status="needs_review" AND no fresher live
+ *   LIVE                   — plan_live_v2.active=true; no unpublished newer draft
+ *   LIVE + NEW DRAFT       — Live exists AND a newer unpublished Draft exists
+ *   LIVE + ROSTER CHANGED  — Live exists AND roster_changed attention unresolved
+ *
+ * Only during BUILDING do we show the technical stage progress dots. In every
+ * other state we show a single compact pill so the plan grid dominates the UX.
  */
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
@@ -17,15 +28,10 @@ type Stage = {
   detail?: string | number;
 };
 
-const LABELS: Record<string, string> = {
-  roster_uploaded:    "Roster uploaded",
-  roster_parsed:      "Roster parsed",
-  schedule_created:   "Schedule created",
-  planning_programme: "Planning programme",
-  generating_workouts:"Generating workouts",
-  validating:         "Validating",
-  ready_for_review:   "Ready for review",
-  published:          "Published",
+const BUILD_LABELS: Record<string, string> = {
+  planning_programme:  "Planning",
+  generating_workouts: "Building sessions",
+  validating:          "Validating",
 };
 
 export function GenerationStatusBanner({
@@ -34,21 +40,58 @@ export function GenerationStatusBanner({
   clientId: string;
   month?: string;
 }) {
+  const router = useRouter();
   const [data, setData] = useState<{ overall: string; stages: Stage[] } | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [product, setProduct] = useState<{
+    state: "no_plan" | "building" | "draft_needs_review" | "live" | "live_plus_draft" | "live_plus_roster_changed";
+    live?: any;
+    draft?: any;
+    roster_changed?: boolean;
+    exceptions_count?: number;
+  } | null>(null);
+  const [buildingSlow, setBuildingSlow] = useState(false);
 
   useEffect(() => {
     let mounted = true;
     let interval: any;
+    let buildStart: number | null = null;
     const tick = async () => {
       try {
-        const res = await api<{ overall: string; stages: Stage[] }>(
-          `/v2/coach/clients/${clientId}/generation/status${month ? `?month=${month}` : ""}`
-        );
+        const [gen, ws] = await Promise.all([
+          api<{ overall: string; stages: Stage[] }>(
+            `/v2/coach/clients/${clientId}/generation/status${month ? `?month=${month}` : ""}`
+          ).catch(() => null),
+          api<any>(`/v2/coach/clients/${clientId}/engine-v2/state`).catch(() => null),
+        ]);
         if (!mounted) return;
-        setData(res);
+        setData(gen || null);
+
+        const anyInProgress = (gen?.stages || []).some((s) => s.state === "in_progress");
+        const anyError = (gen?.stages || []).some((s) => s.state === "error");
+        const live = ws?.has_active_live ? { id: ws.active_live_id, planning_window: ws.roster_range, placements_count: ws.roster_range?.days } : null;
+        const draft = ws?.has_active_draft ? { id: ws.active_draft_id, status: ws.active_draft_status } : null;
+        // Roster-change / new-draft heuristics until dedicated endpoints exist.
+        const rosterChanged = !!(ws?.has_active_live && ws?.has_active_draft && (ws.active_draft_status === "needs_review"));
+        const newDraftAfterLive = rosterChanged;
+        const exceptionsCount = 0;
+
+        let productState: any;
+        if (anyInProgress) {
+          productState = "building";
+          if (buildStart === null) buildStart = Date.now();
+          setBuildingSlow((Date.now() - buildStart) > 45_000);
+        } else {
+          buildStart = null;
+          setBuildingSlow(false);
+          if (draft && !live) productState = "draft_needs_review";
+          else if (live && draft && newDraftAfterLive) productState = "live_plus_draft";
+          else if (live) productState = "live";
+          else if (anyError) productState = "no_plan";
+          else productState = "no_plan";
+        }
+        setProduct({ state: productState, live, draft, roster_changed: rosterChanged, exceptions_count: exceptionsCount });
       } catch {
-        /* silently ignore */
+        /* silent */
       }
     };
     tick();
@@ -56,98 +99,178 @@ export function GenerationStatusBanner({
     return () => { mounted = false; clearInterval(interval); };
   }, [clientId, month]);
 
-  if (!data) return null;
-  const hasActivity = data.stages.some((s) => s.state === "in_progress" || s.state === "error");
-  const showPublished = data.stages.find((s) => s.stage === "published" && s.state === "done");
-  if (!hasActivity && !data.stages.some((s) => s.state === "pending" && s.stage !== "published")) {
-    // Nothing pending & nothing running — show only if there's an error to surface.
-    if (!data.stages.some((s) => s.state === "error")) return null;
-  }
-  if (collapsed) {
+  if (!product) return null;
+
+  // BUILDING — show progress dots
+  if (product.state === "building" && data) {
+    const buildStages = data.stages.filter((s) => s.stage in BUILD_LABELS);
     return (
-      <Pressable style={styles.collapsed} onPress={() => setCollapsed(false)} testID="genstatus-open">
-        <Ionicons name="git-branch-outline" size={14} color={theme.color.textDim} />
-        <Text style={styles.collapsedText}>Pipeline status</Text>
-        <Ionicons name="chevron-down" size={14} color={theme.color.textDim} />
+      <View style={styles.buildingCard} testID="genstatus-building">
+        <View style={styles.buildingHead}>
+          <ActivityIndicator size="small" color={theme.color.brand} />
+          <Text style={styles.buildingTitle}>BUILDING PLAN</Text>
+          {buildingSlow && (
+            <Text style={styles.buildingSlow}>Taking longer than expected…</Text>
+          )}
+        </View>
+        <View style={styles.buildStages}>
+          {buildStages.map((s, i) => (
+            <View key={s.stage} style={styles.buildStage}>
+              <View style={[styles.dot, { backgroundColor: s.state === "done" ? "#61c982" : s.state === "in_progress" ? "#f5b543" : "#3a3a45" }]}>
+                {s.state === "done" && <Ionicons name="checkmark" size={10} color="#000" />}
+              </View>
+              <Text style={styles.buildLabel}>{BUILD_LABELS[s.stage]}</Text>
+              {i < buildStages.length - 1 && <View style={styles.buildRail} />}
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  // NO PLAN
+  if (product.state === "no_plan") {
+    return (
+      <View style={styles.pillNoPlan} testID="genstatus-no-plan">
+        <Ionicons name="calendar-outline" size={14} color={theme.color.textDim} />
+        <Text style={styles.pillTextDim}>NO PLAN</Text>
+        <Text style={styles.pillHint}>Upload roster and build a plan to get started.</Text>
+      </View>
+    );
+  }
+
+  // DRAFT NEEDS REVIEW (no live)
+  if (product.state === "draft_needs_review") {
+    return (
+      <Pressable
+        onPress={() => router.push(`/coach/engine-v2-draft/${clientId}` as any)}
+        style={styles.pillAmber}
+        testID="genstatus-draft-review"
+      >
+        <Ionicons name="alert-circle" size={14} color="#f5b543" />
+        <Text style={styles.pillTextAmber}>DRAFT READY FOR REVIEW</Text>
+        {product.exceptions_count ? (
+          <Text style={styles.pillHint}>{product.exceptions_count} issue{product.exceptions_count > 1 ? "s" : ""}</Text>
+        ) : null}
+        <Ionicons name="chevron-forward" size={14} color="#f5b543" />
       </Pressable>
     );
   }
 
-  return (
-    <View style={styles.wrap} testID="genstatus-banner">
-      <View style={styles.head}>
-        <Text style={styles.title}>PIPELINE STATUS</Text>
-        <Pressable onPress={() => setCollapsed(true)} testID="genstatus-close">
-          <Ionicons name="chevron-up" size={16} color={theme.color.textDim} />
+  // LIVE + NEW DRAFT
+  if (product.state === "live_plus_draft") {
+    return (
+      <View style={styles.livePlus} testID="genstatus-live-plus-draft">
+        <View style={styles.livePill}>
+          <Ionicons name="checkmark-circle" size={14} color="#61c982" />
+          <Text style={styles.pillTextGreen}>LIVE</Text>
+          {product.live?.planning_window?.start && (
+            <Text style={styles.pillHintTight}>{fmtMonth(product.live.planning_window.start)}</Text>
+          )}
+        </View>
+        <Pressable
+          onPress={() => router.push(`/coach/engine-v2-draft/${clientId}` as any)}
+          style={styles.newDraftPill}
+          testID="genstatus-review-new-draft"
+        >
+          <Ionicons name="alert-circle" size={14} color="#f5b543" />
+          <Text style={styles.pillTextAmber}>NEW DRAFT · REVIEW</Text>
+          <Ionicons name="chevron-forward" size={14} color="#f5b543" />
         </Pressable>
       </View>
-      <View style={styles.stagesRow}>
-        {data.stages.map((s, i) => (
-          <View key={s.stage} style={styles.stageCol}>
-            <View style={styles.stageDotRow}>
-              {i > 0 && <View style={[styles.rail, { backgroundColor: railColor(data.stages[i - 1]) }]} />}
-              <View style={[styles.dot, { backgroundColor: dotColor(s) }]}>
-                {s.state === "in_progress" ? (
-                  <ActivityIndicator size="small" color="#000" />
-                ) : s.state === "done" ? (
-                  <Ionicons name="checkmark" size={12} color="#000" />
-                ) : s.state === "error" ? (
-                  <Ionicons name="alert" size={12} color="#000" />
-                ) : null}
-              </View>
-              {i < data.stages.length - 1 && (
-                <View style={[styles.rail, { backgroundColor: railColor(s) }]} />
-              )}
-            </View>
-            <Text style={styles.stageLabel} numberOfLines={2}>{LABELS[s.stage] || s.stage}</Text>
-            {s.detail !== undefined && s.detail !== null && (
-              <Text style={styles.stageDetail} numberOfLines={2}>{String(s.detail)}</Text>
-            )}
-          </View>
-        ))}
+    );
+  }
+
+  // LIVE + ROSTER CHANGED
+  if (product.state === "live_plus_roster_changed") {
+    return (
+      <View style={styles.livePlus} testID="genstatus-live-roster-changed">
+        <View style={styles.livePill}>
+          <Ionicons name="checkmark-circle" size={14} color="#61c982" />
+          <Text style={styles.pillTextGreen}>LIVE</Text>
+        </View>
+        <View style={styles.rosterChangedPill}>
+          <Ionicons name="refresh" size={14} color="#5aa9e6" />
+          <Text style={styles.pillTextBlue}>ROSTER CHANGED · REBUILD DRAFT</Text>
+        </View>
       </View>
+    );
+  }
+
+  // LIVE (steady state)
+  return (
+    <View style={styles.livePill} testID="genstatus-live">
+      <Ionicons name="checkmark-circle" size={14} color="#61c982" />
+      <Text style={styles.pillTextGreen}>LIVE</Text>
+      {product.live?.placements_count !== undefined && (
+        <Text style={styles.pillHintTight}>{product.live.placements_count} placements</Text>
+      )}
+      {product.live?.planning_window?.start && (
+        <Text style={styles.pillHintTight}>· {fmtMonth(product.live.planning_window.start)}</Text>
+      )}
     </View>
   );
 }
 
-function dotColor(s: Stage): string {
-  switch (s.state) {
-    case "done":         return "#61c982";
-    case "in_progress":  return "#f5b543";
-    case "error":        return "#ff6b6b";
-    default:             return "#3a3a45";
-  }
-}
-function railColor(s: Stage): string {
-  switch (s.state) {
-    case "done":  return "#61c98255";
-    case "error": return "#ff6b6b55";
-    default:      return "#3a3a4555";
-  }
+function fmtMonth(iso?: string): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("default", { month: "short", year: "numeric" });
+  } catch { return ""; }
 }
 
 const styles = StyleSheet.create({
-  collapsed: {
-    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
-    backgroundColor: theme.color.surface2, borderRadius: 6, borderWidth: 1, borderColor: theme.color.border,
-    flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6,
-  },
-  collapsedText: { flex: 1, color: theme.color.textDim, fontSize: 11 },
-  wrap: {
+  buildingCard: {
     marginHorizontal: 12, marginTop: 8, marginBottom: 4,
     backgroundColor: theme.color.surface2, borderRadius: 8,
     borderWidth: 1, borderColor: theme.color.border, padding: 10,
   },
-  head: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
-  title: { flex: 1, color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
-  stagesRow: { flexDirection: "row", justifyContent: "space-between", gap: 4 },
-  stageCol: { flex: 1, alignItems: "center" },
-  stageDotRow: { flexDirection: "row", alignItems: "center", width: "100%", height: 24 },
-  rail: { flex: 1, height: 2 },
-  dot: { width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" },
-  stageLabel: {
-    color: theme.color.textHi, fontSize: 10, letterSpacing: 0.5, fontWeight: "700",
-    textAlign: "center", marginTop: 6,
+  buildingHead: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  buildingTitle: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", flex: 1 },
+  buildingSlow: { color: "#f5b543", fontSize: 10, fontStyle: "italic" },
+  buildStages: { flexDirection: "row", alignItems: "center", gap: 4 },
+  buildStage: { flexDirection: "row", alignItems: "center", gap: 4 },
+  buildLabel: { color: theme.color.textHi, fontSize: 10, fontWeight: "700" },
+  buildRail: { width: 12, height: 2, backgroundColor: "#3a3a45", marginHorizontal: 6 },
+  dot: { width: 16, height: 16, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+
+  pillNoPlan: {
+    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6,
   },
-  stageDetail: { color: theme.color.textDim, fontSize: 10, textAlign: "center", marginTop: 2 },
+  pillAmber: {
+    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "rgba(245,181,67,0.10)", borderWidth: 1, borderColor: "rgba(245,181,67,0.35)",
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6,
+  },
+  livePill: {
+    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "rgba(97,201,130,0.10)", borderWidth: 1, borderColor: "rgba(97,201,130,0.35)",
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6,
+  },
+  livePlus: {
+    marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+    flexDirection: "row", flexWrap: "wrap", gap: 6,
+  },
+  newDraftPill: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "rgba(245,181,67,0.10)", borderWidth: 1, borderColor: "rgba(245,181,67,0.35)",
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6,
+  },
+  rosterChangedPill: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: "rgba(90,169,230,0.10)", borderWidth: 1, borderColor: "rgba(90,169,230,0.35)",
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6,
+  },
+  pillTextDim:   { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.4, fontWeight: "800" },
+  pillTextGreen: { color: "#61c982", fontSize: 10, letterSpacing: 1.4, fontWeight: "800" },
+  pillTextAmber: { color: "#f5b543", fontSize: 10, letterSpacing: 1.4, fontWeight: "800" },
+  pillTextBlue:  { color: "#5aa9e6", fontSize: 10, letterSpacing: 1.4, fontWeight: "800" },
+  pillHint:      { color: theme.color.textDim, fontSize: 11, marginLeft: 4 },
+  pillHintTight: { color: theme.color.textDim, fontSize: 10, marginLeft: 4 },
 });

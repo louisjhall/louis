@@ -3,9 +3,10 @@
  * workspace. Reuses `feature_v2_engine_v2_publish` endpoints; no engine
  * changes.
  *
- * Renders inside the workspace Plan tab for engine_v2-flagged clients.
- * Opens exceptions and publish as bottom-sheet-style modals so the coach
- * never leaves the client workspace.
+ * Iter 128f — density pass. Renders as a single-line collapsible ribbon
+ * that summarises Live + Draft state and blocking-exception count. Details
+ * (config status, compare, exceptions, publish gate, rebuild) live in the
+ * expanded body so they don't permanently consume vertical space.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -19,6 +20,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
@@ -38,6 +40,7 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
   const [ackPartial, setAckPartial] = useState(false);
   const [coachNote, setCoachNote] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -121,87 +124,176 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
 
   if (loading) {
     return (
-      <View style={styles.panel}>
-        <ActivityIndicator color={theme.color.brand} />
+      <View style={styles.ribbonLoading}>
+        <ActivityIndicator size="small" color={theme.color.brand} />
       </View>
     );
   }
   if (!state) return null;
 
-  // Empty states
-  if (!state.has_roster) {
-    return (
-      <View style={styles.panel}>
-        <Text style={styles.title}>Programme · Roster required</Text>
-        <Text style={styles.sub}>Upload a roster to enable programme generation.</Text>
-      </View>
-    );
-  }
-  if (!state.has_active_draft) {
-    return (
-      <View style={styles.panel}>
-        <Text style={styles.title}>Programme · No draft</Text>
-        {state.has_active_live ? (
-          <Text style={styles.sub}>
-            Live plan {String(state.active_live_id || "").slice(0, 8)} is active. Build a new Draft to propose changes.
-          </Text>
-        ) : (
-          <Text style={styles.sub}>Ready to build a Draft against this roster.</Text>
-        )}
-        <Pressable style={styles.btnPrimary} onPress={kickoff} disabled={busy}
-                   testID="v2-build-plan">
-          <Text style={styles.btnPrimaryLabel}>{busy ? "Building…" : "Build plan"}</Text>
-        </Pressable>
-        {err ? <Text style={styles.err}>{err}</Text> : null}
-      </View>
-    );
-  }
-
-  // Draft exists
   const cs = exc?.goal_config_status;
-  const ok = exc?.programme_validation_ok;
+
+  // ---- Ribbon summary line (always compact) --------------------------------
+  const hasLive = !!state.has_active_live;
+  const hasDraft = !!state.has_active_draft;
+  const hasRoster = !!state.has_roster;
   const totalPlaced = (exc?.counts?.total || 0);
+
+  // Draft header pieces
+  const liveMonth = fmtMonth(state?.active_live?.planning_window?.start || state?.roster_range?.start);
+
   return (
-    <View style={styles.panel}>
-      <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Programme Draft</Text>
-          <Text style={styles.sub}>
-            {cs?.status === "COMPLETE" ? "✅ Config Complete" : cs?.status === "PARTIAL" ? "⚠ Config Partial" : "❌ Config Missing"}
-            {"  ·  "}
-            {unresolvedBlockers === 0
-              ? "✅ Ready to publish"
-              : `❌ ${unresolvedBlockers} to review`}
-          </Text>
+    <View style={styles.ribbonWrap} testID="engine-v2-ribbon">
+      {/* Compact single-line ribbon */}
+      <Pressable
+        style={styles.ribbon}
+        onPress={() => setExpanded((v) => !v)}
+        testID="engine-v2-ribbon-toggle"
+      >
+        {/* Left: state summary */}
+        <View style={styles.ribbonLeft}>
+          {!hasRoster ? (
+            <>
+              <Ionicons name="cloud-upload-outline" size={13} color={theme.color.textDim} />
+              <Text style={styles.stateDim}>NO ROSTER</Text>
+              <Text style={styles.stateHint}>Upload a roster to enable programme generation.</Text>
+            </>
+          ) : hasLive && hasDraft ? (
+            <>
+              <Ionicons name="checkmark-circle" size={13} color="#61c982" />
+              <Text style={styles.stateGreen}>LIVE</Text>
+              {liveMonth ? <Text style={styles.stateHint}>· {liveMonth}</Text> : null}
+              <Text style={styles.divider}>·</Text>
+              <Ionicons name="alert-circle" size={13} color="#f5b543" />
+              <Text style={styles.stateAmber}>NEW DRAFT</Text>
+              {unresolvedBlockers > 0 ? (
+                <Text style={styles.stateAmberSub}>· {unresolvedBlockers} NEED REVIEW</Text>
+              ) : (
+                <Text style={styles.stateGreenSub}>· READY TO PUBLISH</Text>
+              )}
+            </>
+          ) : hasDraft ? (
+            <>
+              <Ionicons name="alert-circle" size={13} color="#f5b543" />
+              <Text style={styles.stateAmber}>DRAFT</Text>
+              {unresolvedBlockers > 0 ? (
+                <Text style={styles.stateAmberSub}>· {unresolvedBlockers} NEED REVIEW</Text>
+              ) : (
+                <Text style={styles.stateGreenSub}>· READY TO PUBLISH</Text>
+              )}
+            </>
+          ) : hasLive ? (
+            <>
+              <Ionicons name="checkmark-circle" size={13} color="#61c982" />
+              <Text style={styles.stateGreen}>LIVE</Text>
+              {liveMonth ? <Text style={styles.stateHint}>· {liveMonth}</Text> : null}
+            </>
+          ) : (
+            <>
+              <Ionicons name="calendar-outline" size={13} color={theme.color.textDim} />
+              <Text style={styles.stateDim}>NO PLAN</Text>
+              <Text style={styles.stateHint}>Ready to build a Draft against this roster.</Text>
+            </>
+          )}
         </View>
-      </View>
-      <View style={styles.chipRow}>
-        <Pressable style={styles.chip} onPress={() => setShowExceptions(true)}
-                   testID="v2-review-issues">
-          <Text style={styles.chipLabel}>
-            {unresolvedBlockers > 0 ? `${unresolvedBlockers} Needs Review` : `Exceptions (${totalPlaced})`}
-          </Text>
-        </Pressable>
-        <Pressable style={styles.chip} onPress={() => setShowCompare(true)}
-                   testID="v2-compare">
-          <Text style={styles.chipLabel}>
-            Compare Live · {(cmp?.summary?.added || 0)}+ {(cmp?.summary?.removed || 0)}− {(cmp?.summary?.moved || 0)}↔ {(cmp?.summary?.changed || 0)}~
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.chip, canPublish ? styles.chipOk : styles.chipDisabled]}
-          disabled={!canPublish || busy}
-          onPress={() => setShowPublish(true)}
-          testID="v2-publish"
-        >
-          <Text style={styles.chipLabel}>{canPublish ? "Publish" : "Cannot publish"}</Text>
-        </Pressable>
-      </View>
-      <Pressable style={styles.rebuild} onPress={kickoff} disabled={busy}
-                 testID="v2-rebuild">
-        <Text style={styles.rebuildLabel}>{busy ? "Working…" : "↻ Rebuild draft"}</Text>
+
+        {/* Right: compact quick-actions + chevron */}
+        <View style={styles.ribbonRight}>
+          {hasDraft && (
+            <Pressable
+              style={styles.miniBtn}
+              onPress={(e) => { e.stopPropagation?.(); setShowCompare(true); }}
+              testID="v2-compare"
+            >
+              <Text style={styles.miniBtnText}>Compare</Text>
+            </Pressable>
+          )}
+          {hasDraft && unresolvedBlockers > 0 && (
+            <Pressable
+              style={[styles.miniBtn, styles.miniBtnAmber]}
+              onPress={(e) => { e.stopPropagation?.(); setShowExceptions(true); }}
+              testID="v2-review-issues"
+            >
+              <Text style={styles.miniBtnAmberText}>Review ({unresolvedBlockers})</Text>
+            </Pressable>
+          )}
+          {hasDraft && unresolvedBlockers === 0 && cs?.status !== "MISSING" && (
+            <Pressable
+              style={[styles.miniBtn, canPublish ? styles.miniBtnGreen : styles.miniBtn]}
+              onPress={(e) => { e.stopPropagation?.(); setShowPublish(true); }}
+              testID="v2-publish"
+            >
+              <Text style={canPublish ? styles.miniBtnGreenText : styles.miniBtnText}>Publish</Text>
+            </Pressable>
+          )}
+          {!hasDraft && hasRoster && (
+            <Pressable
+              style={[styles.miniBtn, styles.miniBtnBrand]}
+              onPress={(e) => { e.stopPropagation?.(); kickoff(); }}
+              disabled={busy}
+              testID="v2-build-plan"
+            >
+              <Text style={styles.miniBtnBrandText}>{busy ? "…" : "Build plan"}</Text>
+            </Pressable>
+          )}
+          <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={14} color={theme.color.textDim} />
+        </View>
       </Pressable>
-      {err ? <Text style={styles.err}>{err}</Text> : null}
+
+      {/* Expanded body */}
+      {expanded && (
+        <View style={styles.expandedBody}>
+          {hasDraft ? (
+            <>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Config</Text>
+                <Text style={styles.detailVal}>
+                  {cs?.status === "COMPLETE" ? "✅ Complete"
+                    : cs?.status === "PARTIAL" ? "⚠ Partial"
+                    : "❌ Missing"}
+                </Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Exceptions</Text>
+                <Text style={styles.detailVal}>
+                  {unresolvedBlockers > 0
+                    ? `❌ ${unresolvedBlockers} blocking · ${totalPlaced} total`
+                    : `✅ 0 blocking · ${totalPlaced} total`}
+                </Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Compare vs Live</Text>
+                <Text style={styles.detailVal}>
+                  {(cmp?.summary?.added || 0)}+  {(cmp?.summary?.removed || 0)}−  {(cmp?.summary?.moved || 0)}↔  {(cmp?.summary?.changed || 0)}~
+                </Text>
+              </View>
+              <View style={styles.expandActions}>
+                <Pressable style={styles.actionBtn} onPress={() => setShowExceptions(true)}>
+                  <Text style={styles.actionBtnText}>Review issues</Text>
+                </Pressable>
+                <Pressable style={styles.actionBtn} onPress={kickoff} disabled={busy} testID="v2-rebuild">
+                  <Text style={styles.actionBtnText}>{busy ? "…" : "Rebuild draft"}</Text>
+                </Pressable>
+              </View>
+              {err ? <Text style={styles.err}>{err}</Text> : null}
+            </>
+          ) : hasRoster ? (
+            <>
+              <Text style={styles.expandBody}>
+                {hasLive
+                  ? `Live plan ${String(state.active_live_id || "").slice(0, 8)} is active. Build a new Draft to propose changes.`
+                  : "Ready to build a Draft against this roster."}
+              </Text>
+              <Pressable style={styles.actionBtn} onPress={kickoff} disabled={busy}>
+                <Text style={styles.actionBtnText}>{busy ? "Building…" : "Build plan"}</Text>
+              </Pressable>
+              {err ? <Text style={styles.err}>{err}</Text> : null}
+            </>
+          ) : (
+            <Text style={styles.expandBody}>Upload a roster to enable programme generation.</Text>
+          )}
+        </View>
+      )}
 
       {/* Exceptions modal */}
       <Modal visible={showExceptions} transparent animationType="fade">
@@ -333,28 +425,78 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
   );
 }
 
+function fmtMonth(iso?: string): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("default", { month: "short", year: "numeric" });
+  } catch { return ""; }
+}
+
 const styles = StyleSheet.create({
-  panel: {
-    backgroundColor: theme.color.surface2, borderRadius: 12, padding: 14,
-    marginHorizontal: 16, marginTop: 12, marginBottom: 4,
-    borderWidth: 1, borderColor: theme.color.border,
+  ribbonWrap: {
+    borderBottomWidth: 1, borderBottomColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
   },
-  headerRow: { flexDirection: "row", alignItems: "center" },
-  title: { color: theme.color.textHi, fontWeight: "700", fontSize: 15 },
+  ribbonLoading: {
+    paddingVertical: 6, paddingHorizontal: 12,
+    borderBottomWidth: 1, borderBottomColor: theme.color.border,
+    backgroundColor: theme.color.surface2, alignItems: "flex-start",
+  },
+  ribbon: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 12, paddingVertical: 7, gap: 8,
+  },
+  ribbonLeft: {
+    flex: 1, flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap",
+  },
+  ribbonRight: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+  },
+  stateDim:    { color: theme.color.textDim, fontSize: 10.5, fontWeight: "800", letterSpacing: 1.3 },
+  stateGreen:  { color: "#61c982",          fontSize: 10.5, fontWeight: "800", letterSpacing: 1.3 },
+  stateAmber:  { color: "#f5b543",          fontSize: 10.5, fontWeight: "800", letterSpacing: 1.3 },
+  stateHint:   { color: theme.color.textDim, fontSize: 11 },
+  stateAmberSub: { color: "#f5b543", fontSize: 10.5, fontWeight: "700", letterSpacing: 1 },
+  stateGreenSub: { color: "#61c982", fontSize: 10.5, fontWeight: "700", letterSpacing: 1 },
+  divider:     { color: theme.color.border, fontSize: 12, marginHorizontal: 2 },
+
+  miniBtn: {
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
+    borderWidth: 1, borderColor: theme.color.border, backgroundColor: "#00000030",
+  },
+  miniBtnText: { color: theme.color.textHi, fontSize: 11, fontWeight: "700" },
+  miniBtnAmber: { borderColor: "rgba(245,181,67,0.55)", backgroundColor: "rgba(245,181,67,0.14)" },
+  miniBtnAmberText: { color: "#f5b543", fontSize: 11, fontWeight: "800" },
+  miniBtnGreen: { borderColor: "rgba(97,201,130,0.55)", backgroundColor: "rgba(97,201,130,0.14)" },
+  miniBtnGreenText: { color: "#61c982", fontSize: 11, fontWeight: "800" },
+  miniBtnBrand: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  miniBtnBrandText: { color: "#000", fontSize: 11, fontWeight: "800" },
+
+  expandedBody: {
+    paddingHorizontal: 12, paddingBottom: 10, paddingTop: 2,
+    gap: 6, backgroundColor: theme.color.surface2,
+  },
+  detailRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 3,
+  },
+  detailLabel: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700", width: 130 },
+  detailVal:   { color: theme.color.textHi, fontSize: 12, flex: 1 },
+  expandActions: {
+    flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap",
+  },
+  actionBtn: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
+    borderWidth: 1, borderColor: theme.color.border, backgroundColor: "#00000030",
+  },
+  actionBtnText: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
+  expandBody: { color: theme.color.textDim, fontSize: 12, marginBottom: 4 },
+  err: { color: theme.color.red, fontSize: 12, marginTop: 6 },
+
+  /* Modal shared */
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
   subHi: { color: theme.color.amber, fontWeight: "700", fontSize: 12, marginBottom: 2 },
-  err: { color: theme.color.red, fontSize: 12, marginTop: 6 },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  chip: { backgroundColor: theme.color.surface3, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 },
-  chipOk: { backgroundColor: theme.color.green },
-  chipDisabled: { backgroundColor: theme.color.surface3, opacity: 0.5 },
-  chipLabel: { color: theme.color.textHi, fontSize: 12, fontWeight: "600" },
-  rebuild: { marginTop: 10, alignSelf: "flex-start" },
-  rebuildLabel: { color: theme.color.textMuted, fontSize: 12 },
-  btnPrimary: { backgroundColor: theme.color.brand, paddingVertical: 10, paddingHorizontal: 16,
-                borderRadius: 8, marginTop: 12, alignSelf: "flex-start" },
-  btnPrimaryLabel: { color: "#fff", fontWeight: "700" },
-
   modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", padding: 16 },
   modalCard: { backgroundColor: theme.color.surface2, borderRadius: 12, padding: 16, maxHeight: "82%" },
   modalTitle: { color: theme.color.textHi, fontSize: 17, fontWeight: "700", marginBottom: 8 },

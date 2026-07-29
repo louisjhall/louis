@@ -524,6 +524,27 @@ async def endpoint_engine_v2_publish(
             and e.get("priority") in ("KEY", "IMPORTANT")
             and e.get("category") in ("unfilled_objective", "validator_error", "dna_gap")
         ]
+        # Iter 128e — CRITICAL safety fix. Previously, a Draft with
+        # validation.ok=False AND zero exceptions would silently fall through
+        # this gate (because `unresolved_blockers` would be an empty list and
+        # `if unresolved_blockers:` short-circuits). That represents a validator
+        # failure that was NEVER represented as an exception, so the coach has
+        # NOTHING to explicitly resolve. Block it deterministically.
+        if not exceptions:
+            raise HTTPException(422, {
+                "code": "validation_failed_no_exceptions",
+                "message": (
+                    "Draft validation failed but produced no exceptions. This "
+                    "represents a validator gap — the specific blocking finding "
+                    "has not been surfaced for coach resolution. Publish is not "
+                    "permitted. Rebuild the draft or contact the engine owner."
+                ),
+                "validation": {
+                    "ok": False,
+                    "issues": pv.get("issues") or pv.get("errors") or [],
+                    "detail": pv.get("detail"),
+                },
+            })
         if unresolved_blockers:
             raise HTTPException(422, {
                 "code": "unresolved_blocking_exceptions",

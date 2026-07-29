@@ -325,12 +325,31 @@ class PublishBody(BaseModel):
     scope: str = "selected"                 # 'selected' | 'all'
 
 
-@api.post("/v2/coach/clients/{client_id}/plan/publish")
+@api.post("/v2/coach/clients/{client_id}/plan/publish", deprecated=True)
 async def plan_publish(
     client_id: str,
     body: PublishBody,
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
+    """DEPRECATED — Iter 128e.
+
+    This is the older selective-publish path that writes to
+    `workout_assignments` and `plan_drafts` (not `plan_live_v2`). With zero
+    V1 clients on the platform, the canonical publish route is:
+
+        POST /v2/coach/clients/{client_id}/engine-v2/publish
+
+    which writes an immutable `plan_live_v2` row. The current coach UI now
+    routes exclusively through that path.
+
+    This endpoint is retained ONLY to avoid breaking any external caller
+    during the retirement window. It emits a warning header on every call.
+    """
+    import logging
+    logging.getLogger("crewfit").warning(
+        "DEPRECATED plan_publish endpoint called for client_id=%s. "
+        "Use /engine-v2/publish instead.", client_id,
+    )
     """Selectively publish (promote) chosen draft assignments + accept/reject
     change_sets. Creates ONE new plan_version + snapshot capturing the
     accepted set. Rejected change_sets never become live.

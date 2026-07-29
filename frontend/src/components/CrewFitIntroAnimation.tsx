@@ -45,7 +45,22 @@ export async function queueIntroForNextMount(reason: "onboarded" | "cold_launch"
 }
 
 async function shouldPlayIntro(): Promise<boolean> {
+  // ITER 125-DIAG — BUNDLE 0946 diagnostic override.
+  // Force the intro gate to run on every fresh JS runtime so the diagnostic
+  // screen appears on every cold launch, independent of the persisted
+  // crewfit_intro_last_played_at timestamp.
+  //
+  // We still respect `alreadyPlayedThisSession` so the diagnostic doesn't
+  // re-fire on foreground-return within the same session (which would loop
+  // the 8-second screen every time you background/foreground the app).
+  //
+  // The normal 12-hour implementation below is intentionally preserved —
+  // it will be re-enabled by removing this early return once we exit
+  // diagnostic mode.
   if (alreadyPlayedThisSession) return false;
+  return true;
+
+  // eslint-disable-next-line no-unreachable
   try {
     const pending = await AsyncStorage.getItem(KEY_PENDING);
     if (pending) {

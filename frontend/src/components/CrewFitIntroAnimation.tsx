@@ -41,7 +41,6 @@ import {
 } from "react-native";
 import { VideoView, useVideoPlayer } from "expo-video";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { usePathname } from "expo-router";
 import { theme } from "@/src/lib/theme";
 
 const INTRO_SOURCE = require("@/assets/louis/intro.mp4");
@@ -92,43 +91,12 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
   const [visible, setVisible] = useState(false);
   const [errored, setErrored] = useState(false);
   const opacity = useRef(new Animated.Value(1)).current;
-  const pathname = usePathname();
-
-  // Iter 124 — Routes on which the intro splash MUST NOT fire. These are
-  // pre-auth / onboarding screens where a full-screen video overlay would
-  // clash with the content underneath (welcome.tsx has its own Louis video,
-  // login/signup need immediate interactivity, etc.). The intro is a
-  // "welcome to the dashboard" moment — not a cold-launch overlay.
-  const isPreAuthRoute = (() => {
-    const p = (pathname || "").toLowerCase();
-    if (!p || p === "/") return true;
-    return (
-      p.startsWith("/welcome") ||
-      p.startsWith("/atlas-intro") ||
-      p.startsWith("/(auth)") ||
-      p.startsWith("/login") ||
-      p.startsWith("/signup") ||
-      p.startsWith("/assessment") ||
-      p.startsWith("/coaching-dna") ||
-      p.startsWith("/guard-rails") ||
-      p.startsWith("/reality-history") ||
-      p.startsWith("/training-setup") ||
-      p.startsWith("/first-day-choice") ||
-      p.startsWith("/hotel-setup") ||
-      p.startsWith("/legal")
-    );
-  })();
 
   // Decide on first mount whether to show the intro. We DON'T mount the
   // video player at all until we've decided — this keeps startup lean for
   // the 99% of screens that won't be showing it.
   useEffect(() => {
     (async () => {
-      // Never fire during the pre-auth / onboarding flow.
-      if (isPreAuthRoute) {
-        setDecided(true);
-        return;
-      }
       const play = await shouldPlayIntro();
       if (play) {
         alreadyPlayedThisSession = true;
@@ -136,14 +104,7 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
       }
       setDecided(true);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // On pre-auth routes, render children immediately with no overlay and
-  // no loading tile — the intro is only ever a post-login dashboard moment.
-  if (isPreAuthRoute) {
-    return <View style={{ flex: 1 }}>{children}</View>;
-  }
 
   if (!decided) {
     // Very brief — while AsyncStorage resolves. Render a black tile

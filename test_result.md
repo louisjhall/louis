@@ -3585,7 +3585,7 @@ agent_communication:
 
 
 ##====================================================================
-## Iter 128b — Flight Support Variety Engine + Coach Media Queue Matrix
+## Iter 128b — Flight Support Variety Engine + PILOT Persona (in uniform)
 ##====================================================================
 
 backend:
@@ -3600,43 +3600,19 @@ backend:
       - working: "NA"
         agent: "main"
         comment: |
-          Replaced the hardcoded single-protocol-per-trigger with a deterministic
+          Replaced hardcoded single-protocol-per-trigger with a deterministic
           Variety Engine. Added `POOLS` mapping every trigger context to a list
-          of safety-equivalent alternates (pre_flight_light has 5 options,
-          post_flight_reset 4, layover_full 3, movement_break 3, arrival_mobility 2,
-          turnaround_reset 2). Added 11 NEW ProtocolSpecs (breathing, neck/shoulder,
-          hip opener, gentle stretch, legs-up-wall, longer explore/park walks,
-          micro-stretch, walking break, arrival breathing, turnaround breathing) so
-          there is genuine variety. Added `restricted_regions` + `required_equipment`
-          + `environment` fields on ProtocolSpec.
+          of safety-equivalent alternates. Added 11 new ProtocolSpecs. Added
+          `restricted_regions` + `required_equipment` + `environment` fields.
+          `pick_from_pool()` implements: Safety → Equipment → Time → Objective →
+          Environment → Recency (5-session lookback) → deterministic hash tie-
+          break. `select_interventions_for_day` + `get_flight_support_by_date`
+          now history-aware. Backward-compatible.
 
-          `pick_from_pool()` implements the priority order requested by the user:
-          Safety → Suitability (equipment/env) → Context/Time → Objective (family match)
-          → Environment preference → Media availability (deferred) → Recent repetition
-          penalty → Deterministic hash tiebreak. Recent-repetition penalty scales
-          with recency (newest use = -10, oldest in window = -2). Lookback = 5
-          (matches "recommended" per user).
-
-          `select_interventions_for_day` now accepts `user_id`, `history_keys`,
-          `restrictions`, `equipment_available` (all optional, backward-compatible).
-          `get_flight_support_by_date` loads history from `flight_support_activity`
-          (newest 5 protocol_keys) + injury regions from profile.injuries /
-          persistent_restrictions + equipment from profile.equipment BEFORE
-          calling the selector.
-
-          Unit-checked locally:
-            - Deterministic (same inputs → same key).
-            - Different dates → different picks (per-date tiebreak).
-            - Knee restriction → hip_opener excluded.
-            - History of [breathing, neck_shoulder, mobility] → picks activation next.
-
-          Endpoint contract unchanged. Interventions now include `pool_key` for
-          future coach overrides.
-
-  - task: "GET /api/coach/flight-support/media-queue (P1)"
+  - task: "PILOT persona in Exercise Content editor + generator (P1)"
     implemented: true
     working: "NA"
-    file: "backend/feature_flight_support_media.py"
+    file: "backend/feature_exercise_content.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: true
@@ -3644,36 +3620,42 @@ backend:
       - working: "NA"
         agent: "main"
         comment: |
-          New coach-only endpoint that returns the Media Queue matrix. Reads
-          from `db.media_queue` (rows created by resolve_flight_support_frames
-          when a Flight Support exercise is missing preferred-persona media).
+          Added a THIRD persona (`pilot`) to the existing Exercise Content
+          generator so Louis can create pilot-in-uniform frames alongside
+          MALE-LOUIS and FEMALE without rebuilding anything.
 
-          Query params:
-            status=all|needs_media|complete
-            persona_missing=any|pilot|louis|female  (filter rows lacking that persona)
-            search=<substring>
-            limit=<int, default 200>
-
-          Response shape:
-            { items: [{ exercise_id, exercise_name, status, preferred_persona,
-                        matrix: { pilot|louis|female : { start|mid|end : bool } },
-                        missing: { persona: [missing slots] },
-                        covered, total_cells, flight_support_contexts, updated_at }],
-              stats: { total, needs_media, complete, pilot_missing_count,
-                       louis_missing_count, female_missing_count } }
-
-          Sort key: PILOT-missing first, then LOUIS, then FEMALE, then complete.
-          Coach role guard: 403 for anyone not in ('coach','admin').
-
-          Manually verified: created 3 test rows (Dumbbell Row, Goblet Squat,
-          Push-Up), endpoint returns them ordered by PILOT-missing count with
-          correct matrix cells and stats.
+          Backend deltas (feature_exercise_content.py):
+            - Added `EXERCISE_STYLE_PILOT` — white pilot shirt, black-and-gold
+              captain epaulettes, black tie, black pilot trousers, black
+              leather shoes, same black-brick studio backdrop for visual
+              consistency with the rest of the library.
+            - `GenImageBody` extended with `persona: Optional[str]` (values
+              "male"|"female"|"pilot"). Legacy `female` bool still accepted
+              and mapped through `_resolve_persona()`.
+            - `_build_ex_prompt` now takes `persona=` and dispatches to
+              `_style_for_persona()`.
+            - `/exercise-content/{id}/generate-image` writes to a per-persona
+              map:
+                male   → demo_slots + primary_image_id / demo_start_image_id …
+                female → demo_slots_female + *_female_id mirrors
+                pilot  → demo_slots_pilot  + *_pilot_id  mirrors
+              PILOT never overwrites Louis's default frames.
+            - `exercise_content_images` records now carry both `gender`
+              (legacy) and `persona` (new) so the Flight Support media
+              resolver (feature_flight_support_media.py) picks up pilot
+              frames without any resolver changes.
+            - `/image-prompt` accepts `persona=` query param.
+            - `_default_status_flags` seeds `demo_slots_pilot: {}` for new
+              exercises.
+            - Louis identity reference photo is attached ONLY for
+              persona==male; pilot uses text-only prompt (uniform detail is
+              fully described in EXERCISE_STYLE_PILOT).
 
 frontend:
-  - task: "Coach Media Queue Matrix UI (P1)"
+  - task: "Exercise Content editor — PILOT · UNIFORM chip"
     implemented: true
     working: true
-    file: "frontend/app/(coach)/media-queue.tsx"
+    file: "frontend/app/coach/exercise-content.tsx"
     stuck_count: 0
     priority: "high"
     needs_retesting: true
@@ -3681,33 +3663,51 @@ frontend:
       - working: true
         agent: "main"
         comment: |
-          New desktop-only coach screen at /(coach)/media-queue. Registered in
-          the DesktopShell sidebar with `images-outline` icon between Videos
-          and Messages, and hidden from mobile tabs via href:null.
+          Added a third persona chip "PILOT · UNIFORM" beside MALE-LOUIS and
+          FEMALE in the DEMO IMAGES section. All existing behaviour preserved.
 
-          Screen layout:
-            - Header with "PERSONA COVERAGE" title.
-            - Stats strip: 6 pills (TOTAL, NEEDS MEDIA, COMPLETE, PILOT ✕,
-              LOUIS ✕, FEMALE ✕).
-            - Filter row: search input + status chips (ALL/NEEDS/COMPLETE) +
-              persona-missing chips (ANY/PILOT/LOUIS/FEMALE).
-            - Card list: one per exercise with 3×3 matrix cells showing ✓/✗ per
-              (persona × slot). Preferred persona label highlighted in brand red.
-              Complete rows show green pill; needs-media rows show amber pill.
-            - Tap → deep-links to /(coach)/exercises with the exercise name so
-              the coach can upload/generate the missing frames using the
-              existing editor + Nano Banana button.
+          - State renamed `genGender` → `genPersona` with the union
+            "male"|"female"|"pilot"; legacy alias `genGender` kept so no other
+            call-site needs to change.
+          - `Exercise` type extended with `demo_slots_pilot`, `primary_pilot_id`,
+            `demo_start_pilot_id`, `demo_end_pilot_id`.
+          - Prompt-preview modal fetches `/image-prompt?persona=…` and the
+            title now shows "Male · Louis" / "Female" / "Pilot · Uniform".
+          - Generate flow POSTs `{ slot, persona, female }` (female kept for
+            back-compat with older middleware).
+          - `imageIdForSlot(ex, slot, persona)` routes to the correct
+            per-persona map + legacy mirror fields.
+          - Hint text: "Airline pilot · white shirt, black tie, epaulettes".
+          - No new screens, no new nav items. Existing MISSING filter on the
+            Library page continues to surface Flight Support exercises with
+            no additional plumbing needed — they were already appearing there.
 
-          Screenshot verified end-to-end on 1440×900: Louis coach signed in,
-          sidebar "Media Queue" active, 3 exercises rendered with correct
-          matrix cells, PILOT column all-red (missing), LOUIS partial, filters
-          responsive. Pull-to-refresh + focus-effect re-load working.
+          Verified via screenshot on 1440×900: chip renders, activates, and
+          the pilot-in-uniform PRIMARY / END frames that had already been
+          generated for "Cat-cow x 6" render correctly under the PILOT chip.
+
+  - task: "REVERTED — new /(coach)/media-queue screen and endpoint"
+    implemented: false
+    working: "NA"
+    file: "n/a"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Rolled back the unrequested Media Queue screen + `/api/coach/
+          flight-support/media-queue` endpoint added earlier in this
+          iteration. User already has a working Library "MISSING" queue —
+          the ask was to add the PILOT persona to that existing flow, not
+          rebuild anything.
 
 test_plan:
   current_focus:
     - "Flight Support Variety Engine — deterministic rotation, safety filter, history penalty"
-    - "GET /api/coach/flight-support/media-queue — coach guard, matrix + stats shape"
-    - "Coach Media Queue Matrix UI — filters + tap-through to exercise editor"
+    - "PILOT persona generator — prompt, storage layout, per-persona slot maps"
+    - "Exercise editor PILOT chip — chip renders, persona flows through generate + preview"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -3715,37 +3715,45 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Iter 128b delivered two P0/P1 items from the Flight Support Beta upgrade:
+      Iter 128b (revised) delivered two items:
 
       (1) Variety / Rotation Engine (backend, feature_aviation_support.py):
-      Replaced fixed protocol-per-trigger with deterministic pool selection.
-      11 new alternate protocols added (breathing, neck/shoulder, hip opener,
-      gentle stretch, legs-up-wall, park walk, longer explore walk, micro-
-      stretch, walking break, arrival breathing, turnaround breathing).
-      Priority order enforced: Safety → Equipment → Time → Objective →
-      Environment → Recency → Deterministic tiebreak. 5-session lookback
-      from flight_support_activity. Backward-compatible signature — existing
-      callers still work. Coach interventions now carry `pool_key`.
+      Deterministic pool selection with 11 new alternate protocols; priority
+      order Safety → Equipment → Time → Objective → Environment → Recency →
+      Deterministic tiebreak; 5-session lookback from flight_support_activity;
+      backward-compatible signature.
 
-      (2) Coach Media Queue Matrix (backend + frontend):
-      - GET /api/coach/flight-support/media-queue returns the persona × slot
-        matrix + stats, sorted PILOT-missing first.
-      - Desktop-only coach screen at /(coach)/media-queue with filter chips,
-        search, and tap-to-editor deep link.
+      (2) PILOT persona in the EXISTING Exercise Content editor:
+      Added a third persona chip in the DEMO IMAGES section. Backend
+      generator, storage, and image-prompt preview all now support
+      persona ∈ {male, female, pilot}. Pilot images live in their own
+      `demo_slots_pilot` map and never overwrite Louis's default frames.
+      `exercise_content_images` records carry `persona` so the Flight
+      Support media resolver picks them up automatically.
+
+      Rolled back an incorrectly-added Media Queue screen — user's
+      existing Library MISSING filter continues to serve as the queue.
 
       Please TEST:
       Backend:
-        (a) /client/today & /client/flight-support show variety-picked keys
-            for the reviewer / pietro accounts, with pool_key populated.
-        (b) /coach/flight-support/media-queue with different filters returns
-            the correct sort + stats + matrix cells + coach guard.
-        (c) Variety engine determinism: same user + roster → same picks
-            across restarts; different dates rotate; history reshuffles.
-        (d) Restrictions: user with `injuries: 'knee pain'` never gets
-            hip_opener or activation.
+        (a) Variety engine determinism + rotation + safety filter (see
+            behaviour spec in comments above).
+        (b) POST /exercise-content/{id}/generate-image with
+            `body: { slot: "primary", persona: "pilot" }` creates an
+            `exercise_content_images` row with `persona="pilot"` and writes
+            image_id into `demo_slots_pilot.primary` on the exercise doc.
+            Legacy fields (primary_image_id, demo_start_image_id, demo_end_
+            image_id) MUST NOT be overwritten when persona=pilot.
+        (c) GET /exercise-content/{id}/image-prompt?persona=pilot returns
+            a prompt containing "airline pilot", "epaulettes", "white",
+            "tie" — confirms EXERCISE_STYLE_PILOT is wired.
+        (d) Old callers passing only `female: true` still work (persona
+            resolves to "female").
       Frontend:
-        (e) Sidebar nav Media Queue renders on wide viewport, is hidden from
-            mobile tabs.
-        (f) Matrix cells accurate, sort order correct (PILOT-missing first),
-            chip filters re-query correctly, tap navigates to exercise editor.
-
+        (e) Login as louis@crewfit.net → Library → any exercise → DEMO
+            IMAGES row shows THREE chips: MALE · LOUIS, FEMALE, PILOT ·
+            UNIFORM. Clicking PILOT activates, hint changes to "Airline
+            pilot · white shirt, black tie, epaulettes".
+        (f) When PILOT is active and coach clicks GENERATE on a slot, the
+            prompt-preview modal title reads "… · Pilot · Uniform" and
+            the prompt body describes the pilot uniform.

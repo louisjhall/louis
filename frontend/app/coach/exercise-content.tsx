@@ -43,6 +43,11 @@ type Exercise = {
   // Movement-aware image slots — supports bottom / top / apex / etc.
   demo_slots?: Record<string, string | null>;
   demo_slots_female?: Record<string, string | null>;
+  // Iter 128c — Pilot-in-uniform frames for Flight Support exercises.
+  demo_slots_pilot?: Record<string, string | null>;
+  primary_pilot_id?: string | null;
+  demo_start_pilot_id?: string | null;
+  demo_end_pilot_id?: string | null;
   required_slots?: string[];
   movement_pattern?: string;
   category?: string;
@@ -104,10 +109,14 @@ export default function ExerciseContentScreen() {
   // Image generation — prompt-preview modal (cross-platform; Alert.alert
   // collapses on web preview to a single "OK" which was the root cause of
   // the REGEN buttons appearing broken).
-  const [genGender, setGenGender] = useState<"male" | "female">("male");
+  // Iter 128c — three-way persona toggle (male-louis / female / pilot in
+  // uniform). Legacy state name `genGender` retained via alias below to
+  // minimise touch-diff.
+  const [genPersona, setGenPersona] = useState<"male" | "female" | "pilot">("male");
+  const genGender = genPersona; // legacy alias for existing code paths
   const [promptModal, setPromptModal] = useState<null | {
     slot: "primary" | "start" | "end" | "mid" | "top" | "bottom" | "apex" | "stretch" | "loaded" | "finish";
-    gender: "male" | "female";
+    persona: "male" | "female" | "pilot";
     prompt: string;
     cost: number;
     extra: string;
@@ -160,12 +169,11 @@ export default function ExerciseContentScreen() {
     // cost BEFORE anything is generated.
     setBusy(`prompt-${slot}`);
     try {
-      const female = genGender === "female";
-      const q = new URLSearchParams({ slot, female: female ? "true" : "false" }).toString();
+      const q = new URLSearchParams({ slot, persona: genPersona }).toString();
       const preview = await api<any>(`/exercise-content/${detail.id}/image-prompt?${q}`);
       setPromptModal({
         slot,
-        gender: genGender,
+        persona: genPersona,
         prompt: preview?.prompt || "",
         cost: Number(preview?.estimated_cost_usd ?? 0.039),
         extra: "",
@@ -179,7 +187,7 @@ export default function ExerciseContentScreen() {
 
   const firePromptModal = async () => {
     if (!detail || !promptModal) return;
-    const { slot, gender, extra } = promptModal;
+    const { slot, persona, extra } = promptModal;
     setBusy(`gen-${slot}`);
     setPromptModal(null);
     try {
@@ -189,7 +197,9 @@ export default function ExerciseContentScreen() {
           method: "POST",
           body: {
             slot,
-            female: gender === "female",
+            persona,
+            // Keep legacy `female` bool populated for any older middleware.
+            female: persona === "female",
             ...(extra.trim() ? { prompt_extra: extra.trim() } : {}),
           },
         },
@@ -408,23 +418,35 @@ export default function ExerciseContentScreen() {
               <Text style={styles.sect}>DEMO IMAGES</Text>
               <View style={styles.genderRow}>
                 <Pressable
-                  onPress={() => setGenGender("male")}
-                  style={[styles.gChip, genGender === "male" && styles.gChipActive]}
-                  testID="gen-gender-male"
+                  onPress={() => setGenPersona("male")}
+                  style={[styles.gChip, genPersona === "male" && styles.gChipActive]}
+                  testID="gen-persona-male"
                 >
-                  <Ionicons name="man" size={12} color={genGender === "male" ? "#fff" : theme.color.textMuted} />
-                  <Text style={[styles.gChipT, genGender === "male" && { color: "#fff" }]}>MALE · LOUIS</Text>
+                  <Ionicons name="man" size={12} color={genPersona === "male" ? "#fff" : theme.color.textMuted} />
+                  <Text style={[styles.gChipT, genPersona === "male" && { color: "#fff" }]}>MALE · LOUIS</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => setGenGender("female")}
-                  style={[styles.gChip, genGender === "female" && styles.gChipActive]}
-                  testID="gen-gender-female"
+                  onPress={() => setGenPersona("female")}
+                  style={[styles.gChip, genPersona === "female" && styles.gChipActive]}
+                  testID="gen-persona-female"
                 >
-                  <Ionicons name="woman" size={12} color={genGender === "female" ? "#fff" : theme.color.textMuted} />
-                  <Text style={[styles.gChipT, genGender === "female" && { color: "#fff" }]}>FEMALE</Text>
+                  <Ionicons name="woman" size={12} color={genPersona === "female" ? "#fff" : theme.color.textMuted} />
+                  <Text style={[styles.gChipT, genPersona === "female" && { color: "#fff" }]}>FEMALE</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setGenPersona("pilot")}
+                  style={[styles.gChip, genPersona === "pilot" && styles.gChipActive]}
+                  testID="gen-persona-pilot"
+                >
+                  <Ionicons name="airplane" size={12} color={genPersona === "pilot" ? "#fff" : theme.color.textMuted} />
+                  <Text style={[styles.gChipT, genPersona === "pilot" && { color: "#fff" }]}>PILOT · UNIFORM</Text>
                 </Pressable>
                 <Text style={styles.genderHint}>
-                  {genGender === "male" ? "Louis reference locked · red shoes" : "Athletic female · red shoes"}
+                  {genPersona === "male"
+                    ? "Louis reference locked · red shoes"
+                    : genPersona === "female"
+                    ? "Athletic female · red shoes"
+                    : "Airline pilot · white shirt, black tie, epaulettes"}
                 </Text>
               </View>
 
@@ -630,7 +652,11 @@ export default function ExerciseContentScreen() {
           <View style={styles.pmGrabber} />
           <Text style={styles.pmTitle}>
             Generate {promptModal?.slot?.toUpperCase()} image ·{" "}
-            {promptModal?.gender === "female" ? "Female" : "Male · Louis"}
+            {promptModal?.persona === "female"
+              ? "Female"
+              : promptModal?.persona === "pilot"
+              ? "Pilot · Uniform"
+              : "Male · Louis"}
           </Text>
           <Text style={styles.pmCost}>
             Estimated cost: ${promptModal?.cost.toFixed(3)} · 1 image credit
@@ -739,16 +765,32 @@ function resolveRequiredSlots(ex: Exercise): string[] {
   return defaultSlotsForMovement(ex);
 }
 
-function imageIdForSlot(ex: Exercise, slot: string, gender: "male" | "female"): string | null | undefined {
-  // Legacy fields for start/end/primary stay in sync — prefer them so
-  // existing readers keep working. Fall back to the demo_slots map.
-  const legacy: Record<string, string | null | undefined> = {
+function imageIdForSlot(
+  ex: Exercise, slot: string,
+  persona: "male" | "female" | "pilot",
+): string | null | undefined {
+  // Legacy fields for start/end/primary stay in sync for the DEFAULT
+  // (male-louis) persona — prefer them so existing readers keep working.
+  // Female and Pilot personas live in their own maps and never overwrite
+  // Louis's default frames.
+  const legacyMale: Record<string, string | null | undefined> = {
     primary: ex.primary_image_id,
     start:   ex.demo_start_image_id,
     end:     ex.demo_end_image_id,
   };
-  const map = gender === "female" ? (ex.demo_slots_female || {}) : (ex.demo_slots || {});
-  return map[slot] || legacy[slot] || null;
+  const legacyPilot: Record<string, string | null | undefined> = {
+    primary: ex.primary_pilot_id,
+    start:   ex.demo_start_pilot_id,
+    end:     ex.demo_end_pilot_id,
+  };
+  const map =
+    persona === "female"
+      ? (ex.demo_slots_female || {})
+      : persona === "pilot"
+      ? (ex.demo_slots_pilot || {})
+      : (ex.demo_slots || {});
+  const legacy = persona === "pilot" ? legacyPilot : persona === "male" ? legacyMale : {};
+  return (map as Record<string, string | null | undefined>)[slot] || (legacy as Record<string, string | null | undefined>)[slot] || null;
 }
 
 function SlotPicker({

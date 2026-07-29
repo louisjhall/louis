@@ -102,6 +102,40 @@ EXERCISE_STYLE_FEMALE = (
     "pose, no obvious AI hands or feet artefacts."
 )
 
+# Pilot persona — for Flight Support exercises. Pilots are demonstrated
+# IN UNIFORM so the visual context matches the pre/post/turnaround
+# scenario the client is actually in. We keep the same premium-dark
+# studio look and brick backdrop so the pilot frames blend seamlessly
+# with the rest of the exercise library.
+EXERCISE_STYLE_PILOT = (
+    "Premium dark athletic coaching photograph for the CrewFit exercise library. "
+    "The MALE model is an airline PILOT IN FULL UNIFORM, mid-30s to mid-40s, "
+    "clean-cut short hair, athletic professional build, friendly captain-of-the-"
+    "aircraft look. His face should be CLEARLY VISIBLE and NATURALLY LIT — do "
+    "NOT darken, shade, silhouette or obscure his face. He can look down at his "
+    "hands / equipment / floor or three-quarters away as the movement requires, "
+    "but the face remains evenly lit. "
+    "UNIFORM (MUST BE ACCURATE): a crisp WHITE short-sleeve pilot shirt with "
+    "black-and-gold four-bar CAPTAIN epaulettes on both shoulders, a subtle "
+    "black airline tie, plain BLACK pilot trousers with a smart crease, and "
+    "plain BLACK leather pilot shoes (NOT trainers — pilots wear leather shoes). "
+    "The uniform must look believable to real crew — proper epaulette stripes, "
+    "buttoned collar, tie sitting straight when standing. NO high-visibility "
+    "jackets, NO cap on head for movement clarity, NO wings badge if it would "
+    "distort during pose. "
+    "SETTING: dark studio with a black brick textured wall directly behind the "
+    "model, hard rim lighting from the left, deep shadow filling the rest of the "
+    "frame — but the face and epaulettes remain evenly lit. Full-figure vertical "
+    "composition, portrait 3:4 crop, model centred, hands, feet and any equipment "
+    "fully in-frame — never cropped. "
+    "IMPORTANT: do NOT place any wordmark, watermark, airline name, aircraft "
+    "photo, badge or graphic anywhere in the image (on the wall, floor, banners "
+    "or corners). The uniform stripes are the only branding. The rest of the "
+    "image must be clean and text-free. Realistic athletic proportions under "
+    "the uniform — this is a fit, in-service pilot demonstrating a real "
+    "movement, not a stock photo model."
+)
+
 # Legacy alias — some callers still import EXERCISE_STYLE. Default to male.
 EXERCISE_STYLE = EXERCISE_STYLE_MALE
 
@@ -168,6 +202,43 @@ class GenImageBody(BaseModel):
     slot: str = "primary"               # primary|start|end
     prompt_extra: Optional[str] = None
     female: Optional[bool] = None
+    # NEW — explicit persona selector. When provided, supersedes `female`.
+    # Accepts "male" | "female" | "pilot". Legacy callers that only pass
+    # `female` continue to work (mapped to "female"|"male").
+    persona: Optional[str] = None
+
+
+# ---- Persona helpers -------------------------------------------------------
+# Single source of truth for how the three coach-side persona choices map
+# through the whole pipeline (prompt, storage field, image record, logging).
+
+VALID_PERSONAS = ("male", "female", "pilot")
+
+
+def _resolve_persona(persona: Optional[str], female: Optional[bool]) -> str:
+    """Legacy `female` bool -> new persona string. Explicit persona wins."""
+    if persona:
+        p = str(persona).lower().strip()
+        if p in VALID_PERSONAS:
+            return p
+    return "female" if female else "male"
+
+
+def _style_for_persona(persona: str) -> str:
+    return {
+        "male":   EXERCISE_STYLE_MALE,
+        "female": EXERCISE_STYLE_FEMALE,
+        "pilot":  EXERCISE_STYLE_PILOT,
+    }.get(persona, EXERCISE_STYLE_MALE)
+
+
+def _slot_map_field_for_persona(persona: str) -> str:
+    """Which map on the exercise doc stores THIS persona's slot->image_id."""
+    return {
+        "male":   "demo_slots",
+        "female": "demo_slots_female",
+        "pilot":  "demo_slots_pilot",
+    }.get(persona, "demo_slots")
 
 
 # ---- Change log helper ----------------------------------------------------
@@ -240,11 +311,15 @@ async def _generate_ex_image(prompt: str, session_id: str, *, use_louis_ref: boo
     return base64.b64decode(data)
 
 
-def _build_ex_prompt(ex: dict, slot: str, extra: Optional[str], female: Optional[bool]) -> str:
+def _build_ex_prompt(
+    ex: dict, slot: str, extra: Optional[str],
+    female: Optional[bool] = None, persona: Optional[str] = None,
+) -> str:
     name = ex.get("exercise_name") or "exercise"
     equipment = ", ".join(ex.get("equipment_type") or []) or "bodyweight"
     body_area = ex.get("body_area") or ""
-    style = EXERCISE_STYLE_FEMALE if female else EXERCISE_STYLE_MALE
+    resolved = _resolve_persona(persona, female)
+    style = _style_for_persona(resolved)
     slot_map = {
         "start":    f"START POSITION of the {name} — the moment before the movement begins",
         "end":      f"END POSITION of the {name} — the completed position",
@@ -364,9 +439,12 @@ def _default_status_flags() -> dict:
         "demo_start_image_id": None,
         "demo_end_image_id": None,
         # New — movement-aware slot storage. Legacy fields above stay in
-        # sync as mirrors so existing readers keep working.
-        "demo_slots": {},              # {"bottom": img_id, "top": img_id, ...}
+        # sync as mirrors so existing readers keep working. Every persona
+        # gets its own map so pilot / female frames never overwrite each
+        # other or the default (louis) frames.
+        "demo_slots": {},              # {"bottom": img_id, "top": img_id, ...}  · MALE-LOUIS
         "demo_slots_female": {},
+        "demo_slots_pilot": {},
         # Required slots for THIS movement — coach can edit. If left empty
         # the backend derives sensible defaults from movement/name tokens.
         "required_slots": [],
@@ -532,24 +610,32 @@ async def ex_gen_image(ex_id: str, body: GenImageBody = GenImageBody(),
     valid_slots = {"primary", "start", "end", "mid", "top", "bottom",
                    "apex", "stretch", "loaded", "finish"}
     slot = body.slot if body.slot in valid_slots else "primary"
-    prompt = _build_ex_prompt(ex, slot, body.prompt_extra, body.female)
+    persona = _resolve_persona(body.persona, body.female)
+    prompt = _build_ex_prompt(ex, slot, body.prompt_extra, persona=persona)
 
     image_id = new_id()
     now = now_iso()
-    gender = "female" if body.female else "male"
+    # `gender` is kept for legacy readers ("male" | "female"); `persona`
+    # carries the full three-way choice ("male" | "female" | "pilot").
+    # The Flight Support media resolver keys off `persona`.
+    gender_legacy = "female" if persona == "female" else "male"
     await db.exercise_content_images.insert_one({
         "id": image_id, "exercise_id": ex_id, "slot": slot,
-        "requested_slot": slot, "gender": gender,
+        "requested_slot": slot,
+        "gender": gender_legacy,
+        "persona": persona,
         "prompt": prompt, "status": "generating",
         "storage_path": None, "size_bytes": None, "mime": None,
         "created_by": admin["id"], "created_at": now, "updated_at": now,
     })
 
     # Storage layout:
-    #  * Legacy fields kept in sync for primary/start/end so existing
-    #    ExerciseThumbnail and workout-preview readers work unchanged.
+    #  * Legacy fields kept in sync for primary/start/end when persona=male
+    #    so existing ExerciseThumbnail and workout-preview readers work
+    #    unchanged. Female + Pilot only populate their own persona maps
+    #    (never overwrite Louis's default frames).
     #  * All other slots (bottom, top, apex, finish, ...) go into the
-    #    dynamic `demo_slots` map (male or female variant).
+    #    dynamic per-persona map.
     legacy_key_by_slot = {
         "primary": "primary_image_id",
         "start":   "demo_start_image_id",
@@ -560,21 +646,32 @@ async def ex_gen_image(ex_id: str, body: GenImageBody = GenImageBody(),
         "content_status.images": True,
         "updated_at": now,
     }
-    slot_map_field = "demo_slots_female" if body.female else "demo_slots"
+    slot_map_field = _slot_map_field_for_persona(persona)
     set_updates[f"{slot_map_field}.{slot}"] = image_id
     if slot in legacy_key_by_slot:
         legacy_key = legacy_key_by_slot[slot]
-        female_key = legacy_key.replace("_id", "_female_id")
-        if body.female:
+        if persona == "male":
+            set_updates[legacy_key] = image_id
+        elif persona == "female":
+            female_key = legacy_key.replace("_id", "_female_id")
             set_updates[female_key] = image_id
             if not ex.get(legacy_key):
                 set_updates[legacy_key] = image_id
-        else:
-            set_updates[legacy_key] = image_id
+        else:  # pilot
+            pilot_key = legacy_key.replace("_id", "_pilot_id")
+            set_updates[pilot_key] = image_id
+            # Do NOT overwrite Louis's default frame — pilot lives in its
+            # own lane and is resolved by the Flight Support media layer.
     await db.exercises_v2.update_one({"id": ex_id}, {"$set": set_updates})
-    asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=not body.female))
-    await _log(ex_id, admin["id"], "image_generated", f"slot={slot} gender={gender}")
-    return {"image_id": image_id, "slot": slot, "gender": gender, "status": "generating"}
+    # Louis's identity reference is ONLY attached for the "male" persona.
+    # Female + Pilot use text-only prompts (with the CrewFit logo ref).
+    asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=(persona == "male")))
+    await _log(ex_id, admin["id"], "image_generated", f"slot={slot} persona={persona}")
+    return {
+        "image_id": image_id, "slot": slot,
+        "gender": gender_legacy, "persona": persona,
+        "status": "generating",
+    }
 
 
 @api.patch("/exercise-content/{ex_id}/required-slots")
@@ -887,6 +984,7 @@ async def ex_image_prompt_preview(
     slot: str = "primary",
     prompt_extra: str | None = None,
     female: bool | None = None,
+    persona: str | None = None,
     admin: dict = Depends(require_admin()),
 ):
     """Return the exact prompt that would be sent for image generation so
@@ -898,11 +996,13 @@ async def ex_image_prompt_preview(
              "apex", "stretch", "loaded", "finish"}
     if slot not in valid:
         slot = "primary"
-    prompt = _build_ex_prompt(ex, slot, prompt_extra, female)
+    resolved = _resolve_persona(persona, female)
+    prompt = _build_ex_prompt(ex, slot, prompt_extra, persona=resolved)
     return {
         "exercise_id": ex_id,
         "exercise_name": ex.get("exercise_name"),
         "slot": slot,
+        "persona": resolved,
         "prompt": prompt,
         "estimated_cost_usd": 0.039,   # single Nano Banana image
         "warning": "This will consume ~1 image credit on your Emergent LLM key.",

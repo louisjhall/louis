@@ -16,7 +16,6 @@ const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?:
   { path: "/(coach)/approvals", label: "Approvals", icon: "checkmark-circle-outline", testId: "desktop-nav-approvals" },
   { path: "/(coach)/library", label: "Library", icon: "barbell-outline", testId: "desktop-nav-library" },
   { path: "/(coach)/videos", label: "Videos", icon: "videocam-outline", testId: "desktop-nav-videos" },
-  { path: "/(coach)/media-queue", label: "Media Queue", icon: "images-outline", testId: "desktop-nav-media-queue" },
   { path: "/(coach)/messages", label: "Messages", icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
   { path: "/(coach)/analytics", label: "Analytics", icon: "bar-chart-outline", testId: "desktop-nav-analytics" },
   { path: "/(coach)/changelog", label: "Change Log", icon: "time-outline", testId: "desktop-nav-changelog" },

@@ -1,15 +1,20 @@
 /**
  * TodayFlightSupport — client-facing Aviation Support block on Home.
  *
- * Iter 117 · Phase B.
+ * Iter 126 · UX rebuild.
  * Renders interventions returned by /api/client/today as a separate section
  * from Training. NEVER treats these as programme workouts.
+ *
+ * Compact summary card only. Full protocol / guided execution lives in
+ * FlightSupportProtocolModal. Completion is recorded as Flight Support
+ * completion, never as workout completion.
  */
 import React, { useState } from "react";
 import { View, Text, StyleSheet, Pressable, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
+import { FlightSupportProtocolModal } from "@/src/components/FlightSupportProtocolModal";
 
 type Intervention = {
   id: string;
@@ -36,14 +41,14 @@ export function TodayFlightSupport({
   snapshot: any | null;
   onRefresh?: () => Promise<void> | void;
 }) {
-  const [busy, setBusy] = useState<string | null>(null);
+  const [openIntervention, setOpenIntervention] = useState<Intervention | null>(null);
+  const [skipBusy, setSkipBusy] = useState<string | null>(null);
+
   if (!snapshot) return null;
   const enabled = snapshot.auto_flight_support_enabled !== false;
   const items: Intervention[] = snapshot.flight_support || [];
   const role: string = snapshot.role || "role_unknown";
 
-  // Role-unknown → show a subtle prompt for the coach to set it (client
-  // can't self-serve but should at least understand why it's absent).
   if (role === "role_unknown") {
     return (
       <View style={s.wrap} testID="flight-support-role-unknown">
@@ -59,14 +64,14 @@ export function TodayFlightSupport({
   if (!enabled) return null;
   if (items.length === 0) return null;
 
-  const complete = async (it: Intervention, status: "completed" | "skipped") => {
-    setBusy(it.id);
+  const skip = async (it: Intervention) => {
+    setSkipBusy(it.id);
     try {
       await api("/client/flight-support/complete", {
         method: "POST",
         body: {
           intervention_id: it.id,
-          status,
+          status: "skipped",
           protocol_key: it.protocol_key,
           duration_min: it.duration_min,
           date: it.date,
@@ -76,8 +81,12 @@ export function TodayFlightSupport({
     } catch (e: any) {
       Alert.alert("Couldn't save", String(e?.message || e));
     } finally {
-      setBusy(null);
+      setSkipBusy(null);
     }
+  };
+
+  const handleCompleted = async () => {
+    if (onRefresh) await onRefresh();
   };
 
   return (
@@ -88,28 +97,40 @@ export function TodayFlightSupport({
         <Text style={s.headerHint}>Not counted as training</Text>
       </View>
       {items.map((it) => (
-        <FlightSupportCard
-          key={it.id} it={it} busy={busy === it.id}
-          onComplete={() => complete(it, "completed")}
-          onSkip={() => complete(it, "skipped")}
+        <FlightSupportSummary
+          key={it.id}
+          it={it}
+          skipBusy={skipBusy === it.id}
+          onOpen={() => setOpenIntervention(it)}
+          onSkip={() => skip(it)}
         />
       ))}
+
+      <FlightSupportProtocolModal
+        visible={!!openIntervention}
+        intervention={openIntervention}
+        onClose={() => setOpenIntervention(null)}
+        onCompleted={handleCompleted}
+      />
     </View>
   );
 }
 
-function FlightSupportCard({
-  it, busy, onComplete, onSkip,
+/* ---------------------------- summary card ------------------------------- */
+function FlightSupportSummary({
+  it, skipBusy, onOpen, onSkip,
 }: {
-  it: Intervention; busy: boolean;
-  onComplete: () => void; onSkip: () => void;
+  it: Intervention;
+  skipBusy: boolean;
+  onOpen: () => void;
+  onSkip: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const iconName = familyIcon(it.family);
   const tone = familyTone(it.family);
   const done = it.completion_status === "completed";
   const skipped = it.completion_status === "skipped";
-  const partial = it.completion_status === "partial";
+  const movements = (it.blocks || []).length;
+
   return (
     <View
       style={[
@@ -120,82 +141,76 @@ function FlightSupportCard({
       testID={`fs-card-${it.protocol_key}`}
     >
       <Pressable
-        onPress={() => setExpanded((v) => !v)}
+        onPress={done || skipped ? undefined : onOpen}
         style={s.cardHeader}
-        testID={`fs-toggle-${it.id}`}
+        testID={`fs-open-${it.id}`}
+        disabled={done || skipped}
       >
         <View style={[s.iconChip, { backgroundColor: tone + "22", borderColor: tone }]}>
           <Ionicons name={iconName as any} size={14} color={tone} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={s.title} numberOfLines={1}>
-            {it.title}
-            {it.is_bundle ? (
-              <Text style={s.bundleHint}>  ·  {(it.sub_interventions || []).length} steps</Text>
-            ) : null}
+          <Text style={s.title} numberOfLines={1}>{it.title}</Text>
+          <Text style={s.metaLine} numberOfLines={1}>
+            {familyLabel(it.family)}
+            {" · "}
+            {it.duration_min} min
+            {movements > 0 ? ` · ${movements} movement${movements === 1 ? "" : "s"}` : ""}
           </Text>
-          {it.trigger_reason ? (
+          {it.trigger_reason && !done && !skipped ? (
             <Text style={s.reason} numberOfLines={2}>{it.trigger_reason}</Text>
           ) : null}
         </View>
-        <View style={{ alignItems: "flex-end" }}>
-          <Text style={s.duration}>{it.duration_min}m</Text>
-          <Text style={s.intensity}>{intensityLabel(it.intensity)}</Text>
-        </View>
+        {!done && !skipped ? (
+          <Ionicons name="chevron-forward" size={18} color={theme.color.textMuted} />
+        ) : null}
       </Pressable>
 
-      {expanded && it.blocks && it.blocks.length > 0 ? (
-        <View style={s.blocksWrap}>
-          {it.blocks.map((b: any, i: number) => (
-            <View key={i} style={s.blockRow}>
-              <Text style={s.blockName}>{b.name || b.type || `Step ${i + 1}`}</Text>
-              <View style={s.blockRight}>
-                {b.cue ? <Text style={s.blockCue} numberOfLines={1}>{b.cue}</Text> : null}
-                <Text style={s.blockDur}>
-                  {b.duration_min ? `${b.duration_min}m` : b.duration_sec ? `${b.duration_sec}s` : ""}
-                </Text>
-              </View>
-            </View>
-          ))}
-          {it.cues && it.cues.length > 0 ? (
-            <Text style={s.cues}>{it.cues.join("  ·  ")}</Text>
-          ) : null}
+      {/* Status pill OR the two action rows (Start / Skip) */}
+      {done ? (
+        <View style={[s.statusPill, { backgroundColor: theme.color.brand + "22", borderColor: theme.color.brand }]}>
+          <Ionicons name="checkmark-circle" size={13} color={theme.color.brand} />
+          <Text style={[s.statusText, { color: theme.color.brand }]}>COMPLETED</Text>
         </View>
-      ) : null}
-
-      <View style={s.actionsRow}>
-        <Pressable
-          testID={`fs-complete-${it.protocol_key}`}
-          disabled={busy}
-          onPress={onComplete}
-          style={[s.actionBtn, done ? s.actionBtnDone : null]}
-        >
-          <Ionicons name={done ? "checkmark-circle" : "checkmark"} size={13} color={done ? "#fff" : theme.color.brand} />
-          <Text style={[s.actionT, done ? s.actionTDone : { color: theme.color.brand }]}>
-            {done ? "COMPLETED" : partial ? "MARK DONE" : "DONE"}
-          </Text>
-        </Pressable>
-        <Pressable
-          testID={`fs-skip-${it.protocol_key}`}
-          disabled={busy}
-          onPress={onSkip}
-          style={[s.actionBtn, s.actionBtnSkip, skipped ? s.actionBtnSkipped : null]}
-        >
-          <Ionicons name="close" size={13} color={skipped ? "#fff" : theme.color.textMuted} />
-          <Text style={[s.actionT, { color: skipped ? "#fff" : theme.color.textMuted }]}>
-            {skipped ? "SKIPPED" : "SKIP"}
-          </Text>
-        </Pressable>
-      </View>
+      ) : skipped ? (
+        <View style={[s.statusPill, { backgroundColor: theme.color.textMuted + "22", borderColor: theme.color.textMuted }]}>
+          <Ionicons name="close" size={13} color={theme.color.textMuted} />
+          <Text style={[s.statusText, { color: theme.color.textMuted }]}>SKIPPED</Text>
+        </View>
+      ) : (
+        <View style={s.actionsRow}>
+          <Pressable
+            testID={`fs-start-${it.protocol_key}`}
+            onPress={onOpen}
+            style={[s.primaryBtn]}
+          >
+            <Ionicons name="play" size={13} color="#fff" />
+            <Text style={s.primaryBtnText}>START FLIGHT SUPPORT</Text>
+          </Pressable>
+          <Pressable
+            testID={`fs-skip-${it.protocol_key}`}
+            disabled={skipBusy}
+            onPress={onSkip}
+            style={s.skipBtn}
+          >
+            <Text style={s.skipText}>SKIP</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
-function intensityLabel(i?: string): string {
-  const v = (i || "").toLowerCase();
-  if (v === "very_low") return "RPE 1-2";
-  if (v === "low") return "RPE 2-3";
-  return "easy";
+function familyLabel(family: string): string {
+  switch ((family || "").toLowerCase()) {
+    case "mobility":       return "Mobility";
+    case "activation":     return "Activation";
+    case "recovery":       return "Recovery";
+    case "reset":          return "Reset";
+    case "walk":           return "Walk";
+    case "movement_break": return "Movement break";
+    default:               return "Flight Support";
+  }
 }
 
 function familyIcon(family: string): string {
@@ -246,67 +261,55 @@ const s = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderRadius: theme.radius.sm,
     borderWidth: 1, borderColor: theme.color.border,
     borderLeftWidth: 3,
-    padding: 10, gap: 8,
+    padding: 12, gap: 10,
   },
   cardDone: { opacity: 0.7 },
   cardSkipped: { opacity: 0.55 },
   cardHeader: {
-    flexDirection: "row", alignItems: "center", gap: 8,
+    flexDirection: "row", alignItems: "center", gap: 10,
   },
   iconChip: {
-    width: 26, height: 26, borderRadius: 13, borderWidth: 1,
+    width: 32, height: 32, borderRadius: 16, borderWidth: 1,
     alignItems: "center", justifyContent: "center",
   },
-  title: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
-  bundleHint: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "600",
-    fontStyle: "italic",
+  title: {
+    color: theme.color.text, fontSize: 15, fontWeight: "800",
+  },
+  metaLine: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "700",
+    letterSpacing: 0.5, marginTop: 2, textTransform: "uppercase",
   },
   reason: {
-    color: theme.color.textMuted, fontSize: 11, marginTop: 1,
+    color: theme.color.textMuted, fontSize: 12, marginTop: 4, lineHeight: 16,
   },
-  duration: { color: theme.color.brand, fontSize: 13, fontWeight: "800" },
-  intensity: { color: theme.color.textMuted, fontSize: 9, fontWeight: "700",
-                 letterSpacing: 1, marginTop: 1 },
-  blocksWrap: {
-    paddingTop: 6, borderTopWidth: 1, borderTopColor: theme.color.border,
-    gap: 4,
-  },
-  blockRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingVertical: 2,
-  },
-  blockName: {
-    color: theme.color.text, fontSize: 12, fontWeight: "600", flex: 1,
-  },
-  blockRight: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-  },
-  blockCue: {
-    color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
-    maxWidth: 140,
-  },
-  blockDur: {
-    color: theme.color.brand, fontSize: 11, fontWeight: "700", minWidth: 34,
-    textAlign: "right",
-  },
-  cues: {
-    color: theme.color.textMuted, fontSize: 11, marginTop: 4,
-    fontStyle: "italic",
-  },
-  actionsRow: {
-    flexDirection: "row", gap: 6, marginTop: 2,
-  },
-  actionBtn: {
+
+  statusPill: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 8, borderWidth: 1,
-    borderColor: theme.color.brand + "55",
-    flex: 1, justifyContent: "center",
+    alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 12, borderWidth: 1,
   },
-  actionBtnSkip: { borderColor: theme.color.border },
-  actionBtnDone: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  actionBtnSkipped: { backgroundColor: theme.color.textMuted, borderColor: theme.color.textMuted },
-  actionT: { fontSize: 10, fontWeight: "800", letterSpacing: 1 },
-  actionTDone: { color: "#fff" },
+  statusText: { fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+
+  actionsRow: {
+    flexDirection: "row", gap: 8, marginTop: 2,
+  },
+  primaryBtn: {
+    flex: 1,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 12, borderRadius: 10,
+    backgroundColor: theme.color.brand,
+  },
+  primaryBtnText: {
+    color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.2,
+  },
+  skipBtn: {
+    paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10,
+    backgroundColor: "transparent",
+    borderWidth: 1, borderColor: theme.color.border,
+    alignItems: "center", justifyContent: "center",
+  },
+  skipText: {
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1,
+  },
 });

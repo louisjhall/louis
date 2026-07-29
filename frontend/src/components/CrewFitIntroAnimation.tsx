@@ -153,10 +153,12 @@ function IntroOverlay({
   const finishedRef = useRef(false);
 
   const player = useVideoPlayer(INTRO_SOURCE, (p) => {
-    // Pure branded moment. Autoplay with sound — respects device silent
-    // mode natively (iOS/Android ringer mute silences it automatically).
+    // Iter 124 — Silent branded moment. The intro logo animation is a
+    // purely visual cold-launch splash; the video's own audio track (if any)
+    // is muted so it never clashes with foreground audio or feels intrusive
+    // on cold start. If we ever want an audio sting back, flip this to false.
     p.loop = false;
-    p.muted = false;
+    p.muted = true;
     p.play();
   });
 

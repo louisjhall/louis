@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, ScrollView, StyleSheet, TextInput, Pressable, ActivityIndicator, Alert, Platform } from "react-native";
+import { View, Text, ScrollView, StyleSheet, TextInput, Pressable, ActivityIndicator, Alert, Platform, Linking } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { theme } from "../../src/lib/theme";
@@ -71,7 +71,6 @@ export default function DeleteAccount() {
         uxToast("Export downloaded.", "info");
       } else {
         // Native: open the URL — the platform will offer share/save.
-        const { Linking } = require("react-native");
         const url = `${API_BASE}/gdpr/export?token=${token || ""}`;
         await Linking.openURL(url);
       }

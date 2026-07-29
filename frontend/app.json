@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "net.crewfit.app",
-      "buildNumber": "201",
+      "buildNumber": "400",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -50,7 +50,7 @@
       }
     },
     "android": {
-      "versionCode": 301,
+      "versionCode": 400,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"

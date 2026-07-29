@@ -180,7 +180,7 @@ export function MoveWorkoutSheet({
       Haptics.selectionAsync().catch(() => {});
       await api(`/workouts/${source.workoutId}/move`, {
         method: "POST",
-        body: JSON.stringify({ to_date: toDate }),
+        body: { to_date: toDate },
       });
       uxToast(`Moved to ${niceDate(toDate)} — Louis has been notified`);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});

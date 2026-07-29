@@ -54,6 +54,13 @@ export default function Welcome() {
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
+        {/* Stage A build confirmation marker — small identifier to prove
+            the physical Android build is running the correct source.
+            Remove when Stage A is approved. */}
+        <View style={styles.stageMarker}>
+          <Text style={styles.stageMarkerText}>STAGE A ANDROID BUILD</Text>
+        </View>
+
         {/* Louis welcome video card — Stage A: static poster only.
             No player is created on this screen. Stage B will add the
             tap-to-play Louis implementation. */}
@@ -193,6 +200,23 @@ export default function Welcome() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   body: { padding: 22, paddingBottom: 60 },
+
+  stageMarker: {
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(230, 0, 35, 0.14)",
+    borderColor: "#e60023",
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginBottom: 14,
+  },
+  stageMarkerText: {
+    color: "#e60023",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 2,
+  },
 
   brandRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
   brand: { color: theme.color.text, fontSize: 20, fontWeight: "900", letterSpacing: 3 },

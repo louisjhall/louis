@@ -12081,6 +12081,7 @@ import feature_v2_coach_publish           # noqa: E402,F401  V2 Phase 11: Coach 
 import feature_v2_coach_inline_editor     # noqa: E402,F401  V2 Phase 11: Coach Dashboard V2 · Inline workout implementation editor
 import feature_v2_coach_kickoff           # noqa: E402,F401  V2 Phase 11: One-click plan scaffold (programme + phases + P3 + P5 + P6)
 import feature_v2_coach_client_admin     # noqa: E402,F401  V2 Phase 11: Coach Dashboard V2 · Delete client + all references
+import feature_v2_coach_home              # noqa: E402,F401  Iter 128g: Coach Home action queue (deterministic aggregator)
 import feature_v2_engine_v2_kickoff       # noqa: E402,F401  V2 Engine V2: WHAT→WHEN→HOW→VALIDATE pipeline (feature-flagged Draft-only)
 import feature_v2_engine_v2_publish       # noqa: E402,F401  V2 Engine V2: Coach Dashboard Draft integration + Client Live read
 import feature_aviation_support_api        # noqa: E402,F401  Aviation Support Phase B: coach controls + client today

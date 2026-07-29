@@ -1,67 +1,124 @@
 /**
- * Coach Dashboard V2 — Global Attention Home
+ * Coach Home — Today's Action Queue (Iter 128g)
  *
  * Route: /(coach)/v2-home
  *
- * Shows:
- *   - Today summary (24 active · 5 need attention · ...)
- *   - Needs Your Attention queue (cross-client)
- *   - Client list with V2 state chips + filters
+ * Answers ONE question for the coach: what needs my attention right now?
+ * Every visible row is:
+ *   1. current unresolved state
+ *   2. immediately understandable
+ *   3. one obvious next action
+ *   4. a deep link into the exact client workspace tab
+ *   5. auto-resolves as soon as the underlying state is fixed
  *
- * Requires the coach to have opted into `coach_dashboard_v2_enabled`.
- * If not enabled, offers a one-click enable and links back to V1 overview.
+ * Backend source: /api/v2/coach/home/action-queue (deterministic aggregator).
+ *
+ * NOT an event log. NOT a validation dump. NOT another client directory.
  */
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { useAuth } from "@/src/lib/auth";
 
-type AttentionRow = {
+type Priority = "urgent" | "attention" | "upcoming" | "waiting";
+type TaskType =
+  | "profile_blocker"
+  | "draft_review"
+  | "ready_to_publish"
+  | "checkin_review"
+  | "message"
+  | "plan_ending"
+  | "roster_required";
+
+type Task = {
+  id: string;
+  type: TaskType;
+  priority: Priority;
   client_id: string;
   client_name: string;
-  kind: string;
-  severity: "info" | "warning" | "blocker";
-  reason: string;
-  created_at?: string;
-  scope_ref?: string;
-  counts?: { ready?: number; review?: number; conflict?: number };
+  client_subtitle?: string | null;
+  title: string;
+  context?: string | null;
+  meta?: string | null;
+  action_label: string;
+  deep_link: string;
+  counts?: { blocking?: number; important?: number; total?: number };
 };
 
-// Iter 128b — Client list widget removed from Home. Home is the operations
-// dashboard; the canonical Clients directory now lives exclusively at
-// /(coach)/clients (richer view with roster progress, filters, Preview,
-// Review, Add client). All V1/V2 legacy visual references stripped.
-
-const KIND_LABELS: Record<string, string> = {
-  programme_ready: "Programme ready for approval",
-  roster_changed: "Roster changed",
-  pain_reported: "Pain reported",
-  checkin_concern: "Check-in concern",
-  missed_key_session: "Missed key session",
-  event_at_risk: "Event requirement at risk",
-  conflict: "Conflict",
-  needs_review: "Needs review",
-  generation_failure: "Generation failure",
-  roster_parsing: "Roster parsing issue",
+type Queue = {
+  date: string;
+  counts: {
+    needs_action: number;
+    ready_to_publish: number;
+    messages: number;
+    checkins: number;
+    upcoming: number;
+    waiting: number;
+    active_clients: number;
+  };
+  needs_attention: Task[];
+  upcoming: Task[];
+  waiting_on_client: Task[];
 };
 
-const SEVERITY_TINT: Record<string, string> = {
-  blocker: "#ff5555",
-  warning: "#f5b543",
-  info: "#5aa9e6",
+type FilterKind =
+  | "all"
+  | "needs_action"
+  | "ready_to_publish"
+  | "messages"
+  | "checkins"
+  | "upcoming";
+
+const TYPE_ICON: Record<TaskType, any> = {
+  profile_blocker:  "person-circle-outline",
+  draft_review:     "document-text-outline",
+  ready_to_publish: "rocket-outline",
+  checkin_review:   "chatbubble-ellipses-outline",
+  message:          "mail-outline",
+  plan_ending:      "calendar-outline",
+  roster_required:  "cloud-upload-outline",
 };
 
-export default function CoachDashboardV2Home() {
+const PRIORITY_LABEL: Record<Priority, string> = {
+  urgent:    "HIGH PRIORITY",
+  attention: "NEEDS ACTION",
+  upcoming:  "UPCOMING",
+  waiting:   "WAITING",
+};
+
+const PRIORITY_TINT: Record<Priority, string> = {
+  urgent:    "#ff5b5b",
+  attention: "#f5b543",
+  upcoming:  "#5aa9e6",
+  waiting:   "#8e8e93",
+};
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  } catch { return iso; }
+}
+
+export default function CoachHomeScreen() {
   const router = useRouter();
-  const { user } = useAuth();
+  useAuth();  // ensures the screen re-renders after login state changes
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [summary, setSummary] = useState<any>(null);
-  const [attention, setAttention] = useState<AttentionRow[]>([]);
+  const [queue, setQueue] = useState<Queue | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterKind>("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,12 +130,8 @@ export default function CoachDashboardV2Home() {
         setLoading(false);
         return;
       }
-      const [sum, att] = await Promise.all([
-        api("/v2/coach/dashboard/summary").catch(() => null),
-        api("/v2/coach/dashboard/attention").catch(() => ({ attention: [] })),
-      ]);
-      setSummary(sum);
-      setAttention((att as any).attention || []);
+      const q = await api<Queue>("/v2/coach/home/action-queue");
+      setQueue(q);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -96,13 +149,24 @@ export default function CoachDashboardV2Home() {
     } finally { setBusy(false); }
   }, [load]);
 
-  const attentionByClient = useMemo(() => {
-    const map: Record<string, AttentionRow[]> = {};
-    for (const r of attention) {
-      (map[r.client_id] ||= []).push(r);
-    }
-    return map;
-  }, [attention]);
+  // Filter the visible tasks based on which summary card is currently active.
+  const view = useMemo(() => {
+    if (!queue) return null;
+    if (filter === "all") return queue;
+    const filterTypes = (arr: Task[]): Task[] => {
+      switch (filter) {
+        case "needs_action":     return arr;
+        case "ready_to_publish": return arr.filter((t) => t.type === "ready_to_publish");
+        case "messages":         return arr.filter((t) => t.type === "message");
+        case "checkins":         return arr.filter((t) => t.type === "checkin_review");
+        default:                 return arr;
+      }
+    };
+    const na = filter === "upcoming" ? [] : filterTypes(queue.needs_attention);
+    const up = filter === "upcoming" ? queue.upcoming : (filter === "needs_action" ? [] : filterTypes(queue.upcoming));
+    const wo = filter === "upcoming" || filter !== "needs_action" ? queue.waiting_on_client : [];
+    return { ...queue, needs_attention: na, upcoming: up, waiting_on_client: wo };
+  }, [queue, filter]);
 
   if (loading && enabled === null) {
     return <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>;
@@ -125,92 +189,241 @@ export default function CoachDashboardV2Home() {
     );
   }
 
+  const q = view || queue;
+
   return (
-    <ScrollView style={styles.root} contentContainerStyle={{ paddingBottom: 80 }} testID="coach-dashboard-v2">
-      <View style={styles.topRow}>
+    <ScrollView
+      style={styles.root}
+      contentContainerStyle={{ paddingBottom: 60 }}
+      testID="coach-home"
+    >
+      {/* Title strip */}
+      <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
           <Text style={styles.h1}>Coach Home</Text>
-          <Text style={styles.h1sub}>Welcome back{user?.name ? `, ${user.name.split(" ")[0]}` : ""}. Here&apos;s who needs you.</Text>
+          <Text style={styles.h1sub}>
+            {q ? formatDate(q.date) : ""}
+            {q ? ` · ${q.counts.needs_action} need attention · ${q.counts.upcoming} upcoming` : ""}
+          </Text>
         </View>
         <Pressable
           onPress={() => router.push("/(coach)/clients" as any)}
-          style={styles.chip}
+          style={styles.viewClientsBtn}
           testID="home-view-clients"
         >
-          <Text style={styles.chipText}>View clients →</Text>
+          <Text style={styles.viewClientsText}>View clients</Text>
+          <Ionicons name="arrow-forward" size={13} color={theme.color.textHi} />
         </Pressable>
       </View>
 
-      {/* Today summary */}
-      {summary && (
+      {/* Summary cards — clickable filter chips */}
+      {q && (
         <View style={styles.summaryRow}>
-          <SummaryCell label="Active clients"     value={summary.active_clients} />
-          <SummaryCell label="Need attention"     value={summary.need_attention} tint={summary.need_attention ? "#f5b543" : undefined} />
-          <SummaryCell label="Programmes ready"   value={summary.programmes_ready} />
-          <SummaryCell label="Roster changes"     value={summary.roster_changes} />
-          <SummaryCell label="Check-in concerns"  value={summary.checkin_concerns} tint={summary.checkin_concerns ? "#f5b543" : undefined} />
+          <SummaryCard
+            label="Needs attention" value={q.counts.needs_action} icon="alert-circle"
+            tint="#ff5b5b" hint="Action required"
+            active={filter === "all" || filter === "needs_action"}
+            onPress={() => setFilter(filter === "needs_action" ? "all" : "needs_action")}
+            testID="summary-needs-action"
+          />
+          <SummaryCard
+            label="Ready to publish" value={q.counts.ready_to_publish} icon="rocket"
+            tint="#f5b543" hint="Plan ready"
+            active={filter === "ready_to_publish"}
+            onPress={() => setFilter(filter === "ready_to_publish" ? "all" : "ready_to_publish")}
+            testID="summary-ready-to-publish"
+          />
+          <SummaryCard
+            label="Messages" value={q.counts.messages} icon="chatbubble"
+            tint="#5aa9e6" hint="Unread"
+            active={filter === "messages"}
+            onPress={() => setFilter(filter === "messages" ? "all" : "messages")}
+            testID="summary-messages"
+          />
+          <SummaryCard
+            label="Check-ins" value={q.counts.checkins} icon="checkmark-circle"
+            tint="#61c982" hint="Need review"
+            active={filter === "checkins"}
+            onPress={() => setFilter(filter === "checkins" ? "all" : "checkins")}
+            testID="summary-checkins"
+          />
+          <SummaryCard
+            label="Upcoming" value={q.counts.upcoming} icon="calendar"
+            tint="#8b7cd6" hint="Next 7 days"
+            active={filter === "upcoming"}
+            onPress={() => setFilter(filter === "upcoming" ? "all" : "upcoming")}
+            testID="summary-upcoming"
+          />
         </View>
       )}
 
-      {/* Attention queue */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>NEEDS YOUR ATTENTION</Text>
-        {attention.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyTitle}>Nothing needs your attention</Text>
-            <Text style={styles.emptyBody}>CrewFit is handling the current plan for every client. You&apos;ll be notified when review is needed.</Text>
-          </View>
-        ) : (
-          Object.entries(attentionByClient).map(([cid, rows]) => (
-            <View key={cid} style={styles.attnCard}>
-              <View style={styles.attnHeader}>
-                <Text style={styles.attnClient}>{rows[0].client_name}</Text>
-                <Pressable
-                  onPress={() => router.push(`/coach/client/${cid}/workspace` as any)}
-                  style={styles.reviewBtn}
-                  testID={`attn-review-${cid}`}
-                >
-                  <Text style={styles.reviewBtnText}>Review</Text>
-                </Pressable>
-              </View>
-              {rows.map((r, i) => (
-                <View key={i} style={styles.attnRow}>
-                  <View style={[styles.sevDot, { backgroundColor: SEVERITY_TINT[r.severity] || "#999" }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.attnKind}>{KIND_LABELS[r.kind] || r.kind}</Text>
-                    <Text style={styles.attnReason}>{r.reason}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          ))
-        )}
-      </View>
-
-      {/* Iter 128b — Client list intentionally removed from Home.
-          Home is the operations dashboard. The canonical Clients directory
-          lives at /(coach)/clients (richer profile, roster progress, filters,
-          Preview/Review, Add client). Keeping duplication out of Home. */}
-
       {error && <Text style={styles.errorText}>{error}</Text>}
+
+      {q && (
+        <>
+          {/* Needs your attention */}
+          {q.needs_attention.length > 0 && (
+            <Section
+              title="NEEDS YOUR ATTENTION"
+              count={q.needs_attention.length}
+            >
+              {q.needs_attention.map((t) => (
+                <TaskCard key={t.id} task={t} onOpen={(link) => router.push(link as any)} />
+              ))}
+            </Section>
+          )}
+
+          {/* Upcoming */}
+          {q.upcoming.length > 0 && (
+            <Section title="UPCOMING" count={q.upcoming.length}>
+              {q.upcoming.map((t) => (
+                <TaskCard key={t.id} task={t} onOpen={(link) => router.push(link as any)} />
+              ))}
+            </Section>
+          )}
+
+          {/* Waiting on client */}
+          {q.waiting_on_client.length > 0 && (
+            <Section title="WAITING ON CLIENT" count={q.waiting_on_client.length}>
+              {q.waiting_on_client.map((t) => (
+                <TaskCard key={t.id} task={t} onOpen={(link) => router.push(link as any)} />
+              ))}
+            </Section>
+          )}
+
+          {/* Empty state */}
+          {q.needs_attention.length === 0 &&
+            q.upcoming.length === 0 &&
+            q.waiting_on_client.length === 0 && (
+            <View style={styles.emptyCaughtUp} testID="home-empty-state">
+              <Ionicons name="checkmark-done-circle" size={40} color="#61c982" />
+              <Text style={styles.emptyCaughtUpTitle}>You&apos;re all caught up</Text>
+              <Text style={styles.emptyCaughtUpBody}>
+                {filter === "all"
+                  ? "No client actions need your attention right now."
+                  : "Nothing in this bucket. Tap the card again to clear the filter."}
+              </Text>
+            </View>
+          )}
+        </>
+      )}
     </ScrollView>
   );
 }
 
-function SummaryCell({ label, value, tint }: { label: string; value: any; tint?: string }) {
+/* -------------------------------------------------------------------------- */
+/*  Summary card                                                              */
+/* -------------------------------------------------------------------------- */
+function SummaryCard({
+  label, value, icon, tint, hint, active, onPress, testID,
+}: {
+  label: string; value: number; icon: any; tint: string;
+  hint: string; active: boolean; onPress: () => void; testID?: string;
+}) {
+  const inactive = !active && (value === 0);
   return (
-    <View style={styles.sumCell}>
-      <Text style={[styles.sumValue, tint ? { color: tint } : null]}>{value ?? "—"}</Text>
+    <Pressable
+      style={[styles.sumCell, { borderTopColor: tint }, active && styles.sumCellActive, inactive && { opacity: 0.55 }]}
+      onPress={onPress}
+      testID={testID}
+    >
+      <View style={styles.sumHead}>
+        <View style={[styles.sumIcon, { backgroundColor: `${tint}22` }]}>
+          <Ionicons name={icon} size={14} color={tint} />
+        </View>
+        <Text style={[styles.sumValue, { color: value > 0 ? theme.color.textHi : theme.color.textDim }]}>{value}</Text>
+      </View>
       <Text style={styles.sumLabel}>{label}</Text>
+      <Text style={styles.sumHint}>{hint}</Text>
+    </Pressable>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Section wrapper                                                           */
+/* -------------------------------------------------------------------------- */
+function Section({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHead}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionCount}>{count} item{count === 1 ? "" : "s"}</Text>
+      </View>
+      {children}
     </View>
   );
 }
 
-// StatusPill and ClientRow types removed with the client-list widget (iter 128b).
+/* -------------------------------------------------------------------------- */
+/*  Task card                                                                 */
+/* -------------------------------------------------------------------------- */
+function TaskCard({ task, onOpen }: { task: Task; onOpen: (deep_link: string) => void }) {
+  const tint = PRIORITY_TINT[task.priority];
+  const icon = TYPE_ICON[task.type];
+  return (
+    <Pressable
+      style={styles.taskCard}
+      onPress={() => onOpen(task.deep_link)}
+      testID={`task-${task.id}`}
+      accessibilityLabel={`${task.client_name}: ${task.title}`}
+    >
+      {/* Left icon */}
+      <View style={[styles.taskIcon, { backgroundColor: `${tint}22`, borderColor: `${tint}55` }]}>
+        <Ionicons name={icon} size={18} color={tint} />
+      </View>
 
+      {/* Body */}
+      <View style={styles.taskBody}>
+        {/* Client row */}
+        <View style={styles.taskClientRow}>
+          <Text style={styles.taskClient} numberOfLines={1}>{task.client_name}</Text>
+          {task.client_subtitle ? (
+            <Text style={styles.taskSubtitle} numberOfLines={1}> · {task.client_subtitle}</Text>
+          ) : null}
+        </View>
+
+        {/* Title */}
+        <View style={styles.taskTitleRow}>
+          <View style={[styles.taskDot, { backgroundColor: tint }]} />
+          <Text style={styles.taskTitle} numberOfLines={1}>{task.title}</Text>
+        </View>
+
+        {/* Context + meta */}
+        {task.context ? <Text style={styles.taskContext} numberOfLines={2}>{task.context}</Text> : null}
+        {task.meta ? <Text style={styles.taskMeta} numberOfLines={1}>{task.meta}</Text> : null}
+      </View>
+
+      {/* Priority badge + action button */}
+      <View style={styles.taskRight}>
+        <View style={[styles.priorityPill, { borderColor: `${tint}55`, backgroundColor: `${tint}18` }]}>
+          <Text style={[styles.priorityPillText, { color: tint }]}>{PRIORITY_LABEL[task.priority]}</Text>
+        </View>
+        <Pressable
+          style={[styles.actionBtn, task.priority === "urgent" && styles.actionBtnUrgent]}
+          onPress={(e) => { e.stopPropagation?.(); onOpen(task.deep_link); }}
+          testID={`task-action-${task.id}`}
+        >
+          <Text style={[styles.actionBtnText, task.priority === "urgent" && styles.actionBtnTextUrgent]}>
+            {task.action_label}
+          </Text>
+          <Ionicons
+            name="arrow-forward"
+            size={12}
+            color={task.priority === "urgent" ? "#fff" : theme.color.textHi}
+          />
+        </Pressable>
+      </View>
+    </Pressable>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Styles                                                                    */
+/* -------------------------------------------------------------------------- */
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+
   optCard: {
     maxWidth: 480, backgroundColor: theme.color.surface2, borderRadius: 12,
     borderWidth: 1, borderColor: theme.color.border, padding: 24, alignItems: "center",
@@ -221,141 +434,102 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brand, paddingHorizontal: 24, paddingVertical: 12,
     borderRadius: 8, minWidth: 200, alignItems: "center",
   },
-  primaryBtnText: { color: "#000", fontWeight: "800", letterSpacing: 1 },
-  secondaryLink: { color: theme.color.textDim, textDecorationLine: "underline" },
+  primaryBtnText: { color: "#fff", fontWeight: "800", letterSpacing: 1 },
 
-  topRow: { flexDirection: "row", alignItems: "flex-start", padding: 24, paddingBottom: 12 },
-  h1: { color: theme.color.textHi, fontSize: 28, fontWeight: "800", letterSpacing: 0.5 },
-  h1sub: { color: theme.color.textDim, fontSize: 13, marginTop: 4 },
-  chip: {
-    backgroundColor: theme.color.surface2, paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: 16, borderWidth: 1, borderColor: theme.color.border,
+  titleRow: {
+    flexDirection: "row", alignItems: "flex-start", paddingHorizontal: 24, paddingTop: 22, paddingBottom: 14,
   },
-  chipText: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1, fontWeight: "700" },
+  h1: { color: theme.color.textHi, fontSize: 26, fontWeight: "800", letterSpacing: 0.3 },
+  h1sub: { color: theme.color.textDim, fontSize: 12, marginTop: 4 },
+  viewClientsBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: theme.color.surface2, paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
+  },
+  viewClientsText: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
 
+  /* Summary cards */
   summaryRow: {
-    flexDirection: "row", flexWrap: "wrap", gap: 10, marginHorizontal: 24, marginBottom: 12,
+    flexDirection: "row", flexWrap: "wrap", gap: 10, marginHorizontal: 24, marginBottom: 4,
   },
   sumCell: {
-    minWidth: 140, flex: 1, backgroundColor: theme.color.surface2, borderRadius: 10,
-    padding: 14, borderWidth: 1, borderColor: theme.color.border,
+    minWidth: 150, flex: 1, backgroundColor: theme.color.surface2, borderRadius: 10,
+    padding: 12, borderWidth: 1, borderColor: theme.color.border,
+    borderTopWidth: 3,
   },
-  sumValue: { color: theme.color.textHi, fontSize: 28, fontWeight: "800" },
-  sumLabel: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1, fontWeight: "700", marginTop: 2 },
+  sumCellActive: {
+    borderColor: theme.color.brand,
+  },
+  sumHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  sumIcon: {
+    width: 24, height: 24, borderRadius: 6, alignItems: "center", justifyContent: "center",
+  },
+  sumValue: { color: theme.color.textHi, fontSize: 22, fontWeight: "800", marginLeft: "auto" },
+  sumLabel: { color: theme.color.textHi, fontSize: 12, fontWeight: "700", marginTop: 6 },
+  sumHint: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
 
-  section: { marginTop: 24, paddingHorizontal: 24 },
-  sectionTitle: { color: theme.color.textDim, fontSize: 12, letterSpacing: 1.5, fontWeight: "800", marginBottom: 12 },
+  /* Sections */
+  section: { marginTop: 20, paddingHorizontal: 24 },
+  sectionHead: {
+    flexDirection: "row", alignItems: "center", marginBottom: 8,
+  },
+  sectionTitle: {
+    color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", flex: 1,
+  },
+  sectionCount: {
+    color: theme.color.textDim, fontSize: 11, fontWeight: "700",
+  },
 
-  emptyBox: {
-    backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1,
-    borderColor: theme.color.border, padding: 18,
+  /* Task cards */
+  taskCard: {
+    flexDirection: "row", alignItems: "flex-start", gap: 12,
+    backgroundColor: theme.color.surface2, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.color.border,
+    padding: 14, marginBottom: 8,
   },
-  emptyTitle: { color: theme.color.textHi, fontSize: 15, fontWeight: "700", marginBottom: 4 },
-  emptyBody: { color: theme.color.textDim, fontSize: 13, lineHeight: 18 },
+  taskIcon: {
+    width: 40, height: 40, borderRadius: 20, borderWidth: 1,
+    alignItems: "center", justifyContent: "center",
+  },
+  taskBody: { flex: 1, minWidth: 0 },
+  taskClientRow: { flexDirection: "row", alignItems: "center" },
+  taskClient: { color: theme.color.textHi, fontSize: 14, fontWeight: "800" },
+  taskSubtitle: { color: theme.color.textDim, fontSize: 12 },
+  taskTitleRow: { flexDirection: "row", alignItems: "center", marginTop: 4, gap: 6 },
+  taskDot: { width: 6, height: 6, borderRadius: 3 },
+  taskTitle: { color: theme.color.textHi, fontSize: 14, fontWeight: "700", flexShrink: 1 },
+  taskContext: { color: theme.color.textDim, fontSize: 12, marginTop: 3, lineHeight: 17 },
+  taskMeta: { color: theme.color.brand, fontSize: 11, marginTop: 3, fontStyle: "italic" },
 
-  attnCard: {
-    backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1,
-    borderColor: theme.color.border, padding: 14, marginBottom: 10,
+  taskRight: {
+    alignItems: "flex-end", gap: 8, minWidth: 130,
   },
-  attnHeader: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
-  attnClient: { color: theme.color.textHi, fontSize: 16, fontWeight: "700", flex: 1 },
-  reviewBtn: {
-    backgroundColor: theme.color.brand, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6,
+  priorityPill: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, borderWidth: 1,
   },
-  reviewBtnText: { color: "#000", fontWeight: "800", fontSize: 11, letterSpacing: 1 },
-  attnRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 4 },
-  sevDot: { width: 8, height: 8, borderRadius: 4, marginTop: 6, marginRight: 10 },
-  attnKind: { color: theme.color.textHi, fontSize: 13, fontWeight: "600" },
-  attnReason: { color: theme.color.textDim, fontSize: 12, marginTop: 1 },
+  priorityPillText: { fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  actionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6,
+  },
+  actionBtnUrgent: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  actionBtnText: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
+  actionBtnTextUrgent: { color: "#fff" },
 
-  clientHeadRow: { flexDirection: "row", alignItems: "center", marginBottom: 8, gap: 8 },
-  addClientBtn: {
-    marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 6,
-    backgroundColor: theme.color.brand, borderRadius: 6,
-    paddingHorizontal: 12, paddingVertical: 7,
-  },
-  addClientBtnText: { color: "#000", fontSize: 12, fontWeight: "800", letterSpacing: 0.3 },
-  searchBox: {
-    backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
-    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, color: theme.color.textHi, minWidth: 180,
-  },
-  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
-  filterBtn: {
-    backgroundColor: theme.color.surface2, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
+  /* Empty */
+  emptyCaughtUp: {
+    marginHorizontal: 24, marginTop: 24, padding: 32,
+    alignItems: "center", justifyContent: "center", gap: 8,
+    backgroundColor: theme.color.surface2, borderRadius: 12,
     borderWidth: 1, borderColor: theme.color.border,
   },
-  filterBtnActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  filterBtnText: { color: theme.color.textDim, fontSize: 12, fontWeight: "700" },
-  filterBtnTextActive: { color: "#000" },
-
-  clientTable: { backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border, overflow: "hidden" },
-  clientTableHead: {
-    flexDirection: "row", paddingHorizontal: 14, paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: theme.color.border, backgroundColor: "#00000030",
+  emptyCaughtUpTitle: {
+    color: theme.color.textHi, fontSize: 17, fontWeight: "800", marginTop: 6,
   },
-  clientRow: {
-    flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12,
-    flex: 1,
+  emptyCaughtUpBody: {
+    color: theme.color.textDim, fontSize: 13, textAlign: "center", maxWidth: 400, lineHeight: 19,
   },
-  clientRowWrap: {
-    flexDirection: "row", alignItems: "stretch",
-    borderBottomWidth: 1, borderBottomColor: theme.color.border,
-  },
-  rowDeleteBtn: {
-    paddingHorizontal: 12, alignItems: "center", justifyContent: "center",
-    borderLeftWidth: 1, borderLeftColor: theme.color.border,
-    backgroundColor: "transparent",
-  },
-  rowV2Btn: {
-    paddingHorizontal: 12, alignItems: "center", justifyContent: "center",
-    borderLeftWidth: 1, borderLeftColor: theme.color.border,
-    backgroundColor: "transparent",
-  },
-  clientCol: { color: theme.color.textDim, fontSize: 12, letterSpacing: 0.5 },
-  clientName: { color: theme.color.textHi, fontWeight: "700", fontSize: 14 },
-  colClient: { flex: 2 },
-  colGoal:   { flex: 1.5 },
-  colPhase:  { flex: 1.2 },
-  colToday:  { flex: 1.4 },
-  colStatus: { flex: 1.4 },
-
-  statusPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, alignSelf: "flex-start" },
-  statusPillText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
 
   errorText: { color: "#ff6666", padding: 16 },
-
-  // Delete confirmation modal
-  modalBackdrop: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.75)",
-    alignItems: "center", justifyContent: "center", padding: 20,
-  },
-  modalCard: {
-    width: "100%", maxWidth: 460, backgroundColor: theme.color.surface2,
-    borderRadius: 14, borderWidth: 1, borderColor: theme.color.border, padding: 22,
-  },
-  modalTitle: {
-    color: theme.color.textHi, fontSize: 20, fontWeight: "800", marginBottom: 10,
-  },
-  modalBody: { color: theme.color.textDim, fontSize: 13, lineHeight: 19, marginBottom: 16 },
-  modalBodyStrong: { color: theme.color.textHi, fontWeight: "700" },
-  modalLabel: {
-    color: theme.color.textDim, fontSize: 11, letterSpacing: 1, fontWeight: "700",
-    textTransform: "uppercase", marginBottom: 4,
-  },
-  modalEmailHint: {
-    color: theme.color.textHi, fontSize: 13, fontWeight: "600",
-    marginBottom: 8, fontFamily: "monospace",
-  },
-  modalInput: {
-    backgroundColor: theme.color.bg, borderWidth: 1, borderColor: theme.color.border,
-    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
-    color: theme.color.textHi, fontSize: 14, marginBottom: 6,
-  },
-  modalError: { color: "#ff6b6b", fontSize: 12, marginTop: 2, marginBottom: 4 },
-  modalRow: { flexDirection: "row", gap: 10, marginTop: 14, justifyContent: "flex-end" },
-  modalBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8, minWidth: 100, alignItems: "center" },
-  modalBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border },
-  modalBtnGhostText: { color: theme.color.textDim, fontWeight: "700" },
-  modalBtnDanger: { backgroundColor: "#c53030" },
-  modalBtnDangerText: { color: "#fff", fontWeight: "800", letterSpacing: 0.3 },
 });

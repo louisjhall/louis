@@ -52,6 +52,7 @@ DEFAULT_NOTIFICATION_SETTINGS = {
     "weekly_videos": True,
     "roster": True,
     "programme_updates": True,
+    "flight_support": True,
     "quiet_hours_start": "21:00",
     "quiet_hours_end": "07:00",
     "preferred_reminder_time": "07:30",
@@ -79,6 +80,11 @@ NOTIF_CATEGORY: dict[str, str] = {
     # are aviation-duty adjacent → route through the Roster preference.
     "standby_available": "roster",
     "standby_applied":   "roster",
+    # Iter 127 — Flight Support push category (dedicated aviation toggle).
+    "flight_support_pre_flight":  "flight_support",
+    "flight_support_post_flight": "flight_support",
+    "flight_support_layover":     "flight_support",
+    "flight_support_turnaround":  "flight_support",
 }
 
 
@@ -249,7 +255,7 @@ async def notifications_settings_get(user: dict = Depends(current_user)):
 async def notifications_settings_put(body: NotificationSettingsBody, user: dict = Depends(current_user)):
     stored = user.get("notification_settings") or {}
     updates: dict[str, Any] = {}
-    for k in ("check_ins", "habits", "workouts", "coach_messages", "weekly_videos", "roster", "programme_updates",
+    for k in ("check_ins", "habits", "workouts", "coach_messages", "weekly_videos", "roster", "programme_updates", "flight_support",
               "quiet_hours_start", "quiet_hours_end", "preferred_reminder_time", "travel_use_current_tz"):
         v = getattr(body, k)
         if v is not None:

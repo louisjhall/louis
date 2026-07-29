@@ -36,18 +36,45 @@ type Intervention = {
 };
 
 export function TodayFlightSupport({
-  snapshot, onRefresh,
+  snapshot, onRefresh, deepLinkKind,
 }: {
   snapshot: any | null;
   onRefresh?: () => Promise<void> | void;
+  /** When set (e.g. "flight_support_pre_flight" from a push tap), auto-opens
+   *  the first matching intervention's protocol modal. */
+  deepLinkKind?: string;
 }) {
   const [openIntervention, setOpenIntervention] = useState<Intervention | null>(null);
   const [skipBusy, setSkipBusy] = useState<string | null>(null);
+  const openedForDeepLink = React.useRef<string | undefined>(undefined);
+
+  const enabled = snapshot ? snapshot.auto_flight_support_enabled !== false : false;
+  const items: Intervention[] = (snapshot && snapshot.flight_support) || [];
+  const role: string = (snapshot && snapshot.role) || "role_unknown";
+
+  // Deep-link auto-open — fires once per notification tap.
+  React.useEffect(() => {
+    if (!deepLinkKind) return;
+    if (openedForDeepLink.current === deepLinkKind) return;
+    const kindToFamily: Record<string, string[]> = {
+      flight_support_pre_flight:  ["mobility", "activation", "reset"],
+      flight_support_post_flight: ["reset", "recovery"],
+      flight_support_layover:     ["mobility", "recovery", "walk"],
+      flight_support_turnaround:  ["mobility", "movement_break", "walk"],
+    };
+    const families = kindToFamily[deepLinkKind] || [];
+    const match = items.find((it) =>
+      families.some((f) => (it.family || "").toLowerCase().includes(f))
+      && it.completion_status !== "completed"
+    );
+    if (match) {
+      openedForDeepLink.current = deepLinkKind;
+      setOpenIntervention(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkKind, items.length]);
 
   if (!snapshot) return null;
-  const enabled = snapshot.auto_flight_support_enabled !== false;
-  const items: Intervention[] = snapshot.flight_support || [];
-  const role: string = snapshot.role || "role_unknown";
 
   if (role === "role_unknown") {
     return (

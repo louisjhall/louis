@@ -20,6 +20,7 @@ type Settings = {
   weekly_videos: boolean;
   roster: boolean;
   programme_updates: boolean;
+  flight_support: boolean;
   quiet_hours_start: string;
   quiet_hours_end: string;
   preferred_reminder_time: string;
@@ -29,6 +30,7 @@ type Settings = {
 
 // Iter 123 — Notification categories grouped for the client-facing UI.
 // Underlying preference keys are unchanged (server-side gating is identical).
+// Iter 127 — Added AVIATION group for the Flight Support push toggle.
 type Row = { key: keyof Settings; label: string; description: string };
 const GROUPS: { title: string; rows: Row[] }[] = [
   {
@@ -46,6 +48,12 @@ const GROUPS: { title: string; rows: Row[] }[] = [
       { key: "habits",    label: "Habits",    description: "One kind nudge per day" },
       { key: "check_ins", label: "Check-ins", description: "Sunday reminders + missed follow-ups" },
       { key: "roster",    label: "Roster",    description: "7 / 3 / 1 days before it runs out + standby prompts" },
+    ],
+  },
+  {
+    title: "AVIATION",
+    rows: [
+      { key: "flight_support", label: "Flight Support", description: "Pre-flight, post-flight and layover support" },
     ],
   },
 ];

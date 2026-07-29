@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Modal } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
@@ -126,6 +126,13 @@ function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): { pri
 export default function Home() {
   const { user } = useAuth();
   const router = useRouter();
+  // Iter 127 — deep-link from Flight Support push notification tap. Value is
+  // the event type, e.g. "flight_support_pre_flight". TodayFlightSupport
+  // auto-opens the first matching intervention when this is set.
+  const params = useLocalSearchParams<{ flight_support?: string }>();
+  const fsDeepLinkKind = typeof params?.flight_support === "string"
+    ? params.flight_support
+    : undefined;
   // Iter 94t (Phase 1) — server-driven feature flags. Safe defaults if
   // /app-config isn't reachable.
   const tzFlag = useFlag("timezone_card_enabled");
@@ -823,6 +830,7 @@ export default function Home() {
           <TodayFlightSupport
             snapshot={todaySnapshot}
             onRefresh={load}
+            deepLinkKind={fsDeepLinkKind}
           />
 
           <TodayPersonalActivities key={activityRefreshKey} />

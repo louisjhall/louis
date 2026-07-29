@@ -12076,6 +12076,13 @@ async def _tick_reminders_all() -> None:
         await feature_preview.preview_purge_throwaways()
     except Exception:
         logger.exception("preview purge tick failed")
+    # Iter 127 — Flight Support duty-aware push scheduler.
+    try:
+        from feature_flight_support_notifier import flight_support_scheduler_tick
+        from feature_notifications import enqueue_notification as _en_notif
+        await flight_support_scheduler_tick(db, _en_notif)
+    except Exception:
+        logger.exception("flight support tick failed")
 
 _tick_reminders = _tick_reminders_all
 

@@ -10058,11 +10058,13 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
 
 @api.get("/coach/pending-approvals")
 async def coach_pending(_: dict = Depends(require_role("coach"))):
-    rows = await db.workouts.find({"approved": False}, {"_id": 0}).sort("date", 1).to_list(500)
-    for r in rows:
-        u = await db.users.find_one({"id": r["user_id"]}, {"_id": 0, "name": 1})
-        r["client_name"] = u.get("name") if u else "Unknown"
-    return rows
+    # Iter 128d — V1 workout approvals retired. With zero V1 clients the
+    # legacy `workouts.approved=False` list is meaningless. Approvals now
+    # flow through the V2 draft change-set pathway on the workspace Plan tab
+    # (see /v2/coach/clients/{id}/engine-v2/publish and /engine-v2/exceptions).
+    # This endpoint is retained returning an empty list so any lingering
+    # frontend caller doesn't 404 during the retirement window.
+    return []
 
 
 @api.get("/coach/calendar")
@@ -10134,7 +10136,15 @@ async def coach_analytics(days: int = 30, _: dict = Depends(require_role("coach"
         completed = [w for w in scheduled_past if w.get("completed")]
         rpes = [int(w.get("rpe")) for w in completed if isinstance(w.get("rpe"), (int, float))]
         avg_rpe = round(sum(rpes) / len(rpes), 1) if rpes else None
-        compliance = round(100 * len(completed) / len(scheduled_past)) if scheduled_past else 0
+        # Iter 128d — for V2 clients (which is now ALL current clients) V1
+        # `workouts` yields empty scheduled_past → return `None` so the UI
+        # shows "—" instead of a misleading 0%. Analytics on V2 completion
+        # (workout_implementations) is on the backlog; see COACH_DASHBOARD_
+        # CONSOLIDATION_PLAN.md §22.
+        if scheduled_past:
+            compliance = round(100 * len(completed) / len(scheduled_past))
+        else:
+            compliance = None
         # count loads
         c_loads: dict[str, int] = {}
         for w in wkts:
@@ -10160,9 +10170,9 @@ async def coach_analytics(days: int = 30, _: dict = Depends(require_role("coach"
         tot_scheduled += len(scheduled_past)
         tot_completed += len(completed)
         all_rpes.extend(rpes)
-    global_compliance = round(100 * tot_completed / tot_scheduled) if tot_scheduled else 0
+    global_compliance = round(100 * tot_completed / tot_scheduled) if tot_scheduled else None
     global_avg_rpe = round(sum(all_rpes) / len(all_rpes), 1) if all_rpes else None
-    per_client.sort(key=lambda x: -x["compliance"])
+    per_client.sort(key=lambda x: -(x["compliance"] or -1))
     return {
         "days": days,
         "start_date": cutoff_date,

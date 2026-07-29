@@ -176,36 +176,11 @@ export function WorkoutQuickActions({
             onPress={() => setSwapOpen(true)}
           />
 
-          <Action
-            testID="wqa-regen"
-            icon="refresh"
-            label="REGENERATE FROM SCRATCH"
-            sub="Rebuild this session using the latest roster context."
-            busy={busy === "regen"}
-            disabled={target.coach_locked}
-            onPress={regenerate}
-          />
-
-          <Action
-            testID="wqa-approve"
-            icon={target.approved ? "checkmark-done-circle" : "checkmark-circle-outline"}
-            label={target.approved ? "ALREADY APPROVED" : "APPROVE FOR CLIENT"}
-            sub="Confirm this session is ready to send to the client."
-            busy={busy === "approve"}
-            disabled={target.approved}
-            onPress={approve}
-          />
-
-          <Action
-            testID="wqa-lock"
-            icon={target.coach_locked ? "lock-open-outline" : "lock-closed-outline"}
-            label={target.coach_locked ? "UNLOCK" : "COACH-LOCK"}
-            sub={target.coach_locked
-              ? "Allow auto-regeneration again."
-              : "Freeze this session — no auto-updates."}
-            busy={busy === "lock"}
-            onPress={toggleLock}
-          />
+          {/* Iter 128d — Legacy V1 workout mutation buttons (Regenerate / Approve / Lock)
+              REMOVED. They hit /coach/workouts/{wid}/regenerate|approve|lock which are
+              V1-only paths. Since there are zero V1 clients, these controls have no
+              current-programme meaning. Workout structural changes now happen through the
+              canonical client workspace (Plan tab). */}
 
           {(target.missing_media_count || 0) > 0 ? (
             <Action

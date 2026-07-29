@@ -24,11 +24,6 @@ import { initSentry } from "@/src/lib/sentry";
 // One-shot at module load; safe no-op when EXPO_PUBLIC_SENTRY_DSN is unset.
 initSentry();
 
-// Bundle probe marker — visible in Metro logs on cold launch. If this
-// line does NOT appear in the Metro terminal after force-quitting Expo Go
-// and reconnecting, the device is running a stale JS bundle.
-console.log("[BUNDLE_PROBE] CREWFIT_2026_07_29_0946 (root layout)");
-
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 

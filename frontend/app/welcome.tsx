@@ -7,19 +7,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { theme } from "@/src/lib/theme";
 
 /* -------------------------------------------------------------------------- */
-/*  ITER 125 – ISOLATION MODE                                                 */
-/*  The Louis welcome video player has been TEMPORARILY DISABLED for a        */
-/*  binary diagnostic test on the physical device: if the overlay disappears */
-/*  in this state, welcome.tsx was the source. If the overlay persists, the  */
-/*  Louis video surface is being created somewhere else in the app.          */
-/*                                                                            */
-/*  When re-enabled, the LouisVideoPlayer will be restored with the renamed  */
-/*  asset: coach-louis-welcome-v2.mp4                                        */
-/* -------------------------------------------------------------------------- */
-
-
-/* -------------------------------------------------------------------------- */
 /*  Welcome — Louis Hall introduction                                          */
+/*                                                                             */
+/*  Stage A: the Louis welcome video is intentionally a static placeholder     */
+/*  only. No video player is created on this screen. The tap-to-play Louis    */
+/*  implementation is Stage B (rebuilt separately once startup is verified    */
+/*  on the physical device).                                                  */
 /* -------------------------------------------------------------------------- */
 export default function Welcome() {
   const router = useRouter();
@@ -29,12 +22,10 @@ export default function Welcome() {
   const videoW = Math.min(width - 60, 300);
   const videoH = Math.round(videoW * (16 / 9));
 
-  // ITER 125 ISOLATION MODE — Louis video runtime disabled. State
-  // variables kept simple: only fade + navigation remain in play.
+  // Stage A — Louis welcome player is not built into this screen. Only
+  // fade-in animation and AsyncStorage mark are handled here.
   const fade = useRef(new Animated.Value(0)).current;
-  // Kept purely so the "Tap the video to play" label logic below still
-  // renders (it just always shows during isolation).
-  const startedVideo = false;
+  const startedVideo = false; // reserved for Stage B
 
   useEffect(() => {
     // Prefetch — mark that user reached welcome. (Runs exactly once on mount.)
@@ -63,19 +54,16 @@ export default function Welcome() {
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
-        {/* ITER 125 ISOLATION — Louis video runtime is temporarily DISABLED
-            for physical-device overlap diagnosis. Only the static poster
-            renders. No useVideoPlayer, no VideoView, no native surface.
-            Tap does nothing while in isolation mode. */}
+        {/* Louis welcome video card — Stage A: static poster only.
+            No player is created on this screen. Stage B will add the
+            tap-to-play Louis implementation. */}
         <Animated.View style={[styles.videoCardWrap, { opacity: fade }]}>
           <View style={[styles.videoFrame, { width: videoW, height: videoH }]}>
-            {/* Static poster only. NO Louis video mount in isolation mode. */}
             <View style={[StyleSheet.absoluteFill, styles.posterBg]} />
 
-            {/* Play overlay — visible but inert. */}
             <Pressable
               style={StyleSheet.absoluteFill}
-              onPress={() => { console.log("[LOUIS_VIDEO] tap ignored (isolation mode)"); }}
+              onPress={() => { /* Stage A: tap intentionally does nothing. */ }}
               testID="welcome-video-tap"
             >
               <View style={styles.playOverlay} pointerEvents="none">

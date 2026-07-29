@@ -1,100 +1,89 @@
 /**
- * CrewFitIntroAnimation — Iter 125-DIAG (BUNDLE_PROBE build)
+ * CrewFitIntroAnimation
  *
- * DIAGNOSTIC MODE: expo-video is temporarily removed from the startup gate.
- * During phase "showing_intro" we render ONLY a plain React Native screen
- * (black background, centred white text). No useVideoPlayer, no VideoView,
- * no MP4 require() anywhere on cold launch.
+ * Root startup gate for the CrewFit intro video.
  *
- * Purpose: prove the physical device is actually running THIS bundle. If
- * the iPhone still shows either the minimalist startup video or the Louis
- * overlay during the intro window, the device is running a stale bundle.
+ *   App starts
+ *      ↓
+ *   Resolve whether the intro should play (12-hour rule)
+ *      ↓
+ *   If YES  → render ONLY the intro video; children are NOT mounted
+ *              ↓
+ *          video finishes
+ *              ↓
+ *          intro fully unmounts → children mount for the first time
+ *   If NO   → children mount immediately
  *
- * Structural gate contract is unchanged:
- *   undecided     → black screen, {children} NOT mounted
- *   showing_intro → diagnostic text screen, {children} NOT mounted
- *   done          → {children} only
- *
- * 12-hour persistence is unchanged (crewfit_intro_last_played_at).
+ * Contract
+ *   - The startup video and the main CrewFit app never coexist in the
+ *     React tree. There is no overlay, no crossfade, no children rendered
+ *     behind the video. Media isolation is structural.
+ *   - The intro asset is bundled locally.
+ *   - The intro's own audio (if the file contains any) plays natively.
+ *   - The intro plays once. No loop. No native controls.
+ *   - The 12-hour cooldown is stored locally on-device only.
+ *   - A hard safety fallback (video error, or watchdog timeout) always
+ *     hands control back to the main app so a broken video can never
+ *     block access.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  View, Text, StyleSheet, Platform,
-} from "react-native";
+import { View, StyleSheet, Dimensions } from "react-native";
+import { VideoView, useVideoPlayer } from "expo-video";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { theme } from "@/src/lib/theme";
 
+// Asset — bundled at build-time. Keep the require at module scope; the
+// asset registration happens once and cannot instantiate a player by
+// itself.
+const INTRO_SOURCE = require("@/assets/louis/crewfit-startup-minimalist-v2.mp4");
+
+// Local-storage key for the 12-hour rule.
 const KEY_LAST = "crewfit_intro_last_played_at";
-const KEY_PENDING = "crewfit_intro_pending_reason";
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
-// Bundle probe: log once at module load so the [BUNDLE_PROBE] tag is
-// definitely emitted before any user interaction. If this line doesn't
-// appear in Metro logs on cold launch, the device is running a stale bundle.
-console.log("[BUNDLE_PROBE] CREWFIT_2026_07_29_0946");
+// Hard watchdog: even if the video never emits playToEnd (driver quirk,
+// codec issue, etc.) we hand control to the main app after this many ms.
+// Intro is ~10s long; give it 5 seconds of headroom.
+const HARD_WATCHDOG_MS = 15_000;
 
-// Module-level flag so we NEVER play the intro twice in the same JS runtime
-// (same app session — different from a real cold launch). Resets on process
-// kill; survives hot re-mounts.
-let alreadyPlayedThisSession = false;
+// Module-level flag: prevents the intro from firing twice in the same JS
+// runtime. A background → foreground return doesn't create a new runtime,
+// so this flag persists across it. A real cold launch (process killed)
+// resets it because the module is re-evaluated.
+let playedInThisSession = false;
 
-/** Persistently queue the intro to fire on the very next mount, regardless
- *  of the 12-hour cooldown. Use after onboarding completes. */
-export async function queueIntroForNextMount(reason: "onboarded" | "cold_launch" = "onboarded"): Promise<void> {
-  try { await AsyncStorage.setItem(KEY_PENDING, reason); } catch { /* ignore */ }
-}
-
+/** Decide whether the intro should play on this launch. */
 async function shouldPlayIntro(): Promise<boolean> {
-  // ITER 125-DIAG — BUNDLE 0946 diagnostic override.
-  // Force the intro gate to run on every fresh JS runtime so the diagnostic
-  // screen appears on every cold launch, independent of the persisted
-  // crewfit_intro_last_played_at timestamp.
-  //
-  // We still respect `alreadyPlayedThisSession` so the diagnostic doesn't
-  // re-fire on foreground-return within the same session (which would loop
-  // the 8-second screen every time you background/foreground the app).
-  //
-  // The normal 12-hour implementation below is intentionally preserved —
-  // it will be re-enabled by removing this early return once we exit
-  // diagnostic mode.
-  if (alreadyPlayedThisSession) return false;
-  return true;
-
-  // eslint-disable-next-line no-unreachable
+  if (playedInThisSession) return false;
   try {
-    const pending = await AsyncStorage.getItem(KEY_PENDING);
-    if (pending) {
-      await AsyncStorage.removeItem(KEY_PENDING);
-      return true;
-    }
     const last = await AsyncStorage.getItem(KEY_LAST);
-    if (!last) return true;
+    if (!last) return true;                              // first ever launch
     const ts = Date.parse(last);
-    if (isNaN(ts)) return true;
-    return (Date.now() - ts) >= TWELVE_HOURS_MS;
+    if (isNaN(ts)) return true;                          // corrupt value
+    return (Date.now() - ts) >= TWELVE_HOURS_MS;         // 12h cooldown
   } catch {
-    return !alreadyPlayedThisSession;
+    // Storage unavailable — err on the side of showing the intro once.
+    return true;
   }
 }
 
-async function stampPlayed(): Promise<void> {
-  try { await AsyncStorage.setItem(KEY_LAST, new Date().toISOString()); } catch { /* ignore */ }
+/** Persist the completion timestamp. Fire-and-forget. */
+function stampPlayed(): void {
+  AsyncStorage.setItem(KEY_LAST, new Date().toISOString()).catch(() => {});
 }
 
-type Phase = "undecided" | "showing_intro" | "done";
+type Phase = "undecided" | "playing" | "done";
 
 export function CrewFitIntroAnimation({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<Phase>("undecided");
 
   useEffect(() => {
-    console.log("[BUNDLE_PROBE] CrewFitIntroAnimation mounted");
     let cancelled = false;
     (async () => {
       const play = await shouldPlayIntro();
       if (cancelled) return;
       if (play) {
-        alreadyPlayedThisSession = true;
-        setPhase("showing_intro");
+        playedInThisSession = true;
+        setPhase("playing");
       } else {
         setPhase("done");
       }
@@ -102,91 +91,83 @@ export function CrewFitIntroAnimation({ children }: { children: React.ReactNode 
     return () => { cancelled = true; };
   }, []);
 
-  const handleIntroFinished = useCallback(() => {
+  const handleFinished = useCallback(() => {
     stampPlayed();
     setPhase("done");
   }, []);
 
+  // Undecided — plain black tile while AsyncStorage resolves. Children are
+  // deliberately NOT mounted here so the app cannot flash underneath.
   if (phase === "undecided") {
-    return <View style={styles.blackFill} />;
+    return <View style={styles.black} />;
   }
 
-  if (phase === "showing_intro") {
-    return <IntroGate onFinished={handleIntroFinished} />;
+  // Playing — ONLY the intro exists in the tree. No Stack, no Welcome,
+  // no Louis. Structurally impossible for another player to coexist.
+  if (phase === "playing") {
+    return <IntroPlayer onFinished={handleFinished} />;
   }
 
+  // Done — main app mounts here for the first (and only) time.
   return <>{children}</>;
 }
 
-/* --------------------------- diagnostic gate ------------------------------ */
-function IntroGate({ onFinished }: { onFinished: () => void }) {
+/* -------------------------------------------------------------------------- */
+/*  IntroPlayer                                                               */
+/*                                                                            */
+/*  The video player is created inside this component, which only exists     */
+/*  while phase === "playing". When it unmounts, expo-video releases the     */
+/*  underlying native player (AVPlayer on iOS, ExoPlayer on Android).        */
+/* -------------------------------------------------------------------------- */
+function IntroPlayer({ onFinished }: { onFinished: () => void }) {
   const finishedRef = useRef(false);
 
+  const player = useVideoPlayer(INTRO_SOURCE, (p) => {
+    p.loop = false;
+    p.play();
+  });
+
+  const finish = useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    try { player.pause(); } catch { /* ignore */ }
+    onFinished();
+  }, [player, onFinished]);
+
   useEffect(() => {
-    console.log("[STARTUP_DIAG] gate mounted (no video)");
-    // Hold the diagnostic screen for 8 seconds, then hand off to the app.
-    const timer = setTimeout(() => {
-      if (finishedRef.current) return;
-      finishedRef.current = true;
-      console.log("[STARTUP_DIAG] 8s elapsed — finishing");
-      onFinished();
-    }, 8000);
+    // Primary completion signal.
+    const endSub = player.addListener("playToEnd", finish);
+    // Safety fallback: if the video errors, don't block the app.
+    const statusSub = player.addListener("statusChange", (e: any) => {
+      if (e?.status === "error") finish();
+    });
+    // Hard watchdog: guaranteed exit even if all events are swallowed.
+    const watchdog = setTimeout(finish, HARD_WATCHDOG_MS);
     return () => {
-      clearTimeout(timer);
-      console.log("[STARTUP_DIAG] gate unmounted");
+      try { endSub.remove(); } catch { /* ignore */ }
+      try { statusSub.remove(); } catch { /* ignore */ }
+      clearTimeout(watchdog);
     };
-  }, [onFinished]);
+  }, [player, finish]);
+
+  const { width, height } = Dimensions.get("window");
 
   return (
-    <View style={styles.bg} testID="crewfit-intro-animation-diag">
-      <Text style={styles.headline}>CREWFIT STARTUP TEST 0946</Text>
-      <Text style={styles.subline}>NO VIDEO LOADED</Text>
-      <View style={styles.spacer} />
-      <Text style={styles.bundleTag}>BUNDLE 0946</Text>
+    <View style={[styles.black, { width, height }]}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="contain"
+        nativeControls={false}
+        allowsFullscreen={false}
+        allowsPictureInPicture={false}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  blackFill: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
-  bg: {
-    flex: 1,
-    backgroundColor: "#000",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-    ...Platform.select({
-      ios: { zIndex: 10_000 },
-      android: { elevation: 100 },
-      web: { zIndex: 10_000 } as any,
-      default: {},
-    }),
-  },
-  headline: {
-    color: "#fff",
-    fontSize: 22,
-    fontWeight: "900",
-    letterSpacing: 2,
-    textAlign: "center",
-  },
-  subline: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-    letterSpacing: 3,
-    marginTop: 14,
-    textAlign: "center",
-  },
-  spacer: { height: 40 },
-  bundleTag: {
-    color: theme.color.brand,
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 3,
-  },
+  black: { flex: 1, backgroundColor: "#000" },
 });
 
 export default CrewFitIntroAnimation;

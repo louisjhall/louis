@@ -9,21 +9,20 @@ import { LouisAvatar } from "@/src/components/LouisAvatar";
 import { LOUIS, isLouis } from "@/src/lib/coachProfile";
 
 const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?: boolean }[] = [
-  // Iter 128b — Coach nav consolidated. V2 IS the product; V1 legacy routes
-  // remain reachable via direct URL but are removed from the sidebar so
-  // there is ONE canonical coach experience. Do NOT delete V1 files/routes
-  // yet — migration safety net.
-  { path: "/(coach)/v2-home", label: "Home", icon: "home-outline", testId: "desktop-nav-home" },
-  { path: "/(coach)/clients", label: "Clients", icon: "people-outline", testId: "desktop-nav-clients" },
-  { path: "/(coach)/calendar", label: "Calendar", icon: "calendar-outline", testId: "desktop-nav-calendar" },
-  { path: "/(coach)/approvals", label: "Approvals", icon: "checkmark-circle-outline", testId: "desktop-nav-approvals" },
-  { path: "/(coach)/library", label: "Library", icon: "barbell-outline", testId: "desktop-nav-library" },
-  { path: "/(coach)/videos", label: "Videos", icon: "videocam-outline", testId: "desktop-nav-videos" },
-  { path: "/(coach)/messages", label: "Messages", icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
-  { path: "/(coach)/analytics", label: "Analytics", icon: "bar-chart-outline", testId: "desktop-nav-analytics" },
-  { path: "/(coach)/changelog", label: "Change Log", icon: "time-outline", testId: "desktop-nav-changelog" },
+  // Iter 128h — Coach nav consolidated further. Videos + Approvals are gone
+  // from the primary sidebar. Approvals surface via the Home Action Queue
+  // and deep-link straight into the workspace review flow. Videos had no
+  // useful coach-facing purpose. Underlying routes remain reachable by
+  // direct URL / testing agents, but are no longer part of daily coaching.
+  { path: "/(coach)/v2-home",   label: "Home",             icon: "home-outline",         testId: "desktop-nav-home" },
+  { path: "/(coach)/clients",   label: "Clients",          icon: "people-outline",       testId: "desktop-nav-clients" },
+  { path: "/(coach)/calendar",  label: "Calendar",         icon: "calendar-outline",     testId: "desktop-nav-calendar" },
+  { path: "/(coach)/library",   label: "Library",          icon: "barbell-outline",      testId: "desktop-nav-library" },
+  { path: "/(coach)/messages",  label: "Messages",         icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
+  { path: "/(coach)/analytics", label: "Analytics",        icon: "bar-chart-outline",    testId: "desktop-nav-analytics" },
+  { path: "/(coach)/changelog", label: "Change Log",       icon: "time-outline",         testId: "desktop-nav-changelog" },
   { path: "/coach/admin/coaches", label: "Coaches (Admin)", icon: "people-circle-outline", testId: "desktop-nav-admin-coaches", adminOnly: true },
-  { path: "/(coach)/profile", label: "Profile", icon: "person-outline", testId: "desktop-nav-profile" },
+  { path: "/(coach)/profile",   label: "Profile",          icon: "person-outline",       testId: "desktop-nav-profile" },
 ];
 
 function isActive(pathname: string, target: string): boolean {

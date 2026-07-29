@@ -413,3 +413,286 @@ async def endpoint_coach_home_action_queue(
         "waiting_on_client": waiting,
         "at": now_iso(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Client Directory (Iter 128h — CLIENTS page consolidation)
+# ---------------------------------------------------------------------------
+#
+# Answers: "Who do I coach and what is their current coaching state?"
+#
+# Returns ONE compact row per client with the five columns the coach cares
+# about: IDENTITY, GOAL, PLAN STATE, ROSTER STATE, NEXT ACTION.
+#
+# Reuses `_client_tasks` so the next-action logic is *literally the same*
+# as the Home Action Queue — no competing status engine.
+
+_TASK_TYPE_TO_PLAN_STATE = {
+    "draft_review":     ("live_plus_draft", "New Draft", "2"),  # tuple placeholder — resolved dynamically
+    "ready_to_publish": ("ready", "Ready to publish", None),
+}
+
+
+def _plan_state(has_live: bool, has_draft: bool, draft_needs_review: bool) -> dict:
+    """Return the coach-facing plan-state pill data."""
+    if has_live and has_draft:
+        return {
+            "kind": "live_plus_draft",
+            "label": "Live",
+            "tint": "green",
+            "sub": "New Draft" + (" · needs review" if draft_needs_review else ""),
+            "sub_tint": "amber",
+        }
+    if has_draft and not has_live:
+        return {
+            "kind": "draft_only",
+            "label": "Draft",
+            "tint": "amber",
+            "sub": "Needs review" if draft_needs_review else "Ready to publish",
+            "sub_tint": "amber",
+        }
+    if has_live:
+        return {
+            "kind": "live",
+            "label": "Live",
+            "tint": "green",
+            "sub": "On track",
+            "sub_tint": "dim",
+        }
+    return {
+        "kind": "no_plan",
+        "label": "No plan",
+        "tint": "dim",
+        "sub": None,
+        "sub_tint": "dim",
+    }
+
+
+def _roster_state(has_roster: bool, roster_range: Optional[dict],
+                   has_draft: bool, has_live: bool) -> dict:
+    """Return the coach-facing roster-state pill data.
+
+    We do NOT visualise the full timeline here — Clients page is a directory,
+    not a calendar. Just a status word + optional month + updated-N-days ago
+    context.
+    """
+    if not has_roster:
+        return {
+            "kind": "required" if not (has_draft or has_live) else "missing",
+            "label": "Roster required",
+            "tint": "amber",
+            "sub": "Upload roster to build plan",
+        }
+    label = "Loaded"
+    month_txt = None
+    if roster_range and roster_range.get("start"):
+        try:
+            s = _dt.date.fromisoformat(roster_range["start"])
+            month_txt = s.strftime("%b roster")
+        except Exception:
+            pass
+    return {
+        "kind": "loaded",
+        "label": month_txt or "Roster loaded",
+        "tint": "green",
+        "sub": label,
+    }
+
+
+def _primary_next_action(tasks: list[dict], has_draft: bool, has_live: bool,
+                          has_roster: bool) -> dict:
+    """Reduce all a client's tasks to ONE primary next action.
+
+    Priority: urgent > attention > upcoming > waiting. Within a band, use
+    _TYPE_ORDER (profile_blocker before draft_review before ready_to_publish
+    etc.). Falls back to "Open Client" if nothing needs the coach yet."""
+    if tasks:
+        # tasks are already emitted in creation order; sort by our band.
+        best = sorted(tasks, key=_sort_key)[0]
+        return {
+            "label": best["action_label"],
+            "deep_link": best["deep_link"],
+            "priority": best["priority"],
+            "task_type": best["type"],
+        }
+    # Nothing to do — soft "Open" fallback.
+    return {
+        "label": "Open client",
+        "deep_link": None,   # set by caller with client id
+        "priority": "normal",
+        "task_type": None,
+    }
+
+
+@api.get("/v2/coach/clients/directory")
+async def endpoint_coach_clients_directory(
+    q: Optional[str] = None,
+    filter: Optional[str] = "active",
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    """Return the compact client directory used by the Clients page.
+
+    Filters: `active` (default) · `needs_attention` · `archived`.
+    """
+    # Base query: role=client, honour archived filter.
+    match: dict = {"role": "client"}
+    if filter == "archived":
+        match["status"] = "archived"
+    else:
+        match["status"] = {"$ne": "archived"}
+
+    if q:
+        match["$or"] = [
+            {"name":         {"$regex": q, "$options": "i"}},
+            {"display_name": {"$regex": q, "$options": "i"}},
+            {"email":        {"$regex": q, "$options": "i"}},
+            {"profile.airline":   {"$regex": q, "$options": "i"}},
+            {"profile.job_title": {"$regex": q, "$options": "i"}},
+        ]
+
+    clients = await db.users.find(
+        match,
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
+         "profile": 1, "status": 1},
+    ).sort("name", 1).to_list(500)
+
+    rows: list[dict] = []
+    for c in clients:
+        cid = c["id"]
+
+        active_draft = await db.plan_drafts_v2.find_one(
+            {"client_id": cid, **_ACTIVE_DRAFT_FILTER},
+            {"_id": 0, "id": 1, "status": 1},
+            sort=[("created_at", -1)],
+        )
+        active_live = await db.plan_live_v2.find_one(
+            {"client_id": cid, "active": True},
+            {"_id": 0, "id": 1, "roster_range": 1, "planning_window": 1, "activated_at": 1},
+        )
+        has_draft = bool(active_draft)
+        has_live  = bool(active_live)
+
+        # Roster range: prefer the live roster_range, else derive from
+        # schedule_days min/max, else null. Cheap two-count read.
+        roster_range = None
+        has_roster = False
+        n_sched = await db.schedule_days.count_documents({"client_id": cid})
+        has_roster = n_sched > 0
+        if has_roster:
+            first = await db.schedule_days.find(
+                {"client_id": cid}, {"_id": 0, "date": 1}
+            ).sort("date", 1).limit(1).to_list(1)
+            last = await db.schedule_days.find(
+                {"client_id": cid}, {"_id": 0, "date": 1}
+            ).sort("date", -1).limit(1).to_list(1)
+            if first and last:
+                roster_range = {"start": first[0]["date"], "end": last[0]["date"], "days": n_sched}
+
+        tasks = await _client_tasks(c)
+        # Filter for "needs_attention" bucket
+        if filter == "needs_attention":
+            if not any(t["priority"] in ("urgent", "attention") for t in tasks):
+                continue
+
+        plan = _plan_state(has_live, has_draft,
+                           draft_needs_review=(active_draft or {}).get("status") == "needs_review")
+        # For live+draft, tweak `sub` to include the issue count if we know it
+        if plan["kind"] == "live_plus_draft":
+            dr = next((t for t in tasks if t["type"] == "draft_review"), None)
+            if dr:
+                n = (dr.get("counts") or {}).get("total")
+                if n:
+                    plan["sub"] = f"New Draft · {n} issue" + ("s" if n != 1 else "")
+            else:
+                # Draft ready to publish (no unresolved issues)
+                plan["sub"] = "New Draft · ready to publish"
+                plan["sub_tint"] = "green"
+
+        roster = _roster_state(has_roster, roster_range, has_draft, has_live)
+
+        next_action = _primary_next_action(tasks, has_draft, has_live, has_roster)
+        if not next_action.get("deep_link"):
+            next_action["deep_link"] = f"/coach/client/{cid}/workspace"
+
+        # Goal + phase (coach-facing labels)
+        profile = c.get("profile") or {}
+        goal_key = profile.get("main_goal_key") or ""
+        goal_label = ""
+        if goal_key:
+            try:
+                canonical = canonicalise_goal_key(goal_key)
+                tail = canonical.split(".")[-1]
+                goal_label = tail.replace("_", " ").title()
+            except Exception:
+                goal_label = goal_key.split(".")[-1].replace("_", " ").title()
+
+        # Phase — best-effort read of active programme phase.
+        phase_label = None
+        prog = await db.programmes_v2.find_one(
+            {"client_id": cid, "status": {"$in": ["active", "draft"]}},
+            {"_id": 0, "id": 1},
+        )
+        if prog:
+            active_phase = await db.programme_phases_v2.find_one(
+                {"programme_id": prog["id"], "status": "active"},
+                {"_id": 0, "phase_kind": 1},
+            )
+            if active_phase and active_phase.get("phase_kind"):
+                phase_label = str(active_phase["phase_kind"]).replace("_", " ").title()
+
+        rows.append({
+            "id": cid,
+            "name": (c.get("display_name") or c.get("name") or c.get("email") or "Client"),
+            "email": c.get("email"),
+            "avatar_url": (c.get("profile") or {}).get("avatar_url"),
+            "role_line": _build_role_line(profile),
+            "goal": {
+                "label": goal_label or "General fitness",
+                "phase": phase_label,
+            },
+            "plan": plan,
+            "roster": roster,
+            "next_action": next_action,
+            "attention_count": sum(1 for t in tasks if t["priority"] in ("urgent", "attention")),
+            "status": c.get("status") or "active",
+        })
+
+    # Global counts for the filter tabs (independent of current filter)
+    counts_all = {
+        "active":          await db.users.count_documents({"role": "client", "status": {"$ne": "archived"}}),
+        "archived":        await db.users.count_documents({"role": "client", "status": "archived"}),
+    }
+    # Compute needs_attention against the *active* set only.
+    counts_all["needs_attention"] = 0
+    if filter != "needs_attention":
+        # We already iterated; re-derive from a fresh pass on active only when needed
+        active_clients = clients if filter == "active" and not q else await db.users.find(
+            {"role": "client", "status": {"$ne": "archived"}},
+            {"_id": 0, "id": 1, "profile": 1, "name": 1, "display_name": 1, "email": 1},
+        ).to_list(500)
+        for ac in active_clients:
+            ts = await _client_tasks(ac)
+            if any(t["priority"] in ("urgent", "attention") for t in ts):
+                counts_all["needs_attention"] += 1
+    else:
+        counts_all["needs_attention"] = len(rows)
+
+    return {
+        "clients": rows,
+        "counts": counts_all,
+        "filter": filter or "active",
+        "q": q or "",
+        "at": now_iso(),
+    }
+
+
+def _build_role_line(profile: dict) -> str:
+    """Format 'Pilot · Etihad' style role line from profile."""
+    parts: list[str] = []
+    job = (profile or {}).get("job_title") or (profile or {}).get("role")
+    if job:
+        parts.append(str(job).replace("_", " ").title())
+    airline = (profile or {}).get("airline")
+    if airline:
+        parts.append(str(airline))
+    return " · ".join(parts)

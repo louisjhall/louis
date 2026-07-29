@@ -349,11 +349,90 @@ _TYPE_ORDER = {
     "profile_blocker":   0,
     "draft_review":      1,
     "ready_to_publish":  2,
-    "checkin_review":    3,
-    "message":           4,
-    "plan_ending":       5,
-    "roster_required":   6,
+    "media_required":    3,   # Iter 128k — system media task ranks above check-ins
+    "checkin_review":    4,
+    "message":           5,
+    "plan_ending":       6,
+    "roster_required":   7,
+    "exercise_review":   8,
 }
+
+
+# ---------------------------------------------------------------------------
+# Media aggregator (Iter 128k)
+# ---------------------------------------------------------------------------
+#
+# Home surfaces media work as a SYSTEM task, not a per-client task. It
+# reads the two existing needs-media surfaces (coach_tasks for training and
+# media_queue for Flight Support), deduplicates by canonical exercise_id,
+# and returns a single grouped counter that the UI renders as one row.
+#
+# Any exercise reference that cannot resolve to a canonical `exercises_v2`
+# row is surfaced separately as `exercise_review` — never as a media item
+# (per brief §4/§31/§43).
+
+
+async def _media_summary() -> dict:
+    """Return deduplicated counts and breakdown for the Home Needs-Media card.
+
+    Sources (§16/§30/§42):
+      - `coach_tasks` rows with `task_type` starting `exercise_needs_`
+        → training-side media work.
+      - `media_queue` rows with `status == "needs_media"` → Flight Support
+        (and any future unified) media work.
+
+    Deduplication key: `exercise_id`. If both surfaces flag the same
+    exercise it counts once.
+    """
+    training_ids: set[str] = set()
+    fs_ids: set[str] = set()
+    orphan_names: set[str] = set()   # unresolved names → exercise_review
+
+    async for row in db.coach_tasks.find(
+        {"status": "open", "task_type": {"$regex": "^exercise_needs_"}},
+        {"_id": 0, "exercise_id": 1, "exercise_name": 1, "task_type": 1},
+    ):
+        ex_id = row.get("exercise_id")
+        if ex_id:
+            training_ids.add(ex_id)
+        else:
+            nm = (row.get("exercise_name") or "").strip()
+            if nm:
+                orphan_names.add(nm)
+
+    async for row in db.media_queue.find(
+        {"status": "needs_media"},
+        {"_id": 0, "exercise_id": 1, "exercise_name": 1, "family": 1, "preferred_persona": 1},
+    ):
+        ex_id = row.get("exercise_id")
+        if ex_id:
+            # If also present in training set, dedupe (same canonical id).
+            if ex_id not in training_ids:
+                fs_ids.add(ex_id)
+        else:
+            nm = (row.get("exercise_name") or "").strip()
+            if nm:
+                orphan_names.add(nm)
+
+    # Cross-check against `exercises_v2.used_in_upcoming_workouts_count`
+    # for the client-facing subset. This is the authoritative live-exposure
+    # counter maintained by `_bump_usage_counts`.
+    all_ids = training_ids | fs_ids
+    client_facing = 0
+    if all_ids:
+        client_facing = await db.exercises_v2.count_documents({
+            "id": {"$in": list(all_ids)},
+            "used_in_upcoming_workouts_count": {"$gt": 0},
+        })
+
+    total = len(training_ids) + len(fs_ids)
+    return {
+        "total": total,
+        "training": len(training_ids),
+        "flight_support": len(fs_ids),
+        "client_facing": client_facing,
+        "unresolved": len(orphan_names),
+    }
 
 
 def _sort_key(t: dict) -> tuple:
@@ -369,11 +448,16 @@ async def endpoint_coach_home_action_queue(
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
     """Aggregate the coach's action queue from current V2 state."""
-    clients = await db.users.find(
+    clients_raw = await db.users.find(
         {"role": "client", "status": {"$ne": "archived"}},
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
          "profile": 1},
     ).to_list(500)
+    # Iter 128k — production Home defaults to operational clients only
+    # (§18). Test / sandbox / reviewer accounts remain in the DB and are
+    # reachable via `?include_test=1` on the client-directory endpoint,
+    # but they do NOT pollute the coach's action queue.
+    clients = [c for c in clients_raw if _is_operational_client(c)]
 
     all_tasks: list[dict] = []
     for c in clients:
@@ -384,10 +468,64 @@ async def endpoint_coach_home_action_queue(
             items = []
         all_tasks.extend(items)
 
+    # Iter 128k — SYSTEM tasks (not per-client). Media work is one row that
+    # summarises deduplicated media_queue + coach_tasks (exercise_needs_*)
+    # gaps. Only surfaced when there is actual work.
+    system_tasks: list[dict] = []
+    media = await _media_summary()
+    if media["total"] > 0:
+        # Priority derives from actual client exposure (§3). If any of the
+        # canonical rows are already used in an upcoming workout, this is
+        # NEEDS ACTION (client-facing); otherwise it's UPCOMING (Library
+        # cleanup) — never surfaced above real client work.
+        priority = "attention" if media["client_facing"] > 0 else "upcoming"
+        breakdown = []
+        if media["training"]:      breakdown.append(f"{media['training']} Training")
+        if media["flight_support"]:breakdown.append(f"{media['flight_support']} Flight Support")
+        context = f"{media['total']} movement{'s' if media['total'] != 1 else ''} need media"
+        if media["client_facing"]:
+            context += f" · {media['client_facing']} client-facing"
+        meta = " · ".join(breakdown) if breakdown else None
+        system_tasks.append({
+            "id": "media_required:system",
+            "type": "media_required",
+            "priority": priority,
+            "scope": "system",
+            "title": "Media required",
+            "context": context,
+            "meta": meta,
+            "action_label": "Open Media Queue",
+            "deep_link": "/(coach)/library?filter=needs_media",
+            "counts": {
+                "total": media["total"],
+                "client_facing": media["client_facing"],
+                "training": media["training"],
+                "flight_support": media["flight_support"],
+                "unresolved": media["unresolved"],
+            },
+        })
+    if media["unresolved"] > 0:
+        # Orphan exercise names (§4/§31). Separate task so we never inflate
+        # media counts with duplicates or free-text ghosts.
+        system_tasks.append({
+            "id": "exercise_review:system",
+            "type": "exercise_review",
+            "priority": "upcoming",
+            "scope": "system",
+            "title": "Exercise names need review",
+            "context": f"{media['unresolved']} movement name{'s' if media['unresolved'] != 1 else ''} need canonical review before media can be produced.",
+            "meta": None,
+            "action_label": "Review exercises",
+            "deep_link": "/(coach)/library?filter=needs_review",
+            "counts": {"unresolved": media["unresolved"]},
+        })
+
+    combined = all_tasks + system_tasks
+
     # Split by priority band into the three visible sections.
-    needs_attention = [t for t in all_tasks if t["priority"] in ("urgent", "attention")]
-    upcoming        = [t for t in all_tasks if t["priority"] == "upcoming"]
-    waiting         = [t for t in all_tasks if t["priority"] == "waiting"]
+    needs_attention = [t for t in combined if t["priority"] in ("urgent", "attention")]
+    upcoming        = [t for t in combined if t["priority"] == "upcoming"]
+    waiting         = [t for t in combined if t["priority"] == "waiting"]
 
     needs_attention.sort(key=_sort_key)
     upcoming.sort(key=_sort_key)
@@ -396,13 +534,18 @@ async def endpoint_coach_home_action_queue(
     # Summary counts that power the top summary cards. Each card is a
     # deterministic slice of needs_attention/upcoming — no vanity metrics.
     counts = {
-        "needs_action":      len(needs_attention),
-        "ready_to_publish":  sum(1 for t in all_tasks if t["type"] == "ready_to_publish"),
-        "messages":          sum(1 for t in all_tasks if t["type"] == "message"),
-        "checkins":          sum(1 for t in all_tasks if t["type"] == "checkin_review"),
-        "upcoming":          len(upcoming),
-        "waiting":           len(waiting),
-        "active_clients":    len(clients),
+        "needs_action":              len(needs_attention),
+        "ready_to_publish":          sum(1 for t in all_tasks if t["type"] == "ready_to_publish"),
+        "needs_media":               media["total"],
+        "needs_media_client_facing": media["client_facing"],
+        "needs_media_training":      media["training"],
+        "needs_media_flight_support":media["flight_support"],
+        "needs_media_unresolved":    media["unresolved"],
+        "messages":                  sum(1 for t in all_tasks if t["type"] == "message"),
+        "checkins":                  sum(1 for t in all_tasks if t["type"] == "checkin_review"),
+        "upcoming":                  len(upcoming),
+        "waiting":                   len(waiting),
+        "active_clients":            len(clients),
     }
 
     return {

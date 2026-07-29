@@ -38,21 +38,28 @@ type TaskType =
   | "checkin_review"
   | "message"
   | "plan_ending"
-  | "roster_required";
+  | "roster_required"
+  | "media_required"
+  | "exercise_review";
 
 type Task = {
   id: string;
   type: TaskType;
   priority: Priority;
-  client_id: string;
-  client_name: string;
+  client_id?: string;
+  client_name?: string;
   client_subtitle?: string | null;
+  scope?: "system" | "client";
   title: string;
   context?: string | null;
   meta?: string | null;
   action_label: string;
   deep_link: string;
-  counts?: { blocking?: number; important?: number; total?: number };
+  counts?: {
+    blocking?: number; important?: number; total?: number;
+    client_facing?: number; training?: number; flight_support?: number;
+    unresolved?: number;
+  };
 };
 
 type Queue = {
@@ -60,6 +67,11 @@ type Queue = {
   counts: {
     needs_action: number;
     ready_to_publish: number;
+    needs_media: number;
+    needs_media_client_facing: number;
+    needs_media_training: number;
+    needs_media_flight_support: number;
+    needs_media_unresolved: number;
     messages: number;
     checkins: number;
     upcoming: number;
@@ -75,9 +87,9 @@ type FilterKind =
   | "all"
   | "needs_action"
   | "ready_to_publish"
+  | "needs_media"
   | "messages"
-  | "checkins"
-  | "upcoming";
+  | "checkins";
 
 const TYPE_ICON: Record<TaskType, any> = {
   profile_blocker:  "person-circle-outline",
@@ -87,6 +99,8 @@ const TYPE_ICON: Record<TaskType, any> = {
   message:          "mail-outline",
   plan_ending:      "calendar-outline",
   roster_required:  "cloud-upload-outline",
+  media_required:   "images-outline",
+  exercise_review:  "help-circle-outline",
 };
 
 const PRIORITY_LABEL: Record<Priority, string> = {
@@ -157,14 +171,15 @@ export default function CoachHomeScreen() {
       switch (filter) {
         case "needs_action":     return arr;
         case "ready_to_publish": return arr.filter((t) => t.type === "ready_to_publish");
+        case "needs_media":      return arr.filter((t) => t.type === "media_required" || t.type === "exercise_review");
         case "messages":         return arr.filter((t) => t.type === "message");
         case "checkins":         return arr.filter((t) => t.type === "checkin_review");
         default:                 return arr;
       }
     };
-    const na = filter === "upcoming" ? [] : filterTypes(queue.needs_attention);
-    const up = filter === "upcoming" ? queue.upcoming : (filter === "needs_action" ? [] : filterTypes(queue.upcoming));
-    const wo = filter === "upcoming" || filter !== "needs_action" ? queue.waiting_on_client : [];
+    const na = filterTypes(queue.needs_attention);
+    const up = filter === "needs_action" ? [] : filterTypes(queue.upcoming);
+    const wo = filter === "needs_action" ? [] : queue.waiting_on_client;
     return { ...queue, needs_attention: na, upcoming: up, waiting_on_client: wo };
   }, [queue, filter]);
 
@@ -216,7 +231,9 @@ export default function CoachHomeScreen() {
         </Pressable>
       </View>
 
-      {/* Summary cards — clickable filter chips */}
+      {/* Summary cards — clickable filter chips.
+          Iter 128k: UPCOMING removed from top row (§1/§24). NEEDS MEDIA
+          promoted to a first-class card (§1/§5). */}
       {q && (
         <View style={styles.summaryRow}>
           <SummaryCard
@@ -234,6 +251,20 @@ export default function CoachHomeScreen() {
             testID="summary-ready-to-publish"
           />
           <SummaryCard
+            label="Needs media" value={q.counts.needs_media} icon="images"
+            tint="#8b7cd6"
+            hint={
+              q.counts.needs_media === 0
+                ? "All current media ready"
+                : q.counts.needs_media_client_facing > 0
+                  ? `${q.counts.needs_media_client_facing} client-facing`
+                  : "Library cleanup"
+            }
+            active={filter === "needs_media"}
+            onPress={() => setFilter(filter === "needs_media" ? "all" : "needs_media")}
+            testID="summary-needs-media"
+          />
+          <SummaryCard
             label="Messages" value={q.counts.messages} icon="chatbubble"
             tint="#5aa9e6" hint="Unread"
             active={filter === "messages"}
@@ -242,17 +273,10 @@ export default function CoachHomeScreen() {
           />
           <SummaryCard
             label="Check-ins" value={q.counts.checkins} icon="checkmark-circle"
-            tint="#61c982" hint="Need review"
+            tint="#61c982" hint="Needs review"
             active={filter === "checkins"}
             onPress={() => setFilter(filter === "checkins" ? "all" : "checkins")}
             testID="summary-checkins"
-          />
-          <SummaryCard
-            label="Upcoming" value={q.counts.upcoming} icon="calendar"
-            tint="#8b7cd6" hint="Next 7 days"
-            active={filter === "upcoming"}
-            onPress={() => setFilter(filter === "upcoming" ? "all" : "upcoming")}
-            testID="summary-upcoming"
           />
         </View>
       )}
@@ -360,12 +384,15 @@ function Section({ title, count, children }: { title: string; count: number; chi
 function TaskCard({ task, onOpen }: { task: Task; onOpen: (deep_link: string) => void }) {
   const tint = PRIORITY_TINT[task.priority];
   const icon = TYPE_ICON[task.type];
+  const isSystem = task.scope === "system" || !task.client_name;
   return (
     <Pressable
       style={styles.taskCard}
       onPress={() => onOpen(task.deep_link)}
       testID={`task-${task.id}`}
-      accessibilityLabel={`${task.client_name}: ${task.title}`}
+      accessibilityLabel={
+        isSystem ? task.title : `${task.client_name}: ${task.title}`
+      }
     >
       {/* Left icon */}
       <View style={[styles.taskIcon, { backgroundColor: `${tint}22`, borderColor: `${tint}55` }]}>
@@ -374,13 +401,17 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: (deep_link: string) =>
 
       {/* Body */}
       <View style={styles.taskBody}>
-        {/* Client row */}
-        <View style={styles.taskClientRow}>
-          <Text style={styles.taskClient} numberOfLines={1}>{task.client_name}</Text>
-          {task.client_subtitle ? (
-            <Text style={styles.taskSubtitle} numberOfLines={1}> · {task.client_subtitle}</Text>
-          ) : null}
-        </View>
+        {/* Client / system row */}
+        {isSystem ? (
+          <Text style={styles.taskSystemBadge}>OPERATIONS</Text>
+        ) : (
+          <View style={styles.taskClientRow}>
+            <Text style={styles.taskClient} numberOfLines={1}>{task.client_name}</Text>
+            {task.client_subtitle ? (
+              <Text style={styles.taskSubtitle} numberOfLines={1}> · {task.client_subtitle}</Text>
+            ) : null}
+          </View>
+        )}
 
         {/* Title */}
         <View style={styles.taskTitleRow}>
@@ -493,6 +524,10 @@ const styles = StyleSheet.create({
   },
   taskBody: { flex: 1, minWidth: 0 },
   taskClientRow: { flexDirection: "row", alignItems: "center" },
+  taskSystemBadge: {
+    color: "#8b7cd6", fontSize: 9, fontWeight: "800", letterSpacing: 1.5,
+    marginBottom: 2,
+  },
   taskClient: { color: theme.color.textHi, fontSize: 14, fontWeight: "800" },
   taskSubtitle: { color: theme.color.textDim, fontSize: 12 },
   taskTitleRow: { flexDirection: "row", alignItems: "center", marginTop: 4, gap: 6 },

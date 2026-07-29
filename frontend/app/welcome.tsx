@@ -13,33 +13,89 @@ import { theme } from "@/src/lib/theme";
 const LOUIS_WELCOME_VIDEO_SOURCE = require("@/assets/louis/welcome.mp4");
 
 /* -------------------------------------------------------------------------- */
+/*  LouisVideoPlayer — mounted ONLY after the user taps play.                 */
+/*  This is the key to preventing the audio/video clash with the CrewFit      */
+/*  intro-logo splash: expo-video's useVideoPlayer buffers audio on some      */
+/*  Expo Go builds even without .play(), so we don't create the player at    */
+/*  all until an explicit user gesture.                                       */
+/* -------------------------------------------------------------------------- */
+function LouisVideoPlayer({
+  width, height, onPlayingChange, onEnd, muted, onMutedRef,
+}: {
+  width: number; height: number;
+  onPlayingChange: (playing: boolean) => void;
+  onEnd: () => void;
+  muted: boolean;
+  onMutedRef: (fn: () => void) => void;
+}) {
+  const player = useVideoPlayer(LOUIS_WELCOME_VIDEO_SOURCE, (p) => {
+    p.loop = false;
+    p.muted = false;   // user tapped play → play with sound
+    p.play();
+  });
+  // Keep player mute in sync with external muted state
+  useEffect(() => {
+    try { player.muted = muted; } catch { /* ignore */ }
+  }, [player, muted]);
+  useEffect(() => {
+    onMutedRef(() => { try { player.muted = !player.muted; } catch { /* ignore */ } });
+  }, [player, onMutedRef]);
+  useEffect(() => {
+    const s1 = player.addListener("playToEnd", onEnd);
+    const s2 = player.addListener("playingChange", (e: any) => onPlayingChange(!!e?.isPlaying));
+    return () => { try { s1.remove(); } catch {} try { s2.remove(); } catch {} };
+  }, [player, onEnd, onPlayingChange]);
+  return (
+    <VideoView
+      player={player}
+      style={{ width, height }}
+      contentFit="cover"
+      nativeControls={false}
+      allowsFullscreen={false}
+      allowsPictureInPicture={false}
+    />
+  );
+}
+
+
+/* -------------------------------------------------------------------------- */
 /*  Welcome — Louis Hall introduction                                          */
 /* -------------------------------------------------------------------------- */
 export default function Welcome() {
   const router = useRouter();
   const { width } = Dimensions.get("window");
 
-  // Video card is a portrait 9:16 crop (matches Louis's uploaded video). We
-  // size at 60% viewport width and let the video fill it while preserving
-  // aspect ratio — smooth, non-cropping on all screen sizes.
-  const videoW = Math.min(width - 40, 340);
-  const videoH = Math.round(videoW * (16 / 9)); // 9:16 aspect
+  // Video card: 9:16 portrait crop. Slightly smaller so labels + copy have room.
+  const videoW = Math.min(width - 60, 300);
+  const videoH = Math.round(videoW * (16 / 9));
 
-  const player = useVideoPlayer(LOUIS_WELCOME_VIDEO_SOURCE, (p) => {
-    // Iter 123b — DO NOT autoplay. The CrewFit intro-logo splash is often
-    // still on screen during first mount; autoplaying here caused a
-    // visual/audio clash with the logo. Instead we show a play overlay on
-    // the video placeholder and only start playback when the user taps.
-    // Sound is off until the user opts in — same pattern as before.
-    p.loop = false;
-    p.muted = true;
-  });
-
-  const [muted, setMuted] = useState(true);
+  // Iter 123c — DO NOT construct useVideoPlayer up-front. On some Expo Go
+  // builds the player buffers audio immediately on mount, clashing with the
+  // silent CrewFit intro-logo splash still on screen. We only mount the
+  // <LouisVideoPlayer> sub-component after the user taps the poster.
+  const [startedVideo, setStartedVideo] = useState(false);
+  const [muted, setMuted] = useState(false);   // once started we play WITH sound by default
   const [playing, setPlaying] = useState(false);
   const [finished, setFinished] = useState(false);
-  const [everStarted, setEverStarted] = useState(false);
+  const toggleMuteRef = useRef<() => void>(() => {});
   const fade = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    AsyncStorage.setItem("atlas_welcomed_started", "1").catch(() => {});
+    Animated.timing(fade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
+  }, [fade]);
+
+  const onTapPoster = () => setStartedVideo(true);
+  const toggleMute = () => {
+    setMuted((m) => !m);
+    try { toggleMuteRef.current(); } catch { /* ignore */ }
+  };
+  const onPlayAgain = () => {
+    setFinished(false);
+    // Force remount of the player subtree to replay cleanly
+    setStartedVideo(false);
+    setTimeout(() => setStartedVideo(true), 50);
+  };
 
   useEffect(() => {
     // Prefetch — mark that user reached welcome
@@ -47,44 +103,6 @@ export default function Welcome() {
     // Fade the video card in for a smooth arrival.
     Animated.timing(fade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
   }, [fade]);
-
-  useEffect(() => {
-    // Listen for playback status → mark completion so the CTA highlights
-    // once Louis has finished speaking.
-    const sub = player.addListener("playToEnd", () => setFinished(true));
-    const sub2 = player.addListener("playingChange", (e: any) => {
-      setPlaying(!!e?.isPlaying);
-    });
-    return () => {
-      try { sub.remove(); } catch { /* ignore */ }
-      try { sub2.remove(); } catch { /* ignore */ }
-    };
-  }, [player]);
-
-  const toggleMute = () => {
-    const next = !muted;
-    player.muted = next;
-    setMuted(next);
-  };
-
-  const togglePlay = () => {
-    if (playing) {
-      player.pause();
-    } else {
-      if (finished) {
-        try { player.currentTime = 0; } catch { /* ignore */ }
-        setFinished(false);
-      }
-      // Iter 123b — first tap is the user's explicit start signal, so play
-      // WITH sound. They can still mute afterwards via the icon.
-      if (!everStarted) {
-        try { player.muted = false; } catch { /* ignore */ }
-        setMuted(false);
-        setEverStarted(true);
-      }
-      player.play();
-    }
-  };
 
   const proceed = async () => {
     await AsyncStorage.setItem("atlas_welcomed", "1").catch(() => {});
@@ -100,45 +118,55 @@ export default function Welcome() {
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
-        {/* Louis welcome video — hosted, autoplays muted, tap to unmute */}
-        <Animated.View style={[styles.videoCardWrap, { opacity: fade, width: videoW, height: videoH }]}>
-          <View style={styles.videoFrame}>
-            <VideoView
-              player={player}
-              style={StyleSheet.absoluteFill}
-              contentFit="cover"
-              nativeControls={false}
-              allowsFullscreen={false}
-              allowsPictureInPicture={false}
-            />
-            {/* Tap layer — toggles play/pause */}
-            <Pressable
-              style={StyleSheet.absoluteFill}
-              onPress={togglePlay}
-              testID="welcome-video-tap"
-            >
-              {(!playing || finished) ? (
+        {/* Louis welcome video — tap-to-play. Player is NOT instantiated
+            until the user taps the poster, so no audio leaks under the
+            CrewFit intro-logo splash. */}
+        <Animated.View style={[styles.videoCardWrap, { opacity: fade }]}>
+          <View style={[styles.videoFrame, { width: videoW, height: videoH }]}>
+            {startedVideo ? (
+              <LouisVideoPlayer
+                width={videoW}
+                height={videoH}
+                muted={muted}
+                onPlayingChange={setPlaying}
+                onEnd={() => { setFinished(true); setPlaying(false); }}
+                onMutedRef={(fn) => { toggleMuteRef.current = fn; }}
+              />
+            ) : (
+              // Static poster before first tap — plain dark frame + play ring.
+              <View style={[StyleSheet.absoluteFill, styles.posterBg]} />
+            )}
+
+            {/* Play overlay — visible until playing, and again on finish */}
+            {(!startedVideo || !playing || finished) ? (
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={!startedVideo ? onTapPoster : (finished ? onPlayAgain : undefined)}
+                testID="welcome-video-tap"
+              >
                 <View style={styles.playOverlay} pointerEvents="none">
                   <View style={styles.playRing}>
                     <Ionicons name={finished ? "refresh" : "play"} size={26} color="#fff" />
                   </View>
                 </View>
-              ) : null}
-            </Pressable>
+              </Pressable>
+            ) : null}
 
-            {/* Mute / unmute toggle — top-right */}
-            <Pressable
-              testID="welcome-video-mute"
-              onPress={toggleMute}
-              hitSlop={10}
-              style={styles.muteBtn}
-            >
-              <Ionicons
-                name={muted ? "volume-mute" : "volume-high"}
-                size={16}
-                color="#fff"
-              />
-            </Pressable>
+            {/* Mute toggle (only meaningful once video has started) */}
+            {startedVideo ? (
+              <Pressable
+                testID="welcome-video-mute"
+                onPress={toggleMute}
+                hitSlop={10}
+                style={styles.muteBtn}
+              >
+                <Ionicons
+                  name={muted ? "volume-mute" : "volume-high"}
+                  size={16}
+                  color="#fff"
+                />
+              </Pressable>
+            ) : null}
 
             {/* Corner badge */}
             <View style={styles.videoBadgeFloat}>
@@ -146,13 +174,15 @@ export default function Welcome() {
               <Text style={styles.videoBadgeT}>WELCOME MESSAGE</Text>
             </View>
           </View>
-          <Text style={styles.videoName}>LOUIS HALL</Text>
-          <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
-          {!everStarted ? (
-            <Text style={styles.tapUnmute}>Tap the video to play</Text>
-          ) : muted ? (
-            <Text style={styles.tapUnmute}>Tap the video to unmute</Text>
-          ) : null}
+
+          {/* Labels sit BELOW the video frame — not overlaid. */}
+          <View style={styles.videoLabels}>
+            <Text style={styles.videoName}>LOUIS HALL</Text>
+            <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
+            {!startedVideo ? (
+              <Text style={styles.tapUnmute}>Tap the video to play</Text>
+            ) : null}
+          </View>
         </Animated.View>
 
         <View style={styles.divider} />
@@ -271,14 +301,15 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   // Iter 104 — Louis welcome video card
+  // Iter 123c — no fixed height on the wrap; width/height live on videoFrame
+  // so labels underneath sit cleanly below the frame instead of overflowing.
   videoCardWrap: {
     alignSelf: "center",
     marginBottom: 22,
     alignItems: "center",
+    width: "100%",
   },
   videoFrame: {
-    width: "100%",
-    height: "100%",
     borderRadius: 18,
     overflow: "hidden",
     backgroundColor: "#000",
@@ -290,6 +321,16 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
     position: "relative",
+    alignSelf: "center",
+  },
+  posterBg: {
+    backgroundColor: "#0d0d0f",
+  },
+  videoLabels: {
+    alignItems: "center",
+    marginTop: 12,
+    marginBottom: 4,
+    width: "100%",
   },
   playOverlay: {
     ...StyleSheet.absoluteFillObject,

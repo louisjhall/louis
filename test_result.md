@@ -3583,3 +3583,169 @@ agent_communication:
       the workouts land on the Roster+Plan calendar cells with a working
       workout drawer.
 
+
+##====================================================================
+## Iter 128b — Flight Support Variety Engine + Coach Media Queue Matrix
+##====================================================================
+
+backend:
+  - task: "Flight Support Variety / Rotation Engine (P0)"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_aviation_support.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Replaced the hardcoded single-protocol-per-trigger with a deterministic
+          Variety Engine. Added `POOLS` mapping every trigger context to a list
+          of safety-equivalent alternates (pre_flight_light has 5 options,
+          post_flight_reset 4, layover_full 3, movement_break 3, arrival_mobility 2,
+          turnaround_reset 2). Added 11 NEW ProtocolSpecs (breathing, neck/shoulder,
+          hip opener, gentle stretch, legs-up-wall, longer explore/park walks,
+          micro-stretch, walking break, arrival breathing, turnaround breathing) so
+          there is genuine variety. Added `restricted_regions` + `required_equipment`
+          + `environment` fields on ProtocolSpec.
+
+          `pick_from_pool()` implements the priority order requested by the user:
+          Safety → Suitability (equipment/env) → Context/Time → Objective (family match)
+          → Environment preference → Media availability (deferred) → Recent repetition
+          penalty → Deterministic hash tiebreak. Recent-repetition penalty scales
+          with recency (newest use = -10, oldest in window = -2). Lookback = 5
+          (matches "recommended" per user).
+
+          `select_interventions_for_day` now accepts `user_id`, `history_keys`,
+          `restrictions`, `equipment_available` (all optional, backward-compatible).
+          `get_flight_support_by_date` loads history from `flight_support_activity`
+          (newest 5 protocol_keys) + injury regions from profile.injuries /
+          persistent_restrictions + equipment from profile.equipment BEFORE
+          calling the selector.
+
+          Unit-checked locally:
+            - Deterministic (same inputs → same key).
+            - Different dates → different picks (per-date tiebreak).
+            - Knee restriction → hip_opener excluded.
+            - History of [breathing, neck_shoulder, mobility] → picks activation next.
+
+          Endpoint contract unchanged. Interventions now include `pool_key` for
+          future coach overrides.
+
+  - task: "GET /api/coach/flight-support/media-queue (P1)"
+    implemented: true
+    working: "NA"
+    file: "backend/feature_flight_support_media.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          New coach-only endpoint that returns the Media Queue matrix. Reads
+          from `db.media_queue` (rows created by resolve_flight_support_frames
+          when a Flight Support exercise is missing preferred-persona media).
+
+          Query params:
+            status=all|needs_media|complete
+            persona_missing=any|pilot|louis|female  (filter rows lacking that persona)
+            search=<substring>
+            limit=<int, default 200>
+
+          Response shape:
+            { items: [{ exercise_id, exercise_name, status, preferred_persona,
+                        matrix: { pilot|louis|female : { start|mid|end : bool } },
+                        missing: { persona: [missing slots] },
+                        covered, total_cells, flight_support_contexts, updated_at }],
+              stats: { total, needs_media, complete, pilot_missing_count,
+                       louis_missing_count, female_missing_count } }
+
+          Sort key: PILOT-missing first, then LOUIS, then FEMALE, then complete.
+          Coach role guard: 403 for anyone not in ('coach','admin').
+
+          Manually verified: created 3 test rows (Dumbbell Row, Goblet Squat,
+          Push-Up), endpoint returns them ordered by PILOT-missing count with
+          correct matrix cells and stats.
+
+frontend:
+  - task: "Coach Media Queue Matrix UI (P1)"
+    implemented: true
+    working: true
+    file: "frontend/app/(coach)/media-queue.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          New desktop-only coach screen at /(coach)/media-queue. Registered in
+          the DesktopShell sidebar with `images-outline` icon between Videos
+          and Messages, and hidden from mobile tabs via href:null.
+
+          Screen layout:
+            - Header with "PERSONA COVERAGE" title.
+            - Stats strip: 6 pills (TOTAL, NEEDS MEDIA, COMPLETE, PILOT ✕,
+              LOUIS ✕, FEMALE ✕).
+            - Filter row: search input + status chips (ALL/NEEDS/COMPLETE) +
+              persona-missing chips (ANY/PILOT/LOUIS/FEMALE).
+            - Card list: one per exercise with 3×3 matrix cells showing ✓/✗ per
+              (persona × slot). Preferred persona label highlighted in brand red.
+              Complete rows show green pill; needs-media rows show amber pill.
+            - Tap → deep-links to /(coach)/exercises with the exercise name so
+              the coach can upload/generate the missing frames using the
+              existing editor + Nano Banana button.
+
+          Screenshot verified end-to-end on 1440×900: Louis coach signed in,
+          sidebar "Media Queue" active, 3 exercises rendered with correct
+          matrix cells, PILOT column all-red (missing), LOUIS partial, filters
+          responsive. Pull-to-refresh + focus-effect re-load working.
+
+test_plan:
+  current_focus:
+    - "Flight Support Variety Engine — deterministic rotation, safety filter, history penalty"
+    - "GET /api/coach/flight-support/media-queue — coach guard, matrix + stats shape"
+    - "Coach Media Queue Matrix UI — filters + tap-through to exercise editor"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Iter 128b delivered two P0/P1 items from the Flight Support Beta upgrade:
+
+      (1) Variety / Rotation Engine (backend, feature_aviation_support.py):
+      Replaced fixed protocol-per-trigger with deterministic pool selection.
+      11 new alternate protocols added (breathing, neck/shoulder, hip opener,
+      gentle stretch, legs-up-wall, park walk, longer explore walk, micro-
+      stretch, walking break, arrival breathing, turnaround breathing).
+      Priority order enforced: Safety → Equipment → Time → Objective →
+      Environment → Recency → Deterministic tiebreak. 5-session lookback
+      from flight_support_activity. Backward-compatible signature — existing
+      callers still work. Coach interventions now carry `pool_key`.
+
+      (2) Coach Media Queue Matrix (backend + frontend):
+      - GET /api/coach/flight-support/media-queue returns the persona × slot
+        matrix + stats, sorted PILOT-missing first.
+      - Desktop-only coach screen at /(coach)/media-queue with filter chips,
+        search, and tap-to-editor deep link.
+
+      Please TEST:
+      Backend:
+        (a) /client/today & /client/flight-support show variety-picked keys
+            for the reviewer / pietro accounts, with pool_key populated.
+        (b) /coach/flight-support/media-queue with different filters returns
+            the correct sort + stats + matrix cells + coach guard.
+        (c) Variety engine determinism: same user + roster → same picks
+            across restarts; different dates rotate; history reshuffles.
+        (d) Restrictions: user with `injuries: 'knee pain'` never gets
+            hip_opener or activation.
+      Frontend:
+        (e) Sidebar nav Media Queue renders on wide viewport, is hidden from
+            mobile tabs.
+        (f) Matrix cells accurate, sort order correct (PILOT-missing first),
+            chip filters re-query correctly, tap navigates to exercise editor.
+

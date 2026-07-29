@@ -26,6 +26,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
+import { FlightSupportDemoCarousel } from "@/src/components/FlightSupportDemoCarousel";
 import { hapticSuccess } from "@/src/lib/haptics";
 
 type Block = {
@@ -358,11 +359,12 @@ function GuidedPhase({
           <Text style={s.moveCueBig}>{block.cue}</Text>
         ) : null}
 
-        <View style={s.guidedThumbFrame}>
-          <ExerciseThumbnail
-            name={block.name}
-            testIDPrefix={`fs-guided-thumb-${index}`}
-            showVideoBadge={true}
+        <View style={{ marginBottom: 24 }}>
+          <FlightSupportDemoCarousel
+            exerciseId={block.name}
+            exerciseName={block.name}
+            sizePx={220}
+            persona="pilot"
           />
         </View>
 

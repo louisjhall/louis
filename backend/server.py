@@ -10956,6 +10956,17 @@ async def seed():
 @app.on_event("startup")
 async def _startup():
     await seed()
+    # Iter 128 — one-shot: backfill persona field on legacy exercise images
+    # so the new Flight Support media resolver can pick louis/female/pilot
+    # correctly. Idempotent — no-op after the first run.
+    try:
+        from feature_flight_support_media import backfill_personas
+        result = await backfill_personas(db)
+        if result.get("female_backfilled") or result.get("louis_backfilled"):
+            logger.info("persona backfill: %s", result)
+    except Exception:
+        logger.exception("persona backfill failed")
+
     # Zombie job cleanup — any jobs left running from a previous process are dead now.
     for coll in ("image_jobs", "content_jobs"):
         try:
@@ -12122,6 +12133,13 @@ try:
     logger.info("feature_roster_review_delay: /roster/status registered")
 except Exception:
     logger.exception("feature_roster_review_delay failed to register")
+
+# Iter 128 — Flight Support media resolver (3-stage carousel + Pilot persona)
+try:
+    from feature_flight_support_media import register_routes as _fs_media_register
+    _fs_media_register(app, current_user)
+except Exception:
+    logger.exception("feature_flight_support_media failed to register")
 
 app.include_router(api)
 

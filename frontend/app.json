@@ -20,6 +20,7 @@
       "supportsTablet": false,
       "bundleIdentifier": "net.crewfit.app",
       "buildNumber": "200",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSPhotoLibraryUsageDescription": "Upload profile photos, meal photos and roster documents from your library.",
@@ -56,6 +57,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "net.crewfit.app",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "READ_MEDIA_IMAGES",
         "CAMERA",

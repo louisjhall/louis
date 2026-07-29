@@ -161,6 +161,15 @@ function IntroPlayer({ onFinished }: { onFinished: () => void }) {
         nativeControls={false}
         allowsFullscreen={false}
         allowsPictureInPicture={false}
+        // Android-only: force a TextureView-backed surface for the startup
+        // player. expo-video's default on Android is SurfaceView, which is
+        // known to cause overlapping-video rendering artefacts because a
+        // SurfaceView punches a hole through the view hierarchy — content
+        // rendered above it can be visually retained/leaked from a
+        // previous SurfaceView allocation. TextureView renders into the
+        // regular hardware-accelerated view layer, so no hole punching
+        // occurs. iOS ignores this prop.
+        surfaceType="textureView"
       />
     </View>
   );

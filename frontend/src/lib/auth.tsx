@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { api, getToken, setToken } from "./api";
-import { registerForPush } from "./push";
+import { registerForPush, unregisterForPush } from "./push";
 
 export type Role = "client" | "coach";
 export interface UserT {
@@ -117,6 +117,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    // Iter 123 — Unregister THIS device's push token from the current user
+    // BEFORE we clear the session token so the API call still authenticates.
+    // Never blocks logout: any error is swallowed inside unregisterForPush.
+    try {
+      if (user?.id) {
+        await unregisterForPush(user.id);
+      }
+    } catch { /* non-fatal */ }
     await setToken(null);
     setUser(null);
   };

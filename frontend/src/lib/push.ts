@@ -45,3 +45,28 @@ export async function promptAndRegisterPush(userId: string): Promise<"granted" |
   }
 }
 
+// Iter 123 — Unregister THIS device's token from the given user on logout so
+// notifications never leak to another user who signs into the same device.
+// Never throws — logout must proceed even if the push service is unreachable.
+export async function unregisterForPush(userId: string): Promise<void> {
+  if (Platform.OS === "web") return;
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== "granted") return;
+    let deviceToken: string | undefined;
+    try {
+      const t = await Notifications.getDevicePushTokenAsync();
+      deviceToken = t?.data;
+    } catch {
+      return; // no token to unregister
+    }
+    if (!deviceToken) return;
+    await api("/unregister-push", {
+      method: "POST",
+      body: { user_id: userId, platform: Platform.OS, device_token: deviceToken },
+    });
+  } catch (e) {
+    console.log("push unregister skipped:", e);
+  }
+}
+

@@ -75,6 +75,10 @@ NOTIF_CATEGORY: dict[str, str] = {
     "roster_low": "roster",
     "roster_due": "roster",
     "roster_expired": "roster",
+    # Iter 123 — standby availability requests / applied standby sessions
+    # are aviation-duty adjacent → route through the Roster preference.
+    "standby_available": "roster",
+    "standby_applied":   "roster",
 }
 
 

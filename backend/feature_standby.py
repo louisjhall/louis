@@ -415,9 +415,11 @@ async def _apply_standby_workout(user: dict, wk: dict, rec: dict, day: dict, cal
                       updates["standby_reason"], actor="atlas" if called_out else "client",
                       meta={"date": wk.get("date"), "recommendation_id": rec["id"]})
     # In-app notification for the client (respects settings + duty rewording)
+    # Iter 123 — standby is aviation-duty content → route through the
+    # `standby_applied` type which maps to the `roster` preference category.
     try:
         await enqueue_notification(
-            user["id"], "programme_updated",
+            user["id"], "standby_applied",
             "Standby session applied",
             updates["standby_reason"],
             action_url="/(client)/schedule",

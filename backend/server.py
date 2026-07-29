@@ -532,6 +532,13 @@ class RegisterPushBody(BaseModel):
     platform: str
     device_token: str
 
+# Iter 123 — Body for unregister-push. Removes THIS device's token from the
+# user's push registration so notifications no longer target it after logout.
+class UnregisterPushBody(BaseModel):
+    user_id: str
+    device_token: str
+    platform: Optional[str] = None
+
 
 # ------------------------------------------------------------------
 # Workout Intelligence + Weekly Video Script models
@@ -4105,6 +4112,38 @@ async def register_push(body: RegisterPushBody):
     except Exception as e:
         logger.warning("register_push failed (non-blocking): %s", e)
     return {"status": "registered"}
+
+
+# Iter 123 — Unregister this specific device's push token from the given
+# user. Called on logout so notifications never leak to another user who
+# logs into the same device. Never fails the logout: any transport error is
+# logged non-fatally.
+@api.post("/unregister-push", status_code=200)
+async def unregister_push(body: UnregisterPushBody):
+    try:
+        resp = await push_client().post(
+            "/api/v1/push/users/unregister",
+            json=body.model_dump(exclude_none=True),
+        )
+        if resp.status_code == 401:
+            logger.warning("EMERGENT_PUSH_KEY missing/placeholder — unregister skipped")
+        elif resp.status_code == 404:
+            # Endpoint variant fallback — some Emergent push versions use
+            # DELETE on the device endpoint.
+            try:
+                await push_client().request(
+                    "DELETE", "/api/v1/push/users/devices",
+                    json=body.model_dump(exclude_none=True),
+                )
+            except Exception:
+                pass
+        elif resp.status_code >= 400:
+            logger.warning("unregister_push non-2xx %s: %s",
+                            resp.status_code, resp.text[:200])
+    except Exception as e:
+        # Non-blocking — logout must succeed even if the push service is down
+        logger.warning("unregister_push failed (non-blocking): %s", e)
+    return {"status": "unregistered"}
 
 
 async def send_push(recipients: list[str], data: dict, idempotency_key: Optional[str] = None) -> None:

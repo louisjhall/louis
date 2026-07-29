@@ -4,7 +4,7 @@
  * Also prompts the OS-level push permission when the user asks to enable coach messages.
  */
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Switch, TextInput, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, Switch, TextInput, Alert, Platform, Linking } from "react-native";
 import * as Notifications from "expo-notifications";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
@@ -27,14 +27,27 @@ type Settings = {
   permission_status: "granted" | "denied" | "not_requested";
 };
 
-const CATEGORY_ROWS: { key: keyof Settings; label: string; description: string }[] = [
-  { key: "check_ins", label: "Weekly check-ins", description: "Sunday reminders + missed follow-ups" },
-  { key: "habits", label: "Habits", description: "One kind nudge per day" },
-  { key: "workouts", label: "Workouts", description: "Session-of-the-day reminder" },
-  { key: "coach_messages", label: "Coach messages", description: "When Louis replies" },
-  { key: "weekly_videos", label: "Weekly videos", description: "When Louis sends your review" },
-  { key: "roster", label: "Roster", description: "7 / 3 / 1 days before it runs out" },
-  { key: "programme_updates", label: "Programme updates", description: "When your plan is adjusted" },
+// Iter 123 — Notification categories grouped for the client-facing UI.
+// Underlying preference keys are unchanged (server-side gating is identical).
+type Row = { key: keyof Settings; label: string; description: string };
+const GROUPS: { title: string; rows: Row[] }[] = [
+  {
+    title: "COACH",
+    rows: [
+      { key: "coach_messages",    label: "Coach messages",    description: "When Louis replies" },
+      { key: "programme_updates", label: "Programme updates", description: "When your plan is adjusted" },
+      { key: "weekly_videos",     label: "Weekly reviews",    description: "When Louis sends your review" },
+    ],
+  },
+  {
+    title: "MY PLAN",
+    rows: [
+      { key: "workouts",  label: "Workouts",  description: "Session-of-the-day reminder" },
+      { key: "habits",    label: "Habits",    description: "One kind nudge per day" },
+      { key: "check_ins", label: "Check-ins", description: "Sunday reminders + missed follow-ups" },
+      { key: "roster",    label: "Roster",    description: "7 / 3 / 1 days before it runs out + standby prompts" },
+    ],
+  },
 ];
 
 function validTime(s: string): boolean {
@@ -56,6 +69,23 @@ export function NotificationPreferencesCard() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // Iter 123 — Refresh permission status when the user returns from device
+  // Settings so the banner updates without needing a full restart.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      if (Platform.OS === "web") return;
+      try {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (cancelled) return;
+        const mapped = status === "granted" ? "granted" : (permStatus === "not_requested" ? "not_requested" : "denied");
+        if (mapped !== permStatus) setPermStatus(mapped);
+      } catch { /* ignore */ }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [permStatus]);
+
   const save = async (patch: Partial<Settings>) => {
     if (!s) return;
     const optimistic = { ...s, ...patch };
@@ -70,6 +100,9 @@ export function NotificationPreferencesCard() {
     } finally { setSaving(false); }
   };
 
+  // Iter 123 — Contextual permission ask. Native re-prompt is blocked by the
+  // OS after denial, so on `denied` we route directly to app settings via
+  // Linking.openSettings() rather than firing another native prompt.
   const requestPushPermission = async () => {
     if (Platform.OS === "web") {
       try {
@@ -82,10 +115,24 @@ export function NotificationPreferencesCard() {
       return;
     }
     if (!user?.id) return;
+    // If already denied, opening native settings is the ONLY way forward.
+    if (permStatus === "denied") {
+      try { await Linking.openSettings(); } catch {
+        Alert.alert("Open Settings", "Please open your device Settings → CrewFit → Notifications to enable push.");
+      }
+      return;
+    }
     const status = await promptAndRegisterPush(user.id);
     setPermStatus(status);
     if (status === "denied") {
-      Alert.alert("Push permission denied", "You can enable push later from Settings on your device. In-app notifications will still work.");
+      Alert.alert(
+        "Push permission denied",
+        "You can enable push later from your device settings. In-app notifications will still work.",
+        [
+          { text: "Not now", style: "cancel" },
+          { text: "Open Settings", onPress: () => Linking.openSettings().catch(() => {}) },
+        ],
+      );
     }
   };
 
@@ -96,13 +143,35 @@ export function NotificationPreferencesCard() {
       <View style={styles.headRow}>
         <View>
           <Text style={styles.head}>NOTIFICATIONS</Text>
-          <Text style={styles.sub}>Quiet by default. Louis&apos;s important updates always come through.</Text>
+          <Text style={styles.sub}>
+            These settings control which CrewFit updates can send push notifications.
+            Important information stays available inside the app either way.
+          </Text>
         </View>
         {saving ? <Text style={styles.savingT}>SAVING…</Text> : null}
       </View>
 
-      {/* Permission banner */}
-      {permStatus !== "granted" ? (
+      {/* Iter 123 — Permission banner. Distinct states for granted / denied /
+          not_requested. Denied routes straight to native Settings. */}
+      {permStatus === "granted" ? (
+        <View style={styles.permOnCard}>
+          <Ionicons name="checkmark-circle" size={18} color={theme.color.green} />
+          <Text style={styles.permOnT}>Push notifications enabled</Text>
+        </View>
+      ) : permStatus === "denied" ? (
+        <Pressable testID="perm-open-settings" onPress={requestPushPermission} style={styles.permDeniedCard}>
+          <Ionicons name="notifications-off" size={20} color={theme.color.textMuted} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.permTitle}>Push notifications are disabled by your device</Text>
+            <Text style={styles.permBody}>
+              Enable them in device Settings → CrewFit → Notifications. In-app updates keep working either way.
+            </Text>
+          </View>
+          <View style={styles.openSettingsBtn}>
+            <Text style={styles.openSettingsT}>OPEN SETTINGS</Text>
+          </View>
+        </Pressable>
+      ) : (
         <Pressable testID="perm-request" onPress={requestPushPermission} style={styles.permCard}>
           <Ionicons name="notifications" size={20} color={theme.color.brand} />
           <View style={{ flex: 1 }}>
@@ -113,33 +182,33 @@ export function NotificationPreferencesCard() {
           </View>
           <Ionicons name="chevron-forward" size={18} color={theme.color.brand} />
         </Pressable>
-      ) : (
-        <View style={styles.permOnCard}>
-          <Ionicons name="checkmark-circle" size={18} color={theme.color.green} />
-          <Text style={styles.permOnT}>Push notifications enabled</Text>
-        </View>
       )}
 
-      {/* Category toggles */}
-      <View style={{ gap: 4, marginTop: 16 }}>
-        {CATEGORY_ROWS.map((row) => (
-          <View key={row.key} style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.rowLabel}>{row.label}</Text>
-              <Text style={styles.rowDesc}>{row.description}</Text>
-            </View>
-            <Switch
-              testID={`notif-toggle-${row.key}`}
-              value={Boolean(s[row.key])}
-              onValueChange={(v) => save({ [row.key]: v } as any)}
-              trackColor={{ true: theme.color.brand, false: theme.color.borderStrong }}
-              thumbColor="#fff"
-            />
+      {/* Iter 123 — Category toggles grouped by intent. Preference keys are unchanged. */}
+      {GROUPS.map((group) => (
+        <View key={group.title}>
+          <Text style={styles.sect}>{group.title}</Text>
+          <View style={{ gap: 4 }}>
+            {group.rows.map((row) => (
+              <View key={row.key} style={styles.row}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>{row.label}</Text>
+                  <Text style={styles.rowDesc}>{row.description}</Text>
+                </View>
+                <Switch
+                  testID={`notif-toggle-${row.key}`}
+                  value={Boolean(s[row.key])}
+                  onValueChange={(v) => save({ [row.key]: v } as any)}
+                  trackColor={{ true: theme.color.brand, false: theme.color.borderStrong }}
+                  thumbColor="#fff"
+                />
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
+        </View>
+      ))}
 
-      {/* Time settings */}
+      {/* Timing group */}
       <Text style={styles.sect}>TIMING</Text>
       <TimeInput testID="pref-time" label="Preferred reminder time" value={s.preferred_reminder_time} onSave={(v) => save({ preferred_reminder_time: v })} />
       <View style={styles.rowInline}>
@@ -201,6 +270,9 @@ const styles = StyleSheet.create({
   sub: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, maxWidth: 280 },
   savingT: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1.5 },
   permCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginTop: 4, borderRadius: 10, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
+  permDeniedCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginTop: 4, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.borderStrong },
+  openSettingsBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.color.brand },
+  openSettingsT: { color: "#000", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   permTitle: { color: theme.color.text, fontSize: 12, fontWeight: "800" },
   permBody: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   permOnCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, marginTop: 4, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },

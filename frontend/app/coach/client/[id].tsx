@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Alert, Modal, TextInput } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, Alert, Modal, TextInput, Platform } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -268,6 +268,78 @@ export default function ClientDetail() {
   };
 
   const askRestore = () => runAdmin("Restore", "/restore");
+
+  // Iter 128b — admin/coach force password reset. Uses the dedicated
+  // `/coach/clients/{id}/reset-password` endpoint (server.py) which
+  // hashes with the same bcrypt scheme the rest of auth uses.
+  const askResetPassword = async () => {
+    if (Platform.OS !== "web") {
+      // Native: use Alert.prompt on iOS, fallback to text-input modal on
+      // Android. For MVP we only support iOS Alert.prompt + web prompt().
+      if (Platform.OS === "ios" && (Alert as any).prompt) {
+        (Alert as any).prompt(
+          "Reset client password",
+          `Set a new password for ${data?.email || "this client"}.\nMinimum 6 characters.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Reset",
+              style: "destructive",
+              onPress: async (pw?: string) => {
+                if (!pw || pw.length < 6) {
+                  Alert.alert("Too short", "Password must be at least 6 characters.");
+                  return;
+                }
+                await doResetPassword(pw);
+              },
+            },
+          ],
+          "secure-text",
+        );
+        return;
+      }
+      // Android + any other: use the small in-page prompt fallback via
+      // Alert with a follow-up TextInput isn't possible without a modal.
+      // Coach flow lives on web/desktop primarily so this is acceptable.
+      Alert.alert(
+        "Not supported on this device",
+        "Reset a client password from the desktop coach view (Louis on web).",
+      );
+      return;
+    }
+    // Web: window.prompt is fine — coach is on desktop.
+    const pw = typeof window !== "undefined" ? window.prompt(
+      `Set a new password for ${data?.email || "this client"}.\nMinimum 6 characters.`,
+    ) : null;
+    if (!pw) return;
+    if (pw.length < 6) {
+      Alert.alert("Too short", "Password must be at least 6 characters.");
+      return;
+    }
+    const ok = typeof window !== "undefined" ? window.confirm(
+      `Reset ${data?.email || "this client"}'s password to:\n\n${pw}\n\nThey will be signed out and must use this new password to log in.`,
+    ) : true;
+    if (!ok) return;
+    await doResetPassword(pw);
+  };
+
+  const doResetPassword = async (newPassword: string) => {
+    setAdminBusy("Reset Password");
+    try {
+      await api(`/coach/clients/${id}/reset-password`, {
+        method: "POST",
+        body: { new_password: newPassword },
+      });
+      Alert.alert(
+        "Password reset",
+        `New password is now active for ${data?.email || "this client"}. Ask them to sign in again with it.`,
+      );
+    } catch (e: any) {
+      Alert.alert("Reset failed", e?.message || "Try again.");
+    } finally {
+      setAdminBusy(null);
+    }
+  };
 
   const askSoftDelete = async () => {
     const ok = await uxConfirm({
@@ -1067,6 +1139,10 @@ export default function ClientDetail() {
             </View>
 
             <View style={styles.adminActions}>
+              <Pressable testID="admin-reset-password" onPress={askResetPassword} disabled={!!adminBusy} style={styles.adminBtnAlt}>
+                <Ionicons name="key" size={13} color={theme.color.text} />
+                <Text style={styles.adminBtnAltText}>RESET PASSWORD</Text>
+              </Pressable>
               {(!data?.status || data?.status === "active") ? (
                 <>
                   <Pressable testID="admin-archive" onPress={askArchive} disabled={!!adminBusy} style={styles.adminBtnAlt}>

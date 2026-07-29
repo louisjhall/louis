@@ -1202,6 +1202,54 @@ async def change_password(body: ChangePasswordBody, user: dict = Depends(current
     return {"status": "ok", "token": token}
 
 
+# ----- Admin: force-reset a client's password ---------------------------
+# Iter 128b. Coach-only. Lets Louis reset a client's password without
+# needing the client's old one — same UX as the "Send temporary password"
+# flow you'd expect from any coaching platform. Never exposes the hash.
+
+class AdminResetPasswordBody(BaseModel):
+    new_password: str = Field(min_length=6)
+
+
+@api.post("/coach/clients/{client_id}/reset-password")
+async def coach_reset_client_password(
+    client_id: str,
+    body: AdminResetPasswordBody,
+    admin: dict = Depends(require_admin()),
+):
+    client = await db.users.find_one({"id": client_id})
+    if not client:
+        raise HTTPException(404, "client not found")
+    if (client.get("role") or "").lower() not in ("client", "trial"):
+        raise HTTPException(400, "target user is not a client")
+
+    new_hash = hash_pw(body.new_password)
+    await db.users.update_one(
+        {"id": client_id},
+        {"$set": {
+            "password_hash": new_hash,
+            "password_changed_at": now_iso(),
+            "password_reset_by": admin["id"],
+        }},
+    )
+    # Best-effort audit log — never fatal.
+    try:
+        await db.auth_events.insert_one({
+            "id": new_id(),
+            "user_id": client_id,
+            "actor_id": admin["id"],
+            "kind": "coach_password_reset",
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
+    return {
+        "status": "ok",
+        "client_id": client_id,
+        "email": client.get("email"),
+    }
+
+
 @api.post("/auth/onboarding")
 async def onboarding(body: HomeEquipmentBody, user: dict = Depends(current_user)):
     # Merge instead of overwriting the profile object so re-running onboarding

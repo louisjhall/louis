@@ -696,3 +696,279 @@ def _build_role_line(profile: dict) -> str:
     if airline:
         parts.append(str(airline))
     return " · ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Coach Calendar V2 (Iter 128i)
+# ---------------------------------------------------------------------------
+#
+# Cross-client operational calendar. Uses ONLY current authoritative V2 state:
+#   - schedule_days  → roster classification per day
+#   - plan_live_v2   → active Live placements + session_specs
+#   - flight support helpers
+#
+# Does NOT touch V1 collections (db.rosters, db.workouts, db.workout_assignments).
+# Draft state is exposed as a per-client badge, never mixed into Live cells.
+
+
+def _is_operational_client(u: dict) -> bool:
+    """Return True if the client should appear on the coach's operational
+    calendar by default. Filters out test/sandbox/reviewer accounts via
+    explicit account metadata first, then a small email/name fallback.
+    """
+    profile = u.get("profile") or {}
+    ak = str(profile.get("account_kind") or "").lower()
+    if ak in ("test", "sandbox", "reviewer", "demo", "preview"):
+        return False
+    email = (u.get("email") or "").lower()
+    if email.endswith("@test.com"):
+        return False
+    if "test" in email.split("@")[0]:
+        return False
+    name = (u.get("display_name") or u.get("name") or "").lower()
+    if "reviewer" in name or "briefing test" in name:
+        return False
+    return True
+
+
+@api.get("/v2/coach/calendar")
+async def endpoint_coach_calendar(
+    days: int = 7,
+    start: Optional[str] = None,
+    include_test: bool = False,
+    q: Optional[str] = None,
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    """Return the cross-client operational calendar.
+
+    - `days` clamped to [1, 28] (7 / 14 / 28 are the supported UX modes).
+    - `start` optional ISO date; default today.
+    - `include_test` surfaces sandbox/test/reviewer accounts (dev use).
+    - `q` narrows by client name/email/airline/role.
+    """
+    days = max(1, min(int(days or 7), 28))
+    try:
+        d0 = _dt.date.fromisoformat(start) if start else _dt.date.today()
+    except Exception:
+        d0 = _dt.date.today()
+    dates = [(d0 + _dt.timedelta(days=i)).isoformat() for i in range(days)]
+    date_from, date_to = dates[0], dates[-1]
+
+    # Load clients
+    match: dict = {"role": "client", "status": {"$ne": "archived"}}
+    if q:
+        match["$or"] = [
+            {"name":         {"$regex": q, "$options": "i"}},
+            {"display_name": {"$regex": q, "$options": "i"}},
+            {"email":        {"$regex": q, "$options": "i"}},
+            {"profile.airline":   {"$regex": q, "$options": "i"}},
+            {"profile.job_title": {"$regex": q, "$options": "i"}},
+        ]
+    clients_raw = await db.users.find(
+        match,
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "profile": 1},
+    ).sort("name", 1).to_list(500)
+
+    excluded_test_count = 0
+    if include_test:
+        clients = clients_raw
+    else:
+        clients = []
+        for u in clients_raw:
+            if _is_operational_client(u):
+                clients.append(u)
+            else:
+                excluded_test_count += 1
+
+    rows: list[dict] = []
+    for c in clients:
+        cid = c["id"]
+
+        # --- Roster (schedule_days)
+        sched = await db.schedule_days.find(
+            {"client_id": cid, "date": {"$gte": date_from, "$lte": date_to}},
+            {"_id": 0, "date": 1, "day_type": 1, "derived": 1},
+        ).to_list(500)
+        sched_by_date: dict[str, dict] = {}
+        for sd in sched:
+            derived = sd.get("derived") or {}
+            # `day_type` (top-level) is the canonical classification; fall back to
+            # `derived.classification` for older docs.
+            classification = sd.get("day_type") or derived.get("classification") or ""
+            sched_by_date[sd["date"]] = {
+                "classification": classification,
+                "classification_label": _humanise_classification(classification),
+                "duty_burden_band": derived.get("duty_burden_band"),
+            }
+
+        # --- Active Live placements
+        live = await db.plan_live_v2.find_one(
+            {"client_id": cid, "active": True},
+            {"_id": 0, "id": 1, "placement_map": 1, "session_specs": 1, "planning_window": 1},
+        )
+        specs: dict[str, dict] = {}
+        placements_by_date: dict[str, list[dict]] = {}
+        if live:
+            _raw_specs = live.get("session_specs") or {}
+            if isinstance(_raw_specs, dict):
+                # session_specs stored as {exposure_id: spec}
+                for k, v in _raw_specs.items():
+                    if isinstance(v, dict):
+                        specs[k] = v
+            elif isinstance(_raw_specs, list):
+                for s in _raw_specs:
+                    if isinstance(s, dict) and s.get("exposure_id"):
+                        specs[s["exposure_id"]] = s
+            for p in (live.get("placement_map") or []):
+                d = p.get("date")
+                if not d or d < date_from or d > date_to:
+                    continue
+                if p.get("kind") == "rest":
+                    continue
+                spec = specs.get(p.get("exposure_id") or "") or {}
+                placements_by_date.setdefault(d, []).append({
+                    "id": f"v2p:{live['id']}:{p.get('exposure_id') or ''}",
+                    "kind":  p.get("kind") or spec.get("kind") or "session",
+                    "label": _humanise_kind(spec.get("spec_kind") or p.get("kind") or "session"),
+                    "duration_min": (spec.get("duration_min") or p.get("target_duration_min")),
+                    "key": bool(p.get("key")),
+                    "intensity": p.get("intensity_target") or spec.get("intensity_target"),
+                })
+
+        # --- Flight support
+        fs_by_date: dict[str, list[dict]] = {}
+        try:
+            from feature_aviation_support_api import (
+                _flight_support_for_range, _bundle_interventions,
+            )
+            raw_fs = await _flight_support_for_range(cid, date_from, date_to)
+            for d, items in raw_fs.items():
+                bundled = _bundle_interventions(items) if items else []
+                fs_by_date[d] = [{
+                    "id": f.get("id"),
+                    "title": f.get("title"),
+                    "duration_min": f.get("duration_min"),
+                    "family": f.get("family"),
+                    "is_bundle": bool(f.get("is_bundle")),
+                } for f in bundled]
+        except Exception:
+            fs_by_date = {}
+
+        # --- Draft badge (existence only; NO Draft sessions in cells)
+        active_draft = await db.plan_drafts_v2.find_one(
+            {"client_id": cid, **_ACTIVE_DRAFT_FILTER},
+            {"_id": 0, "id": 1, "status": 1},
+            sort=[("created_at", -1)],
+        )
+
+        # Build day cells
+        cells = []
+        has_any_content = False
+        for d in dates:
+            roster = sched_by_date.get(d)
+            trainings = placements_by_date.get(d, [])
+            flights   = fs_by_date.get(d, [])
+            if roster or trainings or flights:
+                has_any_content = True
+            cells.append({
+                "date": d,
+                "roster": roster,
+                "trainings": trainings,
+                "flight_support": flights,
+                "is_rest": (not trainings) and bool(roster),
+            })
+
+        # --- Goal + phase (coach-facing)
+        profile = c.get("profile") or {}
+        goal_key = profile.get("main_goal_key") or ""
+        goal_label = ""
+        if goal_key:
+            try:
+                canonical = canonicalise_goal_key(goal_key)
+                tail = canonical.split(".")[-1]
+                goal_label = tail.replace("_", " ").title()
+            except Exception:
+                goal_label = goal_key.split(".")[-1].replace("_", " ").title()
+
+        phase_label = None
+        prog = await db.programmes_v2.find_one(
+            {"client_id": cid, "status": {"$in": ["active", "draft"]}}, {"_id": 0, "id": 1},
+        )
+        if prog:
+            active_phase = await db.programme_phases_v2.find_one(
+                {"programme_id": prog["id"], "status": "active"},
+                {"_id": 0, "phase_kind": 1},
+            )
+            if active_phase and active_phase.get("phase_kind"):
+                phase_label = str(active_phase["phase_kind"]).replace("_", " ").title()
+
+        rows.append({
+            "client_id": cid,
+            "name": c.get("display_name") or c.get("name") or c.get("email") or "Client",
+            "role_line": _build_role_line(profile),
+            "avatar_url": profile.get("avatar_url"),
+            "goal_label": goal_label or "General fitness",
+            "phase_label": phase_label,
+            "plan_state":  "live" if live else ("draft_only" if active_draft else "no_plan"),
+            "has_roster":  bool(sched),
+            "has_new_draft": bool(active_draft and live),  # newer Draft alongside Live
+            "days": cells,
+            "content_present": has_any_content,
+        })
+
+    return {
+        "start_date": date_from,
+        "end_date":   date_to,
+        "days_count": days,
+        "dates": dates,
+        "clients": rows,
+        "excluded_test_count": excluded_test_count,
+        "at": now_iso(),
+    }
+
+
+def _humanise_kind(k: str) -> str:
+    if not k:
+        return "Session"
+    label_map = {
+        "running":        "Run",
+        "cycling":        "Ride",
+        "swimming":       "Swim",
+        "strength":       "Strength",
+        "mobility":       "Mobility",
+        "recovery":       "Recovery",
+        "brick":          "Brick",
+        "activation":     "Activation",
+        "travel_recovery":"Travel Recovery",
+    }
+    if k in label_map:
+        return label_map[k]
+    return k.replace("_", " ").title()
+
+
+# Roster classification labels — coach-facing single-word tags.
+_ROSTER_LABELS = {
+    "home_day":         "Home",
+    "layover":          "Layover",
+    "layover_departure":"Layover ✈",
+    "layover_arrival":  "Layover ✈",
+    "flight":           "Flight",
+    "turnaround":       "Turnaround",
+    "standby":          "Standby",
+    "off":              "Off",
+    "duty":             "Duty",
+    "training":         "Training",
+    "reserve":          "Reserve",
+    "vacation":         "Vacation",
+    "sick":             "Sick",
+    "unknown":          "-",
+}
+
+
+def _humanise_classification(c: str) -> str:
+    if not c:
+        return ""
+    key = str(c).lower()
+    if key in _ROSTER_LABELS:
+        return _ROSTER_LABELS[key]
+    return key.replace("_", " ").title()

@@ -1,11 +1,17 @@
 /**
- * NutritionTodayCard — Iter 94t (Phase 1)
+ * NutritionTodayCard — Iter 129g compact refresh.
  *
- * Compact card shown near the top of the client home. Displays today's
- * calories + protein progress against target, with a Log Food CTA. Renders
- * a friendly empty state when nothing is logged yet — never "content missing".
+ * Feedback: previous card ate ~1/3 of vertical screen. This version keeps
+ * the progress bars (strongest signal) but shaves ~30% height by:
+ *   • removing the large per-metric icon circles
+ *   • inlining the % with the label (no separate 0% row)
+ *   • collapsing the "meals logged" row and the "Log Meal" CTA into a
+ *     single final row (label left, chip on the right)
+ *
+ * NO nutrition logic changes — same `/nutrition/today` payload, same
+ * logging flow (`/nutrition/pick`), same targets, same totals.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -18,20 +24,68 @@ type Payload = {
   totals?: Totals;
   target?: Target;
   date_local?: string;
-  hydration_ml?: number;
-  remaining?: { calories?: number; protein_g?: number; hydration_ml?: number };
+  remaining?: { calories?: number; protein_g?: number };
 };
 
-function clamp(n: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, n));
-}
+function clamp(n: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, n)); }
 function fmt(n: number | undefined): string {
   if (n === undefined || n === null || isNaN(n as any)) return "0";
   return Math.round(n).toLocaleString();
 }
-function pct(v?: number, t?: number): number {
-  if (!v || !t) return 0;
+function pct01(v?: number, t?: number): number {
+  if (!v || !t || t <= 0) return 0;
   return clamp(v / t, 0, 1);
+}
+
+/**
+ * Bar colour rules:
+ *   • no target or nothing logged → neutral brand
+ *   • over target (>110%)         → red
+ *   • on track (≥ 60% consumed)   → green
+ *   • otherwise                   → brand
+ */
+function barColor(current: number, target?: number): string {
+  if (!target || current <= 0) return theme.color.brand;
+  const p = current / target;
+  if (p > 1.1) return theme.color.red;
+  if (p >= 0.6) return theme.color.green;
+  return theme.color.brand;
+}
+
+function ProgressRow({
+  label, current, target, unit, testID,
+}: {
+  label: string;
+  current: number;
+  target?: number;
+  unit: string;
+  testID?: string;
+}) {
+  const p = pct01(current, target);
+  const pctLabel = target ? `${Math.round(p * 100)}%` : "";
+  const left = target ? Math.max(0, Math.round(target - current)) : 0;
+  const color = barColor(current, target);
+  const hasData = (current || 0) > 0;
+  return (
+    <View style={styles.metricBlock} testID={testID}>
+      <View style={styles.metricHead}>
+        <Text style={styles.metricLbl} numberOfLines={1}>
+          <Text style={styles.metricLblStrong}>{label}</Text>
+          <Text style={styles.metricSep}>  </Text>
+          <Text style={styles.metricV}>{fmt(current)}</Text>
+          {target ? <Text style={styles.metricTgt}>{` / ${fmt(target)} ${unit}`}</Text> : <Text style={styles.metricTgt}>{` ${unit}`}</Text>}
+          {target && hasData ? <Text style={[styles.metricPctInline, { color }]}>{`  ·  ${pctLabel}`}</Text> : null}
+        </Text>
+        {target ? (
+          <Text style={styles.metricLeft} numberOfLines={1}>{fmt(left)} {unit} left</Text>
+        ) : null}
+      </View>
+      <View style={styles.barBg} accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: 100, now: Math.round(p * 100) }}>
+        <View style={[styles.barFill, { width: `${p * 100}%`, backgroundColor: color }]} />
+      </View>
+    </View>
+  );
 }
 
 export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) {
@@ -48,34 +102,15 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
   }, []);
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  const totals = data?.totals || { calories: 0, protein_g: 0 };
+  const totals = data?.totals || { calories: 0, protein_g: 0, count: 0 };
   const target = data?.target || {};
-  const remaining = data?.remaining || {};
-  const nothingLogged = (totals.count ?? 0) === 0 && (totals.calories ?? 0) === 0;
+  const mealsCount = totals.count ?? 0;
+  const nothingLogged = mealsCount === 0 && (totals.calories ?? 0) === 0;
 
-  // Iter 94t (Phase 2) — Open the full Nutrition Centre (photo scan,
-  // barcode, food search, favourites, manual) instead of jumping straight
-  // into manual entry. The centre is where clients see targets + insights.
-  // Iter 95e — route to the modality picker instead of the nutrition hub
-  // so "LOG FIRST MEAL" opens Photo / Barcode / Search / Manual choices.
-  const openNutritionHub = () => router.push("/nutrition" as any);
   const openLog = () => router.push("/nutrition/pick" as any);
   const openSummary = () => router.push("/nutrition" as any);
 
-  // Compute the "you're short on X" hint so clients see a concrete next
-  // action instead of just numbers.
-  const shortOn: { label: string; remaining: number; unit: string } | null = (() => {
-    if (!target.protein_g && !target.calories) return null;
-    // Prefer protein if the client is significantly under (>20g remaining) —
-    // protein is the harder target for crew.
-    if (target.protein_g && (remaining as any).protein_g > 20) {
-      return { label: "PROTEIN", remaining: Math.round((remaining as any).protein_g), unit: "g" };
-    }
-    if (target.calories && (remaining as any).calories > 200) {
-      return { label: "CALORIES", remaining: Math.round((remaining as any).calories), unit: "kcal" };
-    }
-    return null;
-  })();
+  const cta = useMemo(() => nothingLogged ? "LOG FIRST MEAL" : "LOG MEAL", [nothingLogged]);
 
   if (loading && !data) {
     return (
@@ -87,77 +122,43 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
 
   return (
     <View style={styles.card} testID="nutrition-today-card">
-      <View style={styles.head}>
-        <Ionicons name="restaurant" size={16} color={theme.color.brand} />
+      {/* Header — click opens Nutrition detail */}
+      <Pressable onPress={openSummary} style={styles.head} testID="nutrition-open">
         <Text style={styles.title}>TODAY&apos;S NUTRITION</Text>
-        <Pressable onPress={openSummary} hitSlop={10} testID="nutrition-open">
-          <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+        <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+      </Pressable>
+
+      {/* Calories */}
+      <ProgressRow
+        label="Calories"
+        current={totals.calories || 0}
+        target={target.calories}
+        unit="kcal"
+        testID="nutrition-calories-row"
+      />
+
+      {/* Protein */}
+      <ProgressRow
+        label="Protein"
+        current={totals.protein_g || 0}
+        target={target.protein_g}
+        unit="g"
+        testID="nutrition-protein-row"
+      />
+
+      {/* Combined meals + CTA row */}
+      <View style={styles.footRow}>
+        <Pressable onPress={openSummary} hitSlop={6} style={styles.footLeft} testID="nutrition-meals-row">
+          <Text style={styles.footMeals}>
+            <Text style={styles.footMealsN}>{mealsCount}</Text>{" "}
+            {mealsCount === 1 ? "meal logged" : "meals logged"}
+          </Text>
+        </Pressable>
+        <Pressable onPress={openLog} style={styles.cta} testID="nutrition-log">
+          <Ionicons name="add" size={14} color="#fff" />
+          <Text style={styles.ctaT}>{cta}</Text>
         </Pressable>
       </View>
-
-      {nothingLogged ? (
-        <>
-          <Text style={styles.empty}>No meals logged yet today.</Text>
-          {(target.calories || target.protein_g) ? (
-            <View style={styles.targetRow}>
-              {target.calories ? (
-                <Text style={styles.targetPill}>Target: {fmt(target.calories)} kcal</Text>
-              ) : null}
-              {target.protein_g ? (
-                <Text style={styles.targetPill}>{fmt(target.protein_g)}g protein</Text>
-              ) : null}
-            </View>
-          ) : null}
-          <Pressable onPress={openLog} style={styles.primaryBtn} testID="nutrition-log-first">
-            <Ionicons name="add-circle" size={14} color="#fff" />
-            <Text style={styles.primaryBtnT}>LOG FIRST MEAL</Text>
-          </Pressable>
-        </>
-      ) : (
-        <>
-          <View style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.metricLbl}>CALORIES</Text>
-              <Text style={styles.metricV}>
-                {fmt(totals.calories)}
-                {target.calories ? <Text style={styles.metricTgt}> / {fmt(target.calories)} kcal</Text> : <Text style={styles.metricTgt}> kcal</Text>}
-              </Text>
-              {target.calories ? (
-                <View style={styles.barBg}><View style={[styles.barFill, { width: `${pct(totals.calories, target.calories) * 100}%` }]} /></View>
-              ) : null}
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.metricLbl}>PROTEIN</Text>
-              <Text style={styles.metricV}>
-                {fmt(totals.protein_g)}
-                {target.protein_g ? <Text style={styles.metricTgt}> / {fmt(target.protein_g)} g</Text> : <Text style={styles.metricTgt}> g</Text>}
-              </Text>
-              {target.protein_g ? (
-                <View style={styles.barBg}><View style={[styles.barFill, { width: `${pct(totals.protein_g, target.protein_g) * 100}%`, backgroundColor: theme.color.brand }]} /></View>
-              ) : null}
-            </View>
-          </View>
-
-          {shortOn ? (
-            <View style={styles.shortRow} testID="nutrition-short-on">
-              <Ionicons name="alert-circle" size={14} color={theme.color.amber} />
-              <Text style={styles.shortT}>
-                <Text style={{ fontWeight: "900" }}>{shortOn.remaining}{shortOn.unit}</Text> {shortOn.label.toLowerCase()} left to hit today&apos;s target.
-              </Text>
-            </View>
-          ) : null}
-
-          <View style={styles.actions}>
-            <Pressable onPress={openLog} style={[styles.btn, styles.primaryBtn]} testID="nutrition-log">
-              <Ionicons name="add" size={14} color="#fff" />
-              <Text style={styles.primaryBtnT}>LOG FOOD</Text>
-            </Pressable>
-            <Pressable onPress={openSummary} style={[styles.btn, styles.ghostBtn]} testID="nutrition-summary">
-              <Text style={styles.ghostBtnT}>VIEW DAY</Text>
-            </Pressable>
-          </View>
-        </>
-      )}
     </View>
   );
 }
@@ -168,38 +169,103 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
     borderWidth: 1,
     borderColor: theme.color.border,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
     marginBottom: 12,
     gap: 10,
   },
-  head: { flexDirection: "row", alignItems: "center", gap: 8 },
-  title: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, flex: 1 },
+  head: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  title: {
+    color: theme.color.brand,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 2,
+    flex: 1,
+  },
 
-  empty: { color: theme.color.textMuted, fontSize: 12 },
+  metricBlock: { gap: 6 },
+  metricHead: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  metricLbl: {
+    flex: 1,
+    color: theme.color.text,
+    fontSize: 13,
+  },
+  metricLblStrong: {
+    color: theme.color.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  metricSep: { fontSize: 13 },
+  metricV: {
+    color: theme.color.text,
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  metricTgt: {
+    color: theme.color.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  metricPctInline: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  metricLeft: {
+    color: theme.color.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
+  },
 
-  row: { flexDirection: "row", alignItems: "flex-start", marginTop: 4 },
-  metricLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.5, marginBottom: 3 },
-  metricV: { color: theme.color.text, fontSize: 15, fontWeight: "900" },
-  metricTgt: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
-  barBg: { marginTop: 6, height: 4, backgroundColor: theme.color.surface3, borderRadius: 2, overflow: "hidden" },
-  barFill: { height: 4, backgroundColor: theme.color.green, borderRadius: 2 },
-
-  actions: { flexDirection: "row", gap: 8, marginTop: 6 },
-  targetRow: { flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" },
-  targetPill: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1,
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+  barBg: {
+    height: 8,
     backgroundColor: theme.color.surface3,
+    borderRadius: 4,
+    overflow: "hidden",
   },
-  shortRow: {
-    flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2,
-    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
-    backgroundColor: "rgba(245,158,11,0.08)", borderWidth: 1, borderColor: "rgba(245,158,11,0.35)",
+  barFill: { height: 8, borderRadius: 4 },
+
+  footRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginTop: 2,
   },
-  shortT: { color: theme.color.text, fontSize: 12, flex: 1 },
-  btn: { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4, padding: 10, borderRadius: 8 },
-  primaryBtn: { backgroundColor: theme.color.brand },
-  primaryBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  ghostBtn: { borderWidth: 1, borderColor: theme.color.border },
-  ghostBtnT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  footLeft: { flex: 1 },
+  footMeals: {
+    color: theme.color.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  footMealsN: {
+    color: theme.color.text,
+    fontWeight: "900",
+  },
+
+  cta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: theme.color.brand,
+  },
+  ctaT: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+  },
 });

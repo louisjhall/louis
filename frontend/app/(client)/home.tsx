@@ -751,12 +751,16 @@ export default function Home() {
             deepLinkKind={fsDeepLinkKind}
           />
 
+          {/* Nutrition sits directly under the training/flight-support pair —
+              per the user, START WORKOUT + FLIGHT SUPPORT + NUTRITION are
+              the daily "big three" clients need to stay on top of. */}
+          {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
+
           {/* Missed sessions live in the action zone — they need action */}
           {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
 
           {/* ── Block 3: Daily rituals ─────────────────────────────── */}
           <HabitTodayCard />
-          {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
           {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
           <WeeklyCheckinCard />
           {/* Sunday-only weekly review card (see WeeklyReviewCard) */}

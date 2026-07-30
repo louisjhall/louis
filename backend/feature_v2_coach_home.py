@@ -205,7 +205,7 @@ async def _client_tasks(client: dict) -> list[dict]:
             })
         else:
             # Draft is validated — ready to publish
-            placements = active_draft.get("placement_map") or []
+            placements = active_draft.get("placements") or []
             n_sessions = len(placements)
             window = (active_draft.get("planning_window") or {})
             window_txt = ""
@@ -947,7 +947,7 @@ async def endpoint_coach_calendar(
         # --- Active Live placements
         live = await db.plan_live_v2.find_one(
             {"client_id": cid, "active": True},
-            {"_id": 0, "id": 1, "placement_map": 1, "session_specs": 1, "planning_window": 1},
+            {"_id": 0, "id": 1, "placements": 1, "session_specs": 1, "planning_window": 1},
         )
         specs: dict[str, dict] = {}
         placements_by_date: dict[str, list[dict]] = {}
@@ -962,7 +962,7 @@ async def endpoint_coach_calendar(
                 for s in _raw_specs:
                     if isinstance(s, dict) and s.get("exposure_id"):
                         specs[s["exposure_id"]] = s
-            for p in (live.get("placement_map") or []):
+            for p in (live.get("placements") or []):
                 d = p.get("date")
                 if not d or d < date_from or d > date_to:
                     continue

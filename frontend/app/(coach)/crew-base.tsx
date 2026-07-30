@@ -25,6 +25,7 @@ import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
 import { CrewBasePostCard, CrewBasePost } from "@/src/components/crew-base/CrewBasePostCard";
 import { CrewBaseComposer } from "@/src/components/crew-base/CrewBaseComposer";
+import { InstantPostComposer } from "@/src/components/crew-base/InstantPostComposer";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                      */
@@ -384,77 +385,85 @@ export default function CoachCrewBaseScreen() {
             <View style={styles.tabs}>
               {(["feed", "messages"] as RightTab[]).map((k) => {
                 const active = rightTab === k;
+                // Feed tab shows just the label (§21 — no meaningless number).
+                // Messages tab shows conversation count when we have partners.
+                const label = k === "feed"
+                  ? "FEED"
+                  : (partners.length > 0 ? `MESSAGES · ${partners.length}` : "MESSAGES");
                 return (
                   <Pressable key={k} onPress={() => setRightTab(k)} style={[styles.tab, active && styles.tabActive]} testID={`cb-side-tab-${k}`}>
-                    <Text style={[styles.tabT, active && styles.tabTActive]}>
-                      {k === "feed" ? `FEED · ${feed.length}` : `MESSAGES · ${partners.length}`}
-                    </Text>
+                    <Text style={[styles.tabT, active && styles.tabTActive]}>{label}</Text>
                   </Pressable>
                 );
               })}
             </View>
 
-            <ScrollView style={styles.rightScroll} contentContainerStyle={{ paddingBottom: 40 }}>
-              {rightTab === "feed" ? (
-                loading ? (
-                  <View style={{ padding: 30, alignItems: "center" }}><ActivityIndicator /></View>
-                ) : feed.length === 0 ? (
-                  <View style={styles.empty}>
-                    <Ionicons name="megaphone-outline" size={32} color={theme.color.textDim} />
-                    <Text style={styles.emptyT}>No posts yet.</Text>
-                    <Text style={styles.emptySub}>Create your first Crew Base post or click a day on the calendar to schedule one.</Text>
-                    <Pressable onPress={() => openComposer(null)} style={styles.emptyBtn}>
-                      <Text style={styles.emptyBtnT}>NEW POST</Text>
-                    </Pressable>
-                  </View>
-                ) : (
-                  feed.map((p) => (
-                    <CrewBasePostCard
-                      key={p.id}
-                      post={p}
-                      viewerIsCoach
-                      onChanged={loadAll}
-                      onDeleteRequested={() => deletePost(p.id)}
-                    />
-                  ))
-                )
-              ) : (
-                <View>
-                  <Pressable onPress={() => openMessages()} style={styles.viewInboxRow} testID="cb-view-inbox">
-                    <Text style={styles.viewInboxT}>View full inbox</Text>
-                    <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
-                  </Pressable>
-                  {partners.length === 0 ? (
+            {/* FEED — same rendering the client sees, with a sticky quick composer.
+                Comments, reactions and privacy are all resolved server-side via
+                the shared CrewBasePostCard component (§3, §5). */}
+            {rightTab === "feed" ? (
+              <View style={styles.rightFeedStack}>
+                <ScrollView style={styles.rightScroll} contentContainerStyle={{ paddingBottom: 20 }}>
+                  {loading ? (
+                    <View style={{ padding: 30, alignItems: "center" }}><ActivityIndicator /></View>
+                  ) : feed.length === 0 ? (
                     <View style={styles.empty}>
-                      <Ionicons name="chatbubbles-outline" size={32} color={theme.color.textDim} />
-                      <Text style={styles.emptyT}>No conversations yet.</Text>
+                      <Ionicons name="megaphone-outline" size={32} color={theme.color.textDim} />
+                      <Text style={styles.emptyT}>No community posts yet.</Text>
+                      <Text style={styles.emptySub}>Start the conversation below.</Text>
                     </View>
                   ) : (
-                    partners.map((p) => (
-                      <Pressable
+                    feed.map((p) => (
+                      <CrewBasePostCard
                         key={p.id}
-                        onPress={() => openMessages(p.id)}
-                        style={styles.convRow}
-                        testID={`cb-conv-${p.id}`}
-                      >
-                        <View style={styles.convAvatar}>
-                          <Text style={styles.convAvatarT}>
-                            {(p.name || p.email || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
-                          </Text>
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.convName} numberOfLines={1}>{p.name || p.email || "(unnamed)"}</Text>
-                          <Text style={styles.convMeta} numberOfLines={1}>
-                            Private conversation · Coach only
-                          </Text>
-                        </View>
-                        <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
-                      </Pressable>
+                        post={p}
+                        viewerIsCoach
+                        onChanged={loadAll}
+                        onDeleteRequested={() => deletePost(p.id)}
+                      />
                     ))
                   )}
-                </View>
-              )}
-            </ScrollView>
+                </ScrollView>
+                {/* Sticky quick composer — POST-now-only. Same backend as the
+                    full composer; scheduling stays inside + NEW POST / calendar. */}
+                <InstantPostComposer onPosted={loadAll} />
+              </View>
+            ) : (
+              <ScrollView style={styles.rightScroll} contentContainerStyle={{ paddingBottom: 40 }}>
+                <Pressable onPress={() => openMessages()} style={styles.viewInboxRow} testID="cb-view-inbox">
+                  <Text style={styles.viewInboxT}>View full inbox</Text>
+                  <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
+                </Pressable>
+                {partners.length === 0 ? (
+                  <View style={styles.empty}>
+                    <Ionicons name="chatbubbles-outline" size={32} color={theme.color.textDim} />
+                    <Text style={styles.emptyT}>No conversations yet.</Text>
+                  </View>
+                ) : (
+                  partners.map((p) => (
+                    <Pressable
+                      key={p.id}
+                      onPress={() => openMessages(p.id)}
+                      style={styles.convRow}
+                      testID={`cb-conv-${p.id}`}
+                    >
+                      <View style={styles.convAvatar}>
+                        <Text style={styles.convAvatarT}>
+                          {(p.name || p.email || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.convName} numberOfLines={1}>{p.name || p.email || "(unnamed)"}</Text>
+                        <Text style={styles.convMeta} numberOfLines={1}>
+                          Private conversation · Coach only
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
+                    </Pressable>
+                  ))
+                )}
+              </ScrollView>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -579,6 +588,10 @@ const styles = StyleSheet.create({
   tabTActive: { color: theme.color.brand },
 
   rightScroll: { maxHeight: 800 },
+  // Iter 129e — Right-panel Feed stack: scroll takes available space, the
+  // instant composer sticks to the bottom so the coach can quick-post at
+  // any time.
+  rightFeedStack: { flex: 1, minHeight: 500 },
   empty: { padding: 24, alignItems: "center" },
   emptyT: { color: theme.color.text, fontWeight: "800", marginTop: 10 },
   emptySub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, textAlign: "center", lineHeight: 17 },

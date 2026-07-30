@@ -442,20 +442,18 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg }}>
-          {/* Iter 94r — Timezone card. Always at top so crew immediately see
-              which timezone their day / workouts are being scheduled in. */}
-          {tzFlag ? <TimezoneCard /> : null}
-          {/* Iter 94w — Sunday weekly review card (Thu-Sun only). */}
-          <WeeklyReviewCard refreshKey={activityRefreshKey} />
-          {/* Iter 95a — Optional airport-activation card for short-haul dual-session days. */}
-          {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
-          {/* Iter 94t Phase 1 — Nutrition (calories + protein) near top. */}
-          {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
-          {/* Iter 94s — Missed sessions banner (only renders if there are any
-              recoverable missed sessions). Sits above the roster banners. */}
-          {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
-          {/* Iter 94h — TOP-OF-PAGE roster-job status banner. Impossible to miss
-              when an upload has failed, is stuck, or is still processing. */}
+          {/* Iter 128 — Home information architecture (2026 rework).
+              Priority order (top → bottom):
+                1. BLOCKING ALERTS (roster upload state, expiry)
+                2. TODAY ACTION ZONE (workout CTA + flight support)
+                3. DAILY RITUALS (habits, nutrition, weekly check-in/review)
+                4. EVENTS + PERSONAL ACTIVITIES + STANDBY
+                5. PROGRAMME OVERVIEW + SCHEDULE
+                6. UTILITIES (roster upload, timezone) — demoted to bottom
+              The pre-alert card stack (Timezone / WeeklyReview /
+              DualSession / Nutrition / Missed) is redistributed into
+              the proper zones below. */}
+          {/* ── Block 1: Blocking alerts ────────────────────────────── */}
           {rosterJob && rosterJob.status === "failed" ? (
             <View style={styles.jobFailedBanner} testID="home-roster-job-failed">
               <Pressable
@@ -489,30 +487,8 @@ export default function Home() {
               uploaded roster. Auto-hides when the review window elapses. */}
           <RosterReviewBanner onReadyChanged={load} />
 
-          {/* Iter 106 — Prominent, always-visible Upload Roster CTA.
-              This is CrewFit's critical first-step feature: the whole app
-              revolves around a valid roster. Keeping it as a dedicated
-              full-width button above the fold means clients (and returning
-              users uploading next month's roster) always know how to get
-              their next roster in without hunting. */}
-          <Pressable
-            testID="home-upload-roster-cta"
-            onPress={() => router.push("/roster-upload")}
-            style={styles.uploadRosterCta}
-            accessibilityLabel="Upload your roster"
-            accessibilityRole="button"
-          >
-            <View style={styles.uploadRosterIconWrap}>
-              <Ionicons name="cloud-upload" size={22} color={theme.color.brand} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.uploadRosterTitle}>UPLOAD YOUR ROSTER</Text>
-              <Text style={styles.uploadRosterSub}>
-                Drop your latest roster PDF and Louis will build the week around it.
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={theme.color.brand} />
-          </Pressable>
+          {/* Roster upload CTA has moved to the "Utilities" block at the
+              bottom (compact) — it's an admin task, not a daily one. */}
 
           {/* Phase 7B — dynamic programme status + today state.
               Only renders when the client isn't in the default "programme
@@ -654,70 +630,11 @@ export default function Home() {
             </View>
           )}
 
-          {/* Phase 1: Hotel Setup — appears when upcoming layovers need a hotel/gym profile */}
-          <HotelSetupCard />
+          {/* HotelSetupCard, ProgressCard, event/add-event, and additional
+              events blocks moved LOWER in the page (see Blocks 4 & 5).
+              They're context/preview widgets, not primary daily actions. */}
 
-          {/* Phase 3: Your Progress — appears when a weekly snapshot exists */}
-          <ProgressCard />
-
-          {event ? (
-            <Pressable testID="event-card" onPress={() => router.push("/event")} onLongPress={() => setPriorityEvent(eventsAll.find(e => e.id === event.id) || event)}>
-              <AIHeroImage
-                ctx={{ context: "event", goal: (event.event_type || "").toLowerCase(), phase: event.phase_info?.phase || "peak" }}
-                style={styles.eventCardWrap}
-                gradient
-              >
-                <View style={styles.eventCardInner}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.eTop}>{(event.category_label || String(event.event_type || "")).toUpperCase()}{event.category === "race" && event.phase_info?.phase ? ` · ${String(event.phase_info.phase).toUpperCase().replace("_", " ")}` : ""}</Text>
-                    <Text style={styles.eName}>{event.event_name}</Text>
-                    <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
-                  </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={styles.eBig}>{(event.days_value ?? event.phase_info?.days_to_race) ?? "—"}</Text>
-                    <Text style={styles.eBigLbl}>{(event.days_label || "days to event").toUpperCase()}</Text>
-                  </View>
-                </View>
-              </AIHeroImage>
-            </Pressable>
-          ) : (
-            <Pressable testID="add-event-card" onPress={() => router.push("/event")} style={styles.addEventBtn}>
-              <Ionicons name="trophy" size={16} color={theme.color.brand} />
-              <Text style={styles.addEventText}>ADD EVENT (5K, marathon, tri, HYROX…)</Text>
-            </Pressable>
-          )}
-
-          {/* Iter 84 (Task 1.7) — additional registered events (beyond primary) */}
-          {eventsAll.length > 1 ? (
-            <View style={styles.otherEventsWrap} testID="events-secondary-stack">
-              <Text style={styles.otherEventsTitle}>ALSO ON YOUR CALENDAR</Text>
-              {eventsAll.filter((e) => e.id !== event?.id).slice(0, 3).map((e) => {
-                const p = e.priority || "C";
-                const color = p === "A" ? "#DC2626" : p === "B" ? "#F59E0B" : "#6B7280";
-                return (
-                  <Pressable
-                    key={e.id}
-                    testID={`event-row-${e.id}`}
-                    onPress={() => setPriorityEvent(e)}
-                    style={styles.otherEventRow}
-                  >
-                    <View style={[styles.priPill, { backgroundColor: color }]}>
-                      <Text style={styles.priPillT}>{p}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.otherEventName} numberOfLines={1}>{e.event_name}</Text>
-                      <Text style={styles.otherEventMeta} numberOfLines={1}>
-                        {(e.event_type || "").replace(/_/g, " ")} · {e.weeks_to_event ?? "?"} wk
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
-                  </Pressable>
-                );
-              })}
-              <Text style={styles.otherEventsHint}>Tap to change priority.</Text>
-            </View>
-          ) : null}
-
+          {/* ── Block 2: TODAY ACTION ZONE ──────────────────────────── */}
           {todaysWorkout ? (
             <>
               {prompts.length > 0 && (
@@ -824,24 +741,85 @@ export default function Home() {
             )
           )}
 
-          <View style={styles.quickRow}>
-            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
-            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
-            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
-          </View>
-
-          <HabitTodayCard />
-
-          {/* Iter 117 — Aviation Support (Phase B). Rendered as a separate
-              section right after the Training / Rest block so pilots see
-              their operational interventions alongside training without
-              them being confused for programme workouts. Hidden unless
-              /client/today returned interventions. */}
+          {/* Flight Support MUST sit directly after the workout so pilots &
+              crew see their operational interventions inside the primary
+              training action zone. Hidden unless /client/today returned
+              interventions. */}
           <TodayFlightSupport
             snapshot={todaySnapshot}
             onRefresh={load}
             deepLinkKind={fsDeepLinkKind}
           />
+
+          {/* Missed sessions live in the action zone — they need action */}
+          {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
+
+          {/* ── Block 3: Daily rituals ─────────────────────────────── */}
+          <HabitTodayCard />
+          {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
+          {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
+          <WeeklyCheckinCard />
+          {/* Sunday-only weekly review card (see WeeklyReviewCard) */}
+          <WeeklyReviewCard refreshKey={activityRefreshKey} />
+
+          {/* ── Block 4: Events + Personal activities + Standby ────── */}
+          {event ? (
+            <Pressable testID="event-card" onPress={() => router.push("/event")} onLongPress={() => setPriorityEvent(eventsAll.find(e => e.id === event.id) || event)}>
+              <AIHeroImage
+                ctx={{ context: "event", goal: (event.event_type || "").toLowerCase(), phase: event.phase_info?.phase || "peak" }}
+                style={styles.eventCardWrap}
+                gradient
+              >
+                <View style={styles.eventCardInner}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.eTop}>{(event.category_label || String(event.event_type || "")).toUpperCase()}{event.category === "race" && event.phase_info?.phase ? ` · ${String(event.phase_info.phase).toUpperCase().replace("_", " ")}` : ""}</Text>
+                    <Text style={styles.eName}>{event.event_name}</Text>
+                    <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={styles.eBig}>{(event.days_value ?? event.phase_info?.days_to_race) ?? "—"}</Text>
+                    <Text style={styles.eBigLbl}>{(event.days_label || "days to event").toUpperCase()}</Text>
+                  </View>
+                </View>
+              </AIHeroImage>
+            </Pressable>
+          ) : (
+            <Pressable testID="add-event-card" onPress={() => router.push("/event")} style={styles.addEventBtn}>
+              <Ionicons name="trophy" size={16} color={theme.color.brand} />
+              <Text style={styles.addEventText}>ADD EVENT (5K, marathon, tri, HYROX…)</Text>
+            </Pressable>
+          )}
+
+          {/* Iter 84 (Task 1.7) — additional registered events (beyond primary) */}
+          {eventsAll.length > 1 ? (
+            <View style={styles.otherEventsWrap} testID="events-secondary-stack">
+              <Text style={styles.otherEventsTitle}>ALSO ON YOUR CALENDAR</Text>
+              {eventsAll.filter((e) => e.id !== event?.id).slice(0, 3).map((e) => {
+                const p = e.priority || "C";
+                const color = p === "A" ? "#DC2626" : p === "B" ? "#F59E0B" : "#6B7280";
+                return (
+                  <Pressable
+                    key={e.id}
+                    testID={`event-row-${e.id}`}
+                    onPress={() => setPriorityEvent(e)}
+                    style={styles.otherEventRow}
+                  >
+                    <View style={[styles.priPill, { backgroundColor: color }]}>
+                      <Text style={styles.priPillT}>{p}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.otherEventName} numberOfLines={1}>{e.event_name}</Text>
+                      <Text style={styles.otherEventMeta} numberOfLines={1}>
+                        {(e.event_type || "").replace(/_/g, " ")} · {e.weeks_to_event ?? "?"} wk
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
+                  </Pressable>
+                );
+              })}
+              <Text style={styles.otherEventsHint}>Tap to change priority.</Text>
+            </View>
+          ) : null}
 
           <TodayPersonalActivities key={activityRefreshKey} />
 
@@ -856,9 +834,7 @@ export default function Home() {
 
           <StandbyStatusCard />
 
-          <WeeklyCheckinCard />
-          <PushPermissionPrompt />
-
+          {/* ── Block 5: Programme overview + Schedule ─────────────── */}
           {/* Plan C2 — Programme Overview card */}
           {programme ? (
             (() => {
@@ -921,6 +897,12 @@ export default function Home() {
             })()
           ) : null}
 
+          {/* Phase 1: Hotel Setup — appears when upcoming layovers need a hotel/gym profile */}
+          <HotelSetupCard />
+
+          {/* Phase 3: Your Progress — appears when a weekly snapshot exists */}
+          <ProgressCard />
+
           <Text style={styles.sectionTitle}>YOUR SCHEDULE</Text>
           {programmeFocus?.banner_text ? (
             <View style={styles.focusBanner} testID="programme-focus-banner">
@@ -967,6 +949,36 @@ export default function Home() {
           ) : (
             <Text style={styles.sectionHint}>Calendar temporarily unavailable — message Louis if this persists.</Text>
           )}
+
+          {/* ── Block 6: Utilities (demoted) ─────────────────────────
+              Quick nav row, compact roster upload button and small
+              timezone chip live at the bottom so daily rituals and the
+              main workout CTA own the fold. */}
+          <View style={styles.quickRow}>
+            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
+            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
+            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
+          </View>
+
+          <Pressable
+            testID="home-upload-roster-cta"
+            onPress={() => router.push("/roster-upload")}
+            style={styles.uploadRosterCtaCompact}
+            accessibilityLabel="Upload your roster"
+            accessibilityRole="button"
+          >
+            <Ionicons name="cloud-upload" size={16} color={theme.color.brand} />
+            <Text style={styles.uploadRosterCompactT}>UPLOAD NEXT ROSTER</Text>
+            <Ionicons name="chevron-forward" size={14} color={theme.color.brand} />
+          </Pressable>
+
+          {tzFlag ? (
+            <View style={styles.tzChipWrap} testID="home-tz-chip">
+              <TimezoneCard />
+            </View>
+          ) : null}
+
+          <PushPermissionPrompt />
         </View>
       </ScrollView>
 
@@ -1079,6 +1091,32 @@ const styles = StyleSheet.create({
     fontSize: 11, marginTop: 3, lineHeight: 15,
   },
 
+  // Iter 128 — Compact upload-roster row (demoted to utilities block)
+  uploadRosterCtaCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginTop: theme.space.md,
+    marginBottom: theme.space.sm,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  uploadRosterCompactT: {
+    color: theme.color.brand,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    flex: 1,
+  },
+  tzChipWrap: {
+    marginTop: theme.space.xs,
+    marginBottom: theme.space.sm,
+    opacity: 0.75,
+  },
   // Iter 100 — Next 5 Days strip on home
   next5Wrap: {
     marginTop: 20,

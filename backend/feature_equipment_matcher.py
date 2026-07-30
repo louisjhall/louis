@@ -33,6 +33,8 @@ CANONICAL_EQUIPMENT = {
     "cable_stack", "cable_machine",
     "smith_machine",
     "leg_press", "leg_extension", "leg_curl",
+    "chest_press_machine", "shoulder_press_machine",
+    "lat_pulldown", "seated_cable_row",
     "pull_up_bar", "chin_up_bar",
     "kettlebell",
     "resistance_bands",
@@ -53,26 +55,71 @@ EQUIPMENT_ALIASES = {
     "adjustable dumbbells": "adjustable_dumbbells",
     "bb": "barbell", "olympic bar": "olympic_barbell",
     "cable": "cable_stack", "cables": "cable_stack",
+    "cable machine": "cable_stack", "functional trainer": "cable_stack",
     "pull up bar": "pull_up_bar", "pullup bar": "pull_up_bar", "chinup bar": "chin_up_bar",
     "kettlebells": "kettlebell", "kb": "kettlebell",
     "bands": "resistance_bands",
     "rower": "rowing_machine",
     "bike": "stationary_bike", "exercise bike": "stationary_bike",
+    "cross trainer": "elliptical",
     "run track": "treadmill",  # if a hotel says "run track"
-    "mat": "yoga_mat", "gym mat": "yoga_mat",
+    "mat": "yoga_mat", "gym mat": "yoga_mat", "exercise mat": "yoga_mat",
     "med ball": "medicine_ball",
+    "leg press machine": "leg_press",
+    "chest press": "chest_press_machine",
+    "shoulder press": "shoulder_press_machine",
+    "lat pull down": "lat_pulldown", "lat pull-down": "lat_pulldown",
+    "cable row": "seated_cable_row",
+    "squat rack": "barbell", "power rack": "barbell", "rack": "barbell",
     "gym": "full_gym_marker",  # marker only — expands via preset
     "hotel gym": "full_gym_marker",
     "home gym": "full_gym_marker",
+    # Iter 128m — Full Commercial Gym preset: permanent HOME setup expressing
+    # "typical well-equipped commercial gym". Deliberately CONSERVATIVE —
+    # does NOT imply hack squats, GHDs, belt squats, sled, hip thrust machines,
+    # SkiErg, assault bike, specialty bars, etc. Any of those may be added
+    # by the client explicitly on top.
+    "commercial gym": "full_commercial_gym_marker",
+    "full commercial gym": "full_commercial_gym_marker",
+    "commercial_gym_standard": "full_commercial_gym_marker",
+    "full_commercial_gym": "full_commercial_gym_marker",
     "no equipment": "bodyweight", "none": "bodyweight",
 }
 
 # When a client says "full_gym_marker" or when hotel gym_type=full_gym, expand
-# to this canonical set.
+# to this canonical set. (Kept lean — this marker is also used by hotel gyms
+# where we do NOT want to assume machines exist.)
 FULL_GYM_EXPANSION = {
     "dumbbells", "barbell", "bench", "cable_stack", "smith_machine",
     "treadmill", "stationary_bike", "rowing_machine", "kettlebell",
     "pull_up_bar", "yoga_mat", "medicine_ball",
+}
+
+# Iter 128m — Full Commercial Gym preset (permanent HOME setup only).
+# Conservative inventory of equipment that MOST full commercial gyms carry.
+# Does NOT include specialist / bodybuilding machines (hack squat, GHD, belt
+# squat, hip thrust machine, sled, SkiErg, safety bar, trap bar, etc.) —
+# those require explicit client confirmation on top of this preset.
+FULL_COMMERCIAL_GYM_EXPANSION = {
+    # Free weights
+    "dumbbells", "adjustable_dumbbells",
+    "barbell", "olympic_barbell",
+    "bench", "adjustable_bench", "flat_bench", "incline_bench",
+    "kettlebell",
+    # Racks / smith
+    "smith_machine",
+    # Cables + functional
+    "cable_stack",
+    "lat_pulldown", "seated_cable_row",
+    # Machines (common commercial subset only)
+    "leg_press", "leg_extension", "leg_curl",
+    "chest_press_machine", "shoulder_press_machine",
+    # Accessories
+    "pull_up_bar",
+    "resistance_bands",
+    "yoga_mat", "medicine_ball",
+    # Cardio
+    "treadmill", "stationary_bike", "rowing_machine", "elliptical",
 }
 
 
@@ -111,6 +158,8 @@ def normalise_available(items: Any) -> set[str]:
             n = _norm_equip_token(str(k))
             if n == "full_gym_marker":
                 out |= FULL_GYM_EXPANSION
+            elif n == "full_commercial_gym_marker":
+                out |= FULL_COMMERCIAL_GYM_EXPANSION
             elif n:
                 out.add(n)
         return out
@@ -121,6 +170,8 @@ def normalise_available(items: Any) -> set[str]:
             n = _norm_equip_token(str(it))
             if n == "full_gym_marker":
                 out |= FULL_GYM_EXPANSION
+            elif n == "full_commercial_gym_marker":
+                out |= FULL_COMMERCIAL_GYM_EXPANSION
             elif n:
                 out.add(n)
     return out

@@ -402,6 +402,11 @@ function EventBuilder({ q, onSubmit, submitting }: any) {
 
 const HOME_EQ: Option[] = [
   { id: "no_equipment", label: "None", icon: "remove-circle-outline" },
+  // Iter 128m — Full Commercial Gym preset (permanent HOME setup).
+  // Represents typical commercial gym inventory. Conservative — does NOT
+  // imply specialist machines (hack squat / GHD / hip thrust machine / sled
+  // / SkiErg / safety bar). Client can still add specific items on top.
+  { id: "commercial_gym_standard", label: "Full Commercial Gym", icon: "business-outline" },
   { id: "yoga_mat", label: "Yoga mat", icon: "grid-outline" },
   { id: "resistance_bands", label: "Bands", icon: "infinite" },
   { id: "pull_up_bar", label: "Pull-up bar", icon: "reorder-two" },
@@ -421,11 +426,24 @@ const HOME_EQ: Option[] = [
   { id: "mobility_tools", label: "Mobility tools", icon: "hand-left" },
 ];
 
+// Descriptive helper text shown under the equipment options (used only when
+// the "Full Commercial Gym" chip is currently selected, to explain what the
+// preset means without listing every implied piece of equipment).
+const COMMERCIAL_GYM_HINT =
+  "Typical commercial gym with free weights, machines, cables and cardio equipment. Add specific items below if your gym also has them.";
+
 function EquipmentPicker({ q, onSubmit, submitting }: any) {
   const [sel, setSel] = useState<string[]>([]);
   const list = useMemo(() => (q.options && q.options.length ? q.options : HOME_EQ) as Option[], [q.options]);
-  const toggle = (id: string) => setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const toggle = (id: string) => setSel((s) => {
+    if (s.includes(id)) return s.filter((x) => x !== id);
+    // "None" and "Full Commercial Gym" are mutually exclusive with each other.
+    if (id === "no_equipment") return ["no_equipment"];
+    if (id === "commercial_gym_standard") return [...s.filter((x) => x !== "no_equipment"), id];
+    return [...s.filter((x) => x !== "no_equipment"), id];
+  });
   const location = q.meta?.location || "home";
+  const showCommercialHint = sel.includes("commercial_gym_standard") && location === "home";
   return (
     <View>
       <Text style={styles.equipLoc}>{location.toUpperCase()} EQUIPMENT</Text>
@@ -441,6 +459,9 @@ function EquipmentPicker({ q, onSubmit, submitting }: any) {
           );
         })}
       </View>
+      {showCommercialHint ? (
+        <Text style={styles.equipHint}>{COMMERCIAL_GYM_HINT}</Text>
+      ) : null}
       <ContinueBtn onPress={() => onSubmit({ location, equipment: sel })} disabled={submitting} />
     </View>
   );
@@ -681,6 +702,10 @@ const styles = StyleSheet.create({
   evAddT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   equipLoc: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
+  equipHint: {
+    color: theme.color.textDim, fontSize: 11, fontStyle: "italic",
+    marginTop: 12, marginBottom: 6, lineHeight: 16,
+  },
 
   continueBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,

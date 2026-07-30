@@ -44,12 +44,18 @@ export function WeeklyReviewCard({ refreshKey = 0 }: { refreshKey?: number }) {
   }, []);
   useEffect(() => { load(); }, [load, refreshKey]);
 
-  // Only surface the card from Wednesday onwards (Mon=0 … Sun=6)
-  // — Louis wants Sunday as the anchor but crew can complete it early.
+  // Louis's weekly review + progress-update prompt is a SUNDAY-only ritual.
+  // We hide the card on every other day so crew aren't nagged mid-week.
+  // If the client has already completed BOTH actions on Sunday, we keep the
+  // "review ready" state visible until Monday end-of-day so they see the
+  // outcome, then it disappears until next Sunday.
   const showCard = (() => {
     if (!r) return false;
     const dow = new Date().getDay(); // 0=Sun … 6=Sat
-    return dow === 0 || dow >= 4; // Thu/Fri/Sat/Sun
+    if (dow === 0) return true; // Sunday
+    const both = r.checkin_status === "complete" && r.progress_status === "complete";
+    if (dow === 1 && both) return true; // Monday tail — only if already completed
+    return false;
   })();
   if (!showCard || !r) return null;
 

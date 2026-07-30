@@ -10934,15 +10934,25 @@ async def seed():
             "profile.tagline": "CrewFit Coach",
         }})
 
-    # Iter 130a — Emergency admin password reset (env-gated).
-    # If `RESET_ADMIN_ON_STARTUP=1`, force Louis's password to the value in
-    # `ADMIN_STARTUP_PASSWORD` (default: "Louis123!") on every backend boot.
+    # Iter 130a — Emergency admin password reset.
+    # Two independent triggers, either of which will force-reset Louis's
+    # password to "Louis123!" on backend boot:
+    #   (a) env var `RESET_ADMIN_ON_STARTUP=1` (preferred, easy to disable), OR
+    #   (b) marker doc missing in `system_bootstrap` collection — a one-shot
+    #       fallback that runs exactly once per deployment even if env vars
+    #       don't propagate. After it runs it writes a marker so subsequent
+    #       restarts skip it.
     # Intended as an unblock for early-MVP deploys where the production
-    # password has drifted from the documented dev credential. Remove the
-    # env var (or set to 0) after you've regained access and rotated the
-    # password via the app.
+    # password has drifted from the documented dev credential.
     try:
-        if str(os.environ.get("RESET_ADMIN_ON_STARTUP", "")).strip().lower() in ("1", "true", "yes"):
+        env_flag = str(os.environ.get("RESET_ADMIN_ON_STARTUP", "")).strip().lower() in ("1", "true", "yes")
+        marker = None
+        try:
+            marker = await db.system_bootstrap.find_one({"_id": "admin_password_unlock_iter130a"})
+        except Exception:
+            marker = None
+        should_reset = env_flag or (marker is None)
+        if should_reset:
             forced_pw = os.environ.get("ADMIN_STARTUP_PASSWORD", "Louis123!")
             await db.users.update_one(
                 {"email": louis_email},
@@ -10952,9 +10962,18 @@ async def seed():
                     "password_changed_at": now_iso(),
                 }},
             )
+            try:
+                await db.system_bootstrap.update_one(
+                    {"_id": "admin_password_unlock_iter130a"},
+                    {"$set": {"ran_at": now_iso(), "trigger": "env" if env_flag else "one_shot"}},
+                    upsert=True,
+                )
+            except Exception:
+                pass
             logger.warning(
-                "seed: admin password force-reset via RESET_ADMIN_ON_STARTUP env — "
-                "REMOVE this env var once you've regained access."
+                "seed: admin password force-reset (trigger=%s) — REMOVE the "
+                "RESET_ADMIN_ON_STARTUP env once you've regained access.",
+                "env" if env_flag else "one_shot",
             )
     except Exception:
         logger.exception("seed: admin startup password reset failed")

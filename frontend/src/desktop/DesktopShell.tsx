@@ -38,6 +38,16 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
 
+  // Iter 130a — desktop SIGN OUT previously called `logout` directly, which
+  // cleared the token + user state but never navigated. The only
+  // `!user → login` guard lives at `/app/index.tsx`, so on any nested route
+  // the sidebar looked unresponsive. Mirror the mobile profile screens by
+  // routing to /(auth)/login explicitly after logout completes.
+  const handleLogout = async () => {
+    try { await logout(); } catch {}
+    router.replace("/(auth)/login" as any);
+  };
+
   return (
     <View style={styles.root} testID="desktop-shell">
       <View style={styles.sidebar}>
@@ -97,7 +107,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           })}
         </ScrollView>
 
-        <Pressable testID="desktop-logout" onPress={logout} style={styles.logout}>
+        <Pressable testID="desktop-logout" onPress={handleLogout} style={styles.logout}>
           <Ionicons name="log-out-outline" size={18} color={theme.color.textMuted} />
           <Text style={styles.logoutText}>SIGN OUT</Text>
         </Pressable>

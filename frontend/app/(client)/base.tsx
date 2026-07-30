@@ -1,74 +1,82 @@
 /**
- * Base — Coming Soon placeholder (Iter 122).
+ * Crew Base — client-facing community feed (Iter 129).
  *
- * The Base tab replaces the old Messages tab. Community functionality is not
- * built yet. This screen is intentionally lightweight: no backend, no data
- * fetches, no state — just static aspirational copy explaining what Base
- * will become. Messaging with Coach Louis now lives on the floating
- * <CoachChatBubble />.
+ * Replaces the previous "Coming Soon" placeholder. Clients see published
+ * posts only. Comments + a single aviation-themed "Wings" reaction are
+ * available. Identity of other clients is resolved server-side according
+ * to each user's crew_base_identity_mode preference.
+ *
+ * A gear icon in the header opens the client's Crew Base settings
+ * (notification toggle + community identity mode).
  */
-import React from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, RefreshControl } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
-import { BaseIcon } from "@/src/components/BaseIcon";
-
-const FUTURE_FEATURES: { title: string; sub: string }[] = [
-  { title: "Community posts & discussions",
-    sub: "Share updates and reactions with other crew." },
-  { title: "Questions & conversations",
-    sub: "Ask the community about training, travel and recovery." },
-  { title: "Training wins & progress",
-    sub: "Celebrate PBs, streaks and milestones together." },
-  { title: "Roster & travel experiences",
-    sub: "Compare notes on routes, layovers and jet-lag strategy." },
-  { title: "Hotel, airport & layover tips",
-    sub: "Real recommendations from crew who have been there." },
-  { title: "CrewFit announcements",
-    sub: "New coach content, features and programme updates." },
-  { title: "Community challenges & accountability",
-    sub: "Opt-in group challenges to keep the crew moving." },
-];
+import { CrewBasePostCard, CrewBasePost } from "@/src/components/crew-base/CrewBasePostCard";
 
 export default function BaseScreen() {
+  const router = useRouter();
+  const [posts, setPosts] = useState<CrewBasePost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api<{ posts: CrewBasePost[] }>("/crew-base/feed?limit=60");
+      setPosts(res.posts || []);
+      // Mark as seen (clears sidebar badge, does not affect push toggle)
+      api("/crew-base/mark-seen", { method: "POST", body: {} }).catch(() => null);
+    } catch (_e) {
+      setPosts([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onRefresh = () => { setRefreshing(true); load(); };
+
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.iconWrap}>
-          <BaseIcon size={56} color={theme.color.brand} filled />
+      <View style={styles.headerBar}>
+        <View>
+          <Text style={styles.h1} testID="base-h1">Crew Base</Text>
+          <Text style={styles.sub}>Community posts from Louis & the crew</Text>
         </View>
+        <Pressable
+          onPress={() => router.push("/(client)/crew-base-settings" as any)}
+          hitSlop={12}
+          testID="cb-settings-btn"
+        >
+          <Ionicons name="settings-outline" size={20} color={theme.color.textMuted} />
+        </Pressable>
+      </View>
 
-        <Text style={styles.h1} testID="base-h1">Base</Text>
-        <Text style={styles.comingSoon} testID="base-coming-soon">Coming soon</Text>
-        <View style={styles.divider} />
-
-        <Text style={styles.lead}>Your CrewFit community.</Text>
-        <Text style={styles.body}>
-          Base will become a dedicated space for pilots and cabin crew to
-          connect, share experiences, stay accountable and learn from others
-          dealing with training around rosters, flights, layovers, hotels
-          and life on the road.
-        </Text>
-
-        <Text style={styles.sectionLabel}>FUTURE FEATURES</Text>
-        <View style={{ marginTop: 8 }}>
-          {FUTURE_FEATURES.map((f) => (
-            <View key={f.title} style={styles.featureRow}>
-              <View style={styles.dot} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.featureTitle}>{f.title}</Text>
-                <Text style={styles.featureSub}>{f.sub}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.footerCard}>
-          <Text style={styles.footerT}>
-            In the meantime, reach out to Coach Louis anytime — tap the coach
-            bubble on your home screen to open a conversation.
-          </Text>
-        </View>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.color.brand} />}
+      >
+        {loading ? (
+          <View style={{ padding: 40, alignItems: "center" }}>
+            <ActivityIndicator />
+          </View>
+        ) : posts.length === 0 ? (
+          <View style={styles.empty} testID="cb-empty-state">
+            <Ionicons name="megaphone-outline" size={40} color={theme.color.textDim} />
+            <Text style={styles.emptyT}>The community feed is quiet right now.</Text>
+            <Text style={styles.emptySub}>New posts from Louis and CrewFit will appear here.</Text>
+          </View>
+        ) : (
+          posts.map((p) => (
+            <CrewBasePostCard key={p.id} post={p} viewerIsCoach={false} onChanged={load} />
+          ))
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -76,56 +84,15 @@ export default function BaseScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.color.bg },
-  scroll: { padding: 20, paddingBottom: 140 },
-  iconWrap: {
-    alignSelf: "center",
-    marginTop: 24, marginBottom: 12,
-    width: 88, height: 88, borderRadius: 44,
-    backgroundColor: theme.color.brandTint,
-    alignItems: "center", justifyContent: "center",
-    borderWidth: 1, borderColor: theme.color.brand,
+  headerBar: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: theme.space.lg, paddingVertical: theme.space.md,
+    borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  h1: {
-    color: theme.color.text, fontWeight: "900", fontSize: 28,
-    textAlign: "center", letterSpacing: 0.5,
-  },
-  comingSoon: {
-    color: theme.color.brand, fontWeight: "800", fontSize: 12,
-    textAlign: "center", letterSpacing: 3.5,
-    marginTop: 6, textTransform: "uppercase",
-  },
-  divider: {
-    height: 1, backgroundColor: theme.color.border,
-    marginVertical: 20, alignSelf: "stretch",
-  },
-  lead: {
-    color: theme.color.text, fontSize: 16, fontWeight: "700",
-    textAlign: "center", marginBottom: 12,
-  },
-  body: {
-    color: theme.color.textMuted, fontSize: 14, lineHeight: 21,
-    textAlign: "center", paddingHorizontal: 4,
-  },
-  sectionLabel: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "800",
-    letterSpacing: 2.2, marginTop: 30, marginBottom: 4,
-  },
-  featureRow: {
-    flexDirection: "row", alignItems: "flex-start",
-    paddingVertical: 10, gap: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.border,
-  },
-  dot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: theme.color.brand,
-    marginTop: 8,
-  },
-  featureTitle: { color: theme.color.text, fontSize: 14, fontWeight: "700" },
-  featureSub:   { color: theme.color.textMuted, fontSize: 12, marginTop: 2 },
-  footerCard: {
-    marginTop: 24, padding: 14,
-    backgroundColor: theme.color.surface2, borderRadius: 12,
-    borderWidth: 1, borderColor: theme.color.border,
-  },
-  footerT: { color: theme.color.textMuted, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  h1: { color: theme.color.text, fontSize: 22, fontWeight: "900" },
+  sub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  scroll: { padding: theme.space.md, paddingBottom: 60 },
+  empty: { padding: 40, alignItems: "center" },
+  emptyT: { color: theme.color.textMuted, fontWeight: "800", marginTop: 12 },
+  emptySub: { color: theme.color.textDim, fontSize: 12, marginTop: 4, textAlign: "center" },
 });

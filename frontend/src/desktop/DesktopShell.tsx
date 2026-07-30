@@ -19,6 +19,7 @@ const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?:
   { path: "/(coach)/calendar",  label: "Calendar",         icon: "calendar-outline",     testId: "desktop-nav-calendar" },
   { path: "/(coach)/library",   label: "Library",          icon: "barbell-outline",      testId: "desktop-nav-library" },
   { path: "/(coach)/messages",  label: "Messages",         icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
+  { path: "/(coach)/crew-base", label: "Crew Base",        icon: "people-circle-outline", testId: "desktop-nav-crew-base" },
   { path: "/(coach)/analytics", label: "Analytics",        icon: "bar-chart-outline",    testId: "desktop-nav-analytics" },
   { path: "/(coach)/changelog", label: "Change Log",       icon: "time-outline",         testId: "desktop-nav-changelog" },
   { path: "/coach/admin/coaches", label: "Coaches (Admin)", icon: "people-circle-outline", testId: "desktop-nav-admin-coaches", adminOnly: true },

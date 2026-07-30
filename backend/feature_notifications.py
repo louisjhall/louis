@@ -53,6 +53,7 @@ DEFAULT_NOTIFICATION_SETTINGS = {
     "roster": True,
     "programme_updates": True,
     "flight_support": True,
+    "crew_base": True,
     "quiet_hours_start": "21:00",
     "quiet_hours_end": "07:00",
     "preferred_reminder_time": "07:30",
@@ -85,6 +86,11 @@ NOTIF_CATEGORY: dict[str, str] = {
     "flight_support_post_flight": "flight_support",
     "flight_support_layover":     "flight_support",
     "flight_support_turnaround":  "flight_support",
+    # Iter 129 — Crew Base (community) push category. Independent of every
+    # other toggle so clients can silence community pings without losing
+    # workout / roster / flight support / messages notifications.
+    "crew_base_new_post": "crew_base",
+    "crew_base_reply":    "crew_base",
 }
 
 

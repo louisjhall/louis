@@ -31,6 +31,8 @@ export default function ClientLayout() {
         <Tabs.Screen name="profile"   options={{ title: "Profile" }} />
         {/* Messages route still exists — hidden from the bar, opened via CoachChatBubble */}
         <Tabs.Screen name="messages"  options={{ title: "Messages", href: null }} />
+        {/* Crew Base settings — hidden from the bar; opened from the Base header gear */}
+        <Tabs.Screen name="crew-base-settings" options={{ href: null }} />
       </Tabs>
       <CoachChatBubble />
     </View>

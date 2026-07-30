@@ -13,7 +13,7 @@
  * All handlers use existing backend endpoints. No new APIs.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Modal, Pressable, TextInput, Alert, Platform, ActivityIndicator, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Modal, Pressable, TextInput, Alert, ActivityIndicator, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
@@ -43,6 +43,11 @@ export function ClientAdminDrawer({
   const [confirmPerm, setConfirmPerm] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState("");
   const [permText, setPermText] = useState("");
+  // Iter 130a — inline password reset (Android + iOS + Web parity;
+  // Alert.prompt is iOS-only and left Android coaches stuck).
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetPw, setResetPw] = useState("");
+  const [resetPwShow, setResetPwShow] = useState(false);
 
   const load = useCallback(async () => {
     if (!clientId) return;
@@ -57,36 +62,20 @@ export function ClientAdminDrawer({
 
   useEffect(() => { if (visible) load(); }, [visible, load]);
 
-  const doResetPassword = useCallback(async () => {
-    const promptText = `Set a new password for ${data?.email || "this client"}.\nMinimum 6 characters.`;
-    if (Platform.OS === "web") {
-      const pw = typeof window !== "undefined" ? window.prompt(promptText) : null;
-      if (!pw) return;
-      if (pw.length < 6) { Alert.alert("Too short", "Password must be at least 6 characters."); return; }
-      const ok = typeof window !== "undefined" ? window.confirm(`Reset ${data?.email}'s password to:\n\n${pw}\n\nThey will need to use this password to sign in.`) : true;
-      if (!ok) return;
-      await runResetPassword(pw);
-    } else if (Platform.OS === "ios" && (Alert as any).prompt) {
-      (Alert as any).prompt(
-        "Reset client password", promptText,
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Reset", style: "destructive", onPress: async (pw?: string) => {
-            if (!pw || pw.length < 6) { Alert.alert("Too short", "Password must be at least 6 characters."); return; }
-            await runResetPassword(pw);
-          } },
-        ],
-        "secure-text",
-      );
-    } else {
-      Alert.alert("Not supported here", "Use the desktop coach view to reset a client password.");
-    }
-  }, [data]);
+  const doResetPassword = useCallback(() => {
+    // Cross-platform inline flow. Alert.prompt is iOS-only, so on Android
+    // the previous branch just told coaches "not supported here" — this
+    // opens an in-drawer modal with a TextInput that works everywhere.
+    setResetPw("");
+    setResetPwShow(false);
+    setConfirmReset(true);
+  }, []);
 
   const runResetPassword = useCallback(async (newPassword: string) => {
     setBusy("reset-password");
     try {
       await api(`/coach/clients/${clientId}/reset-password`, { method: "POST", body: { new_password: newPassword } });
+      setConfirmReset(false); setResetPw(""); setResetPwShow(false);
       Alert.alert("Password reset", `New password is active for ${data?.email}. Ask them to sign in again.`);
     } catch (e: any) {
       Alert.alert("Reset failed", e?.message || "Try again.");
@@ -213,7 +202,7 @@ export function ClientAdminDrawer({
             <View style={styles.confirmBackdrop}>
               <View style={styles.confirmCard}>
                 <Text style={styles.confirmTitle}>Delete client</Text>
-                <Text style={styles.confirmBody}>Type the client's email to confirm:</Text>
+                <Text style={styles.confirmBody}>Type the client&apos;s email to confirm:</Text>
                 <Text style={styles.confirmHint}>{data?.email}</Text>
                 <TextInput value={confirmEmail} onChangeText={setConfirmEmail} autoCapitalize="none" keyboardType="email-address" style={styles.confirmInput} placeholder="client@example.com" placeholderTextColor="#666" testID="admin-drawer-delete-email" />
                 <View style={styles.confirmRow}>
@@ -232,6 +221,47 @@ export function ClientAdminDrawer({
                 <View style={styles.confirmRow}>
                   <Pressable onPress={() => { setConfirmPerm(false); setPermText(""); }} style={styles.ghostBtn}><Text style={styles.ghostBtnText}>Cancel</Text></Pressable>
                   <Pressable onPress={doPermanentDelete} disabled={busy === "perm-delete"} style={styles.dangerBtn} testID="admin-drawer-perm-confirm"><Text style={styles.dangerBtnText}>{busy === "perm-delete" ? "Deleting…" : "PERMANENT DELETE"}</Text></Pressable>
+                </View>
+              </View>
+            </View>
+          )}
+          {confirmReset && (
+            <View style={styles.confirmBackdrop}>
+              <View style={styles.confirmCard}>
+                <Text style={styles.confirmTitle}>Reset password</Text>
+                <Text style={styles.confirmBody}>
+                  Set a new password for {data?.email}. They&apos;ll use this to sign in.
+                  Minimum 6 characters.
+                </Text>
+                <View style={styles.pwRow}>
+                  <TextInput
+                    value={resetPw}
+                    onChangeText={setResetPw}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry={!resetPwShow}
+                    style={[styles.confirmInput, { flex: 1, marginTop: 0 }]}
+                    placeholder="New password"
+                    placeholderTextColor="#666"
+                    testID="admin-drawer-reset-input"
+                  />
+                  <Pressable onPress={() => setResetPwShow(v => !v)} style={styles.eyeBtn} hitSlop={8} testID="admin-drawer-reset-toggle-visibility">
+                    <Ionicons name={resetPwShow ? "eye-off" : "eye"} size={18} color={theme.color.textDim} />
+                  </Pressable>
+                </View>
+                {resetPw.length > 0 && resetPw.length < 6 ? (
+                  <Text style={styles.pwHint}>Password must be at least 6 characters.</Text>
+                ) : null}
+                <View style={styles.confirmRow}>
+                  <Pressable onPress={() => { setConfirmReset(false); setResetPw(""); setResetPwShow(false); }} style={styles.ghostBtn}><Text style={styles.ghostBtnText}>Cancel</Text></Pressable>
+                  <Pressable
+                    onPress={() => { if (resetPw.length >= 6) runResetPassword(resetPw); }}
+                    disabled={busy === "reset-password" || resetPw.length < 6}
+                    style={[styles.primaryBtn, (busy === "reset-password" || resetPw.length < 6) && { opacity: 0.5 }]}
+                    testID="admin-drawer-reset-confirm"
+                  >
+                    <Text style={styles.primaryBtnText}>{busy === "reset-password" ? "Resetting…" : "Reset"}</Text>
+                  </Pressable>
                 </View>
               </View>
             </View>
@@ -289,4 +319,9 @@ const styles = StyleSheet.create({
   ghostBtnText: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
   dangerBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6, backgroundColor: "#c44" },
   dangerBtnText: { color: "#fff", fontSize: 12, fontWeight: "800", letterSpacing: 0.8 },
+  primaryBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6, backgroundColor: theme.color.brand },
+  primaryBtnText: { color: "#000", fontSize: 12, fontWeight: "800", letterSpacing: 0.8 },
+  pwRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
+  eyeBtn: { padding: 8, borderRadius: 6, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface },
+  pwHint: { color: "#ff6b6b", fontSize: 11, marginTop: 6 },
 });

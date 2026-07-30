@@ -60,6 +60,7 @@
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
         "CAMERA",
         "RECORD_AUDIO",
         "POST_NOTIFICATIONS"

@@ -314,7 +314,15 @@ function FeedCard({
 }) {
   const colour = TL[it.roster_day.training_colour || "green"];
   const flags = it.flags.filter((f) => FLAG_BADGE_STYLE[f]);
-  const route = (it.roster_day.flights || []).map((f) => `${f.from || "?"}→${f.to || "?"}`).join(" · ");
+  const route = (it.roster_day.flights || [])
+    .map((f: any) => {
+      const org = f.origin || f.from || "";
+      const dst = f.destination || f.to || "";
+      if (!org && !dst) return "";
+      return `${org || "?"}→${dst || "?"}`;
+    })
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <View style={styles.card} testID={`lf-card-${it.workout_id}`}>

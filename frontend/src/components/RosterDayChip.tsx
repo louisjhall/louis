@@ -28,7 +28,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 
-type Flight = { number?: string; from?: string; to?: string };
+type Flight = { number?: string; flight_number?: string; from?: string; to?: string; origin?: string; destination?: string };
 
 export type RosterDay = {
   day_type?: string | null;
@@ -57,23 +57,25 @@ function classify(day: RosterDay | null | undefined): {
   const t = normaliseDutyType(day.day_type);
   const flightCount = day.flights?.length || 0;
   const primary = (day.flights && day.flights[0]) || undefined;
+  const primaryNum = primary?.flight_number || primary?.number || "";
+  const primaryTo = primary?.destination || primary?.to || "";
 
   // Flying / turnaround has real flight ops
   if (t === "flight" || t === "flying" || t === "fly" || (flightCount > 0 && t !== "layover")) {
     // Turnaround = one or more flights but not a layover — but PDF often
     // uses explicit "Turnaround" label; keep that as its own kind.
     if (t === "turnaround" || t === "t/r" || t === "turn") {
-      return { kind: "turnaround", icon: "repeat", code: primary?.number || "T/R" };
+      return { kind: "turnaround", icon: "repeat", code: primaryNum || "T/R" };
     }
-    return { kind: "flying", icon: "airplane", code: primary?.number || "FLIGHT" };
+    return { kind: "flying", icon: "airplane", code: primaryNum || "FLIGHT" };
   }
   if (t === "layover") {
     // Use layover city (short); fallback to first flight destination
-    const city = day.layover_city || primary?.to;
+    const city = day.layover_city || primaryTo;
     return { kind: "layover", icon: "bed", code: (city || "LAYOVER").toString().toUpperCase().slice(0, 6) };
   }
   if (t === "turnaround" || t === "t/r" || t === "turn") {
-    return { kind: "turnaround", icon: "repeat", code: primary?.number || "T/R" };
+    return { kind: "turnaround", icon: "repeat", code: primaryNum || "T/R" };
   }
   if (t === "standby" || t === "sby" || t === "stby") {
     return { kind: "standby", icon: "time", code: "STBY" };

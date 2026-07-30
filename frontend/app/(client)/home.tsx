@@ -418,13 +418,23 @@ export default function Home() {
                     size="md"
                     testID="hero-roster-chip-today"
                   />
-                  {(todaysDay?.layover_city || todaysDay?.flights?.[0]) ? (
-                    <Text style={styles.duty}>
-                      {todaysDay?.flights?.[0] ? `${todaysDay.flights[0].from} → ${todaysDay.flights[0].to}` : ""}
-                      {todaysDay?.layover_city && !todaysDay?.flights?.[0]
-                        ? `Layover · ${String(todaysDay.layover_city)}` : ""}
-                    </Text>
-                  ) : null}
+                  {(() => {
+                    // Roster parsers store `origin`/`destination`, but some
+                    // upstream shapes alias to `from`/`to`. Accept both and
+                    // silently drop the label if the route is not fully
+                    // resolvable so we never render "undefined → undefined".
+                    const f0 = todaysDay?.flights?.[0] as any;
+                    const org = f0?.origin || f0?.from || "";
+                    const dst = f0?.destination || f0?.to || "";
+                    const route = org && dst ? `${org} → ${dst}` : "";
+                    if (route) {
+                      return <Text style={styles.duty}>{route}</Text>;
+                    }
+                    if (todaysDay?.layover_city && !f0) {
+                      return <Text style={styles.duty}>{`Layover · ${String(todaysDay.layover_city)}`}</Text>;
+                    }
+                    return null;
+                  })()}
                 </View>
               ) : null}
             </View>

@@ -139,7 +139,15 @@ export function ScheduleRow({
   const rawLabel = day.client_label || day.label || day.day_type;
   const dutyLabel = humaniseDutyLabel(rawLabel);
   const d = fmtDate(day.date);
-  const route = (day.flights || []).map((f) => `${f.from || "?"}→${f.to || "?"}`).join(" · ");
+  const route = (day.flights || [])
+    .map((f: any) => {
+      const org = f.origin || f.from || "";
+      const dst = f.destination || f.to || "";
+      if (!org && !dst) return "";
+      return `${org || "?"}→${dst || "?"}`;
+    })
+    .filter(Boolean)
+    .join(" · ");
   const w = day.workout;
   const hasWorkout = !!w?.id;
 

@@ -129,16 +129,30 @@ async def coach_upload_parse(
                 try:
                     from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days as etihad_to_days
                     from parsers.emirates import detect_emirates, parse_emirates_pdf, to_crewfit_days as emirates_to_days
+                    from parsers.emirates_detailed import (
+                        detect_emirates_detailed, parse_emirates_detailed,
+                        to_crewfit_days as emirates_detailed_to_days,
+                    )
                     with open(path, "rb") as fh:
                         pdf_bytes = fh.read()
+                    # Router priority — strong airline+format signatures ONLY.
+                    # Etihad is fully distinct; Emirates has two mutually
+                    # exclusive variants (Detailed vs Calendar) so we check
+                    # Detailed FIRST, then Calendar. No fall-through guessing.
                     if detect_etihad(pdf_bytes):
                         await _set_job(job_id, stage="reading", progress=20, message="Reading Etihad roster...")
                         pr = parse_etihad_pdf(pdf_bytes, filename=body.filename)
                         days = etihad_to_days(pr)
                         parser_source = "etihad_parser_v1"
                         raw = f"etihad-parser: {len(days)} days, confidence={pr.parse_confidence}"
+                    elif detect_emirates_detailed(pdf_bytes):
+                        await _set_job(job_id, stage="reading", progress=20, message="Reading Emirates roster (Detailed Report)...")
+                        pr = parse_emirates_detailed(pdf_bytes, filename=body.filename)
+                        days = emirates_detailed_to_days(pr)
+                        parser_source = "emirates_detailed_parser_v1"
+                        raw = f"emirates-detailed-parser: {len(days)} days, confidence={pr.parse_confidence}"
                     elif detect_emirates(pdf_bytes):
-                        await _set_job(job_id, stage="reading", progress=20, message="Reading Emirates roster...")
+                        await _set_job(job_id, stage="reading", progress=20, message="Reading Emirates roster (Calendar Report)...")
                         pr = parse_emirates_pdf(pdf_bytes, filename=body.filename)
                         days = emirates_to_days(pr)
                         parser_source = "emirates_parser_v1"

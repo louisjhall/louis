@@ -319,6 +319,10 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
                 try:
                     from parsers.etihad import detect_etihad, parse_etihad_pdf, to_crewfit_days as etihad_to_days
                     from parsers.emirates import detect_emirates, parse_emirates_pdf, to_crewfit_days as emirates_to_days
+                    from parsers.emirates_detailed import (
+                        detect_emirates_detailed, parse_emirates_detailed,
+                        to_crewfit_days as emirates_detailed_to_days,
+                    )
                     with open(path, "rb") as fh:
                         pdf_bytes = fh.read()
                     if detect_etihad(pdf_bytes):
@@ -327,8 +331,14 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
                         days = etihad_to_days(pr)
                         parser_source = "etihad_parser_v1"
                         raw = f"etihad-parser: {len(days)} days, confidence={pr.parse_confidence}"
+                    elif detect_emirates_detailed(pdf_bytes):
+                        await _set_job(job_id, stage="reading", progress=20, message="Reading your Emirates roster (Detailed Report)...")
+                        pr = parse_emirates_detailed(pdf_bytes, filename=body.filename)
+                        days = emirates_detailed_to_days(pr)
+                        parser_source = "emirates_detailed_parser_v1"
+                        raw = f"emirates-detailed-parser: {len(days)} days, confidence={pr.parse_confidence}"
                     elif detect_emirates(pdf_bytes):
-                        await _set_job(job_id, stage="reading", progress=20, message="Reading your Emirates roster...")
+                        await _set_job(job_id, stage="reading", progress=20, message="Reading your Emirates roster (Calendar Report)...")
                         pr = parse_emirates_pdf(pdf_bytes, filename=body.filename)
                         days = emirates_to_days(pr)
                         parser_source = "emirates_parser_v1"
@@ -508,6 +518,14 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 except Exception:
                     detect_emirates = None  # type: ignore
                     emirates_to_days = None  # type: ignore
+                try:
+                    from parsers.emirates_detailed import (
+                        detect_emirates_detailed, parse_emirates_detailed,
+                        to_crewfit_days as emirates_detailed_to_days,
+                    )
+                except Exception:
+                    detect_emirates_detailed = None  # type: ignore
+                    emirates_detailed_to_days = None  # type: ignore
 
                 for idx, f in enumerate(body.files):
                     pct_base = 5 + int((idx / max(1, total)) * 70)
@@ -519,7 +537,7 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                     path = await write_temp(f.file_base64, f.mime_type)
                     paths.append(path)
                     days_from_file: list = []
-                    # Airline fast-path (Etihad → Emirates → LLM)
+                    # Airline fast-path (Etihad → Emirates Detailed → Emirates Calendar → LLM)
                     if (f.mime_type or "").lower() == "application/pdf":
                         try:
                             with open(path, "rb") as fh:
@@ -529,6 +547,12 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                                 days_from_file = etihad_to_days(pr)
                                 combined_raw += f"[etihad-parser {f.filename}]: {len(days_from_file)} days, conf={pr.parse_confidence}\n"
                                 parser_source = "etihad_parser_v1"
+                            elif detect_emirates_detailed is not None and detect_emirates_detailed(pdf_bytes):
+                                pr = parse_emirates_detailed(pdf_bytes, filename=f.filename)
+                                days_from_file = emirates_detailed_to_days(pr)
+                                combined_raw += f"[emirates-detailed-parser {f.filename}]: {len(days_from_file)} days, conf={pr.parse_confidence}\n"
+                                if parser_source == "llm":
+                                    parser_source = "emirates_detailed_parser_v1"
                             elif detect_emirates is not None and detect_emirates(pdf_bytes):
                                 pr = parse_emirates_pdf(pdf_bytes, filename=f.filename)
                                 days_from_file = emirates_to_days(pr)
@@ -633,6 +657,14 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
         except Exception:
             detect_emirates = None  # type: ignore
             emirates_to_days = None  # type: ignore
+        try:
+            from parsers.emirates_detailed import (
+                detect_emirates_detailed, parse_emirates_detailed,
+                to_crewfit_days as emirates_detailed_to_days,
+            )
+        except Exception:
+            detect_emirates_detailed = None  # type: ignore
+            emirates_detailed_to_days = None  # type: ignore
         for idx, (jid, f) in enumerate(zip(job_ids, body.files)):
             path: Optional[str] = None
             try:
@@ -642,7 +674,7 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                 days = []
                 raw = ""
                 parser_source = "llm"
-                # Airline fast-path (Etihad → Emirates → LLM)
+                # Airline fast-path (Etihad → Emirates Detailed → Emirates Calendar → LLM)
                 if (f.mime_type or "").lower() == "application/pdf":
                     try:
                         with open(path, "rb") as fh:
@@ -653,8 +685,14 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                             days = etihad_to_days(pr)
                             parser_source = "etihad_parser_v1"
                             raw = f"etihad-parser: {len(days)} days, conf={pr.parse_confidence}"
+                        elif detect_emirates_detailed is not None and detect_emirates_detailed(pdf_bytes):
+                            await _set_job(jid, stage="reading", progress=30, message="Reading your Emirates roster (Detailed Report)...")
+                            pr = parse_emirates_detailed(pdf_bytes, filename=f.filename)
+                            days = emirates_detailed_to_days(pr)
+                            parser_source = "emirates_detailed_parser_v1"
+                            raw = f"emirates-detailed-parser: {len(days)} days, conf={pr.parse_confidence}"
                         elif detect_emirates is not None and detect_emirates(pdf_bytes):
-                            await _set_job(jid, stage="reading", progress=30, message="Reading your Emirates roster...")
+                            await _set_job(jid, stage="reading", progress=30, message="Reading your Emirates roster (Calendar Report)...")
                             pr = parse_emirates_pdf(pdf_bytes, filename=f.filename)
                             days = emirates_to_days(pr)
                             parser_source = "emirates_parser_v1"

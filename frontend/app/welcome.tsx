@@ -1,18 +1,20 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Dimensions, Animated, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useVideoPlayer, VideoView } from "expo-video";
 import { theme } from "@/src/lib/theme";
+
+// Iter 128l — Louis welcome video restored. Local asset shipped with the
+// build so the intro plays offline on first launch. Tap-to-play semantics:
+// the video starts muted and loops in-frame; tapping the frame toggles
+// mute so the user hears Louis whenever they want to.
+const LOUIS_WELCOME_VIDEO = require("@/assets/video/louis-welcome.mp4");
 
 /* -------------------------------------------------------------------------- */
 /*  Welcome — Louis Hall introduction                                          */
-/*                                                                             */
-/*  Stage A: the Louis welcome video is intentionally a static placeholder     */
-/*  only. No video player is created on this screen. The tap-to-play Louis    */
-/*  implementation is Stage B (rebuilt separately once startup is verified    */
-/*  on the physical device).                                                  */
 /* -------------------------------------------------------------------------- */
 export default function Welcome() {
   const router = useRouter();
@@ -22,18 +24,30 @@ export default function Welcome() {
   const videoW = Math.min(width - 60, 300);
   const videoH = Math.round(videoW * (16 / 9));
 
-  // Stage A — Louis welcome player is not built into this screen. Only
-  // fade-in animation and AsyncStorage mark are handled here.
   const fade = useRef(new Animated.Value(0)).current;
-  const startedVideo = false; // reserved for Stage B
+  const [muted, setMuted] = useState(true);
+  const [started, setStarted] = useState(false);
+
+  const player = useVideoPlayer(LOUIS_WELCOME_VIDEO, (p) => {
+    p.loop = true;
+    p.muted = true;
+    p.play();
+  });
 
   useEffect(() => {
-    // Prefetch — mark that user reached welcome. (Runs exactly once on mount.)
     AsyncStorage.setItem("atlas_welcomed_started", "1").catch(() => {});
-    // Fade the video card in for a smooth arrival.
     Animated.timing(fade, { toValue: 1, duration: 700, useNativeDriver: true }).start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const toggleMute = () => {
+    try {
+      const next = !muted;
+      player.muted = next;
+      setMuted(next);
+      setStarted(true);
+    } catch { /* player not ready */ }
+  };
 
   const proceed = async () => {
     await AsyncStorage.setItem("atlas_welcomed", "1").catch(() => {});
@@ -54,30 +68,40 @@ export default function Welcome() {
           <Text style={styles.brandSub}>WELCOME</Text>
         </View>
 
-        {/* Stage A build confirmation marker — small identifier to prove
-            the physical Android build is running the correct source.
-            Remove when Stage A is approved. */}
-        <View style={styles.stageMarker}>
-          <Text style={styles.stageMarkerText}>STAGE A ANDROID BUILD</Text>
-        </View>
-
-        {/* Louis welcome video card — Stage A: static poster only.
-            No player is created on this screen. Stage B will add the
-            tap-to-play Louis implementation. */}
+        {/* Louis welcome video card — plays inline, muted-loop by default.
+            Tap the frame to unmute (or mute again). */}
         <Animated.View style={[styles.videoCardWrap, { opacity: fade }]}>
           <View style={[styles.videoFrame, { width: videoW, height: videoH }]}>
-            <View style={[StyleSheet.absoluteFill, styles.posterBg]} />
+            <VideoView
+              player={player}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              nativeControls={false}
+              allowsFullscreen={false}
+              allowsPictureInPicture={false}
+            />
 
             <Pressable
               style={StyleSheet.absoluteFill}
-              onPress={() => { /* Stage A: tap intentionally does nothing. */ }}
+              onPress={toggleMute}
               testID="welcome-video-tap"
             >
-              <View style={styles.playOverlay} pointerEvents="none">
-                <View style={styles.playRing}>
-                  <Ionicons name="play" size={26} color="#fff" />
+              {muted ? (
+                <View style={styles.playOverlay} pointerEvents="none">
+                  <View style={styles.playRing}>
+                    <Ionicons name="volume-mute" size={26} color="#fff" />
+                  </View>
                 </View>
-              </View>
+              ) : null}
+            </Pressable>
+
+            {/* Mute toggle badge */}
+            <Pressable style={styles.muteBtn} onPress={toggleMute} testID="welcome-mute-toggle">
+              <Ionicons
+                name={muted ? "volume-mute" : "volume-high"}
+                size={16}
+                color="#fff"
+              />
             </Pressable>
 
             {/* Corner badge */}
@@ -91,8 +115,8 @@ export default function Welcome() {
           <View style={styles.videoLabels}>
             <Text style={styles.videoName}>LOUIS HALL</Text>
             <Text style={styles.videoRole}>FOUNDER · HEAD COACH</Text>
-            {!startedVideo ? (
-              <Text style={styles.tapUnmute}>Tap the video to play</Text>
+            {!started ? (
+              <Text style={styles.tapUnmute}>Tap the video to unmute</Text>
             ) : null}
           </View>
         </Animated.View>

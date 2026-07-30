@@ -10934,6 +10934,31 @@ async def seed():
             "profile.tagline": "CrewFit Coach",
         }})
 
+    # Iter 130a — Emergency admin password reset (env-gated).
+    # If `RESET_ADMIN_ON_STARTUP=1`, force Louis's password to the value in
+    # `ADMIN_STARTUP_PASSWORD` (default: "Louis123!") on every backend boot.
+    # Intended as an unblock for early-MVP deploys where the production
+    # password has drifted from the documented dev credential. Remove the
+    # env var (or set to 0) after you've regained access and rotated the
+    # password via the app.
+    try:
+        if str(os.environ.get("RESET_ADMIN_ON_STARTUP", "")).strip().lower() in ("1", "true", "yes"):
+            forced_pw = os.environ.get("ADMIN_STARTUP_PASSWORD", "Louis123!")
+            await db.users.update_one(
+                {"email": louis_email},
+                {"$set": {
+                    "password_hash": hash_pw(forced_pw),
+                    "password_reset_by": "startup_env_reset",
+                    "password_changed_at": now_iso(),
+                }},
+            )
+            logger.warning(
+                "seed: admin password force-reset via RESET_ADMIN_ON_STARTUP env — "
+                "REMOVE this env var once you've regained access."
+            )
+    except Exception:
+        logger.exception("seed: admin startup password reset failed")
+
     # Legacy coach (kept for backward-compat with pytest suites) — RENAMED and
     # ARCHIVED so he never appears in Louis' visible UI or coach lists.
     legacy = await db.users.find_one({"email": legacy_coach_email})

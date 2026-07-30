@@ -507,7 +507,16 @@ async def ex_list(
             {"exercise_name": rx}, {"tags": rx}, {"movement_pattern": rx},
             {"body_area": rx}, {"equipment_type": rx},
         ]})
-    rows = await db.exercises_v2.find(query, {"_id": 0}).sort("updated_at", -1).to_list(limit)
+    # Iter 129c — Needs Media urgency: `used_in_tomorrow_workouts_count` first
+    # (LIVE tomorrow primary), then `used_in_upcoming_workouts_count` (next 7
+    # days), then latest edit. This makes tomorrow's client-facing exercises
+    # rise to the top of the library WITHOUT requiring the coach to click
+    # the TOMORROW filter.
+    rows = await db.exercises_v2.find(query, {"_id": 0}).sort([
+        ("used_in_tomorrow_workouts_count", -1),
+        ("used_in_upcoming_workouts_count", -1),
+        ("updated_at", -1),
+    ]).to_list(limit)
     return {"exercises": rows, "count": len(rows)}
 
 
@@ -781,6 +790,34 @@ async def _bump_usage_counts() -> None:
         if n:
             name_to_id[n] = x["id"]
 
+    # Iter 129c — Add a very small alias layer so common shorthand used in
+    # session_specs resolves to canonical exercises WITHOUT creating
+    # duplicate library rows (spec §6). Additive only — never overwrites an
+    # existing canonical name.
+    _ALIASES = {
+        "dumbbell rdl": "dumbbell romanian deadlift",
+        "db rdl": "dumbbell romanian deadlift",
+        "rdl": "romanian deadlift",
+        "push-up": "push up",
+        "pushup": "push up",
+        "push ups": "push up",
+        "sl rdl": "single-leg romanian deadlift (dumbbell)",
+    }
+    for alias, target in _ALIASES.items():
+        if alias in name_to_id:
+            continue
+        # Direct match
+        tid = name_to_id.get(target)
+        if not tid:
+            # Fuzzy — allow the target string to be contained in a canonical
+            # library name (e.g. "push up" → "Push-Up").
+            for canon, cid in name_to_id.items():
+                if target in canon or canon in target:
+                    tid = cid
+                    break
+        if tid:
+            name_to_id[alias] = tid
+
     tomorrow_counts: dict[str, int] = {}
     upcoming_counts: dict[str, int] = {}
     first_seen: dict[str, str] = {}
@@ -805,6 +842,64 @@ async def _bump_usage_counts() -> None:
             prev = first_seen.get(xid)
             if not prev or (wdate and wdate < prev):
                 first_seen[xid] = wdate
+
+    # --- V2 Live plan scan ---------------------------------------------------
+    # The authoritative source for a client's current programme is
+    # `plan_live_v2.placements` + `session_specs.payload.*.exercises`. Legacy
+    # `db.workouts` may be stale or empty for V2 clients. Without this scan
+    # a Live session due tomorrow (e.g. Pietro's Strength Full Body #1) never
+    # bumps `used_in_tomorrow_workouts_count`, so its exercises are invisible
+    # to the Needs Media queue.
+    def _iter_exercise_names(payload: dict):
+        """Yield every {'name': ...} entry inside a session_spec payload,
+        regardless of the block key (main / warmup / cooldown / whatever)."""
+        if not isinstance(payload, dict):
+            return
+        for _k, v in payload.items():
+            if isinstance(v, dict):
+                # {"exercises": [...]} pattern
+                for ex in (v.get("exercises") or []):
+                    if isinstance(ex, dict) and (ex.get("name") or ex.get("exercise_id")):
+                        yield ex
+                # nested dicts (e.g. main -> {type, exercises})
+                for _kk, vv in v.items():
+                    if isinstance(vv, list):
+                        for ex in vv:
+                            if isinstance(ex, dict) and (ex.get("name") or ex.get("exercise_id")):
+                                yield ex
+            elif isinstance(v, list):
+                for ex in v:
+                    if isinstance(ex, dict) and (ex.get("name") or ex.get("exercise_id")):
+                        yield ex
+
+    async for live in db.plan_live_v2.find(
+        {"active": True},
+        {"_id": 0, "placements": 1, "session_specs": 1},
+    ):
+        specs = live.get("session_specs") or {}
+        if not isinstance(specs, dict):
+            # tolerate list form
+            specs = {(s.get("exposure_id") or ""): s for s in specs if isinstance(s, dict)}
+        for p in (live.get("placements") or []):
+            pdate = p.get("date") or ""
+            if not (today <= pdate <= week):
+                continue
+            if p.get("kind") == "rest":
+                continue
+            spec = specs.get(p.get("exposure_id") or "") or {}
+            for ex in _iter_exercise_names(spec.get("payload") or {}):
+                xid = ex.get("exercise_id")
+                if not xid:
+                    nm = (ex.get("name") or "").strip().lower()
+                    xid = name_to_id.get(nm)
+                if not xid:
+                    continue
+                upcoming_counts[xid] = upcoming_counts.get(xid, 0) + 1
+                if pdate == tomorrow:
+                    tomorrow_counts[xid] = tomorrow_counts.get(xid, 0) + 1
+                prev = first_seen.get(xid)
+                if not prev or (pdate and pdate < prev):
+                    first_seen[xid] = pdate
 
     for xid, c in upcoming_counts.items():
         await db.exercises_v2.update_one({"id": xid}, {"$set": {

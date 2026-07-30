@@ -18,6 +18,7 @@ import {
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { CommandBar } from "@/src/components/CommandBar";
@@ -120,6 +121,7 @@ export default function CoachWorkspaceScreen() {
   const { id: clientId } = useLocalSearchParams<{ id: string }>();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
+  const insets = useSafeAreaInsets();
 
   const [months, setMonths] = useState<string[]>([]);
   const [month, setMonth] = useState<string>("");
@@ -209,7 +211,7 @@ export default function CoachWorkspaceScreen() {
   }
 
   return (
-    <View style={styles.root} testID="coach-workspace">
+    <View style={[styles.root, { paddingTop: insets.top }]} testID="coach-workspace">
       {/* Iter 128f — Compact client header (one row, ~44px).
           State (LIVE / DRAFT / NO PLAN) lives in the EngineV2DraftPanel
           ribbon below the tabs so it isn't duplicated up here. */}

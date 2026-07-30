@@ -696,8 +696,35 @@ async def endpoint_coach_clients_directory(
     clients = await db.users.find(
         match,
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
-         "profile": 1, "status": 1},
+         "profile": 1, "status": 1, "password_hash": 1, "coach_id": 1,
+         "assigned_coach_id": 1, "created_at": 1},
     ).sort("name", 1).to_list(500)
+
+    # Iter 130a — de-duplicate by email. If the production DB ever ends up
+    # with two rows for the same email (e.g. a stale signup + a coach-
+    # created row), collapse to the "best" one so the coach doesn't see
+    # two identical entries. Ranking: has_password > has_coach > newest.
+    def _rank(c: dict) -> tuple:
+        return (
+            1 if c.get("password_hash") else 0,
+            1 if (c.get("coach_id") or c.get("assigned_coach_id")) else 0,
+            str(c.get("created_at") or ""),
+        )
+    by_email: dict[str, dict] = {}
+    for c in clients:
+        key = (c.get("email") or "").strip().lower()
+        if not key:
+            by_email[c.get("id") or ""] = c  # never drop rows with no email
+            continue
+        if key not in by_email or _rank(c) > _rank(by_email[key]):
+            by_email[key] = c
+    clients = list(by_email.values())
+    # Strip fields we only needed for dedup ranking before returning.
+    for c in clients:
+        c.pop("password_hash", None)
+        c.pop("coach_id", None)
+        c.pop("assigned_coach_id", None)
+        c.pop("created_at", None)
 
     rows: list[dict] = []
     for c in clients:

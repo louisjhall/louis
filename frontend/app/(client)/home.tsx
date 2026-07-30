@@ -488,23 +488,11 @@ export default function Home() {
           <RosterReviewBanner onReadyChanged={load} />
 
           {/* Roster upload CTA has moved to the "Utilities" block at the
-              bottom (compact) — it's an admin task, not a daily one. */}
-
-          {/* Phase 7B — dynamic programme status + today state.
-              Only renders when the client isn't in the default "programme
-              live + session planned today" state. Handles rest/travel/
-              layover days, roster review, and post-upload waiting UX. */}
-          <ProgrammeStatusCard
-            onStateChanged={(s) => {
-              setProgrStatus(s.programme_status);
-              setTodayPlanState(s.today_plan_state?.state || null);
-              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
-                // The programme just went live — reload workouts/roster so
-                // the "Start today's session" hero picks up the new plan.
-                load();
-              }
-            }}
-          />
+              bottom (compact) — it's an admin task, not a daily one.
+              ProgrammeStatusCard has been moved DOWN to sit inside the
+              action zone (just after Flight Support + Nutrition) so it
+              acts as a supporting context note rather than a big header
+              above the primary actions. */}
           {rosterJob && (rosterJob.status === "needs_review" || rosterJob.status === "partial") ? (
             <View style={styles.jobReviewBanner} testID="home-roster-job-review">
               <Pressable
@@ -616,19 +604,8 @@ export default function Home() {
             </Pressable>
           )}
 
-          {roster && !showBanner && (
-            <View style={styles.rosterCard} testID="roster-remaining-card">
-              <View style={{ flex: 1 }}>
-                <Text style={styles.rTop}>ROSTER · {roster.start_date} → {roster.end_date}</Text>
-                <Text style={styles.rBig}>{rDays}</Text>
-                <Text style={styles.rBigLabel}>DAYS REMAINING · {String(expiry?.coverage || "").toUpperCase()} COVERAGE</Text>
-              </View>
-              <Pressable onPress={() => router.push("/roster-upload")} style={styles.rBtn} testID="roster-card-upload">
-                <Ionicons name="cloud-upload" size={16} color={theme.color.brand} />
-                <Text style={styles.rBtnText}>NEW</Text>
-              </Pressable>
-            </View>
-          )}
+          {/* Roster remaining stat card MOVED down to the Utilities block
+              (compact one-line strip). It's informational, not an action. */}
 
           {/* HotelSetupCard, ProgressCard, event/add-event, and additional
               events blocks moved LOWER in the page (see Blocks 4 & 5).
@@ -755,6 +732,22 @@ export default function Home() {
               per the user, START WORKOUT + FLIGHT SUPPORT + NUTRITION are
               the daily "big three" clients need to stay on top of. */}
           {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
+
+          {/* Phase 7B — dynamic programme status + today-plan-state note.
+              Rendered UNDER the primary action trio so on flying/rest/
+              layover days it acts as a supporting context line rather
+              than a giant header above the workout CTA. */}
+          <ProgrammeStatusCard
+            onStateChanged={(s) => {
+              setProgrStatus(s.programme_status);
+              setTodayPlanState(s.today_plan_state?.state || null);
+              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
+                // The programme just went live — reload workouts/roster so
+                // the "Start today's session" hero picks up the new plan.
+                load();
+              }
+            }}
+          />
 
           {/* Missed sessions live in the action zone — they need action */}
           {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
@@ -976,6 +969,24 @@ export default function Home() {
             <Ionicons name="chevron-forward" size={14} color={theme.color.brand} />
           </Pressable>
 
+          {/* Iter 128 — Compact roster-remaining strip (moved from top).
+              A one-line status showing days remaining + coverage band, only
+              when we're not already showing the expiry banner. */}
+          {roster && !showBanner && (
+            <Pressable
+              testID="roster-remaining-card"
+              onPress={() => router.push("/roster-upload")}
+              style={styles.rosterStripCompact}
+            >
+              <Ionicons name="time-outline" size={14} color={theme.color.textMuted} />
+              <Text style={styles.rosterStripT} numberOfLines={1}>
+                Roster · {rDays} day{rDays === 1 ? "" : "s"} remaining
+                {expiry?.coverage ? ` · ${String(expiry.coverage).toUpperCase()}` : ""}
+              </Text>
+              <Ionicons name="chevron-forward" size={12} color={theme.color.textMuted} />
+            </Pressable>
+          )}
+
           {tzFlag ? (
             <View style={styles.tzChipWrap} testID="home-tz-chip">
               <TimezoneCard />
@@ -1120,6 +1131,26 @@ const styles = StyleSheet.create({
     marginTop: theme.space.xs,
     marginBottom: theme.space.sm,
     opacity: 0.75,
+  },
+  // Iter 128 — Compact one-line roster status strip in utilities block
+  rosterStripCompact: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: theme.space.sm,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  rosterStripT: {
+    color: theme.color.textMuted,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    flex: 1,
   },
   // Iter 100 — Next 5 Days strip on home
   next5Wrap: {

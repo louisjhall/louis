@@ -1151,8 +1151,24 @@ async def coach_create_client(body: CoachCreateClientBody, coach: dict = Depends
 
 @api.post("/auth/login")
 async def login(body: LoginBody):
-    u = await db.users.find_one({"email": body.email.lower()})
-    if not u or not verify_pw(body.password, u["password_hash"]):
+    # Iter 130c — duplicate-email safe login.
+    # Production has historically ended up with more than one user row
+    # sharing the same email (a stale signup + a coach-created row, etc.).
+    # `find_one` returns natural order, which is NOT deterministic, so a
+    # password reset applied to Pietro-A can silently miss when Pietro-B
+    # gets returned on the next login. To be robust, we fetch every row
+    # matching the email and try each one — whichever verifies wins.
+    email = body.email.lower().strip()
+    candidates = await db.users.find({"email": email}).to_list(10)
+    u = None
+    for cand in candidates:
+        try:
+            if cand.get("password_hash") and verify_pw(body.password, cand["password_hash"]):
+                u = cand
+                break
+        except Exception:
+            continue
+    if not u:
         raise HTTPException(401, "Invalid credentials")
     # Client lifecycle gate — paused / deletion_pending / deleted accounts cannot log in.
     lifecycle_status = str(u.get("status") or "active").lower()
@@ -1224,14 +1240,35 @@ async def coach_reset_client_password(
         raise HTTPException(400, "target user is not a client")
 
     new_hash = hash_pw(body.new_password)
-    await db.users.update_one(
-        {"id": client_id},
-        {"$set": {
-            "password_hash": new_hash,
-            "password_changed_at": now_iso(),
-            "password_reset_by": admin["id"],
-        }},
-    )
+    # Iter 130c — Reset the password on EVERY row sharing this client's
+    # email. Production has historically had duplicate user rows for the
+    # same email (a stale signup + a coach-created row). If we only
+    # update `client_id`, login (which looks up by email) may hit the
+    # other row and still fail. Belt-and-suspenders: touch them all.
+    email = (client.get("email") or "").strip().lower()
+    now = now_iso()
+    update_payload = {"$set": {
+        "password_hash": new_hash,
+        "password_changed_at": now,
+        "password_reset_by": admin["id"],
+    }}
+    updated_ids: list[str] = [client_id]
+    matched = 1
+    await db.users.update_one({"id": client_id}, update_payload)
+    if email:
+        # Find every row that shares this email (excluding the one we
+        # already updated) and update them too. Cap at 10 to avoid runaway.
+        siblings = await db.users.find(
+            {"email": email, "id": {"$ne": client_id}},
+            {"_id": 0, "id": 1},
+        ).to_list(10)
+        for s in siblings:
+            sid = s.get("id")
+            if not sid:
+                continue
+            await db.users.update_one({"id": sid}, update_payload)
+            updated_ids.append(sid)
+            matched += 1
     # Best-effort audit log — never fatal.
     try:
         await db.auth_events.insert_one({
@@ -1239,7 +1276,9 @@ async def coach_reset_client_password(
             "user_id": client_id,
             "actor_id": admin["id"],
             "kind": "coach_password_reset",
-            "created_at": now_iso(),
+            "created_at": now,
+            "matched_rows": matched,
+            "updated_ids": updated_ids,
         })
     except Exception:
         pass
@@ -1247,6 +1286,7 @@ async def coach_reset_client_password(
         "status": "ok",
         "client_id": client_id,
         "email": client.get("email"),
+        "matched_rows": matched,
     }
 
 

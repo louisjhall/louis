@@ -74,9 +74,16 @@ export function ClientAdminDrawer({
   const runResetPassword = useCallback(async (newPassword: string) => {
     setBusy("reset-password");
     try {
-      await api(`/coach/clients/${clientId}/reset-password`, { method: "POST", body: { new_password: newPassword } });
+      const res: any = await api(`/coach/clients/${clientId}/reset-password`, { method: "POST", body: { new_password: newPassword } });
       setConfirmReset(false); setResetPw(""); setResetPwShow(false);
-      Alert.alert("Password reset", `New password is active for ${data?.email}. Ask them to sign in again.`);
+      const matched = Number(res?.matched_rows || 1);
+      const dupNote = matched > 1
+        ? `\n\n(We also synced ${matched - 1} duplicate account row${matched - 1 === 1 ? "" : "s"} sharing this email so login works reliably.)`
+        : "";
+      Alert.alert(
+        "Password reset",
+        `New password is active for ${data?.email}. Ask them to sign in again.${dupNote}`
+      );
     } catch (e: any) {
       Alert.alert("Reset failed", e?.message || "Try again.");
     } finally { setBusy(null); }

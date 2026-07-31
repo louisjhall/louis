@@ -51,18 +51,39 @@ const TIME_HOME     = [15, 30, 45, 60, 75, 90];
 const TIME_LAYOVER  = [0, 15, 30, 45, 60];
 
 const EQUIPMENT_OPTIONS: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { id: "bodyweight_only",  label: "Bodyweight only",     icon: "body" },
-  { id: "dumbbells",        label: "Dumbbells",           icon: "barbell" },
-  { id: "kettlebells",      label: "Kettlebells",         icon: "barbell-outline" },
-  { id: "barbell",          label: "Barbell + plates",    icon: "flash" },
-  { id: "resistance_bands", label: "Resistance bands",    icon: "reload" },
-  { id: "pullup_bar",       label: "Pull-up bar",         icon: "arrow-up" },
-  { id: "bench",            label: "Bench",               icon: "layers" },
-  { id: "treadmill",        label: "Treadmill",           icon: "speedometer" },
-  { id: "bike",             label: "Bike / turbo",        icon: "bicycle" },
-  { id: "rower",            label: "Rower",               icon: "boat" },
-  { id: "cable",            label: "Cable machine",       icon: "git-network" },
-  { id: "mat",              label: "Yoga / mobility mat", icon: "square-outline" },
+  { id: "bodyweight_only",         label: "Bodyweight only",              icon: "body" },
+  // Iter 130f — Full Commercial Gym preset. Same id as assessment.tsx +
+  // backend feature_equipment_matcher.py so it normalises to
+  // FULL_COMMERCIAL_GYM_EXPANSION (barbell, dumbbells, machines, cardio…).
+  { id: "commercial_gym_standard", label: "Full Commercial Gym",          icon: "business-outline" },
+  { id: "dumbbells",               label: "Dumbbells",                    icon: "barbell" },
+  { id: "kettlebells",             label: "Kettlebells",                  icon: "barbell-outline" },
+  { id: "barbell",                 label: "Barbell + plates",             icon: "flash" },
+  // squat_rack → backend alias resolves to `barbell` canonical
+  // (feature_equipment_matcher.py line 73). Label expanded per request.
+  { id: "squat_rack",              label: "Squat Rack / Power Rack",      icon: "construct" },
+  { id: "bench",                   label: "Bench",                        icon: "layers" },
+  { id: "resistance_bands",        label: "Resistance bands",             icon: "reload" },
+  // Kept existing pullup_bar id (normalises to canonical pull_up_bar via
+  // backend alias). Do NOT rename — pre-existing client data uses it.
+  { id: "pullup_bar",              label: "Pull-up bar",                  icon: "arrow-up" },
+  // trx → canonical (matcher line 43). Label expanded per request.
+  { id: "trx",                     label: "Suspension Trainer / TRX",     icon: "link" },
+  // Existing id `cable` normalises to `cable_stack` via backend alias.
+  // Label improved per request.
+  { id: "cable",                   label: "Cable Machine",                icon: "git-network" },
+  { id: "treadmill",               label: "Treadmill",                    icon: "speedometer" },
+  // Existing id `bike` normalises to `stationary_bike`. Label improved.
+  { id: "bike",                    label: "Exercise Bike",                icon: "bicycle" },
+  { id: "assault_bike",            label: "Assault Bike",                 icon: "flash" },
+  { id: "rower",                   label: "Rower",                        icon: "boat" },
+  { id: "medicine_ball",           label: "Medicine Ball",                icon: "ellipse" },
+  { id: "skipping_rope",           label: "Skipping Rope",                icon: "trending-up" },
+  // Combined per request: foam_roller id already canonical; label conveys
+  // broader mobility toolkit intent so clients tick it for either use.
+  { id: "foam_roller",             label: "Foam Roller / Mobility Tools", icon: "swap-horizontal" },
+  // Existing id `mat` normalises to `yoga_mat` via backend alias.
+  { id: "mat",                     label: "Yoga / mobility mat",          icon: "square-outline" },
 ];
 
 const HOTEL_GYM_OPTIONS: { id: string; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [

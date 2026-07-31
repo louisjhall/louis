@@ -28,6 +28,23 @@ type ClientAdminData = {
   assigned_coach?: { id: string; name: string } | null;
 };
 
+type DuplicateRow = {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  created_at?: string | null;
+  password_changed_at?: string | null;
+  coach_id?: string | null;
+  status?: string | null;
+  has_v2_plan: boolean;
+  has_v2_draft: boolean;
+  has_roster: boolean;
+  roster_days: number;
+  plan_implementations: number;
+  workouts_v2_active: number;
+  recommend_keep: boolean;
+};
+
 export function ClientAdminDrawer({
   visible, onClose, clientId,
 }: {
@@ -49,12 +66,26 @@ export function ClientAdminDrawer({
   const [resetPw, setResetPw] = useState("");
   const [resetPwShow, setResetPwShow] = useState(false);
 
+  // Iter 130d — duplicate account cleanup. Coach can view every users row
+  // sharing this client's email and hard-delete the wrong ones. Guarded on
+  // the backend: cannot delete the row that owns the active V2 plan.
+  const [dupes, setDupes] = useState<DuplicateRow[]>([]);
+  const [dupeTarget, setDupeTarget] = useState<DuplicateRow | null>(null);
+  const [dupeConfirmEmail, setDupeConfirmEmail] = useState("");
+
   const load = useCallback(async () => {
     if (!clientId) return;
     setLoading(true);
     try {
       const r = await api<ClientAdminData>(`/admin/clients/${clientId}`);
       setData(r);
+      // Fire-and-forget: fetch duplicate account rows in parallel.
+      try {
+        const d = await api<{ rows: DuplicateRow[] }>(`/coach/clients/${clientId}/duplicates`);
+        setDupes(Array.isArray(d?.rows) ? d.rows : []);
+      } catch {
+        setDupes([]);
+      }
     } catch (e: any) {
       Alert.alert("Load failed", e?.message || "Try again.");
     } finally { setLoading(false); }
@@ -139,6 +170,32 @@ export function ClientAdminDrawer({
     finally { setBusy(null); }
   }, [clientId, data, permText, onClose]);
 
+  const doDeleteDuplicate = useCallback(async () => {
+    if (!dupeTarget) return;
+    const expected = (dupeTarget.email || "").trim().toLowerCase();
+    if ((dupeConfirmEmail || "").trim().toLowerCase() !== expected) {
+      Alert.alert("Email doesn't match", "Type the client's exact email to confirm the deletion.");
+      return;
+    }
+    setBusy("dup-delete");
+    try {
+      await api(`/coach/clients/${clientId}/duplicates/delete`, {
+        method: "POST",
+        body: { target_id: dupeTarget.id, confirm_email: expected },
+      });
+      Alert.alert("Duplicate deleted", `Removed the duplicate account row for ${dupeTarget.email}. The client can now log in and land on the correct profile.`);
+      setDupeTarget(null);
+      setDupeConfirmEmail("");
+      // Refresh duplicates list.
+      try {
+        const d = await api<{ rows: DuplicateRow[] }>(`/coach/clients/${clientId}/duplicates`);
+        setDupes(Array.isArray(d?.rows) ? d.rows : []);
+      } catch { /* no-op */ }
+    } catch (e: any) {
+      Alert.alert("Delete failed", e?.message || "Try again.");
+    } finally { setBusy(null); }
+  }, [clientId, dupeTarget, dupeConfirmEmail]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -194,6 +251,46 @@ export function ClientAdminDrawer({
               ) : (
                 <Row icon="archive-outline" label="Archive client" sub="Pause programme, hide from active lists. Reversible." busy={busy === "archive"} onPress={doArchive} testID="admin-drawer-archive" />
               )}
+
+              {/* DUPLICATE ACCOUNTS (only shown when > 1 row exists) */}
+              {dupes.length > 1 ? (
+                <>
+                  <Text style={[styles.section, { marginTop: 20, color: "#ffb84d" }]}>DUPLICATE ACCOUNTS</Text>
+                  <Text style={styles.rowSub}>
+                    {dupes.length} rows exist for {dupes[0]?.email}. Keep the one with the active V2 plan — delete the others.
+                  </Text>
+                  {dupes.map((row) => {
+                    const canDelete = !row.has_v2_plan;
+                    const created = row.created_at ? new Date(row.created_at).toLocaleDateString() : "—";
+                    return (
+                      <View key={row.id} style={[styles.dupeCard, row.recommend_keep && styles.dupeCardKeep]} testID={`admin-drawer-dupe-${row.id}`}>
+                        <View style={styles.dupeHeader}>
+                          <Text style={styles.dupeTitle} numberOfLines={1}>
+                            {row.recommend_keep ? "KEEP · " : ""}{row.name || row.id}
+                          </Text>
+                          {row.recommend_keep ? (
+                            <View style={styles.pillKeep}><Text style={styles.pillKeepText}>ACTIVE V2</Text></View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.dupeMeta}>
+                          Created {created} · {row.roster_days} roster day{row.roster_days === 1 ? "" : "s"} · {row.plan_implementations} plan impl · {row.workouts_v2_active} live V2
+                        </Text>
+                        <Text style={styles.dupeIdMono}>{row.id}</Text>
+                        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                          <Pressable
+                            onPress={() => { setDupeTarget(row); setDupeConfirmEmail(""); }}
+                            disabled={!canDelete || busy === "dup-delete"}
+                            style={[styles.dangerBtn, (!canDelete || busy === "dup-delete") && { opacity: 0.4 }]}
+                            testID={`admin-drawer-dupe-delete-${row.id}`}
+                          >
+                            <Text style={styles.dangerBtnText}>{canDelete ? "Delete this row" : "Protected · has V2 plan"}</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </>
+              ) : null}
 
               {/* DANGER */}
               <Text style={[styles.section, { marginTop: 20, color: "#ff6b6b" }]}>DANGER ZONE</Text>
@@ -273,6 +370,35 @@ export function ClientAdminDrawer({
               </View>
             </View>
           )}
+          {dupeTarget && (
+            <View style={styles.confirmBackdrop}>
+              <View style={styles.confirmCard}>
+                <Text style={styles.confirmTitle}>Delete duplicate row</Text>
+                <Text style={styles.confirmBody}>
+                  This hard-deletes the duplicate account row (id below) sharing this email. The other row(s) are untouched.
+                </Text>
+                <Text style={styles.confirmHint}>{dupeTarget.id}</Text>
+                <Text style={[styles.confirmBody, { marginTop: 10 }]}>Type the client&apos;s email to confirm:</Text>
+                <Text style={styles.confirmHint}>{dupeTarget.email}</Text>
+                <TextInput
+                  value={dupeConfirmEmail}
+                  onChangeText={setDupeConfirmEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  style={styles.confirmInput}
+                  placeholder="client@example.com"
+                  placeholderTextColor="#666"
+                  testID="admin-drawer-dupe-confirm-email"
+                />
+                <View style={styles.confirmRow}>
+                  <Pressable onPress={() => { setDupeTarget(null); setDupeConfirmEmail(""); }} style={styles.ghostBtn}><Text style={styles.ghostBtnText}>Cancel</Text></Pressable>
+                  <Pressable onPress={doDeleteDuplicate} disabled={busy === "dup-delete"} style={styles.dangerBtn} testID="admin-drawer-dupe-confirm">
+                    <Text style={styles.dangerBtnText}>{busy === "dup-delete" ? "Deleting…" : "Delete row"}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
       </View>
     </Modal>
@@ -331,4 +457,12 @@ const styles = StyleSheet.create({
   pwRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
   eyeBtn: { padding: 8, borderRadius: 6, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface },
   pwHint: { color: "#ff6b6b", fontSize: 11, marginTop: 6 },
+  dupeCard: { backgroundColor: theme.color.surface2, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border, marginTop: 8 },
+  dupeCardKeep: { borderColor: "rgba(80, 200, 120, 0.5)", backgroundColor: "rgba(80, 200, 120, 0.06)" },
+  dupeHeader: { flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "space-between" },
+  dupeTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800", flex: 1 },
+  dupeMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 4 },
+  dupeIdMono: { color: theme.color.textDim, fontSize: 10, fontFamily: "monospace", marginTop: 2 },
+  pillKeep: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "rgba(80, 200, 120, 0.2)" },
+  pillKeepText: { color: "#50c878", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
 });

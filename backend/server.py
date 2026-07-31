@@ -1151,25 +1151,52 @@ async def coach_create_client(body: CoachCreateClientBody, coach: dict = Depends
 
 @api.post("/auth/login")
 async def login(body: LoginBody):
-    # Iter 130c — duplicate-email safe login.
+    # Iter 130c/d — duplicate-email safe login with V2-plan-aware ranking.
     # Production has historically ended up with more than one user row
     # sharing the same email (a stale signup + a coach-created row, etc.).
-    # `find_one` returns natural order, which is NOT deterministic, so a
-    # password reset applied to Pietro-A can silently miss when Pietro-B
-    # gets returned on the next login. To be robust, we fetch every row
-    # matching the email and try each one — whichever verifies wins.
+    # We fetch every row matching the email, keep only rows whose password
+    # verifies, and then rank so the row with the *active V2 plan* wins.
+    # This means when duplicates linger, the client lands on the profile
+    # that actually has their coaching data — not the stale shell.
     email = body.email.lower().strip()
     candidates = await db.users.find({"email": email}).to_list(10)
-    u = None
+    verified: list[dict] = []
     for cand in candidates:
         try:
             if cand.get("password_hash") and verify_pw(body.password, cand["password_hash"]):
-                u = cand
-                break
+                verified.append(cand)
         except Exception:
             continue
-    if not u:
+    if not verified:
         raise HTTPException(401, "Invalid credentials")
+
+    # Rank verified rows so the one with the richest coaching footprint wins:
+    #   1) has an active V2 plan_live_v2 row
+    #   2) has a coach assigned
+    #   3) has ANY V2 implementation
+    #   4) has schedule_days (roster uploaded)
+    #   5) most recent password_changed_at (proxy for "most recently touched")
+    #   6) most recent created_at
+    async def _score(u: dict) -> tuple:
+        uid = u.get("id")
+        has_active_v2 = await db.plan_live_v2.count_documents({"client_id": uid, "active": True}) > 0
+        has_v2_impl = await db.plan_live_v2_implementations.count_documents({"client_id": uid}) > 0
+        has_sched = await db.schedule_days.count_documents({"client_id": uid}) > 0
+        return (
+            1 if has_active_v2 else 0,
+            1 if (u.get("coach_id") or u.get("assigned_coach_id")) else 0,
+            1 if has_v2_impl else 0,
+            1 if has_sched else 0,
+            str(u.get("password_changed_at") or ""),
+            str(u.get("created_at") or ""),
+        )
+    if len(verified) == 1:
+        u = verified[0]
+    else:
+        scored = [(await _score(v), v) for v in verified]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        u = scored[0][1]
+
     # Client lifecycle gate — paused / deletion_pending / deleted accounts cannot log in.
     lifecycle_status = str(u.get("status") or "active").lower()
     if lifecycle_status in ("paused", "deletion_pending", "deleted"):
@@ -1287,6 +1314,155 @@ async def coach_reset_client_password(
         "client_id": client_id,
         "email": client.get("email"),
         "matched_rows": matched,
+    }
+
+
+# ----- Duplicate account cleanup (coach-only) ----------------------------
+# Iter 130d. Production has accumulated duplicate user rows sharing the
+# same email (stale signup + coach-created row). The coach needs a way to
+# view both rows and hard-delete the one they don't want to keep — usually
+# the one *without* the V2 plan/roster.
+
+async def _client_row_summary(u: dict) -> dict:
+    """Build a compact summary for a duplicate user row so the coach can
+    tell them apart on screen: has V2 plan? has roster? last activity?
+    Kept cheap — counts only, no full docs."""
+    uid = u.get("id")
+    # V2 plan indicators.
+    plan_live = await db.plan_live_v2.count_documents({"client_id": uid, "active": True}) if uid else 0
+    plan_impl = await db.plan_live_v2_implementations.count_documents({"client_id": uid}) if uid else 0
+    plan_draft = await db.plan_drafts_v2.count_documents({"client_id": uid}) if uid else 0
+    # Roster / schedule days.
+    sched = await db.schedule_days.count_documents({"client_id": uid}) if uid else 0
+    # Workouts / assessment.
+    workouts_v2 = await db.plan_live_v2_implementations.count_documents({"client_id": uid, "is_active": True}) if uid else 0
+    return {
+        "id": uid,
+        "name": u.get("name") or u.get("display_name"),
+        "email": u.get("email"),
+        "created_at": u.get("created_at"),
+        "password_changed_at": u.get("password_changed_at"),
+        "coach_id": u.get("coach_id") or u.get("assigned_coach_id"),
+        "status": u.get("status") or "active",
+        "has_v2_plan": plan_live > 0 or plan_impl > 0,
+        "has_v2_draft": plan_draft > 0,
+        "has_roster": sched > 0,
+        "roster_days": sched,
+        "plan_implementations": plan_impl,
+        "workouts_v2_active": workouts_v2,
+        # Simple "keep" recommendation: prefer the row with an active V2
+        # plan; fall back to whichever has a coach + more roster data.
+        "recommend_keep": plan_live > 0 or plan_impl > 0,
+    }
+
+
+@api.get("/coach/clients/{client_id}/duplicates")
+async def coach_list_client_duplicates(
+    client_id: str,
+    admin: dict = Depends(require_admin()),
+):
+    """Return every user row sharing this client's email, with a compact
+    summary so the coach can decide which to delete."""
+    client = await db.users.find_one({"id": client_id})
+    if not client:
+        raise HTTPException(404, "client not found")
+    email = (client.get("email") or "").strip().lower()
+    if not email:
+        return {"email": None, "rows": []}
+    all_rows = await db.users.find({"email": email}).to_list(20)
+    rows = [await _client_row_summary(u) for u in all_rows]
+    # Sort: recommended-keep first, then newest.
+    rows.sort(key=lambda r: (0 if r.get("recommend_keep") else 1, str(r.get("created_at") or "")), reverse=False)
+    return {"email": email, "rows": rows, "total": len(rows)}
+
+
+class DuplicateDeleteBody(BaseModel):
+    target_id: str
+    confirm_email: str
+
+
+@api.post("/coach/clients/{client_id}/duplicates/delete")
+async def coach_delete_client_duplicate(
+    client_id: str,
+    body: DuplicateDeleteBody,
+    admin: dict = Depends(require_admin()),
+):
+    """Hard-delete a specific duplicate user row. Safety guards:
+      * Refuses to delete if it would leave zero rows for that email.
+      * Requires `confirm_email` to match the target row's email.
+      * Refuses to delete a coach or admin row.
+      * Refuses to delete a row that has an active V2 plan (would nuke
+        the client's actual data — coach must archive that one instead).
+    """
+    # Locate the target row.
+    target = await db.users.find_one({"id": body.target_id})
+    if not target:
+        raise HTTPException(404, "target row not found")
+    target_email = (target.get("email") or "").strip().lower()
+    confirm_email = (body.confirm_email or "").strip().lower()
+    if not target_email or target_email != confirm_email:
+        raise HTTPException(400, "confirm_email does not match target row's email")
+
+    # Locate the anchor client to confirm they share an email.
+    anchor = await db.users.find_one({"id": client_id})
+    if not anchor:
+        raise HTTPException(404, "anchor client not found")
+    anchor_email = (anchor.get("email") or "").strip().lower()
+    if anchor_email != target_email:
+        raise HTTPException(400, "target row does not share this client's email")
+
+    role = (target.get("role") or "").lower()
+    if role not in ("client", "trial"):
+        raise HTTPException(400, "can only delete client/trial rows via this endpoint")
+
+    # Safety: refuse to delete the last remaining row for this email.
+    remaining = await db.users.count_documents({"email": target_email, "id": {"$ne": body.target_id}})
+    if remaining < 1:
+        raise HTTPException(400, "cannot delete the only remaining row for this email")
+
+    # Safety: refuse to delete a row that owns an active V2 plan.
+    active_plan = await db.plan_live_v2.count_documents({"client_id": body.target_id, "active": True})
+    if active_plan > 0:
+        raise HTTPException(
+            400,
+            "target row has an active V2 plan — pick the other duplicate to delete, "
+            "or archive this client normally instead of hard-delete."
+        )
+
+    # Hard delete the row + best-effort cleanup of orphan data owned by it.
+    # We deliberately don't chase every collection; the goal is to unstick
+    # login/UX and let the client-level flows recreate what they need.
+    await db.users.delete_one({"id": body.target_id})
+    for coll_name in (
+        "plan_drafts_v2",
+        "plan_live_v2_implementations",
+        "schedule_days",
+        "assessments",
+    ):
+        try:
+            await db[coll_name].delete_many({"client_id": body.target_id})
+        except Exception:
+            logger.exception("duplicate-delete cleanup failed for %s", coll_name)
+
+    # Audit trail.
+    try:
+        await db.auth_events.insert_one({
+            "id": new_id(),
+            "user_id": body.target_id,
+            "actor_id": admin["id"],
+            "kind": "duplicate_row_hard_deleted",
+            "created_at": now_iso(),
+            "email": target_email,
+            "anchor_client_id": client_id,
+        })
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "deleted_id": body.target_id,
+        "email": target_email,
+        "remaining_rows": remaining,
     }
 
 

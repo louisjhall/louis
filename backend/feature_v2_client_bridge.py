@@ -130,28 +130,50 @@ def _backfill_warmup_drills(wu: dict, spec_kind: str, kind: str) -> None:
     # swimming / brick — leave alone (poolside drills need dedicated packs)
 
 
-def _spec_to_exercises(spec: dict) -> list[dict]:
+def _spec_to_exercises(spec: dict, swaps: Optional[list[dict]] = None) -> list[dict]:
     """Convert a strength SessionSpec payload into the legacy exercise list
-    shape used by /workouts/[id]/index.tsx."""
+    shape used by /workouts/[id]/index.tsx.
+
+    Iter 130c — optionally overlay client-side exercise swaps
+    (``plan_live_v2_exercise_swaps``) so the client sees their replacement
+    exercise on every read. Only the NAME is overridden — sets/reps/rest
+    stay exactly as the coach programmed them.
+    """
     if spec.get("spec_kind") != "strength":
         return []
+    swap_by_idx: dict[int, dict] = {}
+    for s in swaps or []:
+        if s.get("is_active") and isinstance(s.get("exercise_index"), int):
+            swap_by_idx[int(s["exercise_index"])] = s
     out: list[dict] = []
-    for ex in (spec.get("payload") or {}).get("exercises") or []:
-        out.append({
-            "name": ex.get("name") or ex.get("exercise") or "Exercise",
-            "exercise_name_display": ex.get("name") or ex.get("exercise") or "Exercise",
+    for i, ex in enumerate(((spec.get("payload") or {}).get("exercises") or [])):
+        base_name = ex.get("name") or ex.get("exercise") or "Exercise"
+        swap = swap_by_idx.get(i)
+        display_name = (swap or {}).get("replacement_name") or base_name
+        row = {
+            "name": display_name,
+            "exercise_name_display": display_name,
             "sets": ex.get("sets"),
             "reps": ex.get("reps"),
             "rpe": ex.get("rpe") or ex.get("load_target"),
             "load_target": ex.get("load_target"),
             "rest_sec": ex.get("rest_sec"),
             "notes": ex.get("cue") or ex.get("notes"),
-        })
+        }
+        if swap:
+            row["swapped_from"] = swap.get("original_name") or base_name
+            row["swapped_at"] = swap.get("created_at") or swap.get("replaced_at")
+            row["swapped_by"] = swap.get("replaced_by")
+        # Preserve alternates list so the client swap UI still has options
+        if ex.get("subs_allowed"):
+            row["subs_allowed"] = list(ex.get("subs_allowed") or [])
+        out.append(row)
     return out
 
 
 def synth_workout_from_placement(
     *, live_id: str, placement: dict, spec: dict, user_id: str,
+    exercise_swaps: Optional[list[dict]] = None,
 ) -> dict:
     """Build a legacy-shaped workout dict from one (placement, session_spec).
     Returns None for rest placements — the client renders them as "Rest"
@@ -163,7 +185,7 @@ def synth_workout_from_placement(
     duration = int(spec.get("duration_min")
                     or placement.get("target_duration_min") or 0)
     focus = spec.get("spec_kind") or kind
-    exercises = _spec_to_exercises(spec)
+    exercises = _spec_to_exercises(spec, swaps=exercise_swaps)
     blocks = _spec_to_blocks(spec)
     equipment_used = list(spec.get("equipment_used") or [])
     env = spec.get("environment")
@@ -271,8 +293,16 @@ async def synth_workouts_for_user(
         )
         if override and override.get("spec_snapshot"):
             spec = override["spec_snapshot"]
+        # Iter 130c — pull per-exercise swaps for this placement so the
+        # bridge can substitute the display name on the fly.
+        swaps = await db.plan_live_v2_exercise_swaps.find(
+            {"client_id": user_id, "exposure_id": eid,
+             "date": d, "is_active": True},
+            {"_id": 0},
+        ).to_list(50)
         row = synth_workout_from_placement(
             live_id=live_id, placement=p, spec=spec, user_id=user_id,
+            exercise_swaps=swaps,
         )
         if row is not None:
             out.append(row)
@@ -313,8 +343,15 @@ async def synth_workout_by_wid(db, wid: str, user_id: str) -> Optional[dict]:
             )
             if override and override.get("spec_snapshot"):
                 spec = override["spec_snapshot"]
+            # Iter 130c — apply per-exercise swaps on the single-workout path too
+            swaps = await db.plan_live_v2_exercise_swaps.find(
+                {"client_id": user_id, "exposure_id": exposure_id,
+                 "date": p.get("date"), "is_active": True},
+                {"_id": 0},
+            ).to_list(50)
             return synth_workout_from_placement(
                 live_id=live_id, placement=p, spec=spec, user_id=user_id,
+                exercise_swaps=swaps,
             )
     return None
 

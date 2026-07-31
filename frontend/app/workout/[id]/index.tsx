@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
+import { clearVideoCache } from "@/src/components/ExerciseVideoPlayer";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 import { RealityModal } from "@/src/components/RealityModal";
 import { ChangeSetupModal } from "@/src/components/ChangeSetupModal";
@@ -110,6 +111,10 @@ export default function WorkoutDetail() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    // Iter 130c — bust the exercise-video cache before reloading so a
+    // freshly uploaded / re-linked How-To video is picked up on the
+    // very next mount instead of surviving until app restart.
+    clearVideoCache();
     try { setW(await api<any>(`/workouts/${id}`)); } finally { setLoading(false); }
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));

@@ -442,6 +442,25 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg }}>
+          {/* Iter 130c — priority pinned block. Coach requested the
+              Weekly Check-In + Programme Progress cards sit directly
+              beneath Pietro's name/header, above every other section,
+              so clients see their reflection touch-point and progress
+              status without scrolling. Everything below keeps the
+              Iter 128 information architecture. */}
+          <WeeklyCheckinCard />
+          <ProgrammeStatusCard
+            onStateChanged={(s) => {
+              setProgrStatus(s.programme_status);
+              setTodayPlanState(s.today_plan_state?.state || null);
+              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
+                // The programme just went live — reload workouts/roster so
+                // the "Start today's session" hero picks up the new plan.
+                load();
+              }
+            }}
+          />
+
           {/* Iter 128 — Home information architecture (2026 rework).
               Priority order (top → bottom):
                 1. BLOCKING ALERTS (roster upload state, expiry)
@@ -733,21 +752,9 @@ export default function Home() {
               the daily "big three" clients need to stay on top of. */}
           {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
 
-          {/* Phase 7B — dynamic programme status + today-plan-state note.
-              Rendered UNDER the primary action trio so on flying/rest/
-              layover days it acts as a supporting context line rather
-              than a giant header above the workout CTA. */}
-          <ProgrammeStatusCard
-            onStateChanged={(s) => {
-              setProgrStatus(s.programme_status);
-              setTodayPlanState(s.today_plan_state?.state || null);
-              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
-                // The programme just went live — reload workouts/roster so
-                // the "Start today's session" hero picks up the new plan.
-                load();
-              }
-            }}
-          />
+          {/* Phase 7B — dynamic programme status card was here; it has
+              been promoted to the pinned block directly beneath Pietro's
+              header (see Iter 130c note at the top of this View). */}
 
           {/* Missed sessions live in the action zone — they need action */}
           {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
@@ -755,7 +762,7 @@ export default function Home() {
           {/* ── Block 3: Daily rituals ─────────────────────────────── */}
           <HabitTodayCard />
           {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
-          <WeeklyCheckinCard />
+          {/* WeeklyCheckinCard moved to pinned block at top (Iter 130c). */}
           {/* Sunday-only weekly review card (see WeeklyReviewCard) */}
           <WeeklyReviewCard refreshKey={activityRefreshKey} />
 

@@ -23,6 +23,28 @@ type VideoResult = { key: string; video: VideoInfo | null } | null;
 const memoryCache: Record<string, VideoResult> = {};
 const inFlight: Record<string, Promise<VideoResult>> = {};
 
+/**
+ * Iter 130c — Clear cached video results.
+ *
+ * The How-To video for an exercise can change server-side (coach uploads a
+ * new demo, changes preferred slot, etc.) and the in-memory cache used to
+ * outlive those updates until the whole app was force-restarted, leaving
+ * clients staring at a stale video. Callers such as the workout screens
+ * invoke `clearVideoCache()` on focus so a fresh /exercises/video lookup
+ * runs, without wiping the cache on every render.
+ *
+ * Passing a name clears just that entry; no arg wipes the whole cache.
+ */
+export function clearVideoCache(name?: string) {
+  if (name) {
+    delete memoryCache[name];
+    delete inFlight[name];
+    return;
+  }
+  for (const k of Object.keys(memoryCache)) delete memoryCache[k];
+  for (const k of Object.keys(inFlight)) delete inFlight[k];
+}
+
 async function fetchVideo(name: string): Promise<VideoResult> {
   if (memoryCache[name] !== undefined) return memoryCache[name];
   if (inFlight[name]) return inFlight[name];

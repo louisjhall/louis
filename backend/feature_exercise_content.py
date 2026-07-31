@@ -900,6 +900,22 @@ async def _bump_usage_counts() -> None:
                 prev = first_seen.get(xid)
                 if not prev or (pdate and pdate < prev):
                     first_seen[xid] = pdate
+                # Iter 130c — also count alternate exercises (`subs_allowed`)
+                # so the coach sees missing media BEFORE a client swaps to
+                # them. Each alt is treated as an "upcoming" occurrence but
+                # not a "tomorrow" one (since the client may never pick it),
+                # which keeps HIGH-priority tasks focused on primary picks.
+                for alt_name in (ex.get("subs_allowed") or []):
+                    an = (alt_name or "").strip().lower()
+                    if not an:
+                        continue
+                    aid = name_to_id.get(an)
+                    if not aid:
+                        continue
+                    upcoming_counts[aid] = upcoming_counts.get(aid, 0) + 1
+                    prev = first_seen.get(aid)
+                    if not prev or (pdate and pdate < prev):
+                        first_seen[aid] = pdate
 
     for xid, c in upcoming_counts.items():
         await db.exercises_v2.update_one({"id": xid}, {"$set": {

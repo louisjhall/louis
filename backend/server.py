@@ -8088,7 +8088,128 @@ async def workout_swap_exercise(wid: str, body: SwapExerciseBody, user: dict = D
     section — only the exercise identity changes. Writes an audit row to
     ``workout_exercise_swaps`` so Louis sees the change in the coach
     dashboard.
+
+    Iter 130c — Engine V2 support. V2 workouts don't exist in
+    ``db.workouts`` (they're synthesised on read from ``plan_live_v2``), so
+    for `v2p:*` workout ids we persist the swap in
+    ``plan_live_v2_exercise_swaps`` and let the client bridge apply it on
+    every subsequent read. Prescription fields (sets/reps/rest/rpe) stay
+    exactly as the coach programmed them because we only override the
+    exercise NAME.
     """
+    # Iter 130c — V2 workout branch (synthetic id `v2p:{live_id}:{eid}`)
+    from feature_v2_client_bridge import V2_WORKOUT_ID_PREFIX, synth_workout_by_wid
+    if (wid or "").startswith(V2_WORKOUT_ID_PREFIX):
+        parts = wid.split(":", 2)
+        if len(parts) < 3:
+            raise HTTPException(400, "invalid V2 workout id")
+        live_id, exposure_id = parts[1], parts[2]
+        # Ownership + live plan lookup
+        live = await db.plan_live_v2.find_one(
+            {"id": live_id, "active": True},
+            {"_id": 0, "id": 1, "client_id": 1, "placements": 1, "session_specs": 1},
+        )
+        if not live:
+            raise HTTPException(404, "workout not found")
+        client_id = live.get("client_id")
+        if user["role"] == "client" and client_id != user["id"]:
+            raise HTTPException(403, "forbidden")
+        # Find the placement + spec so we can resolve the original name
+        placement = next(
+            (p for p in (live.get("placements") or []) if p.get("exposure_id") == exposure_id),
+            None,
+        )
+        if not placement:
+            raise HTTPException(404, "placement not found for this workout")
+        spec = (live.get("session_specs") or {}).get(exposure_id) or {}
+        pay_ex = ((spec.get("payload") or {}).get("exercises") or [])
+        # An earlier swap may already exist for this (client, exposure, date,
+        # index) — use it as our "current" name for audit continuity.
+        existing_swap = await db.plan_live_v2_exercise_swaps.find_one(
+            {"client_id": client_id, "exposure_id": exposure_id,
+             "date": placement.get("date"),
+             "exercise_index": body.exercise_index, "is_active": True},
+            {"_id": 0}, sort=[("created_at", -1)],
+        )
+        if body.exercise_index < 0 or body.exercise_index >= len(pay_ex):
+            raise HTTPException(400, "exercise_index out of range")
+        original_name = (existing_swap or {}).get("original_name") or pay_ex[body.exercise_index].get("name")
+        new_name = (body.new_name or "").strip()
+        if not new_name:
+            raise HTTPException(400, "new_name required")
+        # Supersede any prior swap on the same slot
+        await db.plan_live_v2_exercise_swaps.update_many(
+            {"client_id": client_id, "exposure_id": exposure_id,
+             "date": placement.get("date"),
+             "exercise_index": body.exercise_index, "is_active": True},
+            {"$set": {"is_active": False, "superseded_at": now_iso(),
+                       "superseded_by": "swap"}},
+        )
+        await db.plan_live_v2_exercise_swaps.insert_one({
+            "id": new_id(),
+            "client_id": client_id,
+            "live_id": live_id,
+            "exposure_id": exposure_id,
+            "date": placement.get("date"),
+            "exercise_index": body.exercise_index,
+            "original_name": original_name,
+            "replacement_name": new_name,
+            "reason": body.reason or "client_selected_alternative",
+            "replaced_by": user["role"],
+            "replaced_at": now_iso(),
+            "created_at": now_iso(),
+            "is_active": True,
+        })
+        # Audit trail (mirrors V1 swap for coach visibility)
+        await db.workout_exercise_swaps.insert_one({
+            "id": new_id(),
+            "workout_id": wid,
+            "user_id": client_id,
+            "coach_id": None,
+            "exercise_index": body.exercise_index,
+            "original_name": original_name,
+            "replacement_name": new_name,
+            "reason": body.reason or "client_selected_alternative",
+            "replaced_by": user["role"],
+            "replaced_at": now_iso(),
+            "date": placement.get("date"),
+            "v2": True,
+            "v2_exposure_id": exposure_id,
+        })
+        # Coach to-do — same shape as V1 branch
+        if user["role"] == "client":
+            try:
+                client_meta = await db.users.find_one(
+                    {"id": client_id}, {"_id": 0, "name": 1, "email": 1, "assigned_coach_id": 1},
+                )
+                await db.coach_tasks.insert_one({
+                    "id": new_id(),
+                    "kind": "client_exercise_swap",
+                    "task_type": "client_exercise_swap",
+                    "status": "todo",
+                    "priority": "normal",
+                    "user_id": client_id,
+                    "client_id": client_id,
+                    "workout_id": wid,
+                    "date": placement.get("date"),
+                    "exercise_index": body.exercise_index,
+                    "original_name": original_name,
+                    "replacement_name": new_name,
+                    "reason": body.reason,
+                    "assigned_coach_id": (client_meta or {}).get("assigned_coach_id"),
+                    "client_name": (client_meta or {}).get("name") or (client_meta or {}).get("email"),
+                    "created_at": now_iso(),
+                    "title": f"Client swapped an exercise · {(client_meta or {}).get('name') or 'client'}",
+                    "summary": f"{original_name} → {new_name}"
+                               + (f" ({body.reason})" if body.reason else ""),
+                })
+            except Exception:
+                logger.exception("Failed to create coach task for V2 exercise swap")
+        # Return the synthesised workout with the swap applied
+        fresh = await synth_workout_by_wid(db, wid, client_id)
+        return {"ok": True, "workout": fresh, "swapped_index": body.exercise_index, "new_name": new_name}
+
+    # Legacy V1 branch (unchanged)
     w = await db.workouts.find_one({"id": wid})
     if not w:
         raise HTTPException(404, "workout not found")

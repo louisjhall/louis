@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator,
-  Platform, useWindowDimensions, Modal,
+  Platform, useWindowDimensions, Modal, StatusBar,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -122,6 +122,15 @@ export default function CoachWorkspaceScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
   const insets = useSafeAreaInsets();
+  // Iter 130d — bullet-proof Android status-bar clearance.
+  // Some Android skins with translucent status bars report insets.top === 0
+  // in Expo Go, which caused the header to sit under the system time / signal
+  // icons and made the ADMIN button untappable in the corner. We combine the
+  // safe-area inset with `StatusBar.currentHeight` (Android-only) and floor
+  // everything to a minimum of 24dp on Android / the reported inset on iOS.
+  const rawInset = insets.top || 0;
+  const androidSbHeight = Platform.OS === "android" ? (StatusBar.currentHeight || 0) : 0;
+  const safeTop = Math.max(rawInset, androidSbHeight, Platform.OS === "android" ? 24 : 0);
 
   const [months, setMonths] = useState<string[]>([]);
   const [month, setMonth] = useState<string>("");
@@ -211,7 +220,7 @@ export default function CoachWorkspaceScreen() {
   }
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]} testID="coach-workspace">
+    <View style={[styles.root, { paddingTop: safeTop }]} testID="coach-workspace">
       {/* Iter 128f — Compact client header (one row, ~44px).
           State (LIVE / DRAFT / NO PLAN) lives in the EngineV2DraftPanel
           ribbon below the tabs so it isn't duplicated up here. */}
@@ -227,6 +236,7 @@ export default function CoachWorkspaceScreen() {
           style={styles.adminBtn}
           testID="workspace-admin-btn"
           accessibilityLabel="Client admin"
+          hitSlop={{ top: 12, bottom: 12, left: 8, right: 12 }}
         >
           <Ionicons name="settings-outline" size={14} color={theme.color.textHi} />
           <Text style={styles.adminBtnText}>ADMIN</Text>
@@ -857,17 +867,19 @@ const styles = StyleSheet.create({
 
   header: {
     flexDirection: "row", alignItems: "center",
-    paddingHorizontal: 14, paddingVertical: 8, gap: 6,
+    paddingHorizontal: 14, paddingVertical: 10, gap: 6,
+    minHeight: 48,
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
-  backBtn: { flexDirection: "row", alignItems: "center", padding: 2, marginRight: 4 },
+  backBtn: { flexDirection: "row", alignItems: "center", padding: 8, marginRight: 4, minWidth: 48, minHeight: 44 },
   backTxt: { color: theme.color.textHi, marginLeft: 1, fontSize: 13 },
   adminBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 44,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: theme.color.border,

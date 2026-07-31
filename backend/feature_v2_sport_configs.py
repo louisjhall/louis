@@ -1136,6 +1136,16 @@ _GOAL_ALIASES: dict[str, str] = {
     "aviation_consistency": "general.fitness",
     "improve_energy": "general.fitness",
     "return_to_training": "general.fitness",
+    "improve_health": "general.fitness",
+    "mobility": "general.fitness",
+    "reduce_pain": "general.fitness",
+    "return_injury": "general.fitness",
+    "airline_medical": "general.fitness",
+    # Event goals from the extended training-setup picker map to the closest
+    # existing SPORT_CONFIG until dedicated configs land.
+    "hyrox": "strength.general",
+    "ironman": "triathlon.olympic",
+    "olympic_tri": "triathlon.olympic",
 }
 
 

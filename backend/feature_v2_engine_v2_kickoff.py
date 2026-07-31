@@ -191,11 +191,16 @@ async def engine_v2_kickoff(
             break
     if raw_goal is None:
         # Critical DNA missing — refuse to guess.
+        # Iter 130e — surface the exact raw candidate values so future
+        # frontend/backend goal-key mismatches (e.g. onboarding writes
+        # "lose_fat" but backend only knows "fat_loss") are debuggable
+        # in <30 seconds without spelunking through code.
         return {
             "ok": False,
             "code": "critical_dna_missing",
             "message": "No recognisable goal on profile. Coach must set primary_goal_type / main_goal / event_type_pref before Engine V2 can plan.",
             "checked_fields": ["primary_goal_type", "primary_goal", "primary_goal_id", "goal", "main_goal", "main_goal_key", "event_type_pref"],
+            "raw_candidates": [str(c) if c is not None else None for c in goal_candidates],
         }
     goal_key = canonicalise_goal_key(raw_goal)
     goal = get_goal_config(goal_key)

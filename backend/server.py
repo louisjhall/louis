@@ -11420,6 +11420,33 @@ async def _startup():
         except Exception:
             logger.exception("startup zombie cleanup failed for %s", coll)
 
+    # Iter 130e — frontend↔backend goal-key parity lint.
+    # If someone ships a new option in the mobile onboarding picker
+    # without adding a corresponding entry to `_GOAL_ALIASES`, log a
+    # loud WARN at startup so the mismatch is caught before a real
+    # client hits `critical_dna_missing` on Build Plan. The parity test
+    # already blocks CI, this is the belt-and-suspenders runtime check.
+    try:
+        from feature_v2_sport_configs import _GOAL_ALIASES, SPORT_CONFIGS
+        from tests.test_iter130e_frontend_goal_key_parity import (
+            FRONTEND_GOAL_KEYS,
+        )
+        missing = [
+            k for k in FRONTEND_GOAL_KEYS
+            if k.lower() not in SPORT_CONFIGS and k.lower() not in _GOAL_ALIASES
+        ]
+        if missing:
+            logger.warning(
+                "GOAL-KEY PARITY WARNING — the following frontend "
+                "onboarding keys have no backend alias and will fail "
+                "Engine V2 Build Plan with critical_dna_missing: %s. "
+                "Add each to _GOAL_ALIASES in feature_v2_sport_configs.py.",
+                missing,
+            )
+    except Exception:
+        # Never let this diagnostic block startup.
+        logger.exception("goal-key parity lint at startup failed")
+
     # Roster jobs — the asyncio worker dies with the process on restart /
     # deploy / crash. Any job still "processing" is a zombie; the user is
     # staring at 94% forever. Mark it failed with an actionable message.

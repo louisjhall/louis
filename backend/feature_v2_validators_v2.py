@@ -102,6 +102,9 @@ def validate_programme(
     phase: PhaseSpec,
     goal: GoalConfig,
     unfilled: list[Unfilled],
+    client_profile: Optional[dict] = None,
+    session_specs: Optional[dict[str, dict]] = None,
+    weeks: int = 0,
 ) -> ProgrammeValidation:
     """Enforce programme-level invariants:
        * KEY objectives not silently missing         → ERROR
@@ -256,6 +259,193 @@ def validate_programme(
     daily_totals: dict[_dt.date, int] = {}
     for p in placements:
         daily_totals[p.date] = daily_totals.get(p.date, 0) + int(p.target_duration_min or 0)
+
+    # ---- Iter 130g — goal-family structural validators (deterministic) ---
+    profile = client_profile or {}
+    goal_family = getattr(goal, "family", "") or ""
+    goal_key = getattr(goal, "key", "") or ""
+    weeks_seen = sorted({week_key(p.date) for p in placements})
+    n_weeks = max(1, weeks or len(weeks_seen))
+
+    # Running-family: Long Run present each week + minimum 3 runs/week when
+    # roster allows + strength survives.
+    if goal_family == "running":
+        run_kinds = {"run_easy", "run_long", "run_tempo", "run_threshold",
+                      "run_intervals", "run_vo2", "run_marathon_pace",
+                      "run_race_pace", "run_strides", "run_recovery"}
+        strength_kinds = {"strength_full_body", "strength_upper", "strength_lower",
+                           "strength_push", "strength_pull", "strength_maintenance"}
+        # Long Run per week
+        wk_longrun: dict[tuple[int, int], int] = {}
+        wk_runs: dict[tuple[int, int], int] = {}
+        wk_strength: dict[tuple[int, int], int] = {}
+        for p in placements:
+            wk = week_key(p.date)
+            if p.kind == "run_long":
+                wk_longrun[wk] = wk_longrun.get(wk, 0) + 1
+            if p.kind in run_kinds:
+                wk_runs[wk] = wk_runs.get(wk, 0) + 1
+            if p.kind in strength_kinds:
+                wk_strength[wk] = wk_strength.get(wk, 0) + 1
+
+        # A phase MAY not require a long run (race_week etc.) — only enforce
+        # when the phase quota lists run_long with MIN >= 1 OR non-skippable.
+        long_run_expected = any(
+            q.kind == "run_long" and (q.exposures_per_week[0] > 0
+                                        or not q.can_skip_if_missed)
+            for q in phase.quotas
+        )
+        for wk in weeks_seen:
+            if long_run_expected and wk_longrun.get(wk, 0) == 0:
+                issues.append(Issue("marathon_long_run_missing", "error",
+                                    f"Week {wk}: Long Run missing — KEY anchor "
+                                    f"for {goal_key}"))
+        # Three-run structure — only enforce if phase's aggregate run MIN is >= 3
+        run_min_per_week = sum(int(q.exposures_per_week[0])
+                                for q in phase.quotas if q.kind in run_kinds
+                                and q.exposures_per_week[0] >= 1)
+        # promote fractional KEY MIN to 1 for the sum
+        run_min_per_week += sum(1 for q in phase.quotas if q.kind in run_kinds
+                                and q.priority.upper() == "KEY"
+                                and 0 < q.exposures_per_week[0] < 1)
+        if run_min_per_week >= 3:
+            for wk in weeks_seen:
+                if wk_runs.get(wk, 0) < 3:
+                    issues.append(Issue("weekly_run_count_low", "warning",
+                                        f"Week {wk}: only {wk_runs.get(wk, 0)} run(s) "
+                                        f"(phase expects ≥ {run_min_per_week}). Coach "
+                                        f"should confirm roster prevented a third run."))
+        # Strength survives when the phase quota lists strength with MIN >= 1
+        strength_min = sum(int(q.exposures_per_week[0]) for q in phase.quotas
+                            if q.kind in strength_kinds)
+        if strength_min >= 1:
+            for wk in weeks_seen:
+                if wk_strength.get(wk, 0) == 0:
+                    issues.append(Issue("marathon_strength_dropped", "warning",
+                                        f"Week {wk}: no strength session placed — "
+                                        f"phase MIN={strength_min}. Coach should confirm "
+                                        f"a training day was not available."))
+        # Forbidden: heavy lower-body strength immediately before Long Run
+        long_run_dates = {p.date for p in placements if p.kind == "run_long"}
+        for p in placements:
+            if p.kind not in ("strength_lower", "strength_full_body"):
+                continue
+            next_day = p.date + _dt.timedelta(days=1)
+            if next_day in long_run_dates:
+                issues.append(Issue("strength_before_long_run", "warning",
+                                    f"{p.kind}@{p.date} → Long Run@{next_day} "
+                                    f"— avoid demanding lower-body work "
+                                    f"immediately before the Long Run."))
+
+    # Fat-loss with running excluded: no run_* sessions + 3 strength/week
+    # when roster allows + post-workout cardio present.
+    if goal_key == "strength.fat_loss":
+        dislikes_running = bool(profile.get("dislikes_running")) or (
+            str(profile.get("cardio_preference") or "").lower()
+            in ("elliptical", "rower", "recumbent_bike", "incline_walk",
+                "walk", "bike", "stationary_bike")
+        )
+        strength_kinds = {"strength_full_body", "strength_upper", "strength_lower",
+                           "strength_push", "strength_pull", "strength_maintenance"}
+        cardio_kinds = {"aerobic_z2", "conditioning_mixed", "conditioning_intervals",
+                         "bike_easy", "walk_z2"}
+        run_kinds = {"run_easy", "run_long", "run_tempo", "run_threshold",
+                      "run_intervals", "run_vo2", "run_marathon_pace",
+                      "run_race_pace", "run_strides", "run_recovery"}
+        if dislikes_running:
+            for p in placements:
+                if p.kind in run_kinds:
+                    issues.append(Issue("running_prescribed_despite_preference",
+                                        "error",
+                                        f"{p.kind}@{p.date} — client preference "
+                                        f"excludes running. Cardio must resolve to "
+                                        f"a low-impact modality."))
+        # 3 strength / week required when phase has strength MIN >= 2 or 3
+        wk_strength: dict[tuple[int, int], int] = {}
+        wk_cardio: dict[tuple[int, int], int] = {}
+        for p in placements:
+            wk = week_key(p.date)
+            if p.kind in strength_kinds:
+                wk_strength[wk] = wk_strength.get(wk, 0) + 1
+            if p.kind in cardio_kinds:
+                wk_cardio[wk] = wk_cardio.get(wk, 0) + 1
+        strength_min = 0
+        for q in phase.quotas:
+            if q.kind in strength_kinds:
+                lo = q.exposures_per_week[0]
+                if q.priority.upper() == "KEY" and 0 < lo < 1:
+                    strength_min += 1
+                else:
+                    strength_min += int(lo)
+        for wk in weeks_seen:
+            if strength_min >= 2 and wk_strength.get(wk, 0) < strength_min:
+                issues.append(Issue("fatloss_strength_count_low", "warning",
+                                    f"Week {wk}: only {wk_strength.get(wk, 0)} "
+                                    f"strength session(s) (phase MIN={strength_min}). "
+                                    f"Coach should confirm roster prevented more."))
+            if wk_cardio.get(wk, 0) == 0 and strength_min >= 1:
+                issues.append(Issue("fatloss_cardio_missing", "warning",
+                                    f"Week {wk}: no cardio session placed. "
+                                    f"Post-workout cardio expected on lifting days."))
+
+        # Full-body A/B/C identity check — sessions in the same week should
+        # NOT emit identical exercise anchor sets. Session specs indexed
+        # by exposure_id.
+        if session_specs:
+            per_week_specs: dict[tuple[int, int], list[dict]] = {}
+            for p in placements:
+                if p.kind != "strength_full_body":
+                    continue
+                spec = session_specs.get(p.exposure_id) or {}
+                per_week_specs.setdefault(week_key(p.date), []).append(spec)
+            for wk, specs in per_week_specs.items():
+                if len(specs) < 2:
+                    continue
+                # Compare anchor exercise name-set across sessions.
+                anchor_sig = []
+                for s in specs:
+                    exs = ((s.get("payload") or {}).get("exercises") or [])
+                    sig = tuple(sorted(
+                        ex.get("name", "") for ex in exs
+                        if str(ex.get("role", "")).startswith("primary_")
+                    ))
+                    anchor_sig.append(sig)
+                if len(set(anchor_sig)) < len(anchor_sig):
+                    issues.append(Issue("fullbody_sessions_identical",
+                                        "warning",
+                                        f"Week {wk}: full-body sessions share the "
+                                        f"same anchor exercises. Full Body A/B/C "
+                                        f"rotation may not be engaging."))
+
+    # ---- Iter 130g — full-block progression check --------------------------
+    # For each objective placed across ≥2 weeks, at least one of duration or
+    # exposure count should change. Skip strength (per-week RPE progression
+    # is captured in payload.progression, not target_duration).
+    if session_specs and len(weeks_seen) >= 2:
+        per_obj_by_week: dict[str, dict[tuple[int, int], list[Placement]]] = {}
+        for p in placements:
+            per_obj_by_week.setdefault(p.objective_id, {}).setdefault(
+                week_key(p.date), []).append(p)
+        _NON_PROGRESSING_KINDS = {"rest", "mobility", "recovery",
+                                   "travel_recovery", "activation"}
+        for obj_id, weeks_map in per_obj_by_week.items():
+            if len(weeks_map) < 2:
+                continue
+            sample = next(iter(weeks_map.values()))[0]
+            if sample.kind in _NON_PROGRESSING_KINDS:
+                continue
+            weekly_max_dur = [max((int(p.target_duration_min) for p in placements_w),
+                                    default=0)
+                                for placements_w in weeks_map.values()]
+            weekly_counts = [len(placements_w) for placements_w in weeks_map.values()]
+            all_same_dur = len(set(weekly_max_dur)) <= 1
+            all_same_count = len(set(weekly_counts)) <= 1
+            # Strength kinds progress via RPE (payload.progression), not duration
+            strength_prefix = sample.kind.startswith("strength_")
+            if all_same_dur and all_same_count and not strength_prefix:
+                issues.append(Issue("progression_flat", "warning",
+                                    f"{sample.kind}: duration and count identical "
+                                    f"across weeks — no progression detected."))
 
     # ---- Report -----------------------------------------------------------
     quota_report = {

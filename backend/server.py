@@ -1466,6 +1466,61 @@ async def coach_delete_client_duplicate(
     }
 
 
+# ----- Coach restriction management (Iter 130f) --------------------------
+# Minimum reuse-based coach endpoint to write into the existing
+# `db.restrictions` collection so Engine V2 picks up injury data on the
+# next regeneration. No new schema — reuses source="coach" convention
+# already handled by feature_v2_common.sync_restrictions_from_profile
+# (that helper preserves non-profile source rows).
+
+class CoachRestrictionBody(BaseModel):
+    region: str
+    severity: Optional[str] = "moderate"
+    avoid_patterns: Optional[list[str]] = None
+    raw_text: Optional[str] = None
+    status: Optional[str] = "active"
+
+
+@api.post("/coach/clients/{client_id}/restrictions")
+async def coach_add_client_restriction(
+    client_id: str,
+    body: CoachRestrictionBody,
+    admin: dict = Depends(require_admin()),
+):
+    """Insert a coach-authored restriction into `db.restrictions`.
+    Read by feature_v2_engine_v2_kickoff._load_effective_context; applied
+    to exercise-selection guards on next Engine V2 regeneration."""
+    client = await db.users.find_one({"id": client_id})
+    if not client:
+        raise HTTPException(404, "client not found")
+    doc = {
+        "id": new_id(),
+        "client_id": client_id,
+        "region": (body.region or "").strip().lower() or "general",
+        "severity": (body.severity or "moderate").strip().lower(),
+        "avoid_patterns": [str(p).strip().lower() for p in (body.avoid_patterns or []) if str(p).strip()],
+        "raw_text": (body.raw_text or "").strip(),
+        "source": "coach",
+        "status": (body.status or "active").strip().lower(),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "created_by": admin["id"],
+    }
+    await db.restrictions.insert_one(doc)
+    return {"status": "ok", "restriction_id": doc["id"]}
+
+
+@api.get("/coach/clients/{client_id}/restrictions")
+async def coach_list_client_restrictions(
+    client_id: str,
+    admin: dict = Depends(require_admin()),
+):
+    rows = await db.restrictions.find(
+        {"client_id": client_id}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return {"restrictions": rows, "count": len(rows)}
+
+
 @api.post("/auth/onboarding")
 async def onboarding(body: HomeEquipmentBody, user: dict = Depends(current_user)):
     # Merge instead of overwriting the profile object so re-running onboarding

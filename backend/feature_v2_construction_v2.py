@@ -639,16 +639,20 @@ def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
                     variety_preference: str = "moderate",
                     training_experience: Optional[str] = None,
                     locked_exercises: Optional[dict[str, str]] = None,
+                    session_slot: int = 0,
+                    week_index: int = 0,
                     ) -> tuple[list[dict], list[str]]:
-    """Iter 121b — block-based anchor rotation + Session A/B pattern remap.
+    """Iter 121b + Iter 130g — block-based anchor rotation + Session A/B/C
+    pattern remap.
 
     - Anchor slot primaries stay stable within a "block" (4/6/12 exposures
       by variety level) and refresh at block boundaries — measurable
       progression + genuine variety.
-    - For HIGH-variety `strength_full_body`, push/pull axes alternate
-      between horizontal (Session A) and vertical (Session B) at each
-      block boundary.
+    - For strength_full_body, `session_slot` cycles A/B/C so consecutive
+      full-body sessions in the same week hit different push/pull axes AND
+      different anchor exercises.
     - Beginners are clamped to at-most MODERATE.
+    - `week_index` drives a conservative RPE progression note per week.
     """
     from feature_v2_variety import (
         pick_exercise_with_variety, full_body_pattern_remap,
@@ -656,13 +660,15 @@ def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
 
     template = _STRENGTH_TEMPLATES.get(kind) or _STRENGTH_TEMPLATES.get("strength_full_body")
     remap = full_body_pattern_remap(exposure_number, variety_preference,
-                                     training_experience, kind)
+                                     training_experience, kind,
+                                     session_slot=session_slot)
     exercises: list[dict] = []
     equipment_used: set[str] = set()
     locked_exercises = locked_exercises or {}
     for slot in template or []:
-        # Session A/B remap: HIGH variety may swap horizontal↔vertical for
-        # the push/pull anchors so consecutive blocks feel different.
+        # Session A/B/C remap: swap horizontal↔vertical for push/pull anchors
+        # per session_slot so the three weekly full-body sessions feel
+        # meaningfully different.
         pattern = remap.get(slot["role"], slot["pattern"])
         ex = pick_exercise_with_variety(
             pattern=pattern,
@@ -674,6 +680,7 @@ def _build_strength(kind: str, dur: int, equipment_ctx: set[str],
             training_experience=training_experience,
             avoid_patterns=set(avoid),
             locked_name=locked_exercises.get(slot["role"]),
+            session_slot=session_slot,
         )
         if not ex:
             continue
@@ -835,6 +842,8 @@ def build_session_spec(
     training_experience: Optional[str] = None,
     cardio_preference: str = "run",
     locked_exercises: Optional[dict[str, str]] = None,
+    session_slot: int = 0,
+    week_index: int = 0,
 ) -> SessionSpec:
     """Return a SessionSpec for the given placement. On failure to produce
     content, sets coach_review_required=True on the SessionSpec with a reason;
@@ -861,20 +870,66 @@ def build_session_spec(
     # Iter 121 — resolve cardio-modality-agnostic kinds using client preference.
     # `aerobic_z2` is stored on placements as-is (WHAT preserved); construction
     # decides HOW based on preference & equipment.
+    # Iter 130g — support low-impact modalities (elliptical, rower, recumbent
+    # bike, incline_walk) for clients who cannot / prefer not to run.
     if kind in ("aerobic_z2",):
         pref = (cardio_preference or "run").lower()
-        if pref == "bike" and "bike" in equipment_ctx:
+        if pref in ("bike", "stationary_bike", "spin") and "bike" in equipment_ctx:
             resolved = "bike_easy"
+        elif pref == "recumbent_bike":
+            resolved = "recumbent_bike_easy"
         elif pref == "walk":
             resolved = "walk_z2"
+        elif pref == "incline_walk":
+            resolved = "incline_walk_z2"
+        elif pref == "elliptical":
+            resolved = "elliptical_z2"
+        elif pref == "rower":
+            resolved = "rower_z2"
         else:
             resolved = "run_easy"
         # Rebuild meta for resolved kind
-        meta = session_kind_meta(resolved)
+        meta = session_kind_meta(resolved) or {"modality": MODALITY_RUN}
         modality = meta.get("modality")
         kind_effective = resolved
     else:
         kind_effective = kind
+
+    # Iter 130g — deterministic low-impact cardio builders. These live
+    # OUTSIDE the running/cycling modality dispatch so they never route to
+    # a running builder for clients who explicitly cannot run.
+    _LOW_IMPACT_KINDS = {
+        "elliptical_z2":       ("Elliptical Z2",
+                                "Moderate steady stride. Full range, tall posture.",
+                                ["elliptical"], "any"),
+        "rower_z2":            ("Rowing Z2",
+                                "Legs-hips-arms drive. 24-28 strokes/min. Nasal-breath pace.",
+                                ["rower"], "any"),
+        "recumbent_bike_easy": ("Recumbent Bike Easy",
+                                "Steady seated cadence 75-85 rpm. Conversational.",
+                                ["recumbent_bike"], "any"),
+        "incline_walk_z2":     ("Incline Walk Z2",
+                                "5-8% incline, 5.0-5.5 km/h. Brisk conversational.",
+                                ["treadmill"], "any"),
+    }
+    if kind_effective in _LOW_IMPACT_KINDS:
+        title, cue, equip, env = _LOW_IMPACT_KINDS[kind_effective]
+        wu = max(3, int(duration_min * 0.10))
+        cd = max(3, int(duration_min * 0.08))
+        steady = max(10, duration_min - wu - cd)
+        return SessionSpec(
+            spec_kind="cardio", kind=kind, duration_min=duration_min,
+            intensity_target=intensity_target, environment=env,
+            equipment_used=equip,
+            payload={
+                "warmup":   {"duration_min": wu, "hr_zone": "z1", "cue": "Easy start; loose posture."},
+                "main":     {"type": title.lower().replace(" ", "_"),
+                             "duration_min": steady, "hr_zone": "z2",
+                             "cue": cue},
+                "cooldown": {"duration_min": cd, "hr_zone": "z1", "cue": "Slow down; deep breathing."},
+            },
+            rationale=(f"{title} — {phase_kind} phase (low-impact cardio per client preference)"),
+        )
 
     if modality == MODALITY_RUN:
         if kind_effective == "walk_z2":
@@ -960,15 +1015,33 @@ def build_session_spec(
             variety_preference=variety_preference,
             training_experience=training_experience,
             locked_exercises=locked_exercises or {},
+            session_slot=session_slot,
+            week_index=week_index,
         )
         if not exercises:
             return _unbuildable(kind, duration_min,
                                 "no compatible exercises for current equipment/restrictions")
+        # Iter 130g — deterministic per-week progression note. Non-LLM.
+        _RPE_LADDER = ["RPE 6", "RPE 6-7", "RPE 7", "RPE 7-8", "RPE 8", "RPE 8 + add 1 set"]
+        _SESSION_LABELS = {0: "A", 1: "B", 2: "C"}
+        session_label = _SESSION_LABELS.get(session_slot % 3, "A")
+        label_note = (f"Full Body {session_label}"
+                       if kind_effective == "strength_full_body" else "")
+        progression_note = (
+            f"Week {week_index + 1}: target load "
+            f"{_RPE_LADDER[min(week_index, len(_RPE_LADDER)-1)]}"
+            + (f" · {label_note}" if label_note else "")
+        )
         return SessionSpec(
             spec_kind="strength", kind=kind, duration_min=duration_min,
             intensity_target=intensity_target, environment=env,
             equipment_used=used_equip,
-            payload={"exercises": exercises},
+            payload={
+                "exercises": exercises,
+                "session_label": session_label
+                                  if kind_effective == "strength_full_body" else None,
+                "progression": progression_note,
+            },
             rationale=f"{kind.replace('_',' ').title()} — {phase_kind} phase",
         )
 

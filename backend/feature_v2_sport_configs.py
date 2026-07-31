@@ -282,7 +282,7 @@ _register(GoalConfig(
             quotas=(
                 QuotaRule("run_easy",         (2, 3, 3), "IMPORTANT", 24, (25, 35, 50), "z2", {},
                           notes="Build gentle aerobic base"),
-                QuotaRule("run_long",         (0.5, 1, 1), "KEY",     72, (45, 60, 75), "z2", {},
+                QuotaRule("run_long",         (1, 1, 1), "KEY",     72, (45, 60, 75), "z2", {},
                           can_skip_if_missed=False,
                           preferred_cadence_days=7,
                           cadence_range_days=(6, 9),

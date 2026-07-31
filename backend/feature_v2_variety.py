@@ -103,6 +103,7 @@ def pick_exercise_with_variety(
     training_experience: Optional[str] = None,
     avoid_patterns: Optional[set[str]] = None,
     locked_name: Optional[str] = None,
+    session_slot: int = 0,
 ) -> Optional[dict]:
     """Deterministically pick an exercise from a pool honoring variety.
 
@@ -112,6 +113,9 @@ def pick_exercise_with_variety(
     - Non-anchor slots rotate every `accessory_cadence` exposures.
     - Beginners are clamped to at-most MODERATE regardless of preference.
     - Coach `locked_name` always wins.
+    - `session_slot` (0..N-1) partitions the exercise pool BETWEEN A/B/C
+      full-body sessions so anchors on session-A / B / C stay distinct
+      within the same block.
     """
     avoid_patterns = avoid_patterns or set()
 
@@ -142,48 +146,63 @@ def pick_exercise_with_variety(
                 return ex
 
     if slot_role in ANCHOR_SLOTS:
-        # Rotate anchors at block boundaries
-        idx = _anchor_block_index(exposure_number, variety_preference,
+        # Rotate anchors at block boundaries; each session_slot gets a
+        # different offset so Full Body A/B/C stay meaningfully distinct.
+        slot_offset = max(0, int(session_slot)) % 3
+        block_idx = _anchor_block_index(exposure_number, variety_preference,
                                    training_experience)
-        return compatible[idx % len(compatible)]
+        idx = (block_idx * 3 + slot_offset) % len(compatible)
+        return compatible[idx]
 
-    # Non-anchor accessories rotate faster
+    # Non-anchor accessories rotate faster + offset by session_slot
+    slot_offset = max(0, int(session_slot)) % max(1, len(compatible))
     idx = _accessory_index(exposure_number, variety_preference,
                             training_experience)
-    return compatible[idx % len(compatible)]
+    return compatible[(idx + slot_offset) % len(compatible)]
 
 
 # ---------------------------------------------------------------------------
-# Session A / B pattern rotation for HIGH-variety full-body sessions
+# Session A / B / C pattern rotation for full-body sessions
 # ---------------------------------------------------------------------------
-# For strength_full_body sessions and HIGH-variety clients we alternate the
-# push/pull axis so consecutive exposures don't drill the same patterns.
-# The template slots still map to their pattern; we just remap the pattern
-# for two of the slots on odd exposures.
+# Iter 130g — three-session rotation for clients whose weekly quota calls
+# for three lifting sessions (typical of strength.fat_loss when the roster
+# allows).  Session A/B/C differ by pattern axis + anchor pool offset:
+#   * A — horizontal push + horizontal pull  (default template)
+#   * B — vertical push   + vertical pull
+#   * C — mixed axis: horizontal push + vertical pull
+# Anchor pool offset (`session_slot` in pick_exercise_with_variety) ensures
+# the primary lift is a genuinely different exercise per session.
 
 _FULL_BODY_SESSION_B_REMAP = {
     "primary_horizontal_push": "vertical_push",
     "primary_horizontal_pull": "vertical_pull",
 }
 
+_FULL_BODY_SESSION_C_REMAP = {
+    "primary_horizontal_pull": "vertical_pull",
+}
+
 
 def full_body_pattern_remap(exposure_number: int, variety_preference: str,
                              training_experience: Optional[str],
-                             kind: str) -> dict[str, str]:
-    """Return a slot_role → alternative_pattern remap for HIGH-variety
-    full-body strength sessions. Empty dict for LOW/MODERATE or non-full-body.
+                             kind: str,
+                             session_slot: int = 0) -> dict[str, str]:
+    """Return a slot_role → alternative_pattern remap for full-body strength
+    sessions. Empty dict for LOW variety or non-full-body kinds.
+
+    `session_slot` cycles through A(0) / B(1) / C(2) so consecutive
+    full-body sessions in the same week do not share the same pattern axes.
     """
     if kind != "strength_full_body":
         return {}
     v = _effective_variety(variety_preference, training_experience)
-    if v != "high":
+    if v == "low":
         return {}
-    # Alternate every anchor block (not every exposure) so within a block the
-    # patterns stay consistent enough to progress on.
-    block_idx = _anchor_block_index(exposure_number, variety_preference,
-                                     training_experience)
-    if block_idx % 2 == 1:
+    slot = max(0, int(session_slot)) % 3
+    if slot == 1:
         return dict(_FULL_BODY_SESSION_B_REMAP)
+    if slot == 2:
+        return dict(_FULL_BODY_SESSION_C_REMAP)
     return {}
 
 
@@ -193,11 +212,16 @@ def full_body_pattern_remap(exposure_number: int, variety_preference: str,
 
 _CARDIO_ALIASES = {
     "run":       "run", "running":   "run", "runner":    "run",
+    "treadmill": "run",
     "bike":      "bike","cycling":   "bike","cycle":     "bike",
+    "stationary_bike": "bike", "stationary": "bike", "spin": "bike",
+    "recumbent_bike":  "recumbent_bike", "recumbent": "recumbent_bike",
     "walk":      "walk","walking":   "walk",
-    "elliptical":"elliptical",
-    "rower":     "rower","rowing":  "rower",
+    "incline_walk":    "incline_walk", "incline_walking": "incline_walk",
+    "elliptical":"elliptical", "cross_trainer": "elliptical",
+    "rower":     "rower","rowing":   "rower", "row": "rower",
     "swim":      "swim","swimming":  "swim",
+    "no_running": "elliptical",   # explicit "not running" → safe default
     "no_preference": "run", "none": "run", "":"run",
 }
 
@@ -205,8 +229,15 @@ _CARDIO_ALIASES = {
 def resolve_cardio_modality(client_profile: Optional[dict]) -> str:
     if not client_profile:
         return "run"
+    # If the client explicitly dislikes running, upgrade the fallback to a
+    # low-impact modality UNLESS the client also expressed a positive
+    # non-running preference.
     raw = (client_profile.get("cardio_preference")
-           or client_profile.get("preferred_cardio_modality") or "run")
+           or client_profile.get("preferred_cardio_modality"))
+    if not raw and client_profile.get("dislikes_running"):
+        raw = "elliptical"
+    if not raw:
+        raw = "run"
     key = str(raw).strip().lower().replace(" ", "_")
     return _CARDIO_ALIASES.get(key, "run")
 

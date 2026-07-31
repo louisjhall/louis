@@ -403,13 +403,23 @@ def build_demand(
     def _per_quota_counts(qs, cap):
         """Assign per-quota exposure counts respecting `cap` total.
         KEY MIN is protected first, then TARGET is filled by declaration order.
+
+        Iter 130f — Bug fix: a KEY quota declared with a fractional min
+        (e.g. run_long (0.5, 1, 1) meaning "at least every other week")
+        must never round down to zero via ``int(lo)`` — that silently
+        deletes the anchor. For KEY priority with ``0 < lo < 1`` we
+        promote to ``1`` so the anchor is always seeded. Non-KEY
+        fractional mins continue to floor as before.
         """
         counts: dict[str, int] = {}
         remaining = cap
         # Pass 1 — every quota's MIN is guaranteed (KEY MIN protected first)
         for q in sorted(qs, key=lambda q: (0 if q.priority.upper() == "KEY" else 1)):
             lo, target, hi = q.exposures_per_week
-            n_min = int(lo)
+            if q.priority.upper() == "KEY" and 0 < lo < 1:
+                n_min = 1
+            else:
+                n_min = int(lo)
             if n_min <= remaining:
                 counts[q.kind] = n_min
                 remaining -= n_min
@@ -428,18 +438,117 @@ def build_demand(
                 remaining -= add
         return counts, remaining
 
-    # 1) MAIN quotas fill up to training_days_per_week
-    main_counts, _ = _per_quota_counts(main_quotas, main_day_cap)
-    # 2) SUPPORT quotas fill the stacking budget (independent of main slack)
-    support_counts, _ = _per_quota_counts(support_quotas, auto_stack_budget)
+    # Iter 130g — MAIN MIN allocation may spill into the stacking budget so
+    # that a marathon plan with training_days_per_week=3 still receives its
+    # KEY Long Run + IMPORTANT Easy Runs + IMPORTANT Strength MIN (i.e.
+    # 3 runs + 2 strength minimum) without silently dropping the strength.
+    # Rule: MAIN gets `main_day_cap` primary budget; if MAIN MINs need more,
+    # they may borrow up to `auto_stack_budget` (support-stacking capacity).
+    # SUPPORT gets whatever remains of the stacking budget after MAIN MINs.
+    total_session_budget = main_day_cap + auto_stack_budget
 
-    per_quota_counts_by_kind: dict[str, int] = {**main_counts, **support_counts}
+    def _per_quota_counts_priority_preserving(qs, primary_cap, borrow_cap):
+        """Two-phase allocator that guarantees MINs across the combined
+        primary + borrow budget while preserving priority order.
+
+        Pass 1 (MINs, KEY→IMPORTANT→SUPPORTING→OPTIONAL): fill each quota's
+        minimum, drawing from primary first then borrow. KEY fractional MIN
+        (0<lo<1) rounds up to 1 (never silently deleted).
+        Pass 2 (TARGETs, same order): fill remaining headroom up to
+        ``min(int(hi), round(target))`` from primary first then borrow.
+
+        Returns (counts_by_kind, primary_used, borrow_used).
+        """
+        rank = {"KEY": 0, "IMPORTANT": 1, "SUPPORTING": 2, "OPTIONAL": 3}
+        counts: dict[str, int] = {}
+        primary_used = 0
+        borrow_used = 0
+        pri = primary_cap
+        bor = borrow_cap
+
+        def _draw(n: int) -> int:
+            """Draw up to n from primary then borrow; returns amount drawn."""
+            nonlocal pri, bor, primary_used, borrow_used
+            take_pri = min(n, pri)
+            pri -= take_pri
+            primary_used += take_pri
+            remaining = n - take_pri
+            take_bor = min(remaining, bor)
+            bor -= take_bor
+            borrow_used += take_bor
+            return take_pri + take_bor
+
+        sorted_qs = sorted(qs, key=lambda q: rank.get(q.priority.upper(), 9))
+        for q in sorted_qs:
+            lo, tgt, hi = q.exposures_per_week
+            if q.priority.upper() == "KEY" and 0 < lo < 1:
+                n_min = 1
+            else:
+                n_min = int(lo)
+            got = _draw(n_min)
+            counts[q.kind] = got
+        for q in sorted_qs:
+            lo, tgt, hi = q.exposures_per_week
+            already = counts.get(q.kind, 0)
+            headroom = min(int(hi), int(round(tgt))) - already
+            if headroom > 0:
+                add = _draw(headroom)
+                counts[q.kind] = already + add
+        return counts, primary_used, borrow_used
+
+    all_counts, pri_used, bor_used = _per_quota_counts_priority_preserving(
+        quotas, main_day_cap, auto_stack_budget,
+    )
+    # Split back to main/support for reporting only
+    main_counts = {q.kind: all_counts.get(q.kind, 0) for q in main_quotas}
+    support_counts = {q.kind: all_counts.get(q.kind, 0) for q in support_quotas}
+
+    per_quota_counts_by_kind: dict[str, int] = dict(all_counts)
     freq_derivation["priority_clip"] = {
         "main_day_cap": main_day_cap,
-        "main_counts": main_counts,
         "auto_stack_budget": auto_stack_budget,
+        "total_session_budget": total_session_budget,
+        "primary_budget_used": pri_used,
+        "stacking_budget_used": bor_used,
+        "main_counts": main_counts,
         "support_counts": support_counts,
+        "allocation_note": (
+            "MAIN MINs may borrow from stacking budget so KEY+IMPORTANT "
+            "minima survive when training_days_per_week is tight. TARGETs "
+            "still fill up to combined budget in priority order."
+        ),
     }
+
+    # Iter 130f — deterministic KEY-anchor guardrail. A non-skippable KEY
+    # quota (e.g. marathon Long Run) must never resolve to zero. If it
+    # does, we forcibly demote one lower-priority IMPORTANT slot to make
+    # room. This is a safety net that catches any future scaling / cap
+    # edge cases without another silent long-run deletion.
+    dropped_key_anchors: list[str] = []
+    for q in main_quotas:
+        if q.priority.upper() != "KEY":
+            continue
+        if getattr(q, "can_skip_if_missed", True):
+            continue
+        if main_counts.get(q.kind, 0) >= 1:
+            continue
+        # Anchor was dropped — try to reclaim from the largest IMPORTANT bucket.
+        candidates = [k for k in main_counts
+                      if main_counts[k] > 0
+                      and not any(x.kind == k and x.priority.upper() == "KEY" for x in main_quotas)]
+        candidates.sort(key=lambda k: main_counts[k], reverse=True)
+        if candidates:
+            main_counts[candidates[0]] -= 1
+            main_counts[q.kind] = 1
+            dropped_key_anchors.append(
+                f"reclaimed 1 slot from {candidates[0]} → {q.kind} (KEY anchor rescue)"
+            )
+        else:
+            dropped_key_anchors.append(
+                f"⚠ {q.kind} (KEY, non-skippable) still resolves to 0 — no lower-priority slot to reclaim from"
+            )
+    if dropped_key_anchors:
+        freq_derivation["priority_clip"]["key_anchor_rescues"] = dropped_key_anchors
 
     for week_index, week_start in enumerate(week_start_dates):
         for q in quotas:

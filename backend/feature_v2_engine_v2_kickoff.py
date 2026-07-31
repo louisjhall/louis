@@ -120,6 +120,7 @@ async def _load_effective_context(client_id: str) -> dict:
         "event": event,
         "recent_sessions_8w": recent,
         "restrictions": restrictions_set,
+        "restrictions_raw": restrictions_rows,
         "equipment": equipment_set,
     }
 
@@ -369,6 +370,31 @@ async def engine_v2_kickoff(
 
     session_specs: dict[str, dict] = {}   # keyed by exposure_id
     session_validations: dict[str, list[dict]] = {}
+
+    # Iter 130g — per-week ordinal for full-body strength sessions so
+    # session_slot (A/B/C) can be computed deterministically without
+    # requiring the caller to inject week metadata.
+    _full_body_ordinal_by_week: dict[tuple[int, int], int] = {}
+    _placements_sorted = sorted(schedule.placements, key=lambda p: (p.date, p.exposure_id))
+
+    # Compute session_slot per placement for strength_full_body kinds.
+    session_slot_by_exposure: dict[str, int] = {}
+    for pl in _placements_sorted:
+        if pl.kind == "strength_full_body":
+            wk = week_key(pl.date)
+            n = _full_body_ordinal_by_week.get(wk, 0)
+            session_slot_by_exposure[pl.exposure_id] = n
+            _full_body_ordinal_by_week[wk] = n + 1
+
+    # Iter 130g — read client cardio/variety/experience prefs from the DNA
+    # profile. cardio_preference influences aerobic_z2 resolution (run vs
+    # elliptical vs rower etc). variety_preference drives A/B/C rotation.
+    prof_cardio_pref = (profile.get("cardio_preference")
+                        or profile.get("preferred_cardio_modality")
+                        or ("elliptical" if profile.get("dislikes_running") else "run"))
+    prof_variety = profile.get("variety_preference") or "moderate"
+    prof_experience = profile.get("training_experience") or "intermediate"
+
     for pl in schedule.placements:
         avail = avail_by_date.get(pl.date.isoformat(), 60)
         # Availability CAP — never a prescription
@@ -383,6 +409,10 @@ async def engine_v2_kickoff(
             # Session cannot fit into availability — flag it, don't shrink below min
             effective_duration = quota_min
 
+        # Week index for progression note
+        wk_days = (pl.date - window_start).days
+        week_index_pl = max(0, wk_days // 7)
+
         spec = build_session_spec(
             kind=pl.kind,
             duration_min=effective_duration,
@@ -392,6 +422,12 @@ async def engine_v2_kickoff(
             equipment_ctx=ctx["equipment"],
             avoid_patterns=ctx["restrictions"],
             intensity_ceiling=intensity_ceiling_by_date.get(pl.date.isoformat(), "any"),
+            exposure_number=int(pl.exposure_number or 1),
+            variety_preference=prof_variety,
+            training_experience=prof_experience,
+            cardio_preference=prof_cardio_pref,
+            session_slot=session_slot_by_exposure.get(pl.exposure_id, 0),
+            week_index=week_index_pl,
         )
         sv = validate_session(spec.to_dict(), pl, avail, ctx["restrictions"])
         session_specs[pl.exposure_id] = spec.to_dict()
@@ -404,7 +440,85 @@ async def engine_v2_kickoff(
         phase=current_phase,
         goal=goal,
         unfilled=schedule.unfilled,
+        client_profile=profile,
+        session_specs=session_specs,
+        weeks=window_weeks,
     )
+
+    # ---- 8b. Build deterministic Generation Receipt (non-LLM) ----------
+    # Compact summary of preferences used, roster used, restrictions used,
+    # required weekly structure, sessions generated per week, progression
+    # method, unplaced sessions, validation pass/warn/fail counts.
+    sessions_per_week: dict[str, dict[str, int]] = {}
+    for p in schedule.placements:
+        wk = f"{week_key(p.date)[0]}-W{week_key(p.date)[1]:02d}"
+        sessions_per_week.setdefault(wk, {})
+        sessions_per_week[wk][p.kind] = sessions_per_week[wk].get(p.kind, 0) + 1
+
+    required_weekly_structure = {}
+    for q in current_phase.quotas:
+        lo, tgt, hi = q.exposures_per_week
+        required_weekly_structure[q.kind] = {
+            "min": lo, "target": tgt, "max": hi,
+            "priority": q.priority.upper(),
+            "can_skip_if_missed": q.can_skip_if_missed,
+        }
+    receipt = {
+        "goal_key": goal_key,
+        "phase": current_phase.phase_kind,
+        "weeks_in_window": window_weeks,
+        "client_preferences_used": {
+            "training_days_per_week": profile.get("training_days_per_week"),
+            "sessions_per_week_min": profile.get("sessions_per_week_min"),
+            "sessions_per_week_max": profile.get("sessions_per_week_max"),
+            "preferred_training_days": profile.get("preferred_training_days") or [],
+            "preferred_session_length": profile.get("preferred_session_length"),
+            "cardio_preference": prof_cardio_pref,
+            "variety_preference": prof_variety,
+            "training_experience": prof_experience,
+            "dislikes_running": bool(profile.get("dislikes_running")),
+            "willing_to_train_layovers": bool(profile.get("willing_to_train_layovers")),
+            "max_home_minutes": profile.get("max_home_minutes"),
+            "max_layover_minutes": profile.get("time_layover_min"),
+        },
+        "roster_used": {
+            "schedule_days_in_window": len(sd_rows),
+            "date_range": {"start": window_start.isoformat(),
+                            "end": window_end.isoformat()},
+            "day_types": sorted({(d.get("day_type") or "unknown") for d in sd_rows}),
+        },
+        "restrictions_used": [
+            {
+                "region": r.get("region"),
+                "severity": r.get("severity"),
+                "avoid_patterns": r.get("avoid_patterns") or [],
+                "source": r.get("source"),
+                "status": r.get("status", "active"),
+            }
+            for r in (ctx.get("restrictions_raw") or [])
+        ],
+        "required_weekly_structure": required_weekly_structure,
+        "sessions_generated_per_week": sessions_per_week,
+        "progression_method": (
+            "Duration progression via QuotaRule.progression (running/aerobic); "
+            "RPE ladder in payload.progression (strength). Full Body A/B/C "
+            "rotation via session_slot when strength_days_per_week ≥ 2."
+        ),
+        "unplaced_sessions": [
+            {"kind": u.kind, "priority": u.priority.upper(),
+             "reason_code": u.reason_code, "human_reason": u.human_reason}
+            for u in schedule.unfilled
+        ],
+        "validation_summary": {
+            "ok": prog_val.ok,
+            "errors": sum(1 for i in prog_val.issues if i.severity == "error"),
+            "warnings": sum(1 for i in prog_val.issues if i.severity == "warning"),
+            "issues": [
+                {"code": i.code, "severity": i.severity, "message": i.message}
+                for i in prog_val.issues
+            ],
+        },
+    }
 
     # ---- 9. Persist Draft V2 -------------------------------------------
     draft_id = new_id()
@@ -518,6 +632,7 @@ async def engine_v2_kickoff(
             "issues": [{"code": i.code, "severity": i.severity, "message": i.message} for i in prog_val.issues],
             "quota_report": prog_val.quota_report,
         },
+        "generation_receipt": receipt,
         "status": draft_status,
         "engine_version": "v2",
     })
@@ -562,6 +677,7 @@ async def engine_v2_kickoff(
             {"code": i.code, "severity": i.severity, "message": i.message}
             for i in prog_val.issues
         ],
+        "generation_receipt": receipt,
         "took_seconds": round(time.time() - t0, 3),
     }
 

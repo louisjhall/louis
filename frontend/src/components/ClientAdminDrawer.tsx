@@ -73,6 +73,20 @@ export function ClientAdminDrawer({
   const [dupeTarget, setDupeTarget] = useState<DuplicateRow | null>(null);
   const [dupeConfirmEmail, setDupeConfirmEmail] = useState("");
 
+  // Iter 130j — Training Availability quick-edit form (lifts per-client
+  // caps so the engine can honour the intended weekly structure).
+  const [avEdit, setAvEdit] = useState(false);
+  const [avTrainingDays, setAvTrainingDays] = useState("");
+  const [avSessionsMax, setAvSessionsMax] = useState("");
+  const [avSessionLen, setAvSessionLen] = useState("");
+  const [avHomeCap, setAvHomeCap] = useState("");
+  const [avLayoverCap, setAvLayoverCap] = useState("");
+  const [avCardioPref, setAvCardioPref] = useState("");
+  const [avVariety, setAvVariety] = useState("");
+  const [avExperience, setAvExperience] = useState("");
+  const [avDislikesRunning, setAvDislikesRunning] = useState<"yes" | "no" | "">("");
+  const [avLayoversOk, setAvLayoversOk] = useState<"yes" | "no" | "">("");
+
   const load = useCallback(async () => {
     if (!clientId) return;
     setLoading(true);
@@ -196,6 +210,71 @@ export function ClientAdminDrawer({
     } finally { setBusy(null); }
   }, [clientId, dupeTarget, dupeConfirmEmail]);
 
+  // Iter 130j — Save Training Availability. Only fields the coach filled
+  // in are sent. Backend endpoint whitelists + logs the diff.
+  const openAvEdit = useCallback(() => {
+    // Prefill from anything we can find on the client doc, else blank.
+    const p: any = (data as any)?.profile || {};
+    setAvTrainingDays(p.training_days_per_week ? String(p.training_days_per_week) : "");
+    setAvSessionsMax(p.sessions_per_week_max ? String(p.sessions_per_week_max) : "");
+    setAvSessionLen(p.preferred_session_length ? String(p.preferred_session_length) : "");
+    setAvHomeCap(p.max_home_minutes || p.time_home_min
+      ? String(p.max_home_minutes || p.time_home_min) : "");
+    setAvLayoverCap(p.time_layover_min ? String(p.time_layover_min) : "");
+    setAvCardioPref(p.cardio_preference || "");
+    setAvVariety(p.variety_preference || "");
+    setAvExperience(p.training_experience || "");
+    setAvDislikesRunning(p.dislikes_running === true ? "yes"
+                          : p.dislikes_running === false ? "no" : "");
+    setAvLayoversOk(p.willing_to_train_layovers === true ? "yes"
+                     : p.willing_to_train_layovers === false ? "no" : "");
+    setAvEdit(true);
+  }, [data]);
+
+  const doSaveAvailability = useCallback(async () => {
+    const body: Record<string, any> = {};
+    const num = (s: string) => (s.trim() && !isNaN(Number(s)) ? Number(s) : undefined);
+    if (num(avTrainingDays) !== undefined) body.training_days_per_week = num(avTrainingDays);
+    if (num(avSessionsMax) !== undefined) {
+      body.sessions_per_week_max = num(avSessionsMax);
+      body.sessions_per_week_min = num(avTrainingDays) ?? num(avSessionsMax);
+    }
+    if (num(avSessionLen) !== undefined) body.preferred_session_length = num(avSessionLen);
+    if (num(avHomeCap) !== undefined) {
+      body.max_home_minutes = num(avHomeCap);
+      body.time_home_min = num(avHomeCap);
+    }
+    if (num(avLayoverCap) !== undefined) body.time_layover_min = num(avLayoverCap);
+    if (avCardioPref.trim()) body.cardio_preference = avCardioPref.trim().toLowerCase();
+    if (avVariety.trim()) body.variety_preference = avVariety.trim().toLowerCase();
+    if (avExperience.trim()) body.training_experience = avExperience.trim().toLowerCase();
+    if (avDislikesRunning) body.dislikes_running = avDislikesRunning === "yes";
+    if (avLayoversOk) body.willing_to_train_layovers = avLayoversOk === "yes";
+    if (Object.keys(body).length === 0) {
+      Alert.alert("Nothing to save", "Fill at least one field.");
+      return;
+    }
+    setBusy("training-availability");
+    try {
+      const res: any = await api(`/v2/coach/clients/${clientId}/training-availability`, {
+        method: "PATCH", body,
+      });
+      setAvEdit(false);
+      const changedKeys = Object.keys(res?.diff || {});
+      Alert.alert(
+        "Availability saved",
+        (changedKeys.length
+          ? `Updated: ${changedKeys.join(", ")}.\n\n`
+          : "No changes were needed.\n\n") +
+        "Now press \"Rebuild draft\" on the workspace to regenerate the programme.",
+      );
+    } catch (e: any) {
+      Alert.alert("Save failed", e?.detail?.message || e?.message || String(e));
+    } finally { setBusy(null); }
+  }, [clientId, avTrainingDays, avSessionsMax, avSessionLen, avHomeCap,
+      avLayoverCap, avCardioPref, avVariety, avExperience,
+      avDislikesRunning, avLayoversOk]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.backdrop}>
@@ -226,6 +305,17 @@ export function ClientAdminDrawer({
                 busy={busy === "reset-password"}
                 onPress={doResetPassword}
                 testID="admin-drawer-reset-password"
+              />
+
+              {/* TRAINING AVAILABILITY (Iter 130j) */}
+              <Text style={[styles.section, { marginTop: 20 }]}>TRAINING AVAILABILITY</Text>
+              <Row
+                icon="time-outline"
+                label="Edit training days & time caps"
+                sub="How many days, how long, cardio preference. Lifts the caps that block programme generation."
+                busy={busy === "training-availability"}
+                onPress={openAvEdit}
+                testID="admin-drawer-training-availability"
               />
 
               {/* COACH */}
@@ -326,6 +416,133 @@ export function ClientAdminDrawer({
                   <Pressable onPress={() => { setConfirmPerm(false); setPermText(""); }} style={styles.ghostBtn}><Text style={styles.ghostBtnText}>Cancel</Text></Pressable>
                   <Pressable onPress={doPermanentDelete} disabled={busy === "perm-delete"} style={styles.dangerBtn} testID="admin-drawer-perm-confirm"><Text style={styles.dangerBtnText}>{busy === "perm-delete" ? "Deleting…" : "PERMANENT DELETE"}</Text></Pressable>
                 </View>
+              </View>
+            </View>
+          )}
+          {/* Iter 130j — Training Availability edit modal */}
+          {avEdit && (
+            <View style={styles.confirmBackdrop}>
+              <View style={[styles.confirmCard, { maxHeight: "85%" }]}>
+                <ScrollView>
+                  <Text style={styles.confirmTitle}>Training availability</Text>
+                  <Text style={styles.confirmBody}>
+                    Leave a field blank to keep its current value. Values in
+                    minutes for the time caps.
+                  </Text>
+
+                  <Text style={styles.fieldLabel}>Training days per week (1–7)</Text>
+                  <TextInput
+                    value={avTrainingDays} onChangeText={setAvTrainingDays}
+                    keyboardType="number-pad" placeholder="e.g. 5"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-training-days"
+                  />
+
+                  <Text style={styles.fieldLabel}>Max sessions per week</Text>
+                  <TextInput
+                    value={avSessionsMax} onChangeText={setAvSessionsMax}
+                    keyboardType="number-pad" placeholder="e.g. 6"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-sessions-max"
+                  />
+
+                  <Text style={styles.fieldLabel}>Preferred session length (min)</Text>
+                  <TextInput
+                    value={avSessionLen} onChangeText={setAvSessionLen}
+                    keyboardType="number-pad" placeholder="e.g. 75"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-session-len"
+                  />
+
+                  <Text style={styles.fieldLabel}>Home / office daily cap (min)</Text>
+                  <TextInput
+                    value={avHomeCap} onChangeText={setAvHomeCap}
+                    keyboardType="number-pad" placeholder="e.g. 120"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-home-cap"
+                  />
+
+                  <Text style={styles.fieldLabel}>Layover daily cap (min)</Text>
+                  <TextInput
+                    value={avLayoverCap} onChangeText={setAvLayoverCap}
+                    keyboardType="number-pad" placeholder="e.g. 60"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-layover-cap"
+                  />
+
+                  <Text style={styles.fieldLabel}>Cardio preference</Text>
+                  <Text style={styles.fieldHint}>
+                    run · walk · bike · elliptical · rower · recumbent_bike · incline_walk
+                  </Text>
+                  <TextInput
+                    value={avCardioPref} onChangeText={setAvCardioPref}
+                    autoCapitalize="none" placeholder="e.g. elliptical"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-cardio-pref"
+                  />
+
+                  <Text style={styles.fieldLabel}>Variety preference</Text>
+                  <Text style={styles.fieldHint}>low · moderate · high</Text>
+                  <TextInput
+                    value={avVariety} onChangeText={setAvVariety}
+                    autoCapitalize="none" placeholder="e.g. high"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-variety"
+                  />
+
+                  <Text style={styles.fieldLabel}>Training experience</Text>
+                  <Text style={styles.fieldHint}>beginner · intermediate · advanced</Text>
+                  <TextInput
+                    value={avExperience} onChangeText={setAvExperience}
+                    autoCapitalize="none" placeholder="e.g. intermediate"
+                    placeholderTextColor="#666" style={styles.confirmInput}
+                    testID="admin-av-experience"
+                  />
+
+                  <Text style={styles.fieldLabel}>Dislikes running?</Text>
+                  <View style={styles.pillRow}>
+                    <Pressable onPress={() => setAvDislikesRunning("yes")}
+                      style={[styles.pillChoice, avDislikesRunning === "yes" && styles.pillChoiceActive]}
+                      testID="admin-av-dislikes-yes">
+                      <Text style={[styles.pillChoiceText, avDislikesRunning === "yes" && styles.pillChoiceTextActive]}>Yes</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setAvDislikesRunning("no")}
+                      style={[styles.pillChoice, avDislikesRunning === "no" && styles.pillChoiceActive]}
+                      testID="admin-av-dislikes-no">
+                      <Text style={[styles.pillChoiceText, avDislikesRunning === "no" && styles.pillChoiceTextActive]}>No</Text>
+                    </Pressable>
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Willing to train on layovers?</Text>
+                  <View style={styles.pillRow}>
+                    <Pressable onPress={() => setAvLayoversOk("yes")}
+                      style={[styles.pillChoice, avLayoversOk === "yes" && styles.pillChoiceActive]}
+                      testID="admin-av-layovers-yes">
+                      <Text style={[styles.pillChoiceText, avLayoversOk === "yes" && styles.pillChoiceTextActive]}>Yes</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setAvLayoversOk("no")}
+                      style={[styles.pillChoice, avLayoversOk === "no" && styles.pillChoiceActive]}
+                      testID="admin-av-layovers-no">
+                      <Text style={[styles.pillChoiceText, avLayoversOk === "no" && styles.pillChoiceTextActive]}>No</Text>
+                    </Pressable>
+                  </View>
+
+                  <View style={[styles.confirmRow, { marginTop: 20 }]}>
+                    <Pressable onPress={() => setAvEdit(false)} style={styles.ghostBtn}>
+                      <Text style={styles.ghostBtnText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={doSaveAvailability}
+                      disabled={busy === "training-availability"}
+                      style={[styles.primaryBtn, busy === "training-availability" && { opacity: 0.5 }]}
+                      testID="admin-av-save"
+                    >
+                      <Text style={styles.primaryBtnText}>
+                        {busy === "training-availability" ? "Saving…" : "Save"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
               </View>
             </View>
           )}
@@ -457,6 +674,13 @@ const styles = StyleSheet.create({
   pwRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
   eyeBtn: { padding: 8, borderRadius: 6, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface },
   pwHint: { color: "#ff6b6b", fontSize: 11, marginTop: 6 },
+  fieldLabel: { color: theme.color.text, fontSize: 13, fontWeight: "600", marginTop: 12 },
+  fieldHint: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
+  pillRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  pillChoice: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface },
+  pillChoiceActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brand },
+  pillChoiceText: { color: theme.color.text, fontSize: 13, fontWeight: "600" },
+  pillChoiceTextActive: { color: "#fff" },
   dupeCard: { backgroundColor: theme.color.surface2, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border, marginTop: 8 },
   dupeCardKeep: { borderColor: "rgba(80, 200, 120, 0.5)", backgroundColor: "rgba(80, 200, 120, 0.06)" },
   dupeHeader: { flexDirection: "row", alignItems: "center", gap: 8, justifyContent: "space-between" },

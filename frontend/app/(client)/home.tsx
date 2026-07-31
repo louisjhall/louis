@@ -442,24 +442,18 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg }}>
-          {/* Iter 130c — priority pinned block. Coach requested the
-              Weekly Check-In + Programme Progress cards sit directly
-              beneath Pietro's name/header, above every other section,
-              so clients see their reflection touch-point and progress
-              status without scrolling. Everything below keeps the
-              Iter 128 information architecture. */}
-          <WeeklyCheckinCard />
-          <ProgrammeStatusCard
-            onStateChanged={(s) => {
-              setProgrStatus(s.programme_status);
-              setTodayPlanState(s.today_plan_state?.state || null);
-              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
-                // The programme just went live — reload workouts/roster so
-                // the "Start today's session" hero picks up the new plan.
-                load();
-              }
-            }}
-          />
+          {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
+              pinned directly beneath Pietro's name/header per coach request.
+              The chips route to the deeper Calendar / Check-In / Progress
+              screens — moved from the old Utilities block at the bottom so
+              clients see progress + reflection touch-points before the
+              training action zone. Everything below preserves the Iter 128
+              information architecture. */}
+          <View style={styles.quickRow} testID="quick-nav-top">
+            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
+            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
+            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
+          </View>
 
           {/* Iter 128 — Home information architecture (2026 rework).
               Priority order (top → bottom):
@@ -752,9 +746,21 @@ export default function Home() {
               the daily "big three" clients need to stay on top of. */}
           {nutritionFlag ? <NutritionTodayCard refreshKey={activityRefreshKey} /> : null}
 
-          {/* Phase 7B — dynamic programme status card was here; it has
-              been promoted to the pinned block directly beneath Pietro's
-              header (see Iter 130c note at the top of this View). */}
+          {/* Phase 7B — dynamic programme status + today-plan-state note.
+              Rendered UNDER the primary action trio so on flying/rest/
+              layover days it acts as a supporting context line rather
+              than a giant header above the workout CTA. */}
+          <ProgrammeStatusCard
+            onStateChanged={(s) => {
+              setProgrStatus(s.programme_status);
+              setTodayPlanState(s.today_plan_state?.state || null);
+              if (progrStatus && progrStatus !== s.programme_status && s.programme_status === "programme_live") {
+                // The programme just went live — reload workouts/roster so
+                // the "Start today's session" hero picks up the new plan.
+                load();
+              }
+            }}
+          />
 
           {/* Missed sessions live in the action zone — they need action */}
           {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
@@ -762,7 +768,7 @@ export default function Home() {
           {/* ── Block 3: Daily rituals ─────────────────────────────── */}
           <HabitTodayCard />
           {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
-          {/* WeeklyCheckinCard moved to pinned block at top (Iter 130c). */}
+          <WeeklyCheckinCard />
           {/* Sunday-only weekly review card (see WeeklyReviewCard) */}
           <WeeklyReviewCard refreshKey={activityRefreshKey} />
 
@@ -955,15 +961,11 @@ export default function Home() {
           )}
 
           {/* ── Block 6: Utilities (demoted) ─────────────────────────
-              Quick nav row, compact roster upload button and small
-              timezone chip live at the bottom so daily rituals and the
-              main workout CTA own the fold. */}
-          <View style={styles.quickRow}>
-            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
-            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
-            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
-          </View>
-
+              Roster upload + timezone chip live at the bottom so daily
+              rituals and the main workout CTA own the fold. The
+              Monthly / Check-In / Progress quick-nav chip row previously
+              rendered here has been promoted to the top of the screen
+              (Iter 130c) directly beneath the client's name/header. */}
           <Pressable
             testID="home-upload-roster-cta"
             onPress={() => router.push("/roster-upload")}

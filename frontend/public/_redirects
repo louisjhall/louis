@@ -1,7 +1,0 @@
-# Cloudflare Pages — Expo Router SPA fallback.
-# Every unmatched path is rewritten (status 200, not redirect) to /index.html
-# so client-side routing under expo-router handles the URL (e.g.
-# /coach/v2-home, /workout/abc123, /assessment). Without this, deep-link
-# refreshes and pasted URLs return 404 because Cloudflare would try to
-# serve a static file that doesn't exist.
-/*    /index.html   200

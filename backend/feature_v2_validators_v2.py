@@ -105,6 +105,8 @@ def validate_programme(
     client_profile: Optional[dict] = None,
     session_specs: Optional[dict[str, dict]] = None,
     weeks: int = 0,
+    daily_time_cap_by_date: Optional[dict] = None,
+    day_type_by_date: Optional[dict] = None,
 ) -> ProgrammeValidation:
     """Enforce programme-level invariants:
        * KEY objectives not silently missing         → ERROR
@@ -260,12 +262,68 @@ def validate_programme(
     for p in placements:
         daily_totals[p.date] = daily_totals.get(p.date, 0) + int(p.target_duration_min or 0)
 
-    # ---- Iter 130g — goal-family structural validators (deterministic) ---
+    # ---- Iter 130g + 130h — goal-family structural validators (deterministic)
     profile = client_profile or {}
     goal_family = getattr(goal, "family", "") or ""
     goal_key = getattr(goal, "key", "") or ""
     weeks_seen = sorted({week_key(p.date) for p in placements})
     n_weeks = max(1, weeks or len(weeks_seen))
+    time_caps = daily_time_cap_by_date or {}
+    day_types = day_type_by_date or {}
+
+    def _week_dates(wk: tuple[int, int]) -> list[_dt.date]:
+        """Return list of 7 dates for an ISO (year, week)."""
+        try:
+            # Monday of that ISO week
+            monday = _dt.date.fromisocalendar(wk[0], wk[1], 1)
+            return [monday + _dt.timedelta(days=i) for i in range(7)]
+        except Exception:
+            return []
+
+    def _feasible_open_slots_in_week(
+        wk: tuple[int, int], required_min: int,
+        exclude_forbidden_around_kind: Optional[str] = None,
+        long_run_dates: Optional[set] = None,
+    ) -> tuple[int, list[str]]:
+        """Compute how many feasible open training slots remain in a week,
+        along with human-readable reasons for those that were rejected.
+        A day counts as feasible when:
+          * daily_time_cap >= 30 min
+          * day_type NOT sick / vacation / annual_leave
+          * date is not already occupied by another main placement
+          * date is not adjacent to a Long Run (when caller passes a
+            forbidden-adjacency kind like strength_full_body).
+        """
+        placed_dates = {p.date for p in placements}
+        long_run_dates = long_run_dates or set()
+        feasible = 0
+        rejection_reasons: list[str] = []
+        for d in _week_dates(wk):
+            cap = int(time_caps.get(d, 0)) if time_caps else 60
+            dt = day_types.get(d.isoformat(), "unknown")
+            if dt in ("sick", "sickness", "sick_leave",
+                       "vacation", "annual_leave", "leave"):
+                rejection_reasons.append(f"{d.isoformat()}: {dt}")
+                continue
+            if cap < 30:
+                rejection_reasons.append(f"{d.isoformat()}: daily cap {cap}m < 30m")
+                continue
+            if d in placed_dates:
+                # already occupied — this is stacking territory. Only allow
+                # non-conflicting stack (e.g. mobility) but treat as taken
+                # for main-session feasibility.
+                rejection_reasons.append(f"{d.isoformat()}: already occupied")
+                continue
+            if exclude_forbidden_around_kind == "strength_full_body":
+                if d in long_run_dates:
+                    rejection_reasons.append(f"{d.isoformat()}: Long Run day")
+                    continue
+                if (d + _dt.timedelta(days=1)) in long_run_dates:
+                    rejection_reasons.append(
+                        f"{d.isoformat()}: day before Long Run")
+                    continue
+            feasible += 1
+        return feasible, rejection_reasons
 
     # Running-family: Long Run present each week + minimum 3 runs/week when
     # roster allows + strength survives.
@@ -315,27 +373,65 @@ def validate_programme(
                                         f"Week {wk}: only {wk_runs.get(wk, 0)} run(s) "
                                         f"(phase expects ≥ {run_min_per_week}). Coach "
                                         f"should confirm roster prevented a third run."))
-        # Strength survives when the phase quota lists strength with MIN >= 1
-        strength_min = sum(int(q.exposures_per_week[0]) for q in phase.quotas
-                            if q.kind in strength_kinds)
-        if strength_min >= 1:
+        # Iter 130h — Strength MIN protection + second-strength enforcement.
+        # For each week, compare required strength count against placed. If
+        # placed < required AND the week had a feasible open slot → ERROR;
+        # otherwise WARNING with the roster reason preserved.
+        strength_required_per_week = 0
+        for q in phase.quotas:
+            if q.kind in strength_kinds:
+                lo = q.exposures_per_week[0]
+                if q.priority.upper() == "KEY" and 0 < lo < 1:
+                    strength_required_per_week += 1
+                else:
+                    strength_required_per_week += int(lo)
+        long_run_dates_set = {p.date for p in placements if p.kind == "run_long"}
+        if strength_required_per_week >= 1:
             for wk in weeks_seen:
-                if wk_strength.get(wk, 0) == 0:
-                    issues.append(Issue("marathon_strength_dropped", "warning",
-                                        f"Week {wk}: no strength session placed — "
-                                        f"phase MIN={strength_min}. Coach should confirm "
-                                        f"a training day was not available."))
+                placed_n = wk_strength.get(wk, 0)
+                if placed_n >= strength_required_per_week:
+                    continue
+                # Something is missing. Was another slot feasible?
+                feasible, reasons = _feasible_open_slots_in_week(
+                    wk, required_min=strength_required_per_week - placed_n,
+                    exclude_forbidden_around_kind="strength_full_body",
+                    long_run_dates=long_run_dates_set,
+                )
+                deficit = strength_required_per_week - placed_n
+                reason_summary = ("; ".join(reasons[:5])
+                                   if reasons else "no roster reason recorded")
+                if placed_n == 0:
+                    code = "marathon_strength_dropped"
+                else:
+                    # 1 placed but 2 required → this is the "second strength"
+                    code = "marathon_second_strength_missing_when_feasible"
+                if feasible >= deficit:
+                    issues.append(Issue(code, "error",
+                        f"Week {wk}: {placed_n}/{strength_required_per_week} strength "
+                        f"placed but {feasible} feasible slot(s) remained "
+                        f"(rejections: {reason_summary})."))
+                else:
+                    issues.append(Issue(code, "warning",
+                        f"Week {wk}: {placed_n}/{strength_required_per_week} strength — "
+                        f"no feasible slot for the remaining session "
+                        f"({reason_summary})."))
         # Forbidden: heavy lower-body strength immediately before Long Run
-        long_run_dates = {p.date for p in placements if p.kind == "run_long"}
         for p in placements:
             if p.kind not in ("strength_lower", "strength_full_body"):
                 continue
             next_day = p.date + _dt.timedelta(days=1)
-            if next_day in long_run_dates:
+            if next_day in long_run_dates_set:
                 issues.append(Issue("strength_before_long_run", "warning",
                                     f"{p.kind}@{p.date} → Long Run@{next_day} "
                                     f"— avoid demanding lower-body work "
                                     f"immediately before the Long Run."))
+        # Forbidden: strength stacked on the same date as the Long Run
+        for p in placements:
+            if p.kind in ("strength_lower", "strength_full_body"):
+                if p.date in long_run_dates_set:
+                    issues.append(Issue("strength_stacked_on_long_run", "error",
+                                        f"{p.kind}@{p.date} is stacked with a Long Run — "
+                                        f"never stack strength with the Long Run."))
 
     # Fat-loss with running excluded: no run_* sessions + 3 strength/week
     # when roster allows + post-workout cardio present.
@@ -347,8 +443,9 @@ def validate_programme(
         )
         strength_kinds = {"strength_full_body", "strength_upper", "strength_lower",
                            "strength_push", "strength_pull", "strength_maintenance"}
-        cardio_kinds = {"aerobic_z2", "conditioning_mixed", "conditioning_intervals",
-                         "bike_easy", "walk_z2"}
+        standalone_cardio_kinds = {"aerobic_z2", "conditioning_mixed",
+                                    "conditioning_intervals",
+                                    "bike_easy", "walk_z2"}
         run_kinds = {"run_easy", "run_long", "run_tempo", "run_threshold",
                       "run_intervals", "run_vo2", "run_marathon_pace",
                       "run_race_pace", "run_strides", "run_recovery"}
@@ -360,15 +457,12 @@ def validate_programme(
                                         f"{p.kind}@{p.date} — client preference "
                                         f"excludes running. Cardio must resolve to "
                                         f"a low-impact modality."))
-        # 3 strength / week required when phase has strength MIN >= 2 or 3
+        # Iter 130h — 3 strength/week required + feasibility-aware severity.
         wk_strength: dict[tuple[int, int], int] = {}
-        wk_cardio: dict[tuple[int, int], int] = {}
         for p in placements:
             wk = week_key(p.date)
             if p.kind in strength_kinds:
                 wk_strength[wk] = wk_strength.get(wk, 0) + 1
-            if p.kind in cardio_kinds:
-                wk_cardio[wk] = wk_cardio.get(wk, 0) + 1
         strength_min = 0
         for q in phase.quotas:
             if q.kind in strength_kinds:
@@ -378,19 +472,43 @@ def validate_programme(
                 else:
                     strength_min += int(lo)
         for wk in weeks_seen:
-            if strength_min >= 2 and wk_strength.get(wk, 0) < strength_min:
-                issues.append(Issue("fatloss_strength_count_low", "warning",
-                                    f"Week {wk}: only {wk_strength.get(wk, 0)} "
-                                    f"strength session(s) (phase MIN={strength_min}). "
-                                    f"Coach should confirm roster prevented more."))
-            if wk_cardio.get(wk, 0) == 0 and strength_min >= 1:
-                issues.append(Issue("fatloss_cardio_missing", "warning",
-                                    f"Week {wk}: no cardio session placed. "
-                                    f"Post-workout cardio expected on lifting days."))
+            placed_n = wk_strength.get(wk, 0)
+            if strength_min >= 1 and placed_n < strength_min:
+                feasible, reasons = _feasible_open_slots_in_week(
+                    wk, required_min=strength_min - placed_n,
+                )
+                deficit = strength_min - placed_n
+                reason_summary = ("; ".join(reasons[:5])
+                                   if reasons else "no roster reason recorded")
+                sev = "error" if feasible >= deficit else "warning"
+                issues.append(Issue("fatloss_strength_count_low", sev,
+                    f"Week {wk}: only {placed_n} strength session(s) "
+                    f"(phase MIN={strength_min}). "
+                    f"Feasible remaining slots: {feasible}; "
+                    f"rejections: {reason_summary}."))
+        # Iter 130h — post-workout cardio on each strength session (inline)
+        if dislikes_running and session_specs:
+            for p in placements:
+                if p.kind not in strength_kinds:
+                    continue
+                spec = session_specs.get(p.exposure_id) or {}
+                pwc = (spec.get("payload") or {}).get("post_workout_cardio") or None
+                cap = int(time_caps.get(p.date, 0)) if time_caps else 0
+                if not pwc or int(pwc.get("duration_min") or 0) <= 0:
+                    # No cardio attached — decide severity based on the
+                    # daily cap. If the roster window is < 40 min, cardio
+                    # genuinely didn't fit → WARNING; otherwise ERROR.
+                    sev = "warning" if cap and cap < 40 else "error"
+                    issues.append(Issue("fatloss_cardio_missing", sev,
+                        f"{p.kind}@{p.date}: no post-workout cardio attached "
+                        f"(daily cap {cap}m). Non-run cardio component required."))
+                elif pwc.get("modality") == "run":
+                    issues.append(Issue("fatloss_cardio_running_leak", "error",
+                        f"{p.kind}@{p.date}: post-workout cardio resolved to "
+                        f"running despite client preference."))
 
-        # Full-body A/B/C identity check — sessions in the same week should
-        # NOT emit identical exercise anchor sets. Session specs indexed
-        # by exposure_id.
+        # Iter 130h — Full-body A/B/C identity check upgraded to ERROR.
+        # Sessions in the same week MUST NOT emit identical exercise sets.
         if session_specs:
             per_week_specs: dict[tuple[int, int], list[dict]] = {}
             for p in placements:
@@ -401,21 +519,23 @@ def validate_programme(
             for wk, specs in per_week_specs.items():
                 if len(specs) < 2:
                     continue
-                # Compare anchor exercise name-set across sessions.
+                # Compare anchor + full exercise-name signature across sessions.
                 anchor_sig = []
+                full_sig = []
                 for s in specs:
                     exs = ((s.get("payload") or {}).get("exercises") or [])
-                    sig = tuple(sorted(
+                    a_sig = tuple(sorted(
                         ex.get("name", "") for ex in exs
                         if str(ex.get("role", "")).startswith("primary_")
                     ))
-                    anchor_sig.append(sig)
-                if len(set(anchor_sig)) < len(anchor_sig):
-                    issues.append(Issue("fullbody_sessions_identical",
-                                        "warning",
-                                        f"Week {wk}: full-body sessions share the "
-                                        f"same anchor exercises. Full Body A/B/C "
-                                        f"rotation may not be engaging."))
+                    f_sig = tuple(sorted(ex.get("name", "") for ex in exs))
+                    anchor_sig.append(a_sig)
+                    full_sig.append(f_sig)
+                if len(set(anchor_sig)) < len(anchor_sig) or len(set(full_sig)) < len(full_sig):
+                    issues.append(Issue("fullbody_sessions_identical", "error",
+                        f"Week {wk}: full-body sessions share identical exercise "
+                        f"selections. Full Body A/B/C rotation broken — block "
+                        f"approval until distinct anchors/accessories are emitted."))
 
     # ---- Iter 130g — full-block progression check --------------------------
     # For each objective placed across ≥2 weeks, at least one of duration or

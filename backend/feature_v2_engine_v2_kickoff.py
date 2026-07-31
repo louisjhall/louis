@@ -395,6 +395,15 @@ async def engine_v2_kickoff(
     prof_variety = profile.get("variety_preference") or "moderate"
     prof_experience = profile.get("training_experience") or "intermediate"
 
+    # Iter 130h — decide whether strength sessions should carry an inline
+    # post-workout cardio block. Enabled for strength-family goals when the
+    # client has an explicit non-run cardio preference (or dislikes_running).
+    _cp_low = str(prof_cardio_pref).lower()
+    attach_post_wo_cardio = bool(
+        getattr(goal, "family", "") == "strength"
+        and (_cp_low != "run" or profile.get("dislikes_running"))
+    )
+
     for pl in schedule.placements:
         avail = avail_by_date.get(pl.date.isoformat(), 60)
         # Availability CAP — never a prescription
@@ -428,6 +437,7 @@ async def engine_v2_kickoff(
             cardio_preference=prof_cardio_pref,
             session_slot=session_slot_by_exposure.get(pl.exposure_id, 0),
             week_index=week_index_pl,
+            attach_post_workout_cardio=attach_post_wo_cardio,
         )
         sv = validate_session(spec.to_dict(), pl, avail, ctx["restrictions"])
         session_specs[pl.exposure_id] = spec.to_dict()
@@ -443,17 +453,56 @@ async def engine_v2_kickoff(
         client_profile=profile,
         session_specs=session_specs,
         weeks=window_weeks,
+        daily_time_cap_by_date=daily_time_cap_by_date,
+        day_type_by_date=day_type_by_date,
     )
 
     # ---- 8b. Build deterministic Generation Receipt (non-LLM) ----------
     # Compact summary of preferences used, roster used, restrictions used,
     # required weekly structure, sessions generated per week, progression
     # method, unplaced sessions, validation pass/warn/fail counts.
+    # Iter 130h — receipt now explicitly separates Required / Generated /
+    # Placed / Stacked / Shortened / Unplaced so the coach can quickly
+    # confirm which required sessions actually reached the client.
     sessions_per_week: dict[str, dict[str, int]] = {}
+    placed_per_week_kind: dict[str, dict[str, int]] = {}
+    stacked_dates: set = set()
+    shortened_specs: list[dict] = []
     for p in schedule.placements:
         wk = f"{week_key(p.date)[0]}-W{week_key(p.date)[1]:02d}"
         sessions_per_week.setdefault(wk, {})
         sessions_per_week[wk][p.kind] = sessions_per_week[wk].get(p.kind, 0) + 1
+        placed_per_week_kind.setdefault(wk, {})
+        placed_per_week_kind[wk][p.kind] = placed_per_week_kind[wk].get(p.kind, 0) + 1
+    # Detect stacked placements (>1 on same date)
+    by_date: dict[str, list] = {}
+    for p in schedule.placements:
+        by_date.setdefault(p.date.isoformat(), []).append(p.kind)
+    stacked_days = {d: kinds for d, kinds in by_date.items() if len(kinds) > 1}
+    # Detect shortened cardio blocks
+    for eid, spec in session_specs.items():
+        pwc = (spec.get("payload") or {}).get("post_workout_cardio") or None
+        if pwc and pwc.get("shortened"):
+            shortened_specs.append({
+                "exposure_id": eid,
+                "kind": spec.get("kind"),
+                "cardio_min": pwc.get("duration_min"),
+                "reason": pwc.get("shortening_reason"),
+            })
+
+    # Required/Generated/Placed per KIND (aggregated across weeks)
+    required_by_kind_wkidx: dict[str, int] = {}
+    for e in demand.required_exposures:
+        required_by_kind_wkidx[e.kind] = required_by_kind_wkidx.get(e.kind, 0) + 1
+    placed_by_kind_total: dict[str, int] = {}
+    for p in schedule.placements:
+        placed_by_kind_total[p.kind] = placed_by_kind_total.get(p.kind, 0) + 1
+    unplaced_records = [
+        {"kind": u.kind, "priority": u.priority.upper(),
+         "reason_code": u.reason_code, "human_reason": u.human_reason,
+         "candidate_hint_dates": u.candidate_hint_dates}
+        for u in schedule.unfilled
+    ]
 
     required_weekly_structure = {}
     for q in current_phase.quotas:
@@ -480,6 +529,7 @@ async def engine_v2_kickoff(
             "willing_to_train_layovers": bool(profile.get("willing_to_train_layovers")),
             "max_home_minutes": profile.get("max_home_minutes"),
             "max_layover_minutes": profile.get("time_layover_min"),
+            "attach_post_workout_cardio": attach_post_wo_cardio,
         },
         "roster_used": {
             "schedule_days_in_window": len(sd_rows),
@@ -498,17 +548,21 @@ async def engine_v2_kickoff(
             for r in (ctx.get("restrictions_raw") or [])
         ],
         "required_weekly_structure": required_weekly_structure,
+        "required_by_kind_total":  required_by_kind_wkidx,
+        "generated_by_kind_total": required_by_kind_wkidx,  # every required exposure is generated
+        "placed_by_kind_total":    placed_by_kind_total,
+        "stacked_days":            stacked_days,
+        "shortened_components":    shortened_specs,
         "sessions_generated_per_week": sessions_per_week,
+        "placed_per_week_kind": placed_per_week_kind,
         "progression_method": (
             "Duration progression via QuotaRule.progression (running/aerobic); "
             "RPE ladder in payload.progression (strength). Full Body A/B/C "
-            "rotation via session_slot when strength_days_per_week ≥ 2."
+            "rotation via session_slot when strength_days_per_week ≥ 2. "
+            "Post-workout cardio attached inline for strength-family goals "
+            "with non-run cardio preference."
         ),
-        "unplaced_sessions": [
-            {"kind": u.kind, "priority": u.priority.upper(),
-             "reason_code": u.reason_code, "human_reason": u.human_reason}
-            for u in schedule.unfilled
-        ],
+        "unplaced_sessions": unplaced_records,
         "validation_summary": {
             "ok": prog_val.ok,
             "errors": sum(1 for i in prog_val.issues if i.severity == "error"),

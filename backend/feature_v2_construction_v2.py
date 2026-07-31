@@ -844,6 +844,7 @@ def build_session_spec(
     locked_exercises: Optional[dict[str, str]] = None,
     session_slot: int = 0,
     week_index: int = 0,
+    attach_post_workout_cardio: bool = False,
 ) -> SessionSpec:
     """Return a SessionSpec for the given placement. On failure to produce
     content, sets coach_review_required=True on the SessionSpec with a reason;
@@ -1032,17 +1033,76 @@ def build_session_spec(
             f"{_RPE_LADDER[min(week_index, len(_RPE_LADDER)-1)]}"
             + (f" · {label_note}" if label_note else "")
         )
+
+        # Iter 130h — deterministic post-workout cardio component attached
+        # to strength sessions for clients whose weekly programme requires
+        # non-running cardio (fat_loss + dislikes_running / non-run pref).
+        # Cardio time is subtracted from the total session budget so daily
+        # cap is always respected. If time is tight, cardio is shortened
+        # (never removed) — a minimum 5 min floor is preserved so the
+        # component remains visible; if the session simply cannot fit
+        # 5 minutes, we mark the block with `shortened=True` + reason.
+        post_workout_cardio = None
+        if attach_post_workout_cardio and kind_effective == "strength_full_body":
+            _CARDIO_MODALITY_META = {
+                "elliptical":       ("Elliptical",       ["elliptical"],       "Steady stride, tall posture."),
+                "rower":            ("Rowing",           ["rower"],            "Legs-hips-arms drive, 24-28 spm."),
+                "recumbent_bike":   ("Recumbent Bike",   ["recumbent_bike"],   "Steady seated cadence 75-85 rpm."),
+                "bike":             ("Stationary Bike",  ["bike"],             "Steady cadence, moderate resistance."),
+                "walk":             ("Brisk Walk",       ["walking_shoes"],    "Purposeful pace, arms swinging."),
+                "incline_walk":     ("Incline Walk",     ["treadmill"],        "5-8% incline, 5.0-5.5 km/h."),
+            }
+            cp = (cardio_preference or "").lower()
+            if cp in _CARDIO_MODALITY_META:
+                cardio_title, cardio_equip, cardio_cue = _CARDIO_MODALITY_META[cp]
+                # Reserve 10-20 min for cardio out of the total budget.
+                # Strength template needs ≥25 min to be worthwhile; below
+                # that threshold, cardio is trimmed to what fits.
+                ideal_cardio = 15
+                min_strength_floor = 25
+                if duration_min >= min_strength_floor + ideal_cardio:
+                    cardio_min = ideal_cardio
+                    shortened = False
+                    reason = None
+                elif duration_min >= min_strength_floor + 5:
+                    cardio_min = duration_min - min_strength_floor
+                    shortened = True
+                    reason = (f"Session budget {duration_min}m only leaves "
+                              f"{cardio_min}m after protecting {min_strength_floor}m "
+                              f"strength core")
+                else:
+                    cardio_min = 5
+                    shortened = True
+                    reason = (f"Session budget {duration_min}m is tight; cardio "
+                              f"held to 5m floor and strength core reduced")
+                post_workout_cardio = {
+                    "modality":     cp,
+                    "title":        cardio_title,
+                    "duration_min": int(cardio_min),
+                    "hr_zone":      "z2",
+                    "equipment":    cardio_equip,
+                    "cue":          cardio_cue,
+                    "shortened":    shortened,
+                    "shortening_reason": reason,
+                }
+
+        payload_out = {
+            "exercises": exercises,
+            "session_label": session_label
+                              if kind_effective == "strength_full_body" else None,
+            "progression": progression_note,
+        }
+        if post_workout_cardio:
+            payload_out["post_workout_cardio"] = post_workout_cardio
+
         return SessionSpec(
             spec_kind="strength", kind=kind, duration_min=duration_min,
             intensity_target=intensity_target, environment=env,
             equipment_used=used_equip,
-            payload={
-                "exercises": exercises,
-                "session_label": session_label
-                                  if kind_effective == "strength_full_body" else None,
-                "progression": progression_note,
-            },
-            rationale=f"{kind.replace('_',' ').title()} — {phase_kind} phase",
+            payload=payload_out,
+            rationale=f"{kind.replace('_',' ').title()} — {phase_kind} phase"
+                     + (f" + {post_workout_cardio['title']} finisher"
+                         if post_workout_cardio else ""),
         )
 
     if modality == MODALITY_MOBILITY:

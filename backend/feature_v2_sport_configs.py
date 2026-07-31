@@ -1121,12 +1121,21 @@ _GOAL_ALIASES: dict[str, str] = {
     "cycling.endurance": "cycling.endurance",
     "muscle_gain": "strength.muscle_gain", "strength.muscle_gain": "strength.muscle_gain",
     "hypertrophy": "strength.muscle_gain",
+    "build_muscle": "strength.muscle_gain",
     "fat_loss": "strength.fat_loss", "strength.fat_loss": "strength.fat_loss",
     "recomp": "strength.fat_loss", "weight_loss": "strength.fat_loss",
+    "lose_fat": "strength.fat_loss", "lose_weight": "strength.fat_loss",
     "strength": "strength.general", "strength.general": "strength.general",
     "general_fitness": "general.fitness", "general.fitness": "general.fitness",
     "longevity": "general.fitness", "general.longevity": "general.fitness",
     "fitness": "general.fitness",
+    # Onboarding-side goals that don't have a dedicated SPORT_CONFIG yet all
+    # collapse to general.fitness so the engine can proceed. Coaches can
+    # refine per-client once the plan is live.
+    "health_markers": "general.fitness",
+    "aviation_consistency": "general.fitness",
+    "improve_energy": "general.fitness",
+    "return_to_training": "general.fitness",
 }
 
 

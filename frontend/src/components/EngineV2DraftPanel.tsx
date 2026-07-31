@@ -86,10 +86,24 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
   const kickoff = async () => {
     setBusy(true); setErr(null);
     try {
-      await api(`/v2/coach/clients/${clientId}/engine-v2/kickoff`,
+      const res = await api(`/v2/coach/clients/${clientId}/engine-v2/kickoff`,
         { method: "POST", body: { planning_window_weeks: 4 } });
+      // Iter 130i — kickoff can return 200 with {ok:false, code:'...'} when
+      // DNA is missing / roster empty / engine flag off. Previously the UI
+      // silently swallowed those responses and refreshed — user saw
+      // "nothing happened". Surface the code + message so the coach can act.
+      if (res && res.ok === false) {
+        const codeLine = res.code ? `[${res.code}] ` : "";
+        const msg = res.message || "Engine V2 kickoff returned ok:false";
+        setErr(codeLine + msg);
+        // Refresh state anyway so any partial changes propagate.
+        await load();
+        return;
+      }
       await load();
-    } catch (e: any) { setErr(e?.message || String(e)); }
+    } catch (e: any) {
+      setErr(e?.detail?.message || e?.message || String(e));
+    }
     finally { setBusy(false); }
   };
 

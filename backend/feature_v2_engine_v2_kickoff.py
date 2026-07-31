@@ -150,6 +150,12 @@ async def engine_v2_kickoff(
     touches Live workout_assignments / workout_implementations.
     """
     if not await _is_engine_v2_enabled(client_id):
+        # Iter 130i — trace flag-disabled kickoffs so Production coaches can
+        # tell why "Build Plan" was silently rejected.
+        logger.warning(
+            "engine_v2_kickoff EARLY-EXIT flag_disabled "
+            f"client_id={client_id} coach={coach.get('email')}"
+        )
         raise HTTPException(409, "Engine V2 not enabled for this client. "
                                   "Enable via /engine-v2/enable-for.")
 
@@ -196,6 +202,14 @@ async def engine_v2_kickoff(
         # frontend/backend goal-key mismatches (e.g. onboarding writes
         # "lose_fat" but backend only knows "fat_loss") are debuggable
         # in <30 seconds without spelunking through code.
+        # Iter 130i — also log this server-side so a Production coach
+        # pressing "Build Plan" leaves a trace when the response is 200
+        # {ok:false, code:'critical_dna_missing'}.
+        logger.warning(
+            "engine_v2_kickoff EARLY-EXIT critical_dna_missing "
+            f"client_id={client_id} coach={coach.get('email')} "
+            f"raw_candidates={[str(c) if c is not None else None for c in goal_candidates]}"
+        )
         return {
             "ok": False,
             "code": "critical_dna_missing",
@@ -264,6 +278,12 @@ async def engine_v2_kickoff(
 
     # If there are no schedule_days, we can't proceed — surface as validation error
     if not sd_rows:
+        # Iter 130i — log server-side for Production trace.
+        logger.warning(
+            "engine_v2_kickoff EARLY-EXIT no_schedule_days "
+            f"client_id={client_id} coach={coach.get('email')} "
+            f"window={window_start.isoformat()}..{window_end.isoformat()}"
+        )
         return {
             "ok": False,
             "code": "no_schedule_days",

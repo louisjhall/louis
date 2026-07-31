@@ -905,13 +905,49 @@ async def _bump_usage_counts() -> None:
                 # them. Each alt is treated as an "upcoming" occurrence but
                 # not a "tomorrow" one (since the client may never pick it),
                 # which keeps HIGH-priority tasks focused on primary picks.
+                #
+                # Iter 130d — if an alt name has no library row at all, we
+                # auto-create a `draft` exercises_v2 stub so it enters the
+                # media queue immediately (previously these were silently
+                # skipped by name_to_id, leaving Louis blind to the gap).
+                # Also mirror the alias fuzzy-match layer the primary loop
+                # uses ("dumbbell rdl" → "dumbbell romanian deadlift").
                 for alt_name in (ex.get("subs_allowed") or []):
-                    an = (alt_name or "").strip().lower()
+                    an = (alt_name or "").strip()
                     if not an:
                         continue
-                    aid = name_to_id.get(an)
+                    an_lc = an.lower()
+                    aid = name_to_id.get(an_lc) or name_to_id.get(_ALIASES.get(an_lc, ""))
                     if not aid:
-                        continue
+                        # Try fuzzy contains-match against the library
+                        for canon, cid in name_to_id.items():
+                            if an_lc == canon or an_lc in canon or canon in an_lc:
+                                aid = cid
+                                break
+                    if not aid:
+                        # Auto-create a draft stub so this alt shows up in
+                        # the media queue as "needs_review". Non-destructive:
+                        # if a proper library entry is added later, the coach
+                        # can archive this stub.
+                        aid = new_id()
+                        try:
+                            await db.exercises_v2.insert_one({
+                                "id": aid,
+                                "exercise_name": an,
+                                "status": "Draft",
+                                "approval_status": "needs_review",
+                                "auto_created_from": "subs_allowed",
+                                "auto_created_at": now_iso(),
+                                "auto_created_for_exposure_id": p.get("exposure_id"),
+                                "content_status": {"images": False, "video": False, "coaching_points": False},
+                                "used_in_tomorrow_workouts_count": 0,
+                                "used_in_upcoming_workouts_count": 0,
+                                "first_scheduled_date": None,
+                            })
+                            name_to_id[an_lc] = aid
+                        except Exception:
+                            logger.exception("auto-create alt stub failed for %r", an)
+                            continue
                     upcoming_counts[aid] = upcoming_counts.get(aid, 0) + 1
                     prev = first_seen.get(aid)
                     if not prev or (pdate and pdate < prev):

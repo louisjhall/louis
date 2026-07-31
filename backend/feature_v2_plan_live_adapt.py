@@ -336,3 +336,66 @@ async def client_live_implementation_for_date(
         {"client_id": user["id"], "date": date, "is_active": True}, {"_id": 0},
     )
     return {"date": date, "implementation": row}
+
+
+# ---------------------------------------------------------------------------
+# Iter 130b — Revert Change Setup.
+# ---------------------------------------------------------------------------
+# Deactivate the active `plan_live_v2_implementations` row for a placement
+# so the client / coach sees the original programme setup again. The
+# original row is preserved (`is_active=false, superseded_by='revert'`) so
+# the audit trail is intact. No spec mutation, no regeneration — just flips
+# a boolean.
+
+class RevertChangeSetupBody(BaseModel):
+    date: str = Field(..., description="ISO date whose Change Setup override should be reverted.")
+
+
+async def _apply_revert_change_setup(*, user: dict, body: RevertChangeSetupBody, actor: str) -> dict:
+    user_id = user["id"]
+    # Count what's active before we flip anything, so we can tell the caller
+    # whether the revert did anything (idempotent, no throw).
+    active_before = await db.plan_live_v2_implementations.count_documents(
+        {"client_id": user_id, "date": body.date, "is_active": True},
+    )
+    if active_before == 0:
+        return {
+            "ok": True,
+            "date": body.date,
+            "reverted_count": 0,
+            "message": "No active Change Setup override on this date — already at original setup.",
+        }
+    res = await db.plan_live_v2_implementations.update_many(
+        {"client_id": user_id, "date": body.date, "is_active": True},
+        {"$set": {
+            "is_active": False,
+            "superseded_at": _now(),
+            "superseded_by": f"revert_{actor}",
+        }},
+    )
+    return {
+        "ok": True,
+        "date": body.date,
+        "reverted_count": int(res.modified_count),
+        "actor": actor,
+        "message": f"Reverted to original setup for {body.date}.",
+    }
+
+
+@api.post("/v2/client/plan/adapt-live/revert")
+async def client_revert_adapt_live(
+    body: RevertChangeSetupBody,
+    user: dict = Depends(current_user),
+) -> dict:
+    return await _apply_revert_change_setup(user=user, body=body, actor="client")
+
+
+@api.post("/v2/coach/clients/{client_id}/plan/adapt-live/revert")
+async def coach_revert_adapt_live(
+    client_id: str, body: RevertChangeSetupBody,
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    client = await db.users.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Client not found.")
+    return await _apply_revert_change_setup(user=client, body=body, actor="coach")

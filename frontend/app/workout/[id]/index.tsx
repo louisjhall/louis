@@ -139,6 +139,46 @@ export default function WorkoutDetail() {
     save({ day_load: next });
   };
   const [rateOpen, setRateOpen] = useState(false);
+  // Iter 130b — Revert Change Setup. Deactivates the active
+  // plan_live_v2_implementations override for this workout's date so the
+  // session returns to the originally-scheduled setup. Uses a lightweight
+  // native confirm because the change is easily reversible (client can
+  // press Change Setup again).
+  const [reverting, setReverting] = useState(false);
+  const revertAdaptation = async () => {
+    if (!w?.date || reverting) return;
+    // Cross-platform confirm — mirrors ClientAdminDrawer's flow to stay
+    // consistent across iOS / Android / Web.
+    const proceed = await new Promise<boolean>((resolve) => {
+      if (typeof window !== "undefined" && typeof (window as any).confirm === "function") {
+        resolve((window as any).confirm("Revert this workout to the original setup?"));
+      } else {
+        const { Alert } = require("react-native");
+        Alert.alert(
+          "Revert Change Setup",
+          "Return this workout to its originally-planned environment & equipment?",
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+            { text: "Revert", style: "destructive", onPress: () => resolve(true) },
+          ],
+        );
+      }
+    });
+    if (!proceed) return;
+    setReverting(true);
+    try {
+      const endpoint = isCoach
+        ? `/v2/coach/clients/${w.client_id}/plan/adapt-live/revert`
+        : `/v2/client/plan/adapt-live/revert`;
+      await api(endpoint, { method: "POST", body: { date: w.date } });
+      await load();
+    } catch (e: any) {
+      const { Alert } = require("react-native");
+      Alert.alert("Couldn't revert", e?.message || "Please try again.");
+    } finally {
+      setReverting(false);
+    }
+  };
   const complete = async () => {
     // Iter 101 — quick post-workout rating sheet before firing /complete.
     setRateOpen(true);
@@ -251,6 +291,16 @@ export default function WorkoutDetail() {
                 ].filter(Boolean).join(" · ") || "Bodyweight"}
               </Text>
             </View>
+            <Pressable
+              testID="workout-revert-adaptation"
+              onPress={revertAdaptation}
+              disabled={reverting}
+              style={styles.revertBtn}
+              hitSlop={6}
+            >
+              <Ionicons name={reverting ? "hourglass" : "arrow-undo"} size={12} color={theme.color.brand} />
+              <Text style={styles.revertBtnT}>{reverting ? "…" : "REVERT"}</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -726,6 +776,19 @@ const styles = StyleSheet.create({
   },
   adaptedText: {
     color: theme.color.text, fontSize: 12, fontWeight: "700", marginTop: 1,
+  },
+  // Iter 130b — small "REVERT" chip sitting on the right of the ADAPTED
+  // badge. Uses the brand palette so it reads as a peer action, not a
+  // destructive one (the underlying data isn't deleted).
+  revertBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  revertBtnT: {
+    color: theme.color.brand, fontSize: 9, letterSpacing: 1.4, fontWeight: "900",
   },
   // Iter 102 — Layover context block
   layoverCtx: {

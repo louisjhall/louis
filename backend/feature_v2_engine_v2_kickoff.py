@@ -455,6 +455,8 @@ async def _engine_v2_kickoff_impl(
         goal_key=goal_key,
         phase_spec=current_phase,
         week_start_dates=week_starts,
+        window_start=window_start,
+        window_end=window_end,
     )
 
     # ---- 6. WHEN — schedule -------------------------------------------

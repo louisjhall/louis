@@ -271,12 +271,21 @@ def build_demand(
     phase_spec: PhaseSpec,
     week_start_dates: list[_dt.date],
     progression_state: Optional[dict] = None,
+    window_start: Optional[_dt.date] = None,
+    window_end: Optional[_dt.date] = None,
 ) -> DemandPlan:
     """Compute the set of required training exposures for the given planning
     window (one entry per week * per quota).
 
     `week_start_dates` — list of Monday dates for each week in the window,
     in order. Determines how many exposures to schedule per quota.
+
+    `window_start` / `window_end` (optional, Iter 131c) — the actual planning
+    window bounds. When provided, partial opening / closing weeks (fewer than
+    5 in-window days) do NOT generate KEY or IMPORTANT-non-skippable
+    exposures — this prevents a 1-2 day partial week from being asked to
+    satisfy a full weekly quota. SUPPORTING and OPTIONAL exposures still
+    generate but are proportionally scaled down.
     """
     cfg = get_goal_config(goal_key)
     quotas = list(phase_spec.quotas)
@@ -550,12 +559,62 @@ def build_demand(
     if dropped_key_anchors:
         freq_derivation["priority_clip"]["key_anchor_rescues"] = dropped_key_anchors
 
+    # ------ Iter 131c — partial-week detection ---------------------------
+    #   A week is "partial" if fewer than 5 of its 7 days fall inside the
+    #   planning window. In a partial week we do NOT emit compulsory
+    #   (KEY / IMPORTANT non-skippable) exposures — those would otherwise
+    #   produce validator errors and unfillable blockers that no amount of
+    #   scheduling can satisfy.
+    FULL_WEEK_MIN_DAYS = 5
+
+    def _usable_days_in_week(wk_start: _dt.date) -> int:
+        if window_start is None and window_end is None:
+            return 7  # backward-compat: assume full weeks when bounds absent
+        count = 0
+        for _i in range(7):
+            _d = wk_start + _dt.timedelta(days=_i)
+            if window_start is not None and _d < window_start:
+                continue
+            if window_end is not None and _d > window_end:
+                continue
+            count += 1
+        return count
+
+    partial_week_notes: list[str] = []
+
     for week_index, week_start in enumerate(week_start_dates):
+        usable_days = _usable_days_in_week(week_start)
+        is_partial = usable_days < FULL_WEEK_MIN_DAYS
+        if is_partial:
+            partial_week_notes.append(
+                f"partial_week: {week_start.isoformat()} — "
+                f"{usable_days} of 7 days in window "
+                f"(compulsory quotas waived; supporting proportionally scaled)"
+            )
         for q in quotas:
             _lo, _target, _hi = q.exposures_per_week
             n_this_week = per_quota_counts_by_kind.get(q.kind, 0)
             if n_this_week <= 0:
                 continue
+
+            # Iter 131c partial-week gate --------------------------------
+            if is_partial:
+                is_compulsory = (
+                    q.priority.upper() == "KEY"
+                    or (q.priority.upper() == "IMPORTANT" and not q.can_skip_if_missed)
+                )
+                if is_compulsory:
+                    # Skip compulsory quotas in partial weeks entirely.
+                    # No exposure generated → validator cannot mark it unfilled.
+                    continue
+                # SUPPORTING / OPTIONAL: scale down proportionally to the
+                # usable window. E.g. a 2-day partial week gets ~2/7 of the
+                # target support sessions. Always keep at least 0 (may drop
+                # a quota completely if it rounds down).
+                scaled = int(round(n_this_week * usable_days / 7.0))
+                n_this_week = max(0, min(n_this_week, scaled))
+                if n_this_week <= 0:
+                    continue
 
             # Stable objective_id per (client, goal, phase, quota_kind)
             obj_id = _stable_id(client_id, cfg.key, phase_spec.phase_kind, q.kind)
@@ -624,7 +683,7 @@ def build_demand(
     return DemandPlan(
         required_exposures=exposures,
         frequency_caps=caps,
-        notes=notes,
+        notes=notes + partial_week_notes,
         goal_key=cfg.key,
         phase_kind=phase_spec.phase_kind,
         weeks=len(week_start_dates),
@@ -924,36 +983,74 @@ def schedule_demand(
                 c_target_start + _dt.timedelta(days=6)
             )
 
-            # Candidate placements to evict:
-            #  * Only SUPPORTING or OPTIONAL priority (never evict another
-            #    compulsory exposure).
-            #  * Placement date sits inside the compulsory exposure's TARGET
-            #    week AND its allowed window.
-            #  * The placement must be the SOLE placement on that date
-            #    (i.e. it opened a training date). Mobility stacked onto
-            #    an existing primary session is not sole-on-date and is
-            #    therefore skipped — evicting it wouldn't free a date.
-            candidates = []
+            # Candidate DATES to reclaim (Iter 131c — bundle-aware):
+            #  * Every placement on the date must be SUPPORTING or OPTIONAL
+            #    (never evict another compulsory placement).
+            #  * At least one placement exists on that date.
+            #  * Date sits inside the compulsory exposure's TARGET week AND
+            #    its allowed window.
+            # We evict the WHOLE bundle atomically, retry the compulsory
+            # exposure on the cleared date, and — if the retry succeeds —
+            # try to re-add any Mobility placement from the evicted bundle
+            # if it still fits within the daily time cap. Non-mobility
+            # lower-priority sessions from the bundle are moved to the
+            # unfilled list (the coach can decide whether to re-add later).
+            date_bundles: dict[_dt.date, list[Placement]] = {}
             for p in plan.placements:
                 p_pri = (p.priority or "").upper()
                 if p_pri not in ("SUPPORTING", "OPTIONAL"):
+                    # Compulsory placement on this date → date is off-limits.
+                    date_bundles.pop(p.date, None)
+                    date_bundles[p.date] = []  # sentinel: has a compulsory
                     continue
                 if not (c_target_start <= p.date <= c_target_end):
                     continue
                 if not (c_allowed_start <= p.date <= c_allowed_end):
                     continue
-                if sum(1 for q in plan.placements if q.date == p.date) != 1:
+                if date_bundles.get(p.date) is None:
+                    date_bundles[p.date] = []
+                # Only append if the sentinel hasn't already been set to empty
+                # (meaning this date contains a compulsory placement).
+                if p.date not in date_bundles or date_bundles[p.date] != []:
+                    date_bundles.setdefault(p.date, []).append(p)
+                # Note: sentinel-empty case above stays empty (compulsory).
+            # Filter: keep only dates whose bundle is non-empty AND we haven't
+            # blacklisted (blacklist = we set to empty list because of a
+            # compulsory placement seen on that date).
+            candidates: list[tuple[_dt.date, list[Placement]]] = []
+            # Recompute cleanly to avoid the sentinel/append race above:
+            date_bundles = {}
+            date_has_compulsory: set[_dt.date] = set()
+            for p in plan.placements:
+                p_pri = (p.priority or "").upper()
+                if p_pri not in ("SUPPORTING", "OPTIONAL"):
+                    date_has_compulsory.add(p.date)
                     continue
-                ctx = next((c for c in day_contexts if c.date == p.date), None)
+                if not (c_target_start <= p.date <= c_target_end):
+                    continue
+                if not (c_allowed_start <= p.date <= c_allowed_end):
+                    continue
+                date_bundles.setdefault(p.date, []).append(p)
+            for d, bundle in date_bundles.items():
+                if d in date_has_compulsory:
+                    continue  # date shared with a compulsory placement
+                if not bundle:
+                    continue
+                ctx = next((c for c in day_contexts if c.date == d), None)
                 if ctx is None:
                     continue
-                candidates.append((p, ctx))
+                candidates.append((d, bundle))
 
             rescued = False
-            for evicted_p, ctx in candidates:
-                # Evict the lower-priority placement.
-                plan.placements.remove(evicted_p)
-                # Retry the compulsory exposure on this date.
+            for evict_date, bundle in candidates:
+                ctx = next((c for c in day_contexts if c.date == evict_date), None)
+                if ctx is None:
+                    continue
+                # Evict entire bundle atomically.
+                for evicted_p in bundle:
+                    if evicted_p in plan.placements:
+                        plan.placements.remove(evicted_p)
+                # Retry compulsory on cleared date.
                 check = validate_placement(
                     kind=comp_exp.kind, date=ctx.date, plan=plan,
                     goal=goal, phase=phase,
@@ -963,22 +1060,53 @@ def schedule_demand(
                     target_duration_min=comp_exp.target_duration_min,
                     daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
                 )
-                if check.ok:
-                    apply_placement(
-                        plan,
-                        exposure_id=comp_exp.exposure_id,
-                        objective_id=comp_exp.objective_id,
-                        kind=comp_exp.kind,
-                        date=ctx.date,
-                        priority=comp_exp.priority,
-                        intensity_target=comp_exp.intensity_target,
-                        target_duration_min=comp_exp.target_duration_min,
+                if not check.ok:
+                    # Restore bundle exactly if compulsory still fails.
+                    for evicted_p in bundle:
+                        plan.placements.append(evicted_p)
+                    continue
+                # Compulsory validates — apply it.
+                apply_placement(
+                    plan,
+                    exposure_id=comp_exp.exposure_id,
+                    objective_id=comp_exp.objective_id,
+                    kind=comp_exp.kind,
+                    date=ctx.date,
+                    priority=comp_exp.priority,
+                    intensity_target=comp_exp.intensity_target,
+                    target_duration_min=comp_exp.target_duration_min,
+                )
+                # Try to re-add Mobility from the evicted bundle if it still
+                # fits under the daily cap after the compulsory session lands.
+                # Non-mobility lower-priority items (Aerobic Z2, run_easy,
+                # etc.) are moved to unfilled — the coach can choose to
+                # re-place them elsewhere.
+                readded_mobility_ids: set[str] = set()
+                for evicted_p in bundle:
+                    if evicted_p.kind != "mobility":
+                        continue
+                    mob_check = validate_placement(
+                        kind=evicted_p.kind, date=ctx.date, plan=plan,
+                        goal=goal, phase=phase,
+                        day_ctx_burden=ctx.duty_burden_score,
+                        day_ctx_opportunity=ctx.training_opportunity,
+                        priority=evicted_p.priority,
+                        target_duration_min=evicted_p.target_duration_min,
+                        daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
                     )
-                    validation_notes.append(
-                        f"compulsory-rescue: swapped {evicted_p.priority} "
-                        f"{evicted_p.kind} on {ctx.date} for {comp_exp.priority} "
-                        f"{comp_exp.kind} (exposure {comp_exp.exposure_id})"
-                    )
+                    if mob_check.ok:
+                        plan.placements.append(evicted_p)
+                        readded_mobility_ids.add(evicted_p.exposure_id)
+
+                validation_notes.append(
+                    f"compulsory-rescue: cleared {len(bundle)} lower-priority "
+                    f"session(s) on {ctx.date} for {comp_exp.priority} "
+                    f"{comp_exp.kind}. Re-added mobility: "
+                    f"{len(readded_mobility_ids)}."
+                )
+                for evicted_p in bundle:
+                    if evicted_p.exposure_id in readded_mobility_ids:
+                        continue
                     remaining_unfilled.append(Unfilled(
                         exposure_id=evicted_p.exposure_id,
                         objective_id=evicted_p.objective_id,
@@ -988,14 +1116,12 @@ def schedule_demand(
                         human_reason=(
                             f"{evicted_p.priority} {evicted_p.kind} on {ctx.date} "
                             f"was evicted to make room for compulsory "
-                            f"{comp_exp.priority} {comp_exp.kind} (Iter 131a rescue)"
+                            f"{comp_exp.priority} {comp_exp.kind} (Iter 131c bundle rescue)"
                         ),
                         candidate_hint_dates=[],
                     ))
-                    rescued = True
-                    break
-                # Restore exactly if compulsory still fails.
-                plan.placements.append(evicted_p)
+                rescued = True
+                break
             if not rescued:
                 remaining_unfilled.append(uf)
         unfilled = remaining_unfilled

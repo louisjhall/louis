@@ -83,26 +83,89 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
     exc?.goal_config_status?.status !== "MISSING" &&
     (exc?.goal_config_status?.status === "COMPLETE" || ackPartial);
 
+  // Iter 131b — visible rebuild banner (info / success / error) so coaches
+  // always know what state the rebuild is in. Errors are dismissible; success
+  // banners auto-dismiss after 30s.
+  const [banner, setBanner] = useState<
+    | { kind: "info" | "success" | "error"; message: string; details?: string }
+    | null
+  >(null);
+
   const kickoff = async () => {
+    if (busy) return; // extra client-side guard — button is disabled anyway
     setBusy(true); setErr(null);
+    setBanner({
+      kind: "info",
+      message: "Rebuilding draft…",
+      details: "This normally takes 10–30 seconds.",
+    });
+    const t0 = Date.now();
+    console.info("engine_v2_kickoff: start", { clientId });
     try {
-      const res = await api(`/v2/coach/clients/${clientId}/engine-v2/kickoff`,
+      const res = await api<any>(`/v2/coach/clients/${clientId}/engine-v2/kickoff`,
         { method: "POST", body: { planning_window_weeks: 4 } });
+
+      // Iter 131b — server may respond {ok:true, in_flight:true} when a
+      // rebuild is already running for this client (from a concurrent tab
+      // or a double-click). Show an info banner, do NOT overwrite state.
+      if (res && res.in_flight) {
+        setBanner({
+          kind: "info",
+          message: "A rebuild is already running.",
+          details: res.message || `Started ${Math.round(res.age_seconds || 0)}s ago. Please wait.`,
+        });
+        console.info("engine_v2_kickoff: in_flight", res);
+        return;
+      }
+
       // Iter 130i — kickoff can return 200 with {ok:false, code:'...'} when
-      // DNA is missing / roster empty / engine flag off. Previously the UI
-      // silently swallowed those responses and refreshed — user saw
-      // "nothing happened". Surface the code + message so the coach can act.
+      // DNA is missing / roster empty / engine flag off. Surface the code +
+      // message so the coach can act.
       if (res && res.ok === false) {
         const codeLine = res.code ? `[${res.code}] ` : "";
         const msg = res.message || "Engine V2 kickoff returned ok:false";
+        setBanner({ kind: "error", message: codeLine + msg });
         setErr(codeLine + msg);
-        // Refresh state anyway so any partial changes propagate.
+        console.info("engine_v2_kickoff: ok=false", res);
         await load();
         return;
       }
+
+      // Success — refresh + show completion banner with counts.
       await load();
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      const placements = res?.counts?.placements ?? "?";
+      const unfilled = res?.counts?.unfilled ?? 0;
+      const errors = res?.counts?.validation_errors ?? 0;
+      // Blocking issues surfaced to the coach = validation errors +
+      // unfilled compulsory exposures. Use the max of unfilled + errors as
+      // a rough proxy; the coach's `Review issues` drawer shows the exact
+      // list.
+      const blocking = Math.max(unfilled, errors);
+      const now = new Date();
+      const hhmmss = now.toTimeString().slice(0, 8);
+      setBanner({
+        kind: "success",
+        message: "Draft rebuilt successfully.",
+        details:
+          `Completed at ${hhmmss} · ${placements} session` +
+          (placements === 1 ? "" : "s") +
+          ` created · ${blocking} blocking issue` +
+          (blocking === 1 ? "" : "s") +
+          ` remaining · rebuild took ${elapsed}s`,
+      });
+      console.info("engine_v2_kickoff: done", {
+        clientId, placements, unfilled, errors, elapsed
+      });
+      // Auto-dismiss success after 30s.
+      setTimeout(() => {
+        setBanner((b) => (b && b.kind === "success" ? null : b));
+      }, 30_000);
     } catch (e: any) {
-      setErr(e?.detail?.message || e?.message || String(e));
+      const msg = e?.detail?.message || e?.message || String(e);
+      setBanner({ kind: "error", message: msg });
+      setErr(msg);
+      console.warn("engine_v2_kickoff: throw", e);
     }
     finally { setBusy(false); }
   };
@@ -285,11 +348,45 @@ export default function EngineV2DraftPanel({ clientId, onPublished }: Props) {
                 <Pressable style={styles.actionBtn} onPress={() => setShowExceptions(true)}>
                   <Text style={styles.actionBtnText}>Review issues</Text>
                 </Pressable>
-                <Pressable style={styles.actionBtn} onPress={kickoff} disabled={busy} testID="v2-rebuild">
-                  <Text style={styles.actionBtnText}>{busy ? "…" : "Rebuild draft"}</Text>
+                <Pressable
+                  style={[styles.actionBtn, busy && styles.actionBtnBusy]}
+                  onPress={kickoff} disabled={busy} testID="v2-rebuild">
+                  <Text style={styles.actionBtnText}>
+                    {busy ? "Rebuilding…" : "Rebuild draft"}
+                  </Text>
                 </Pressable>
               </View>
-              {err ? <Text style={styles.err}>{err}</Text> : null}
+              {banner ? (
+                <View
+                  testID="v2-rebuild-banner"
+                  style={[
+                    styles.banner,
+                    banner.kind === "info"    && styles.bannerInfo,
+                    banner.kind === "success" && styles.bannerSuccess,
+                    banner.kind === "error"   && styles.bannerError,
+                  ]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.bannerTitle}>
+                      {banner.kind === "info"    ? "🔄  " : ""}
+                      {banner.kind === "success" ? "✓  "  : ""}
+                      {banner.kind === "error"   ? "⚠  "  : ""}
+                      {banner.message}
+                    </Text>
+                    {banner.details ? (
+                      <Text style={styles.bannerDetails}>{banner.details}</Text>
+                    ) : null}
+                  </View>
+                  {banner.kind !== "info" ? (
+                    <Pressable
+                      onPress={() => setBanner(null)}
+                      hitSlop={10}
+                      testID="v2-rebuild-banner-dismiss">
+                      <Text style={styles.bannerClose}>×</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+              {err && !banner ? <Text style={styles.err}>{err}</Text> : null}
             </>
           ) : hasRoster ? (
             <>
@@ -504,9 +601,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
     borderWidth: 1, borderColor: theme.color.border, backgroundColor: "#00000030",
   },
+  actionBtnBusy: { opacity: 0.5 },
   actionBtnText: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
   expandBody: { color: theme.color.textDim, fontSize: 12, marginBottom: 4 },
   err: { color: theme.color.red, fontSize: 12, marginTop: 6 },
+
+  /* Rebuild banner (Iter 131b) — visible progress + result feedback */
+  banner: {
+    flexDirection: "row", alignItems: "flex-start",
+    padding: 10, borderRadius: 8, marginTop: 8, borderWidth: 1, gap: 8,
+  },
+  bannerInfo: {
+    backgroundColor: "#4b3d0c", borderColor: theme.color.amber,
+  },
+  bannerSuccess: {
+    backgroundColor: "#0f3d1a", borderColor: theme.color.green,
+  },
+  bannerError: {
+    backgroundColor: "#3d0f13", borderColor: theme.color.red,
+  },
+  bannerTitle: { color: theme.color.textHi, fontSize: 13, fontWeight: "700" },
+  bannerDetails: { color: theme.color.textMuted, fontSize: 12, marginTop: 2 },
+  bannerClose: {
+    color: theme.color.textHi, fontSize: 20, paddingHorizontal: 4, marginTop: -4,
+  },
 
   /* Modal shared */
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },

@@ -36,6 +36,7 @@ from typing import Any, Optional
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
+from pymongo.errors import DuplicateKeyError
 
 from server import api, db, require_role, new_id, now_iso, logger
 
@@ -148,16 +149,126 @@ async def engine_v2_kickoff(
 
     Writes results to plan_drafts_v2 + associated shadow collections. Never
     touches Live workout_assignments / workout_implementations.
+
+    Iter 131b — this endpoint is protected by a per-client in-flight lock in
+    `db.engine_v2_kickoff_locks`. If a second request arrives while a
+    rebuild is still running for the same client, the second call returns
+    a lightweight `{ok:true, in_flight:true, ...}` response so the UI can
+    show a "rebuild already running" message instead of queueing duplicate
+    expensive work. Stale locks older than 180s are considered abandoned
+    and force-cleared.
     """
     if not await _is_engine_v2_enabled(client_id):
-        # Iter 130i — trace flag-disabled kickoffs so Production coaches can
-        # tell why "Build Plan" was silently rejected.
         logger.warning(
             "engine_v2_kickoff EARLY-EXIT flag_disabled "
             f"client_id={client_id} coach={coach.get('email')}"
         )
         raise HTTPException(409, "Engine V2 not enabled for this client. "
                                   "Enable via /engine-v2/enable-for.")
+
+    # ---- Iter 131b — in-flight lock (per client) ---------------------------
+    lock_id = f"kickoff:{client_id}"
+    now = now_iso()
+    lock_acquired = False
+    try:
+        await db.engine_v2_kickoff_locks.insert_one({
+            "_id": lock_id,
+            "client_id": client_id,
+            "status": "running",
+            "started_at": now,
+            "coach_id": coach.get("id"),
+            "coach_email": coach.get("email"),
+        })
+        lock_acquired = True
+    except DuplicateKeyError:
+        existing = await db.engine_v2_kickoff_locks.find_one({"_id": lock_id})
+        started = str((existing or {}).get("started_at") or "")
+        age_s = 999.0
+        try:
+            # Compare ISO strings — approximate but sufficient for staleness
+            from datetime import datetime, timezone
+            t0 = datetime.fromisoformat(started.replace("Z", "+00:00"))
+            if t0.tzinfo is None:
+                t0 = t0.replace(tzinfo=timezone.utc)
+            age_s = (datetime.now(timezone.utc) - t0).total_seconds()
+        except Exception:
+            pass
+        if age_s < 180:
+            # Fresh in-flight — decline the duplicate.
+            logger.info(
+                "engine_v2_kickoff IN-FLIGHT — refusing duplicate "
+                f"client_id={client_id} coach={coach.get('email')} "
+                f"age_s={round(age_s,1)}"
+            )
+            return {
+                "ok": True,
+                "in_flight": True,
+                "status": "rebuild_already_running",
+                "started_at": started,
+                "age_seconds": round(age_s, 1),
+                "message": (
+                    f"A rebuild for this client is already in progress "
+                    f"(started {int(age_s)}s ago). Please wait for it to "
+                    f"finish before pressing Rebuild draft again."
+                ),
+            }
+        # Stale (>180s) — force-clear and re-acquire.
+        logger.warning(
+            "engine_v2_kickoff STALE-LOCK cleared "
+            f"client_id={client_id} age_s={round(age_s,1)}"
+        )
+        await db.engine_v2_kickoff_locks.delete_one({"_id": lock_id})
+        await db.engine_v2_kickoff_locks.insert_one({
+            "_id": lock_id,
+            "client_id": client_id,
+            "status": "running",
+            "started_at": now,
+            "coach_id": coach.get("id"),
+            "coach_email": coach.get("email"),
+        })
+        lock_acquired = True
+
+    logger.info(
+        "engine_v2_kickoff START "
+        f"client_id={client_id} coach={coach.get('email')} "
+        f"weeks={body.planning_window_weeks}"
+    )
+
+    try:
+        result = await _engine_v2_kickoff_impl(client_id, body, coach)
+        logger.info(
+            "engine_v2_kickoff DONE "
+            f"client_id={client_id} coach={coach.get('email')} "
+            f"draft_id={result.get('draft_id')} "
+            f"ok={result.get('ok')} "
+            f"placements={result.get('counts', {}).get('placements')} "
+            f"unfilled={result.get('counts', {}).get('unfilled')} "
+            f"errors={result.get('counts', {}).get('validation_errors')} "
+            f"took_s={result.get('took_seconds')}"
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "engine_v2_kickoff FAIL "
+            f"client_id={client_id} coach={coach.get('email')} err={e!s}"
+        )
+        raise
+    finally:
+        if lock_acquired:
+            try:
+                await db.engine_v2_kickoff_locks.delete_one({"_id": lock_id})
+            except Exception:
+                pass
+
+
+async def _engine_v2_kickoff_impl(
+    client_id: str,
+    body: "EngineV2KickoffBody",
+    coach: dict,
+) -> dict:
+    """Actual kickoff pipeline — separated so the lock wrapper stays thin."""
 
     t0 = time.time()
 

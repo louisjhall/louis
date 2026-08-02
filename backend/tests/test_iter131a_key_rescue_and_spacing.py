@@ -37,7 +37,7 @@ from feature_v2_sequencing import (  # noqa: E402
     Placement, PlacementPlan, validate_placement, apply_placement, week_key,
 )
 from feature_v2_demand_v2 import (  # noqa: E402
-    build_demand, schedule_demand, RequiredExposure, Unfilled,
+    build_demand, schedule_demand, RequiredExposure, Unfilled, DemandPlan,
 )
 from feature_v2_roster_context import DayContext  # noqa: E402
 from feature_v2_validators_v2 import validate_programme  # noqa: E402
@@ -396,6 +396,341 @@ class TestRule4_KeyRescuePostPass(unittest.TestCase):
                      if p.exposure_id == "preplaced_mob"]
         self.assertEqual(len(preserved), 1,
                           "Preplaced SUPPORTING should have been restored")
+
+
+# ---------------------------------------------------------------------------
+# Rule 4 (generalised) — compulsory rescue also covers IMPORTANT non-skippable
+# ---------------------------------------------------------------------------
+
+def _sole_ctx_list(monday: _dt.date, opportunity_by_day: dict[int, int],
+                    cap_by_day: dict[int, int], day_type: str = "home_day") -> list[DayContext]:
+    """Build 7 DayContexts with per-index opportunity/cap overrides."""
+    out = []
+    for i in range(7):
+        d = monday + _dt.timedelta(days=i)
+        out.append(DayContext(
+            date=d, day_type=day_type,
+            duty_burden_score=0,
+            training_opportunity=opportunity_by_day.get(i, 30),
+            available_time_min=cap_by_day.get(i, 45),
+            recommended_intensity_ceiling=None,
+            recovery_state="fresh",
+            recent_hard_days_48h=0, upcoming_hard_days_48h=0,
+            consecutive_duty_days=0, sleep_opportunity="normal",
+            tz_shift_last_48h=0, layover_length_hours=0,
+            duty_duration_min_today=0, reasons=[],
+        ))
+    return out
+
+
+def _mk_exposure(*, exposure_id: str, kind: str, priority: str,
+                  can_skip: bool, week_start: _dt.date,
+                  duration: int = 45,
+                  ordinal: int = 1) -> RequiredExposure:
+    week_end = week_start + _dt.timedelta(days=6)
+    return RequiredExposure(
+        exposure_id=exposure_id,
+        objective_id=f"obj_{kind}",
+        kind=kind, priority=priority,
+        target_duration_min=duration,
+        duration_min_min=max(15, duration - 15),
+        duration_max_min=duration + 15,
+        intensity_target="rpe6-7" if kind.startswith("strength") else "z2",
+        week_index=0, ordinal_within_week=ordinal,
+        can_skip_if_missed=can_skip,
+        quota_source="test.iter131a",
+        target_week_start=week_start, target_week_end=week_end,
+        allowed_window_start=week_start, allowed_window_end=week_end,
+    )
+
+
+class TestRule4Generalised_CompulsoryRescue(unittest.TestCase):
+
+    def test_important_non_skippable_is_rescued_from_supporting_date(self):
+        """Pietro-shape: strength_full_body is IMPORTANT non-skippable.
+        A pre-placed SUPPORTING mobility occupies the only KEY-clearing
+        date. Rescue must evict the mobility and place the strength there."""
+        goal = get_goal_config("running.marathon")
+        phase = goal.phase_specs["foundation"]
+        monday = _monday()
+
+        # Only Wednesday clears IMPORTANT floor (35). All others below (20).
+        # Wed cap is set to exactly 45m so a preplaced 15m mobility PLUS a
+        # 45m strength (=60m) exceeds the cap — the greedy pass therefore
+        # cannot stack the strength on Wed. Only rescue (which evicts the
+        # mobility, freeing 15m) can place the strength.
+        ctxs = _sole_ctx_list(
+            monday,
+            opportunity_by_day={2: 90},
+            cap_by_day={2: 45},
+        )
+
+        # Direct demand: 1 IMPORTANT non-skippable strength_full_body,
+        # week 0. No other exposures — keeps the scenario tight.
+        exp = _mk_exposure(
+            exposure_id="imp_strength_1",
+            kind="strength_full_body",
+            priority="IMPORTANT",
+            can_skip=False,
+            week_start=monday,
+            duration=45,
+        )
+        demand = DemandPlan(
+            required_exposures=[exp],
+            frequency_caps={"client_training_days_per_week_max": 7},
+        )
+
+        # Preplace a SUPPORTING mobility on Wed (opens that date).
+        existing = [
+            Placement(
+                exposure_id="preplaced_mob",
+                objective_id="obj_mob",
+                kind="mobility",
+                date=monday + _dt.timedelta(days=2),
+                priority="SUPPORTING", exposure_number=1,
+                intensity_class="EASY",
+                target_duration_min=15,
+                intensity_target="flow", key=False,
+            )
+        ]
+
+        result = schedule_demand(
+            demand=demand, day_contexts=ctxs,
+            goal=goal, phase=phase,
+            preferred_weekdays={0, 1, 2, 3, 4},
+            existing_placements=existing,
+        )
+
+        # Assert IMPORTANT non-skippable was placed on Wed.
+        strength = [p for p in result.placements if p.kind == "strength_full_body"]
+        self.assertEqual(
+            len(strength), 1,
+            f"Expected 1 strength placement after IMPORTANT rescue, got "
+            f"{len(strength)}. Placements: "
+            f"{[(p.kind, p.priority, p.date) for p in result.placements]}. "
+            f"Unfilled: {[(u.kind, u.priority) for u in result.unfilled]}"
+        )
+        self.assertEqual(strength[0].date, monday + _dt.timedelta(days=2),
+                          "IMPORTANT strength should have taken the Wed slot")
+        # And the reason_code on the displaced mobility should be the new
+        # generalised value.
+        displaced = [u for u in result.unfilled
+                     if u.exposure_id == "preplaced_mob"]
+        self.assertEqual(len(displaced), 1)
+        self.assertEqual(displaced[0].reason_code,
+                          "displaced_by_compulsory_rescue")
+
+    def test_key_rescued_before_important_when_both_unfilled(self):
+        """A KEY exposure and an IMPORTANT non-skippable exposure are both
+        unfilled with only one SUPPORTING slot to reclaim. KEY must win."""
+        goal, phase = _fat_loss_setup()  # KEY strength_full_body per week
+        monday = _monday()
+
+        # Only Wednesday clears KEY floor (55). Wed cap 45m — a preplaced
+        # 15m mobility + a 45m strength would exceed it, so greedy cannot
+        # stack the strength. Only rescue can place the KEY there.
+        ctxs = _sole_ctx_list(
+            monday,
+            opportunity_by_day={2: 90},
+            cap_by_day={2: 45},
+        )
+
+        # Direct demand: 1 KEY strength + 1 IMPORTANT non-skippable strength.
+        key_exp = _mk_exposure(
+            exposure_id="key_strength_1",
+            kind="strength_full_body",
+            priority="KEY",
+            can_skip=False,
+            week_start=monday,
+            duration=45,
+            ordinal=1,
+        )
+        imp_exp = _mk_exposure(
+            exposure_id="imp_strength_2",
+            kind="strength_full_body",
+            priority="IMPORTANT",
+            can_skip=False,
+            week_start=monday,
+            duration=45,
+            ordinal=2,
+        )
+        demand = DemandPlan(
+            required_exposures=[key_exp, imp_exp],
+            frequency_caps={"client_training_days_per_week_max": 7},
+        )
+
+        # Preplace a SUPPORTING on Wed — the only viable slot.
+        existing = [
+            Placement(
+                exposure_id="preplaced_mob",
+                objective_id="obj_mob",
+                kind="mobility",
+                date=monday + _dt.timedelta(days=2),
+                priority="SUPPORTING", exposure_number=1,
+                intensity_class="EASY",
+                target_duration_min=15,
+                intensity_target="flow", key=False,
+            )
+        ]
+
+        result = schedule_demand(
+            demand=demand, day_contexts=ctxs,
+            goal=goal, phase=phase,
+            preferred_weekdays={0, 1, 2, 3, 4},
+            existing_placements=existing,
+        )
+
+        # KEY must have won the Wed slot.
+        wed = monday + _dt.timedelta(days=2)
+        placed_on_wed = [p for p in result.placements if p.date == wed]
+        self.assertTrue(
+            any(p.exposure_id == "key_strength_1" for p in placed_on_wed),
+            f"KEY should have taken Wed. Placements on Wed: "
+            f"{[(p.exposure_id, p.priority) for p in placed_on_wed]}. "
+            f"Unfilled: {[(u.exposure_id, u.priority) for u in result.unfilled]}"
+        )
+        # IMPORTANT should remain unfilled (no other viable slot).
+        remaining_imp = [u for u in result.unfilled
+                         if u.exposure_id == "imp_strength_2"]
+        self.assertEqual(
+            len(remaining_imp), 1,
+            "IMPORTANT should be unfilled — no other viable slot"
+        )
+
+    def test_compulsory_never_evicts_another_compulsory(self):
+        """A KEY exposure is already placed on Wed. An IMPORTANT non-skippable
+        cannot find any other viable date. The rescue MUST NOT evict the
+        KEY — the IMPORTANT stays unfilled."""
+        goal, phase = _fat_loss_setup()
+        monday = _monday()
+
+        # Only Wed clears both floors — but Wed is occupied by a KEY.
+        ctxs = _sole_ctx_list(
+            monday,
+            opportunity_by_day={2: 90},
+            cap_by_day={2: 90},
+        )
+
+        # Preplace a KEY on Wed (already placed).
+        wed = monday + _dt.timedelta(days=2)
+        existing = [
+            Placement(
+                exposure_id="preplaced_key",
+                objective_id="obj_key_strength",
+                kind="strength_full_body",
+                date=wed,
+                priority="KEY", exposure_number=1,
+                intensity_class="HARD",
+                target_duration_min=45,
+                intensity_target="rpe6-7",
+                key=True,
+            )
+        ]
+
+        # Demand: 1 IMPORTANT non-skippable exposure — no viable slot
+        # besides Wed (already taken by the KEY).
+        imp_exp = _mk_exposure(
+            exposure_id="imp_strength_x",
+            kind="strength_full_body",
+            priority="IMPORTANT",
+            can_skip=False,
+            week_start=monday,
+            duration=45,
+        )
+        demand = DemandPlan(
+            required_exposures=[imp_exp],
+            frequency_caps={"client_training_days_per_week_max": 7},
+        )
+
+        result = schedule_demand(
+            demand=demand, day_contexts=ctxs,
+            goal=goal, phase=phase,
+            preferred_weekdays={0, 1, 2, 3, 4},
+            existing_placements=existing,
+        )
+
+        # KEY must still be on Wed (not evicted).
+        preserved_key = [p for p in result.placements
+                         if p.exposure_id == "preplaced_key"]
+        self.assertEqual(
+            len(preserved_key), 1,
+            "Compulsory rescue must NEVER evict another compulsory exposure"
+        )
+        self.assertEqual(preserved_key[0].date, wed)
+
+        # IMPORTANT should be unfilled.
+        remaining_imp = [u for u in result.unfilled
+                         if u.exposure_id == "imp_strength_x"]
+        self.assertEqual(len(remaining_imp), 1)
+
+    def test_skippable_important_does_not_trigger_compulsory_rescue(self):
+        """An IMPORTANT with can_skip_if_missed=True is NOT compulsory.
+        If it's unfilled, the SUPPORTING placement occupying its would-be
+        slot must remain untouched."""
+        goal, phase = _fat_loss_setup()
+        monday = _monday()
+
+        # Only Wed clears IMPORTANT floor (35). Wed cap 45m — a preplaced
+        # 15m mobility + a 45m strength would exceed it, so greedy cannot
+        # stack the strength. If rescue is INCORRECTLY triggered for a
+        # skippable IMPORTANT, it would evict the mobility.
+        ctxs = _sole_ctx_list(
+            monday,
+            opportunity_by_day={2: 90},
+            cap_by_day={2: 45},
+        )
+
+        imp_skippable = _mk_exposure(
+            exposure_id="imp_skippable_1",
+            kind="strength_full_body",
+            priority="IMPORTANT",
+            can_skip=True,   # <-- KEY DIFFERENCE
+            week_start=monday,
+            duration=45,
+        )
+        demand = DemandPlan(
+            required_exposures=[imp_skippable],
+            frequency_caps={"client_training_days_per_week_max": 7},
+        )
+
+        existing = [
+            Placement(
+                exposure_id="preplaced_mob",
+                objective_id="obj_mob",
+                kind="mobility",
+                date=monday + _dt.timedelta(days=2),
+                priority="SUPPORTING", exposure_number=1,
+                intensity_class="EASY",
+                target_duration_min=15,
+                intensity_target="flow", key=False,
+            )
+        ]
+
+        result = schedule_demand(
+            demand=demand, day_contexts=ctxs,
+            goal=goal, phase=phase,
+            preferred_weekdays={0, 1, 2, 3, 4},
+            existing_placements=existing,
+        )
+
+        # Mobility MUST still be on Wed (rescue did not trigger).
+        preserved = [p for p in result.placements
+                     if p.exposure_id == "preplaced_mob"]
+        self.assertEqual(
+            len(preserved), 1,
+            "Skippable IMPORTANT must NOT trigger compulsory rescue"
+        )
+        # The skippable IMPORTANT should be unfilled (it couldn't find a
+        # slot — Wed was taken by the mobility, and no other day cleared
+        # the IMPORTANT floor).
+        unfilled_imp = [u for u in result.unfilled
+                        if u.exposure_id == "imp_skippable_1"]
+        self.assertEqual(len(unfilled_imp), 1)
+        # And critically, the displacement reason_code must NOT be present
+        # anywhere in unfilled.
+        codes = {u.reason_code for u in result.unfilled}
+        self.assertNotIn("displaced_by_compulsory_rescue", codes,
+                          "Rescue should not have run for a skippable IMPORTANT")
 
 
 # ---------------------------------------------------------------------------

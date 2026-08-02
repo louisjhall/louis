@@ -856,115 +856,146 @@ def schedule_demand(
                     f"KEY exposure {exp.kind} in week {exp.week_index} could not be placed"
                 )
 
-    # ---- Iter 131a — KEY-rescue post-pass ---------------------------------
-    # After the greedy pass, some KEY exposures may be unfilled because a
-    # SUPPORTING exposure earlier claimed the only remaining training date in
-    # the week. Run one rescue pass: for each unfilled KEY, if a SUPPORTING
-    # placement in the same ISO-week opened a NEW training date (i.e. it is
-    # the sole placement on its date), temporarily evict that SUPPORTING and
-    # retry the KEY on that date. If the KEY validates, keep the swap. If it
-    # still fails, restore the SUPPORTING exactly. No recursion, single pass.
+    # ---- Iter 131a — Compulsory-exposure rescue post-pass -----------------
+    # After the greedy pass, some compulsory exposures may be unfilled because
+    # a lower-priority exposure earlier claimed the only remaining training
+    # date in the week. Run one rescue pass covering both:
+    #   1. KEY exposures                       (always compulsory)
+    #   2. IMPORTANT with can_skip_if_missed=False   (protected non-skippable)
+    #
+    # For each unfilled compulsory exposure, we look ONLY within that
+    # exposure's TARGET week for a lower-priority placement that opened a
+    # new training date (SUPPORTING or OPTIONAL only — a compulsory
+    # exposure is never evicted). We temporarily evict it, retry the
+    # compulsory exposure on that date, and either keep the swap or
+    # restore the lower-priority placement exactly if the retry still
+    # fails. KEY exposures are processed BEFORE IMPORTANT so KEY always
+    # wins any tie. Single pass, no recursion.
     if unfilled:
         # Preserve original exposure metadata so we can rebuild + retry.
         exp_by_id: dict[str, Any] = {e.exposure_id: e for e in ordered}
-        # Determine which placements are SUPPORTING and sole-on-date
-        def _is_support_kind(k: str) -> bool:
-            from feature_v2_sport_configs import (
-                session_load_bucket, LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY,
-            )
-            return session_load_bucket(k) in (LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY)
 
-        remaining_unfilled: list[Unfilled] = []
+        def _priority_rank(pr: str) -> int:
+            return {"KEY": 0, "IMPORTANT": 1, "SUPPORTING": 2,
+                    "OPTIONAL": 3}.get((pr or "").upper(), 9)
+
+        def _is_compulsory(pr: str, can_skip: bool) -> bool:
+            p = (pr or "").upper()
+            if p == "KEY":
+                return True
+            if p == "IMPORTANT" and not can_skip:
+                return True
+            return False
+
+        # Split unfilled into (rescueable compulsory, everything else).
+        # Order: KEY first, then IMPORTANT non-skippable. Non-compulsory
+        # unfilled entries pass through untouched.
+        rescue_queue: list[Unfilled] = []
+        passthrough: list[Unfilled] = []
         for uf in unfilled:
-            if uf.priority.upper() != "KEY":
-                remaining_unfilled.append(uf)
-                continue
-            key_exp = exp_by_id.get(uf.exposure_id)
-            if key_exp is None:
+            exp = exp_by_id.get(uf.exposure_id)
+            can_skip = bool(getattr(exp, "can_skip_if_missed", True)) if exp else True
+            if exp is not None and _is_compulsory(uf.priority, can_skip):
+                rescue_queue.append(uf)
+            else:
+                passthrough.append(uf)
+        rescue_queue.sort(key=lambda u: (_priority_rank(u.priority),
+                                          u.exposure_id))
+
+        remaining_unfilled: list[Unfilled] = list(passthrough)
+
+        for uf in rescue_queue:
+            comp_exp = exp_by_id.get(uf.exposure_id)
+            if comp_exp is None:
                 remaining_unfilled.append(uf)
                 continue
 
-            # KEY's allowed window
-            k_allowed_start = key_exp.allowed_window_start or (
-                first_monday + _dt.timedelta(days=7 * key_exp.week_index) - _dt.timedelta(days=7)
+            # Target + allowed windows for the compulsory exposure.
+            c_allowed_start = comp_exp.allowed_window_start or (
+                first_monday + _dt.timedelta(days=7 * comp_exp.week_index) - _dt.timedelta(days=7)
             )
-            k_allowed_end = key_exp.allowed_window_end or (
-                first_monday + _dt.timedelta(days=7 * key_exp.week_index + 6) + _dt.timedelta(days=7)
+            c_allowed_end = comp_exp.allowed_window_end or (
+                first_monday + _dt.timedelta(days=7 * comp_exp.week_index + 6) + _dt.timedelta(days=7)
             )
-            k_target_start = key_exp.target_week_start or (
-                first_monday + _dt.timedelta(days=7 * key_exp.week_index)
+            c_target_start = comp_exp.target_week_start or (
+                first_monday + _dt.timedelta(days=7 * comp_exp.week_index)
             )
-            k_target_end = key_exp.target_week_end or (
-                k_target_start + _dt.timedelta(days=6)
+            c_target_end = comp_exp.target_week_end or (
+                c_target_start + _dt.timedelta(days=6)
             )
 
-            # Candidate placements to evict: SUPPORTING placements whose date
-            # sits inside KEY's TARGET week and which are the SOLE placement
-            # on that date.
+            # Candidate placements to evict:
+            #  * Only SUPPORTING or OPTIONAL priority (never evict another
+            #    compulsory exposure).
+            #  * Placement date sits inside the compulsory exposure's TARGET
+            #    week AND its allowed window.
+            #  * The placement must be the SOLE placement on that date
+            #    (i.e. it opened a training date). Mobility stacked onto
+            #    an existing primary session is not sole-on-date and is
+            #    therefore skipped — evicting it wouldn't free a date.
             candidates = []
             for p in plan.placements:
-                if not _is_support_kind(p.kind):
+                p_pri = (p.priority or "").upper()
+                if p_pri not in ("SUPPORTING", "OPTIONAL"):
                     continue
-                if not (k_target_start <= p.date <= k_target_end):
+                if not (c_target_start <= p.date <= c_target_end):
                     continue
-                # Sole-on-date?
+                if not (c_allowed_start <= p.date <= c_allowed_end):
+                    continue
                 if sum(1 for q in plan.placements if q.date == p.date) != 1:
                     continue
-                # Must lie in KEY's allowed window
-                if not (k_allowed_start <= p.date <= k_allowed_end):
-                    continue
-                # Find the DayContext for that date
                 ctx = next((c for c in day_contexts if c.date == p.date), None)
                 if ctx is None:
                     continue
                 candidates.append((p, ctx))
 
             rescued = False
-            for support_p, ctx in candidates:
-                # Evict SUPPORTING
-                plan.placements.remove(support_p)
-                # Retry KEY validation on this date
+            for evicted_p, ctx in candidates:
+                # Evict the lower-priority placement.
+                plan.placements.remove(evicted_p)
+                # Retry the compulsory exposure on this date.
                 check = validate_placement(
-                    kind=key_exp.kind, date=ctx.date, plan=plan,
+                    kind=comp_exp.kind, date=ctx.date, plan=plan,
                     goal=goal, phase=phase,
                     day_ctx_burden=ctx.duty_burden_score,
                     day_ctx_opportunity=ctx.training_opportunity,
-                    priority=key_exp.priority,
-                    target_duration_min=key_exp.target_duration_min,
+                    priority=comp_exp.priority,
+                    target_duration_min=comp_exp.target_duration_min,
                     daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
                 )
                 if check.ok:
                     apply_placement(
                         plan,
-                        exposure_id=key_exp.exposure_id,
-                        objective_id=key_exp.objective_id,
-                        kind=key_exp.kind,
+                        exposure_id=comp_exp.exposure_id,
+                        objective_id=comp_exp.objective_id,
+                        kind=comp_exp.kind,
                         date=ctx.date,
-                        priority=key_exp.priority,
-                        intensity_target=key_exp.intensity_target,
-                        target_duration_min=key_exp.target_duration_min,
+                        priority=comp_exp.priority,
+                        intensity_target=comp_exp.intensity_target,
+                        target_duration_min=comp_exp.target_duration_min,
                     )
                     validation_notes.append(
-                        f"KEY-rescue: swapped SUPPORTING {support_p.kind} on {ctx.date} "
-                        f"for {key_exp.kind} (exposure {key_exp.exposure_id})"
+                        f"compulsory-rescue: swapped {evicted_p.priority} "
+                        f"{evicted_p.kind} on {ctx.date} for {comp_exp.priority} "
+                        f"{comp_exp.kind} (exposure {comp_exp.exposure_id})"
                     )
-                    # The evicted SUPPORTING becomes unfilled.
                     remaining_unfilled.append(Unfilled(
-                        exposure_id=support_p.exposure_id,
-                        objective_id=support_p.objective_id,
-                        kind=support_p.kind,
-                        priority=support_p.priority,
-                        reason_code="displaced_by_key_rescue",
+                        exposure_id=evicted_p.exposure_id,
+                        objective_id=evicted_p.objective_id,
+                        kind=evicted_p.kind,
+                        priority=evicted_p.priority,
+                        reason_code="displaced_by_compulsory_rescue",
                         human_reason=(
-                            f"SUPPORTING {support_p.kind} on {ctx.date} was evicted to "
-                            f"make room for KEY {key_exp.kind} (Iter 131a rescue)"
+                            f"{evicted_p.priority} {evicted_p.kind} on {ctx.date} "
+                            f"was evicted to make room for compulsory "
+                            f"{comp_exp.priority} {comp_exp.kind} (Iter 131a rescue)"
                         ),
                         candidate_hint_dates=[],
                     ))
                     rescued = True
                     break
-                # KEY still fails — restore SUPPORTING exactly
-                plan.placements.append(support_p)
+                # Restore exactly if compulsory still fails.
+                plan.placements.append(evicted_p)
             if not rescued:
                 remaining_unfilled.append(uf)
         unfilled = remaining_unfilled

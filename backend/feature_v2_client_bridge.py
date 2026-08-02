@@ -245,9 +245,15 @@ async def synth_workouts_for_user(
     db, user_id: str, *,
     start_iso: Optional[str] = None,
     end_iso: Optional[str] = None,
+    override_dates: Optional[set] = None,
 ) -> list[dict]:
     """Return legacy-shaped workout rows for a client's active plan_live_v2.
-    Silently returns [] when no active V2 plan or client is not V2-flagged."""
+    Silently returns [] when no active V2 plan or client is not V2-flagged.
+
+    Phase 1 manual override: any date in `override_dates` (active
+    replace_day or suppress_day) is dropped from the V2 splice so the
+    client sees the coach's decision, not the automated placement.
+    """
     user = await db.users.find_one(
         {"id": user_id}, {"_id": 0, "profile.v2_flags": 1},
     )
@@ -264,6 +270,7 @@ async def synth_workouts_for_user(
     live_id = live.get("id")
     placements = live.get("placements") or []
     specs = live.get("session_specs") or {}
+    _override_dates = override_dates or set()
     out: list[dict] = []
     for p in placements:
         d = p.get("date")
@@ -272,6 +279,12 @@ async def synth_workouts_for_user(
         if start_iso and d < start_iso:
             continue
         if end_iso and d > end_iso:
+            continue
+        if d in _override_dates:
+            # Coach has an active date-level override for this date.
+            # Drop the V2 session so the client sees the manual outcome
+            # (a manual db.workouts row for replace_day, or rest for
+            # suppress_day).
             continue
         eid = p.get("exposure_id") or ""
         spec = specs.get(eid) or {}

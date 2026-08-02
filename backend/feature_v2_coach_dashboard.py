@@ -538,11 +538,18 @@ async def workspace_month(
         {"client_id": client_id, "date": {"$gte": sd_str, "$lte": ed_str}}, {"_id": 0}
     ).sort("date", 1).to_list(200)
 
-    # For V1-only clients: also expose V1 workouts for this month as read-only rows
+    # For V1-only clients: expose V1 workouts as read-only rows.
+    # For V2 clients: still surface manual workouts (source=coach_manual) so
+    # the Plan calendar shows them alongside V2 assignments.
     v1_workouts = []
     if kind == "v1":
         v1_workouts = await db.workouts.find(
             {"user_id": client_id, "date": {"$gte": sd_str, "$lte": ed_str}}, {"_id": 0}
+        ).sort("date", 1).to_list(200)
+    else:
+        v1_workouts = await db.workouts.find(
+            {"user_id": client_id, "date": {"$gte": sd_str, "$lte": ed_str},
+             "source": "coach_manual"}, {"_id": 0}
         ).sort("date", 1).to_list(200)
 
     # Implementations (only fetch summaries — not full exercise lists — for the header row)
@@ -670,6 +677,8 @@ async def workspace_month(
             "coach_locked": bool(w.get("coach_locked")),
             "needs_coach_review": bool(w.get("needs_coach_review")),
             "completed": bool(w.get("completed")),
+            "source": w.get("source"),
+            "manual_lock": bool(w.get("manual_lock")),
         })
 
     # --- Engine V2 placements (plan_live_v2 preferred, else active draft preview)

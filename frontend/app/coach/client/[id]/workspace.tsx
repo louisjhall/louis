@@ -33,6 +33,9 @@ import { InlineWorkoutEditor } from "@/src/components/InlineWorkoutEditor";
 import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
 import { V2ClientTabs, V2Tab } from "@/src/components/V2ClientTabs";
 import EngineV2DraftPanel from "@/src/components/EngineV2DraftPanel";
+import ManualWorkoutBuilderSheet from "@/src/components/ManualWorkoutBuilderSheet";
+import DayActionsMenu, { DayState } from "@/src/components/DayActionsMenu";
+import DeleteManualConfirmSheet from "@/src/components/DeleteManualConfirmSheet";
 
 type DayRow = {
   date: string;
@@ -147,6 +150,19 @@ export default function CoachWorkspaceScreen() {
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<V2Tab>("plan");
 
+  // Phase 1 Manual Workout Builder — state
+  const [dayMenuDate, setDayMenuDate] = useState<string | null>(null);
+  const [manualBuilder, setManualBuilder] = useState<null | {
+    date: string; editing: any | null; replaceGenerated: boolean;
+  }>(null);
+  const [deleteTarget, setDeleteTarget] = useState<null | {
+    workout: any; wasReplacingGeneratedDay: boolean;
+  }>(null);
+  // date -> { id, mode, replacement_workout_id }
+  const [overrides, setOverrides] = useState<Record<string, any>>({});
+  // date -> manual workout doc (source=coach_manual)
+  const [manualByDate, setManualByDate] = useState<Record<string, any>>({});
+
   const loadMonths = useCallback(async () => {
     if (!clientId) return;
     try {
@@ -172,8 +188,31 @@ export default function CoachWorkspaceScreen() {
     } finally { setLoading(false); }
   }, [clientId, month]);
 
+  // Phase 1 Manual Workout Builder — load active overrides for the visible month.
+  const loadManualAndOverrides = useCallback(async () => {
+    if (!clientId || !month) return;
+    try {
+      const ovRes = await api<{ overrides: any[] }>(`/coach/clients/${clientId}/day-overrides?active_only=true`);
+      const ovMap: Record<string, any> = {};
+      (ovRes.overrides || []).forEach(o => { ovMap[o.date] = o; });
+      setOverrides(ovMap);
+    } catch {
+      // silent — overrides overlay is best-effort; core calendar still loads
+    }
+  }, [clientId, month]);
+
+  // Manual workouts come from data.days[].v1_workouts (source === "coach_manual").
+  useEffect(() => {
+    const map: Record<string, any> = {};
+    (data?.days || []).forEach((d: any) => {
+      const m = (d.v1_workouts || []).find((w: any) => w?.source === "coach_manual");
+      if (m) map[d.date] = m;
+    });
+    setManualByDate(map);
+  }, [data]);
+
   useEffect(() => { loadMonths(); }, [loadMonths]);
-  useEffect(() => { if (month) loadMonth(); }, [month, loadMonth]);
+  useEffect(() => { if (month) { loadMonth(); loadManualAndOverrides(); } }, [month, loadMonth, loadManualAndOverrides]);
 
   const approveReady = useCallback(async () => {
     if (!data) return;
@@ -214,6 +253,69 @@ export default function CoachWorkspaceScreen() {
     const next = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
     setMonth(next);
   }, [month]);
+
+  // Phase 1 Manual Workout Builder — helpers
+  const computeDayState = useCallback((row: DayRow): DayState => {
+    const override = overrides[row.date];
+    if (override) {
+      return override.mode === "replace_day" ? "replaced" : "suppressed";
+    }
+    const manual = manualByDate[row.date];
+    if (manual) return "manual";
+    const hasGenerated =
+      (row.assignments?.length || 0) > 0 ||
+      (row.v1_workouts || []).some((w: any) => w?.source !== "coach_manual");
+    return hasGenerated ? "generated" : "empty";
+  }, [overrides, manualByDate]);
+
+  const openBuilderForCreate = useCallback((date: string, replaceGenerated: boolean) => {
+    setManualBuilder({ date, editing: null, replaceGenerated });
+  }, []);
+
+  const openBuilderForEdit = useCallback(async (manualStub: any) => {
+    if (!manualStub?.id) return;
+    try {
+      const full = await api<any>(`/workouts/${manualStub.id}`);
+      setManualBuilder({ date: full.date, editing: full, replaceGenerated: false });
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    }
+  }, []);
+
+  const suppressDay = useCallback(async (date: string) => {
+    setBusy(true);
+    try {
+      await api(`/coach/clients/${clientId}/day-overrides/${date}`, {
+        method: "POST", body: { mode: "suppress_day", reason: "coach suppress_day" },
+      });
+      await loadManualAndOverrides();
+      await loadMonth();
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally { setBusy(false); }
+  }, [clientId, loadManualAndOverrides, loadMonth]);
+
+  const restoreDay = useCallback(async (date: string) => {
+    setBusy(true);
+    try {
+      await api(`/coach/clients/${clientId}/day-overrides/${date}`, { method: "DELETE" });
+      await loadManualAndOverrides();
+      await loadMonth();
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally { setBusy(false); }
+  }, [clientId, loadManualAndOverrides, loadMonth]);
+
+  const askDeleteManual = useCallback(async (manualStub: any, date: string) => {
+    if (!manualStub?.id) return;
+    try {
+      const full = await api<any>(`/workouts/${manualStub.id}`);
+      const wasReplacing = !!overrides[date] && overrides[date].mode === "replace_day";
+      setDeleteTarget({ workout: full, wasReplacingGeneratedDay: wasReplacing });
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    }
+  }, [overrides]);
 
   if (!clientId) {
     return <View style={styles.center}><Text style={styles.err}>No client id</Text></View>;
@@ -347,8 +449,11 @@ export default function CoachWorkspaceScreen() {
           )}
           {data.days.map((d) => (
             <DayRowView key={d.date} row={d} desktop={isDesktop}
+              dayState={computeDayState(d)}
+              manualStub={manualByDate[d.date]}
               onOpenWorkout={(aid) => setDrawerAssignmentId(aid)}
-              onOpenFlightSupport={(date, fs) => setFsSheet({ date, item: fs })} />
+              onOpenFlightSupport={(date, fs) => setFsSheet({ date, item: fs })}
+              onPressDate={() => setDayMenuDate(d.date)} />
           ))}
 
           {/* Exceptions block */}
@@ -409,6 +514,69 @@ export default function CoachWorkspaceScreen() {
         onClose={() => setAdminDrawerOpen(false)}
         clientId={String(clientId)}
       />
+
+      {/* Phase 1 Manual Workout Builder — Day actions menu */}
+      {dayMenuDate && (() => {
+        const row = data?.days?.find(d => d.date === dayMenuDate);
+        if (!row) return null;
+        const state = computeDayState(row);
+        const manualStub = manualByDate[dayMenuDate];
+        return (
+          <DayActionsMenu
+            visible={!!dayMenuDate}
+            date={dayMenuDate}
+            state={state}
+            onClose={() => setDayMenuDate(null)}
+            onCreateManual={() => openBuilderForCreate(dayMenuDate, false)}
+            onReplaceGenerated={() => openBuilderForCreate(dayMenuDate, true)}
+            onSuppressDay={() => suppressDay(dayMenuDate)}
+            onRestoreDay={() => restoreDay(dayMenuDate)}
+            onOpenManual={() => openBuilderForEdit(manualStub)}
+            onEditManual={() => openBuilderForEdit(manualStub)}
+            onDeleteManual={() => askDeleteManual(manualStub, dayMenuDate)}
+          />
+        );
+      })()}
+
+      {/* Phase 1 Manual Workout Builder — Builder sheet */}
+      {manualBuilder && (
+        <ManualWorkoutBuilderSheet
+          visible={!!manualBuilder}
+          onClose={() => setManualBuilder(null)}
+          onSaved={async (result) => {
+            setManualBuilder(null);
+            await loadManualAndOverrides();
+            await loadMonth();
+            const n = (result?.missing_media || []).length;
+            if (n > 0) {
+              try {
+                const { Alert } = require("react-native");
+                Alert.alert("Media queued",
+                  `${n} exercise${n === 1 ? " has" : "s have"} been added to the media queue.`);
+              } catch {}
+            }
+          }}
+          clientId={String(clientId)}
+          date={manualBuilder.date}
+          editing={manualBuilder.editing}
+          replaceGenerated={manualBuilder.replaceGenerated}
+        />
+      )}
+
+      {/* Phase 1 Manual Workout Builder — Delete confirmation */}
+      {deleteTarget && (
+        <DeleteManualConfirmSheet
+          visible={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={async () => {
+            setDeleteTarget(null);
+            await loadManualAndOverrides();
+            await loadMonth();
+          }}
+          workout={deleteTarget.workout}
+          wasReplacingGeneratedDay={deleteTarget.wasReplacingGeneratedDay}
+        />
+      )}
     </View>
   );
 }
@@ -454,21 +622,39 @@ function TabBar({ active, onChange }: { active: V2Tab; onChange: (t: V2Tab) => v
   );
 }
 
-function DayRowView({ row, desktop, onOpenWorkout, onOpenFlightSupport }: {
+function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenFlightSupport, onPressDate }: {
   row: DayRow; desktop: boolean;
+  dayState: DayState;
+  manualStub: any | undefined;
   onOpenWorkout: (aid: string) => void;
   onOpenFlightSupport: (date: string, item: any) => void;
+  onPressDate: () => void;
 }) {
   const dt = fmtDate(row.date);
   const burden = row.schedule?.duty_burden_band;
+  const badge = dayState === "manual" ? { label: "MANUAL", color: "#5aa9e6" }
+              : dayState === "replaced" ? { label: "REPLACED", color: "#f5b543" }
+              : dayState === "suppressed" ? { label: "HIDDEN", color: "#8e8e93" }
+              : null;
   return (
     <View style={[styles.dayRow, desktop ? styles.dayRowDesktop : styles.dayRowMobile]}>
-      {/* Date column */}
-      <View style={styles.dateCol}>
+      {/* Date column — Phase 1: clickable → DayActionsMenu */}
+      <Pressable
+        style={styles.dateCol}
+        onPress={onPressDate}
+        testID={`day-press-${row.date}`}
+        accessibilityLabel={`Open day actions for ${row.date}`}
+        hitSlop={4}
+      >
         <Text style={styles.dateDow}>{dt.dow}</Text>
         <Text style={styles.dateD}>{dt.d}</Text>
         <Text style={styles.dateMon}>{dt.mon}</Text>
-      </View>
+        {badge && (
+          <View style={{ marginTop: 4, backgroundColor: badge.color, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
+            <Text style={{ color: "#000", fontWeight: "700", fontSize: 8 }}>{badge.label}</Text>
+          </View>
+        )}
+      </Pressable>
       {/* Roster / real life */}
       <View style={[styles.rosterCol, desktop ? { flex: 1 } : {}]}>
         {row.schedule ? (

@@ -8153,12 +8153,25 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                 workouts, _gate_meta = await filter_new_client_workouts(user, r, workouts)
             except Exception:
                 logger.exception("setup-day gate skipped (regenerate)")
+            # Phase 1 Manual Workout Builder — load active date-level overrides
+            # once. Regenerate must NEVER silently overwrite a manual workout
+            # or a date the coach has explicitly replaced/suppressed.
+            try:
+                from feature_coach_manual_workouts import get_active_override_dates
+                _override_dates = set((await get_active_override_dates(user["id"])).keys())
+            except Exception:
+                _override_dates = set()
+            skipped_dates: list[str] = []
             for w in workouts:
                 d = w.get("date")
                 if not d:
                     continue
                 existing = await db.workouts.find_one({"user_id": user["id"], "roster_id": body.roster_id, "date": d}, {"_id": 0})
-                if existing and (existing.get("coach_locked") or existing.get("completed")):
+                if existing and (existing.get("coach_locked") or existing.get("completed") or existing.get("manual_lock")):
+                    skipped_dates.append(d)
+                    continue
+                if d in _override_dates:
+                    skipped_dates.append(d)
                     continue
                 doc = {
                     "id": existing["id"] if existing else new_id(),
@@ -8192,7 +8205,7 @@ async def workouts_regenerate(body: WorkoutRegenerateBody, user: dict = Depends(
                 except Exception as e:
                     logger.warning("workout regenerate upsert failed for date=%s: %s", d, e)
                     continue
-            await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso()}})
+            await db.gen_jobs.update_one({"id": job_id}, {"$set": {"status": "done", "done": len(workouts), "finished_at": now_iso(), "skipped_dates": skipped_dates}})
             # JIT exercise-media scan after regenerate too.
             try:
                 from feature_exercise_content import run_exercise_media_scan
@@ -8218,13 +8231,31 @@ async def workouts_week(user: dict = Depends(current_user)):
         rows = prune_pending(rows)
     except Exception:
         logger.exception("workouts/week: prune_pending failed — showing all")
+    # Phase 1 Manual Workout Builder — apply active date-level overrides.
+    # For every date that has an active replace_day/suppress_day override,
+    # hide legacy GENERATED rows (source != coach_manual). Manual rows
+    # (source == coach_manual) are always kept.
+    override_dates: set[str] = set()
+    try:
+        from feature_coach_manual_workouts import get_active_override_dates, MANUAL_SOURCE
+        overrides = await get_active_override_dates(user["id"])
+        override_dates = set(overrides.keys())
+        if override_dates:
+            rows = [
+                r for r in rows
+                if (r.get("date") not in override_dates) or (r.get("source") == MANUAL_SOURCE)
+            ]
+    except Exception:
+        logger.exception("workouts/week: manual override filter failed")
     # Iter 109 — Engine V2 clients read their published plan from plan_live_v2
     # (placements + session_specs), not from the legacy `workouts` collection.
     # Splice V2-derived rows in so the client home / calendar / workout screen
     # all "just work" without frontend changes. Rows are read-only.
     try:
         from feature_v2_client_bridge import synth_workouts_for_user
-        v2_rows = await synth_workouts_for_user(db, user["id"])
+        v2_rows = await synth_workouts_for_user(
+            db, user["id"], override_dates=override_dates,
+        )
         if v2_rows:
             # Legacy rows for the same date should not double up with a V2
             # row (unlikely in practice — V2 clients have no legacy workouts —
@@ -12525,6 +12556,7 @@ import feature_roster_lifecycle      # noqa: E402,F401  Plan D4-7: client roster
 import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reassessment forms (no full DNA rebuild)
 import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
+import feature_coach_manual_workouts     # noqa: E402,F401  Phase 1 Manual Workout Builder + day-level overrides
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
 import feature_coach_roster_upload       # noqa: E402,F401  Phase A · A2: coach uploads roster on behalf of client
 import feature_v2_state_foundation        # noqa: E402,F401  V2 Phase 1: DRAFT/LIVE state layer (feature-flagged, off by default)

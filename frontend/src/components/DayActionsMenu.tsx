@@ -4,7 +4,7 @@
  * Shows different actions depending on whether the date already has sessions
  * and whether a coach override is active for the date.
  */
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, Pressable, StyleSheet, Modal } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
@@ -33,6 +33,16 @@ type Props = {
 
 export default function DayActionsMenu(props: Props) {
   const { visible, onClose, date, state } = props;
+  // Guard against React Native Web bubbling the same pointer-up event that
+  // opened the modal into the overlay's onPress (which would close it in the
+  // same frame — user sees "menu never opens"). Give the overlay 300ms of
+  // inertia before it accepts a close tap.
+  const [overlayReady, setOverlayReady] = useState(false);
+  useEffect(() => {
+    if (!visible) { setOverlayReady(false); return; }
+    const t = setTimeout(() => setOverlayReady(true), 300);
+    return () => clearTimeout(t);
+  }, [visible]);
   const items: { key: string; label: string; icon: any; onPress: () => void; danger?: boolean; testID: string }[] = [];
 
   if (state === "empty") {
@@ -58,7 +68,7 @@ export default function DayActionsMenu(props: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
+      <Pressable style={styles.overlay} onPress={overlayReady ? onClose : undefined}>
         <View style={styles.card} onStartShouldSetResponder={() => true}>
           <Text style={styles.title}>{date}</Text>
           <Text style={styles.subtitle}>{stateLabel(state)}</Text>

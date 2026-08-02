@@ -623,7 +623,9 @@ below.]:
 | Preview (local pod) | `mongodb://localhost:27017` | `crewfit_v1` | What you see when you open the Emergent preview URL |
 | Production (Cloudflare Pages + hosted backend) | different Mongo cluster (managed) | (managed) | What Louis's real clients hit |
 
-**Guarantee:** no code path in this repo hard-codes a database name or a
+**Expected** based on environment-driven configuration, but Production
+separation has not yet been directly verified: no code path in this repo
+hard-codes a database name or a
 Mongo URL. Everything reads `os.environ["MONGO_URL"]` and
 `os.environ["DB_NAME"]` at boot. Preview cannot see Production data and
 vice-versa.
@@ -646,7 +648,7 @@ Metro (Expo dev bundler) on port 3000.
 
 - If `RESET_ADMIN_ON_STARTUP=1` **or** `system_bootstrap["admin_password_unlock_iter130a"]`
   doc is missing → force Louis's password to `ADMIN_STARTUP_PASSWORD`
-  (default `"Louis123!"`) and write the marker.
+  (default `[REDACTED — do not store passwords in documentation]`) and write the marker.
 - Currently `RESET_ADMIN_ON_STARTUP=1` is set on Preview so restarts always
   reset. **On Production this is what re-resets Louis's password on every
   restart** — remove or set to `0` after verifying Louis's new password
@@ -1058,7 +1060,7 @@ Only the modules a maintainer will actually touch. Small helpers omitted.
 ### B7. `RESET_ADMIN_ON_STARTUP` on Production
 
 - Currently set to `1` in `backend/.env`. On Production this force-resets
-  Louis's password to `Louis123!` on every restart.
+  Louis's password to `[REDACTED — do not store passwords in documentation]` on every restart.
 - **Follow-up:** once Louis's new password is verified to persist,
   set this to `0` (or delete the env var) so `password_changed_at`
   writes survive.

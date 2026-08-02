@@ -1,12 +1,40 @@
 # CrewFit — Technical Handover (Delta)
 
-**Date:** 2026-06 · **Scope:** Delta-only handover (Option A) covering the 9
-undocumented areas of the CrewFit codebase. This document supplements the
-existing Joel / Pietro V2 Engine deep-dive specs and the V2 Engine phase
+**Date:** 2 August 2026 · **Scope:** Delta-only handover (Option A) covering
+the 9 undocumented areas of the CrewFit codebase. This document supplements
+the existing Joel / Pietro V2 Engine deep-dive specs and the V2 Engine phase
 guides.
 
 Everything here is derived from a **read-only** inspection of the current repo.
 No plans were regenerated, no LLMs were called, no tests were run.
+
+**File location status (this document):**
+- Path: `/app/docs/HANDOVER_DELTA.md` (canonical)
+- Browser-served copy: `/app/frontend/public/HANDOVER_DELTA.md`
+  (served by Metro on Preview so it can be viewed at
+  `https://flight-fit-plans.preview.emergentagent.com/HANDOVER_DELTA.md`)
+- **Git status: LOCAL ONLY.** Not committed, not pushed. Survives pod
+  restarts (persistent volume) but is not in the repo history and will not
+  be present in a fresh clone or on Production.
+- No service was restarted for this amendment pass.
+
+**Emergent credits — approximate:**
+- Initial Delta Handover creation (previous turn): ~4–6 credits (many
+  grep / view / one bulk file write).
+- This amendment pass: ~1 credit (targeted edits only, no re-audit).
+- **Running total for the handover work: ~5–7 credits (approximate).**
+- The Emergent credit meter is the source of truth; the figures above are
+  a best-effort estimate from tool-call volume, not a direct meter read.
+
+**Confirmed vs Inferred conventions used in this document:**
+- Lines marked **[CONFIRMED]** were read directly from source files or
+  environment configuration in this or the previous turn.
+- Lines marked **[INFERRED]** are logical extensions or conventional
+  assumptions that were **not** re-verified by opening the relevant
+  Production config in this pass.
+- Absence of a marker means the statement is a structural summary of
+  multiple confirmed reads (safe to treat as confirmed for the code paths
+  named, but not for the Production runtime unless explicitly stated).
 
 ## Contents
 
@@ -19,8 +47,12 @@ No plans were regenerated, no LLMs were called, no tests were run.
 7. DB schema — key relationships
 8. Preview vs Production separation
 9. Coach approval / publish flow
-10. Appendix A — file → responsibility index
-11. Appendix B — conflicting sources of truth (call-outs)
+10. **Deployment matrix (what triggers what kind of build)**
+11. **Production visibility checklist**
+12. **Overrides & persistence — what survives a new publish**
+13. **Current vs deprecated endpoints**
+14. Appendix A — file → responsibility index
+15. Appendix B — conflicting sources of truth (call-outs)
 
 ---
 
@@ -257,8 +289,11 @@ Two co-existing surfaces:
 - `send_push(recipients, data, idempotency_key)` in `server.py` (line 4472).
 - Posts to `EMERGENT_PUSH_KEY`-authenticated proxy at `PUSH_BASE_URL` +
   `/api/v1/push/trigger`. Non-blocking — failures are logged, not raised.
-- `EMERGENT_PUSH_KEY` is `placeholder` in dev; **replaced at deploy time**
-  by the Emergent build pipeline. Never edit that env var by hand.
+- `EMERGENT_PUSH_KEY` is `placeholder` in dev [CONFIGURATION CONFIRMED
+  from `/app/backend/.env`]; **replaced at deploy time**
+  by the Emergent build pipeline [INFERRED from Emergent platform
+  convention — not verified against the Production build config in this
+  pass]. Never edit that env var by hand.
 - Token registration endpoints:
   - `POST /api/register-push` (line 4427)
   - `POST /api/unregister-push` (line 4444)
@@ -577,7 +612,11 @@ Also:
 ### 8.1 Databases
 
 Both stacks are the same **codebase**, deployed twice, pointing at
-**different MongoDB instances**:
+**different MongoDB instances** [INFERRED — Preview `.env` was read
+directly (`MONGO_URL=mongodb://localhost:27017`, `DB_NAME=crewfit_v1`);
+Production's `MONGO_URL` and `DB_NAME` were **not** re-verified in this
+pass. The separation is inferred from convention and the code path
+below.]:
 
 | Stack | `MONGO_URL` | `DB_NAME` | Notes |
 |---|---|---|---|
@@ -670,8 +709,10 @@ subsequent logins land in the correct workspace.
    - `MISSING` → hard block `422 config_missing`.
    - `PARTIAL` → require `ack_partial_config=true` on the request, else
      `422 partial_config_ack_required` (this is why
-     `strength.fat_loss` and `running.marathon` need P8 progression
-     tables — they currently return PARTIAL).
+     `strength.fat_loss` and `running.marathon` [INFERRED from earlier
+     session diagnostics — the specific PARTIAL entries in
+     `feature_v2_p8_progression.py` were not re-verified in this pass]
+     currently return PARTIAL).
 3. **Programme validation** — if `programme_validation.ok == false`:
    - No exceptions at all → `422 validation_failed_no_exceptions`
      ("validator gap — the specific blocking finding has not been surfaced
@@ -738,7 +779,129 @@ older `plan_versions` / `plan_snapshots` foundation tables — the newer
 
 ---
 
-## 10. Appendix A — file → responsibility index
+## 10. Deployment matrix — what change requires what kind of build
+
+**How to read this table:**
+- "Full publish" = redeploy backend + web via the Emergent Publish button
+  in the top-right of the workspace. Free, ~2–5 minutes.
+- "Web publish only" = redeploy the compiled web bundle only (Cloudflare
+  Pages / Emergent web target). Backend untouched.
+- "iOS build" / "Android build" = a fresh native binary through the
+  Emergent build pipeline. Required whenever the change affects native
+  code, Expo config, or a JS bundle that the app store binary cannot
+  hot-reload.
+- OTA (Over-The-Air) hot-swaps are **not** currently configured for this
+  app; treat every JS-only change as requiring a build for real devices
+  installed from the store.
+
+| # | Change type | Example | Full publish? | Web publish only? | iOS build? | Android build? |
+|---|---|---|---|---|---|---|
+| 1 | **Data-only change** (Mongo doc edit, restriction add, availability tweak, DNA field) | Fix a client's `profile.availability.duty_day_min` | No | No | No | No |
+| 2 | **Client programme publish** (V2 Engine `plan_live_v2` swap) | Coach hits "Publish" in `EngineV2DraftPanel` | No | No | No | No |
+| 3 | **Backend logic/config change** (Python edit, endpoint, seed, env var) | Change publish gate, edit `feature_v2_p8_progression.py` | **Yes** — full publish | No | No | No |
+| 4 | **Coach web-UI change** (Expo web-only screen, `EngineV2DraftPanel`, `ClientAdminDrawer`, coach dashboard components) | Add a new column to the coach roster viewer | **Yes** — full publish (web bundle rebuild) | Yes, if backend already up-to-date | No — coach uses browser | No — coach uses browser |
+| 5 | **Client JS/UI change** (client-facing Expo screen, component, style) | Redesign the Today card | **Yes** — full publish covers preview + Expo Go | Yes, if backend already up-to-date | **Yes** — required for installed iOS clients to see the change | **Yes** — required for installed Android clients to see the change |
+| 6 | **Native / Expo config change** (`app.json` permissions, new native module, `expo-*` addition or upgrade) | Add camera permission, install `expo-audio` | **Yes** — full publish | No | **Yes** — required (native binary regen) | **Yes** — required (native binary regen) |
+
+**Notes:**
+- Rows 1 and 2 are **data-plane** changes; they take effect the moment the
+  document is written to Mongo. No deploy needed.
+- Row 3 (backend) requires a publish because the running FastAPI process
+  needs the new code loaded. Coach browser reload sees it next request.
+- Rows 4 and 5 both need a publish, but only Row 5 (client-facing) needs
+  fresh iOS/Android binaries because installed apps have to pick up the
+  new JS bundle from the store.
+- Row 6 is the only row that changes the *native shell* — every installed
+  app needs to be re-downloaded from TestFlight / Play Store.
+
+---
+
+## 11. Production visibility checklist
+
+Use this exact sequence to confirm a client is fully wired in Production.
+Every step is a **read-only** query — safe to run without risking cost or
+side effects.
+
+**Prerequisites:**
+- Coach JWT for the Production backend (log in as Louis on the deployed
+  web coach dashboard, copy `cf_token` from `AsyncStorage` or the browser
+  DevTools).
+- Client `id` from the client directory.
+
+| # | Question | How to confirm | What "good" looks like |
+|---|---|---|---|
+| 1 | **Does the client exist in Production?** | `GET /api/coach/clients` (as Louis) and search for the client by email/name. | Client is in the list, `deleted_at` is null. |
+| 2 | **Is Engine V2 enabled for this client?** | `GET /api/v2/coach/clients/{id}/engine-v2/status` OR read `users.profile.v2_flags` on the client row. | `engine_v2 == true`. If false, `PATCH /api/v2/coach/clients/{id}/engine-v2/enable`. |
+| 3 | **Does an active `plan_live_v2` record exist?** | `GET /api/v2/coach/clients/{id}/engine-v2/state` — returns `live_id`, `activated_at`, `goal_key`. | `live_id` present + non-null; `activated_at` recent. |
+| 4 | **Is the correct client ID assigned to Louis?** | On the client row: `users.assigned_coach_id` (or `coach_id`) equals Louis's user id. Cross-check by finding the client via `GET /api/coach/clients` (only assigned clients show up). | Louis's id matches. |
+| 5 | **Does `/api/workouts/week` return the V2 synthetic workouts?** | As the client (or via `POST /api/coach/preview/impersonate` on Louis's Production token), call `GET /api/workouts/week?start=YYYY-MM-DD`. | At least one workout row with `id` starting `v2p:{live_id}:{exposure_id}` — that prefix proves it came from `synth_workouts_for_user()` reading `plan_live_v2`. |
+| 6 | **Does `/api/client/today` return the current session?** | Same auth: `GET /api/client/today`. | `training.workouts[]` non-empty on a training day (or `labels.training_state == "rest_day"` if it's a real rest day), `roster_day` populated. |
+| 7 | **Does the installed app point at the Production backend?** | In the installed build, open Settings → About (or wherever the API base is shown) — the URL there must be the Production hostname, **not** `flight-fit-plans.preview.emergentagent.com`. If no in-app screen shows it, uninstall and reinstall from the store to force a fresh build. | Base URL matches the Production API. |
+
+**Escalation flags — stop immediately if you see any of these:**
+- Step 3 returns `no_live_v2` after the coach published. → Publish path
+  failed silently or wrote to a different DB. Check `plan_drafts_v2.status`
+  for the client — should be `published` with a `live_id`. If not,
+  the publish gate blocked (see §9.2).
+- Step 5 returns workout rows whose `id` does **not** start with `v2p:` on
+  a V2-enabled client. → The V2 bridge is not firing. Check `v2_flags`
+  (Step 2) and that `plan_live_v2.active == true`.
+- Step 7 shows the Preview backend host on a Production-installed app. →
+  Wrong binary is installed. Get a fresh Production build from the App
+  Store / Play Store.
+
+---
+
+## 12. Overrides & persistence — what survives a new publish
+
+Five distinct override mechanisms exist. Understanding **which survive a
+new `plan_live_v2` publish and which are lost** is critical when the
+coach republishes.
+
+| Layer | Collection | What it stores | Survives new publish? | Notes |
+|---|---|---|---|---|
+| **A. Immutable Live** | `plan_live_v2` (one row `active=true` per client) | The published snapshot of placements + session_specs at publish time. | **Superseded, not lost.** Prior row is retained with `active=false` and linked via `previous_live_id`. History is queryable forever. | This is the source of truth read by the V2 bridge. |
+| **B. Live implementation overrides** | `plan_live_v2_implementations` (one row per (exposure_id, date/date-range)) | Coach "Change Setup" edits — a full `spec_snapshot` replacing what the draft built. | **LOST on new publish.** The new `plan_live_v2` snapshot resets what the bridge reads; new rows are needed after republish. | Written by `feature_v2_coach_inline_editor.py` PATCH `/plan/implementations/{iid}`. |
+| **C. Per-exercise swaps** | `plan_live_v2_exercise_swaps` (one row per (client, exposure, date, exercise)) | Substituting a single exercise inside an otherwise-unchanged session (e.g. swap barbell squat → goblet squat for today). | **LOST on new publish.** [INFERRED] — the swap is keyed on `(client, exposure_id, date)`, and after republish the new `plan_live_v2` has different exposure ids, so the swap no longer matches. Not re-verified in this pass. | Written by `feature_v2_coach_inline_editor.py` swap endpoint. |
+| **D. Workout assignments** | `workout_assignments` (one row per scheduled placement) + `workout_implementations` (built content) | Foundation-layer state for the OLD publish path (`feature_v2_coach_publish.py`, deprecated). Also written by `p5_scheduling` / `p6_construction`. | Not read by the current `plan_live_v2` bridge — **effectively orphaned** for V2-enabled clients unless the deprecated publish path is used. | Retained for audit + for coach dashboard views that still query these tables. |
+| **E. Reality-based adaptations** | `db.workouts` (V1) modification + `decision_records` + a chip cue written into today's session | Client tapped "im_tired" / "hotel_room" / etc. — deterministic reduction via `feature_v2_p7_equipment._adapt()`. | **Applies to today's session only.** Does **not** persist beyond the day it was applied. A new publish rebuilds future sessions from scratch. | Written by `feature_v2_p10_reality.py::_apply_reality`. |
+
+**Practical implication for the coach:**
+- If Louis has manually tuned a client's programme via **B (Change Setup)**
+  or **C (per-exercise swap)** and then re-runs Build Plan + Publish,
+  **those tweaks vanish** unless he re-applies them after the new publish.
+- **A (Live snapshot)** is the only layer that carries forward
+  automatically — because the new publish IS the new snapshot.
+- **E (Reality chip)** is by design one-shot: it's a today-only softening,
+  never a persistent programme change.
+
+**Recommendation before republish:** export the current live's
+`plan_live_v2_implementations` and `plan_live_v2_exercise_swaps` for the
+client (or take a screenshot of the affected days). The coach can then
+re-apply them post-publish.
+
+---
+
+## 13. Current vs deprecated endpoints
+
+Both endpoints in each pair are still mounted for backward compatibility.
+**Use only the "Current" column for new work.** The client V2 bridge
+reads `plan_live_v2` only — anything writing to the "Deprecated" endpoints
+will be invisible to the client app.
+
+| Purpose | Current (use these) | Deprecated (do not use) | Notes |
+|---|---|---|---|
+| **Kickoff (build a draft)** | `POST /api/v2/coach/clients/{id}/engine-v2/kickoff` (`feature_v2_engine_v2_kickoff.py`) | `POST /api/v2/coach/clients/{id}/plan/kickoff` (`feature_v2_coach_kickoff.py`) | Frontend "Build Plan" button uses the current one. Legacy path writes to `plan_drafts` (V1-style), not `plan_drafts_v2`. |
+| **Publish a plan** | `POST /api/v2/coach/clients/{id}/engine-v2/publish` (`feature_v2_engine_v2_publish.py`) | `POST /api/v2/coach/clients/{id}/plan/publish` — explicitly `deprecated=True` in FastAPI (`feature_v2_coach_publish.py`) | Only the current one writes `plan_live_v2`; only `plan_live_v2` is read by the client. |
+| **Live plan retrieval (client-side)** | `GET /api/v2/client/plan/live` and `GET /api/v2/client/plan/live/day/{iso_date}` (`feature_v2_engine_v2_publish.py`) | Legacy V1 `GET /api/programme/current` + `GET /api/workouts/week` for V1-only clients | V2-enabled clients get their live plan **synthesised in-memory** via the bridge and returned through `/workouts/week` as well — the two current endpoints are additive, not replacements. |
+| **Workout retrieval (client-side)** | `GET /api/workouts/week` (transparently splices in V2 synthesised workouts via `synth_workouts_for_user`), `GET /api/workouts/{wid}` (handles both legacy ids and `v2p:*` ids via `synth_workout_by_wid`), `GET /api/client/today` (composite Today) | Direct reads on `db.workouts` for V2 clients (would miss the V2 rows entirely) | The bridge is transparent by design — legacy client code did not need changes to see V2 plans. |
+| **Roster upload** | Client: `POST /api/roster/upload-and-generate`. Coach: `POST /api/coach/clients/{cid}/roster/upload-parse` + confirm. | — | No deprecated pair here; both are current. |
+| **Reality submission** | `POST /api/v2/client/reality/apply` (chip resolver) | Legacy `POST /api/reality/apply` + `POST /api/reality/submit` (V1 event store) | V1 endpoints are still active for V1-only clients; kept as telemetry sink even for V2 clients. |
+
+---
+
+
+## 14. Appendix A — file → responsibility index
 
 Only the modules a maintainer will actually touch. Small helpers omitted.
 
@@ -838,7 +1001,7 @@ Only the modules a maintainer will actually touch. Small helpers omitted.
 
 ---
 
-## 11. Appendix B — Conflicting sources of truth (call-outs)
+## 15. Appendix B — Conflicting sources of truth (call-outs)
 
 ### B1. Exercise library — two collections, one resolver
 
@@ -906,13 +1069,34 @@ Only the modules a maintainer will actually touch. Small helpers omitted.
   build. Do not manually change it. Push notifications only work on
   Published builds, never on Expo Go / web preview.
 
-### B9. Wix DNS + Cloudflare Pages
+### B9. Wix DNS + Cloudflare Pages — MOVED
 
-- Web dashboard is deployed on Cloudflare Pages (not Cloudflare Workers)
-  because the domain's nameservers stay on Wix. Pages accepts a
-  CNAME/A-record mapping without transferring the domain.
-- Backend continues to be served by the Emergent-managed API host — the
-  Pages site only serves the compiled Expo web bundle.
+- This section has been removed from the programme-generation handover
+  because it is a deployment concern, not a programme-generation concern.
+- **Where it now lives:** please create a separate document
+  `/app/docs/DEPLOYMENT_WEB.md` for the Wix nameserver → Cloudflare Pages
+  CNAME setup. That document is not created in this pass to keep the
+  amendment low-cost.
+
+---
+
+## Amendment pass — cost & follow-up summary
+
+- **Estimated additional Emergent credit cost for this amendment pass:**
+  ~1 credit (targeted edits only, no code inspection beyond header
+  location, no service calls).
+- **Total approximate credits used for the full handover (initial doc +
+  this amendment):** ~5–7 credits, best-effort estimate. Emergent's
+  meter is authoritative.
+- **Is a full publish required to see this change?** **No** — this is a
+  Markdown documentation file, not shipped code (see Deployment Matrix
+  Row 1 — data-only class).
+- **Is a new iOS or Android build required?** **No.** No native or JS
+  code was touched.
+- **Does the amended file remain local only?** **Yes.** Path:
+  `/app/docs/HANDOVER_DELTA.md`. A browser-served copy exists at
+  `/app/frontend/public/HANDOVER_DELTA.md`. Neither is committed nor
+  pushed to any Git remote in this pass.
 
 ---
 

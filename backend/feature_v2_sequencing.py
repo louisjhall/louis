@@ -341,17 +341,24 @@ def validate_placement(
                         f"{kind} on {date} → {p.kind} on {p.date} forbidden",
                     )
 
-    # ---- Two-day-out KEY spacing safeguard --------------------------------
+    # ---- Two-day-out KEY spacing safeguard (cross-family only) -----------
+    # Iter 131a: this rule previously blocked ANY KEY within 48h of ANY other
+    # KEY, which prevented legitimate 3× strength_full weeks and near-consecutive
+    # A/B/C sessions. Same-family KEY-to-KEY spacing is now the exclusive
+    # responsibility of `session_family_recovery_hours` (the goal's authoritative
+    # same-family control). This safeguard now only fires when the two KEYs are
+    # of DIFFERENT families (e.g. strength_full KEY beside a run_long KEY).
     if key:
+        this_family = session_family(kind)
         for offset in (-2, -1, +1, +2):
             neighbour = date + _dt.timedelta(days=offset)
             for p in plan.by_date(neighbour):
-                if p.key:
+                if p.key and session_family(p.kind) != this_family:
                     gap_h = abs(offset) * 24
                     if gap_h < 48:
                         return PlacementCheck(
-                            False, "key_spacing_48h",
-                            f"KEY {p.kind} on {p.date} within 48h",
+                            False, "key_spacing_48h_cross_family",
+                            f"KEY {p.kind} on {p.date} within 48h (cross-family)",
                         )
 
     # ---- Consecutive-training-days cap ------------------------------------

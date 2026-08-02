@@ -244,7 +244,11 @@ _ENDURANCE_FORBIDDEN = (
 _STRENGTH_FORBIDDEN = (
     ("strength_hyp", "strength_hyp"),        # same body area shouldn't repeat
     ("strength_power", "strength_power"),
-    ("strength_full", "strength_full"),      # if strength is KEY, need spacing
+    # Iter 131a: ("strength_full", "strength_full") removed — adjacent-day
+    # full-body strength is now permitted at the sequencing level. Variety is
+    # enforced downstream by A/B/C rotation + the Iter 130g variety validator,
+    # and the goal's session_family_recovery_hours["strength_full"] still
+    # blocks same-day repeats.
     # heavy legs the day before an endurance KEY
     ("strength_lower", "run_long"),
     ("strength_full", "run_long"),
@@ -369,7 +373,7 @@ _register(GoalConfig(
     },
     session_family_recovery_hours={
         "run_long": 72, "run_threshold": 48, "run_vo2": 48, "run_race_pace": 72,
-        "strength_full": 48, "strength_lower": 48,
+        "strength_full": 24, "strength_lower": 48,
     },
     forbidden_sequences=_ENDURANCE_FORBIDDEN + _STRENGTH_FORBIDDEN,
     strength_endurance_interference=True,
@@ -890,7 +894,7 @@ _register(GoalConfig(
             ),
         ),
     },
-    session_family_recovery_hours={"strength_hyp": 48, "strength_full": 48, "strength_power": 48},
+    session_family_recovery_hours={"strength_hyp": 48, "strength_full": 24, "strength_power": 48},
     forbidden_sequences=_STRENGTH_FORBIDDEN,
 ))
 
@@ -968,7 +972,7 @@ _register(GoalConfig(
             ),
         ),
     },
-    session_family_recovery_hours={"strength_full": 48, "conditioning": 48, "run_vo2": 48},
+    session_family_recovery_hours={"strength_full": 24, "conditioning": 48, "run_vo2": 48},
     forbidden_sequences=_STRENGTH_FORBIDDEN + (
         ("conditioning", "strength_full"),
         ("conditioning", "conditioning"),
@@ -1029,7 +1033,7 @@ _register(GoalConfig(
             ),
         ),
     },
-    session_family_recovery_hours={"strength_full": 48},
+    session_family_recovery_hours={"strength_full": 24},
     forbidden_sequences=_STRENGTH_FORBIDDEN,
 ))
 
@@ -1103,7 +1107,7 @@ _register(GoalConfig(
             ),
         ),
     },
-    session_family_recovery_hours={"strength_full": 48, "conditioning": 48},
+    session_family_recovery_hours={"strength_full": 24, "conditioning": 48},
     forbidden_sequences=_STRENGTH_FORBIDDEN + (
         ("conditioning", "strength_full"),  # spare recovery for main strength
         ("conditioning", "conditioning"),

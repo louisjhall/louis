@@ -856,6 +856,119 @@ def schedule_demand(
                     f"KEY exposure {exp.kind} in week {exp.week_index} could not be placed"
                 )
 
+    # ---- Iter 131a — KEY-rescue post-pass ---------------------------------
+    # After the greedy pass, some KEY exposures may be unfilled because a
+    # SUPPORTING exposure earlier claimed the only remaining training date in
+    # the week. Run one rescue pass: for each unfilled KEY, if a SUPPORTING
+    # placement in the same ISO-week opened a NEW training date (i.e. it is
+    # the sole placement on its date), temporarily evict that SUPPORTING and
+    # retry the KEY on that date. If the KEY validates, keep the swap. If it
+    # still fails, restore the SUPPORTING exactly. No recursion, single pass.
+    if unfilled:
+        # Preserve original exposure metadata so we can rebuild + retry.
+        exp_by_id: dict[str, Any] = {e.exposure_id: e for e in ordered}
+        # Determine which placements are SUPPORTING and sole-on-date
+        def _is_support_kind(k: str) -> bool:
+            from feature_v2_sport_configs import (
+                session_load_bucket, LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY,
+            )
+            return session_load_bucket(k) in (LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY)
+
+        remaining_unfilled: list[Unfilled] = []
+        for uf in unfilled:
+            if uf.priority.upper() != "KEY":
+                remaining_unfilled.append(uf)
+                continue
+            key_exp = exp_by_id.get(uf.exposure_id)
+            if key_exp is None:
+                remaining_unfilled.append(uf)
+                continue
+
+            # KEY's allowed window
+            k_allowed_start = key_exp.allowed_window_start or (
+                first_monday + _dt.timedelta(days=7 * key_exp.week_index) - _dt.timedelta(days=7)
+            )
+            k_allowed_end = key_exp.allowed_window_end or (
+                first_monday + _dt.timedelta(days=7 * key_exp.week_index + 6) + _dt.timedelta(days=7)
+            )
+            k_target_start = key_exp.target_week_start or (
+                first_monday + _dt.timedelta(days=7 * key_exp.week_index)
+            )
+            k_target_end = key_exp.target_week_end or (
+                k_target_start + _dt.timedelta(days=6)
+            )
+
+            # Candidate placements to evict: SUPPORTING placements whose date
+            # sits inside KEY's TARGET week and which are the SOLE placement
+            # on that date.
+            candidates = []
+            for p in plan.placements:
+                if not _is_support_kind(p.kind):
+                    continue
+                if not (k_target_start <= p.date <= k_target_end):
+                    continue
+                # Sole-on-date?
+                if sum(1 for q in plan.placements if q.date == p.date) != 1:
+                    continue
+                # Must lie in KEY's allowed window
+                if not (k_allowed_start <= p.date <= k_allowed_end):
+                    continue
+                # Find the DayContext for that date
+                ctx = next((c for c in day_contexts if c.date == p.date), None)
+                if ctx is None:
+                    continue
+                candidates.append((p, ctx))
+
+            rescued = False
+            for support_p, ctx in candidates:
+                # Evict SUPPORTING
+                plan.placements.remove(support_p)
+                # Retry KEY validation on this date
+                check = validate_placement(
+                    kind=key_exp.kind, date=ctx.date, plan=plan,
+                    goal=goal, phase=phase,
+                    day_ctx_burden=ctx.duty_burden_score,
+                    day_ctx_opportunity=ctx.training_opportunity,
+                    priority=key_exp.priority,
+                    target_duration_min=key_exp.target_duration_min,
+                    daily_time_cap_min=dtcap.get(ctx.date, ctx.available_time_min),
+                )
+                if check.ok:
+                    apply_placement(
+                        plan,
+                        exposure_id=key_exp.exposure_id,
+                        objective_id=key_exp.objective_id,
+                        kind=key_exp.kind,
+                        date=ctx.date,
+                        priority=key_exp.priority,
+                        intensity_target=key_exp.intensity_target,
+                        target_duration_min=key_exp.target_duration_min,
+                    )
+                    validation_notes.append(
+                        f"KEY-rescue: swapped SUPPORTING {support_p.kind} on {ctx.date} "
+                        f"for {key_exp.kind} (exposure {key_exp.exposure_id})"
+                    )
+                    # The evicted SUPPORTING becomes unfilled.
+                    remaining_unfilled.append(Unfilled(
+                        exposure_id=support_p.exposure_id,
+                        objective_id=support_p.objective_id,
+                        kind=support_p.kind,
+                        priority=support_p.priority,
+                        reason_code="displaced_by_key_rescue",
+                        human_reason=(
+                            f"SUPPORTING {support_p.kind} on {ctx.date} was evicted to "
+                            f"make room for KEY {key_exp.kind} (Iter 131a rescue)"
+                        ),
+                        candidate_hint_dates=[],
+                    ))
+                    rescued = True
+                    break
+                # KEY still fails — restore SUPPORTING exactly
+                plan.placements.append(support_p)
+            if not rescued:
+                remaining_unfilled.append(uf)
+        unfilled = remaining_unfilled
+
     # ---- Chronological renumbering per objective_id -----------------------
     # exposure_id remains the immutable identity from build_demand; but the
     # exposure_number displayed on the calendar must be 1..N in DATE order

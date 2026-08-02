@@ -457,6 +457,7 @@ async def _engine_v2_kickoff_impl(
         week_start_dates=week_starts,
         window_start=window_start,
         window_end=window_end,
+        effective_start_date=today,
     )
 
     # ---- 6. WHEN — schedule -------------------------------------------
@@ -866,6 +867,7 @@ async def _engine_v2_kickoff_impl(
         ],
         "generation_receipt": receipt,
         "took_seconds": round(time.time() - t0, 3),
+        "engine_iteration": "131d",
     }
 
 

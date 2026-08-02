@@ -779,6 +779,7 @@ async def endpoint_engine_v2_client_state(
         "has_active_live": bool(active_live),
         "active_live_id": (active_live or {}).get("id"),
         "active_live_activated_at": (active_live or {}).get("activated_at"),
+        "engine_iteration": "131d",
     }
 
 

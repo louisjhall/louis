@@ -273,6 +273,7 @@ def build_demand(
     progression_state: Optional[dict] = None,
     window_start: Optional[_dt.date] = None,
     window_end: Optional[_dt.date] = None,
+    effective_start_date: Optional[_dt.date] = None,
 ) -> DemandPlan:
     """Compute the set of required training exposures for the given planning
     window (one entry per week * per quota).
@@ -280,12 +281,14 @@ def build_demand(
     `week_start_dates` — list of Monday dates for each week in the window,
     in order. Determines how many exposures to schedule per quota.
 
-    `window_start` / `window_end` (optional, Iter 131c) — the actual planning
-    window bounds. When provided, partial opening / closing weeks (fewer than
-    5 in-window days) do NOT generate KEY or IMPORTANT-non-skippable
-    exposures — this prevents a 1-2 day partial week from being asked to
-    satisfy a full weekly quota. SUPPORTING and OPTIONAL exposures still
-    generate but are proportionally scaled down.
+    `window_start` / `window_end` (optional) — the outer planning window
+    bounds.
+
+    `effective_start_date` (optional, Iter 131d) — the FIRST date on which
+    the client can actually train. Kickoff sets this to `today` because
+    days before today are in the past. Used to compute usable-days-in-week
+    for the partial-week gate. If absent, we fall back to `window_start`,
+    and if that's also absent, we assume every week is a full 7-day week.
     """
     cfg = get_goal_config(goal_key)
     quotas = list(phase_spec.quotas)
@@ -568,12 +571,21 @@ def build_demand(
     FULL_WEEK_MIN_DAYS = 5
 
     def _usable_days_in_week(wk_start: _dt.date) -> int:
-        if window_start is None and window_end is None:
+        # Iter 131d — lower bound is max(window_start, effective_start_date).
+        # Days before the effective start (i.e. in the past) do NOT count as
+        # usable, even when window_start is aligned to the Monday of the
+        # current week (which kickoff always does).
+        eff_lower = None
+        if effective_start_date is not None:
+            eff_lower = effective_start_date
+        elif window_start is not None:
+            eff_lower = window_start
+        if eff_lower is None and window_end is None:
             return 7  # backward-compat: assume full weeks when bounds absent
         count = 0
         for _i in range(7):
             _d = wk_start + _dt.timedelta(days=_i)
-            if window_start is not None and _d < window_start:
+            if eff_lower is not None and _d < eff_lower:
                 continue
             if window_end is not None and _d > window_end:
                 continue

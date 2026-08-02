@@ -346,6 +346,217 @@ async def coach_edit_manual_workout(wid: str, body: ManualWorkoutEditBody,
     return {"ok": True, "workout": fresh, "missing_media": missing_media}
 
 
+# ---------------------------------------------------------------------------
+# Manual workout move (Phase 1.5)
+# ---------------------------------------------------------------------------
+
+class ManualMoveBody(BaseModel):
+    to_date: str
+    reason: Optional[str] = None
+    # If target date already contains a manual workout, allow_swap must be
+    # true to swap the two dates. Never silently overwrites.
+    allow_swap: bool = False
+    # Coach explicitly overriding a warning (available_time / equipment /
+    # heavy-duty / restriction). Recorded for audit.
+    warning_override: Optional[str] = None
+
+
+@api.post("/coach/workouts/{wid}/manual/move")
+async def coach_move_manual_workout(wid: str, body: ManualMoveBody,
+                                    coach: dict = Depends(require_role("coach"))):
+    w = await _load_manual_workout(wid)
+    from_date = w.get("date")
+    to_date = (body.to_date or "").strip()
+    if not to_date:
+        raise HTTPException(400, "to_date required")
+    if to_date == from_date:
+        return {"ok": True, "workout": w, "changed": False}
+
+    cid = w["user_id"]
+    other = await db.workouts.find_one(
+        {"user_id": cid, "date": to_date, "id": {"$ne": wid}}, {"_id": 0},
+    )
+    # Only allow swapping with another MANUAL workout. Generated legacy rows
+    # on the target date stay put — coach must use the Phase 1 whole-day
+    # override tools if they want to replace them.
+    swap_target = None
+    if other:
+        if other.get("source") != MANUAL_SOURCE:
+            raise HTTPException(
+                409,
+                "Target date has a non-manual workout — use Phase 1 replace/suppress instead of move",
+            )
+        if not body.allow_swap:
+            raise HTTPException(
+                409,
+                "Target date already has a manual workout — set allow_swap=true to swap",
+            )
+        if other.get("completed") or other.get("coach_locked_by_client_action"):
+            raise HTTPException(409, "Cannot swap: target manual workout is completed")
+        swap_target = other
+
+    # Refuse to move a completed workout.
+    if w.get("completed"):
+        raise HTTPException(400, "Cannot move a completed workout")
+
+    # If the origin date has an active replace_day override pointing at THIS
+    # workout, deactivate it (the manual is moving, so the origin date should
+    # return to its generated content, unless the coach explicitly wanted
+    # otherwise — a follow-up can suppress the origin explicitly).
+    linked_origin_override = await db.coach_day_overrides.find_one(
+        {"client_id": cid, "date": from_date, "active": True,
+         "replacement_workout_id": wid},
+        {"_id": 0},
+    )
+    if linked_origin_override:
+        await _deactivate_override(
+            linked_origin_override["id"], coach,
+            reason="manual workout moved to another date",
+        )
+
+    now = now_iso()
+    move_audit = {
+        "action": "move",
+        "by": coach.get("id"),
+        "at": now,
+        "from_date": from_date,
+        "to_date": to_date,
+        "reason": body.reason,
+        "warning_override": body.warning_override,
+        "swap_with": (swap_target or {}).get("id"),
+        "origin_override_deactivated": (linked_origin_override or {}).get("id"),
+    }
+
+    if swap_target:
+        # Two-step swap using a temporary placeholder to avoid any unique-index
+        # collision on (user_id, date).
+        temp = f"__swap_{new_id()[:8]}"
+        await db.workouts.update_one({"id": swap_target["id"]},
+                                     {"$set": {"date": temp, "updated_at": now}})
+        await db.workouts.update_one({"id": wid},
+                                     {"$set": {"date": to_date, "updated_at": now,
+                                               "edited_by": coach.get("id"), "edited_at": now},
+                                      "$push": {"audit": move_audit}})
+        await db.workouts.update_one({"id": swap_target["id"]},
+                                     {"$set": {"date": from_date, "updated_at": now,
+                                               "edited_by": coach.get("id"), "edited_at": now},
+                                      "$push": {"audit": {"action": "swap_in",
+                                                          "by": coach.get("id"), "at": now,
+                                                          "from_date": to_date,
+                                                          "to_date": from_date,
+                                                          "swapped_with": wid}}})
+    else:
+        await db.workouts.update_one({"id": wid},
+                                     {"$set": {"date": to_date, "updated_at": now,
+                                               "edited_by": coach.get("id"), "edited_at": now},
+                                      "$push": {"audit": move_audit}})
+
+    try:
+        await _log_change(
+            coach_id=coach.get("id"), client_id=cid,
+            category="workout", kind="manual_workout_move",
+            title=f"Moved manual workout {from_date} → {to_date}",
+            description=body.reason or "",
+            actor="coach",
+            meta={"workout_id": wid, "from_date": from_date, "to_date": to_date,
+                  "swapped_with": (swap_target or {}).get("id"),
+                  "warning_override": body.warning_override},
+        )
+    except Exception:
+        logger.exception("manual move: _log_change failed")
+
+    fresh = await db.workouts.find_one({"id": wid}, {"_id": 0})
+    swap_fresh = None
+    if swap_target:
+        swap_fresh = await db.workouts.find_one({"id": swap_target["id"]}, {"_id": 0})
+    return {
+        "ok": True,
+        "workout": fresh,
+        "moved_from": from_date,
+        "moved_to": to_date,
+        "swapped_workout": swap_fresh,
+        "undo_token": {
+            "workout_id": wid,
+            "from_date": to_date,          # to undo, we go back
+            "to_date": from_date,
+            "swap_partner_id": (swap_target or {}).get("id"),
+        },
+    }
+
+
+class ManualUndoMoveBody(BaseModel):
+    # The response from /move returned an undo_token — pass it back as-is.
+    undo_token: dict
+
+
+@api.post("/coach/workouts/{wid}/manual/undo-move")
+async def coach_undo_manual_move(wid: str, body: ManualUndoMoveBody,
+                                 coach: dict = Depends(require_role("coach"))):
+    w = await _load_manual_workout(wid)
+    tok = body.undo_token or {}
+    if tok.get("workout_id") != wid:
+        raise HTTPException(400, "undo_token workout_id mismatch")
+    target_date = tok.get("to_date")     # was the original date
+    current_date = tok.get("from_date")  # is where the workout is now
+    if not target_date or not current_date:
+        raise HTTPException(400, "undo_token missing dates")
+    if w.get("date") != current_date:
+        # The workout has been moved again since — do NOT silently undo.
+        raise HTTPException(
+            409,
+            "Cannot undo: workout has been changed since the move",
+        )
+
+    swap_partner_id = tok.get("swap_partner_id")
+    now = now_iso()
+    if swap_partner_id:
+        partner = await db.workouts.find_one({"id": swap_partner_id}, {"_id": 0})
+        if not partner:
+            # Partner was deleted; just move this one back.
+            swap_partner_id = None
+        else:
+            # Reverse the swap.
+            temp = f"__swap_{new_id()[:8]}"
+            await db.workouts.update_one({"id": swap_partner_id},
+                                         {"$set": {"date": temp, "updated_at": now}})
+            await db.workouts.update_one({"id": wid},
+                                         {"$set": {"date": target_date, "updated_at": now},
+                                          "$push": {"audit": {"action": "undo_move",
+                                                              "by": coach.get("id"), "at": now,
+                                                              "from_date": current_date,
+                                                              "to_date": target_date,
+                                                              "swap_partner_id": swap_partner_id}}})
+            await db.workouts.update_one({"id": swap_partner_id},
+                                         {"$set": {"date": current_date, "updated_at": now},
+                                          "$push": {"audit": {"action": "undo_swap",
+                                                              "by": coach.get("id"), "at": now,
+                                                              "from_date": target_date,
+                                                              "to_date": current_date,
+                                                              "swapped_with": wid}}})
+    if not swap_partner_id:
+        await db.workouts.update_one({"id": wid},
+                                     {"$set": {"date": target_date, "updated_at": now},
+                                      "$push": {"audit": {"action": "undo_move",
+                                                          "by": coach.get("id"), "at": now,
+                                                          "from_date": current_date,
+                                                          "to_date": target_date}}})
+
+    try:
+        await _log_change(
+            coach_id=coach.get("id"), client_id=w["user_id"],
+            category="workout", kind="manual_workout_move_undo",
+            title=f"Undo move: {current_date} → {target_date}",
+            actor="coach",
+            meta={"workout_id": wid, "from_date": current_date, "to_date": target_date,
+                  "swap_partner_id": swap_partner_id},
+        )
+    except Exception:
+        logger.exception("manual undo-move: _log_change failed")
+
+    fresh = await db.workouts.find_one({"id": wid}, {"_id": 0})
+    return {"ok": True, "workout": fresh, "restored_to": target_date}
+
+
 class ManualDeleteBody(BaseModel):
     confirm: bool = False
     reason: Optional[str] = None

@@ -14,7 +14,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator,
-  Platform, useWindowDimensions, Modal, StatusBar,
+  Platform, useWindowDimensions, Modal, StatusBar, Alert,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -36,6 +36,7 @@ import EngineV2DraftPanel from "@/src/components/EngineV2DraftPanel";
 import ManualWorkoutBuilderSheet from "@/src/components/ManualWorkoutBuilderSheet";
 import DayActionsMenu, { DayState } from "@/src/components/DayActionsMenu";
 import DeleteManualConfirmSheet from "@/src/components/DeleteManualConfirmSheet";
+import MoveManualWorkoutSheet from "@/src/components/MoveManualWorkoutSheet";
 
 type DayRow = {
   date: string;
@@ -157,6 +158,10 @@ export default function CoachWorkspaceScreen() {
   }>(null);
   const [deleteTarget, setDeleteTarget] = useState<null | {
     workout: any; wasReplacingGeneratedDay: boolean;
+  }>(null);
+  const [moveTarget, setMoveTarget] = useState<null | { workout: any }>(null);
+  const [undoBanner, setUndoBanner] = useState<null | {
+    workout_id: string; undo_token: any; label: string;
   }>(null);
   // date -> { id, mode, replacement_workout_id }
   const [overrides, setOverrides] = useState<Record<string, any>>({});
@@ -316,6 +321,31 @@ export default function CoachWorkspaceScreen() {
       setError(e?.message || String(e));
     }
   }, [overrides]);
+
+  const askMoveManual = useCallback(async (manualStub: any) => {
+    if (!manualStub?.id) return;
+    try {
+      const full = await api<any>(`/workouts/${manualStub.id}`);
+      setMoveTarget({ workout: full });
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    }
+  }, []);
+
+  const undoMove = useCallback(async () => {
+    if (!undoBanner) return;
+    setBusy(true);
+    try {
+      await api(`/coach/workouts/${undoBanner.workout_id}/manual/undo-move`, {
+        method: "POST", body: { undo_token: undoBanner.undo_token },
+      });
+      setUndoBanner(null);
+      await loadManualAndOverrides();
+      await loadMonth();
+    } catch (e: any) {
+      Alert.alert("Could not undo move", e?.message || "Please try again.");
+    } finally { setBusy(false); }
+  }, [undoBanner, loadManualAndOverrides, loadMonth]);
 
   if (!clientId) {
     return <View style={styles.center}><Text style={styles.err}>No client id</Text></View>;
@@ -534,6 +564,7 @@ export default function CoachWorkspaceScreen() {
             onOpenManual={() => openBuilderForEdit(manualStub)}
             onEditManual={() => openBuilderForEdit(manualStub)}
             onDeleteManual={() => askDeleteManual(manualStub, dayMenuDate)}
+            onMoveManual={() => askMoveManual(manualStub)}
           />
         );
       })()}
@@ -576,6 +607,47 @@ export default function CoachWorkspaceScreen() {
           workout={deleteTarget.workout}
           wasReplacingGeneratedDay={deleteTarget.wasReplacingGeneratedDay}
         />
+      )}
+
+      {/* Phase 1.5 — Move manual workout */}
+      {moveTarget && (
+        <MoveManualWorkoutSheet
+          visible={!!moveTarget}
+          onClose={() => setMoveTarget(null)}
+          workout={moveTarget.workout}
+          days={data?.days || []}
+          clientId={String(clientId)}
+          onMoved={async (res) => {
+            setMoveTarget(null);
+            setUndoBanner({
+              workout_id: res.workout.id,
+              undo_token: res.undo_token,
+              label: `Moved ${res.moved_from} → ${res.moved_to}`,
+            });
+            await loadManualAndOverrides();
+            await loadMonth();
+          }}
+        />
+      )}
+
+      {/* Phase 1.5 — Undo banner after a successful move */}
+      {undoBanner && (
+        <View style={styles.undoBanner} pointerEvents="box-none">
+          <View style={styles.undoInner}>
+            <Ionicons name="checkmark-circle" size={18} color="#61c982" />
+            <Text style={styles.undoText}>{undoBanner.label}</Text>
+            <Pressable
+              onPress={undoMove}
+              style={styles.undoBtn}
+              testID="undo-move-btn"
+            >
+              <Text style={styles.undoBtnText}>Undo</Text>
+            </Pressable>
+            <Pressable onPress={() => setUndoBanner(null)} testID="undo-close-btn" style={{ paddingHorizontal: 6 }}>
+              <Ionicons name="close" size={16} color={theme.color.textHi} />
+            </Pressable>
+          </View>
+        </View>
       )}
     </View>
   );
@@ -1045,6 +1117,11 @@ function formatMonth(m: string, short = false): string {
 }
 
 const styles = StyleSheet.create({
+  undoBanner: { position: "absolute", left: 16, right: 16, bottom: 24, alignItems: "center", zIndex: 1000 },
+  undoInner: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.card, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 14, gap: 10, maxWidth: 480 },
+  undoText: { color: theme.color.textHi, fontSize: 13, flex: 1 },
+  undoBtn: { backgroundColor: theme.color.brand, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
+  undoBtnText: { color: "#000", fontWeight: "700", fontSize: 12 },
   root: { flex: 1, backgroundColor: theme.color.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
   err: { color: "#ff6666" },

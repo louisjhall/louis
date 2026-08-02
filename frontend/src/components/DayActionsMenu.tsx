@@ -28,6 +28,7 @@ type Props = {
   onEditManual: () => void;
   onDeleteManual: () => void;
   onOpenManual: () => void;
+  onMoveManual: () => void;
 };
 
 export default function DayActionsMenu(props: Props) {
@@ -42,10 +43,12 @@ export default function DayActionsMenu(props: Props) {
   } else if (state === "manual") {
     items.push({ key: "open", label: "Open manual workout", icon: "open-outline", onPress: props.onOpenManual, testID: "day-menu-open" });
     items.push({ key: "edit", label: "Edit manual workout", icon: "create", onPress: props.onEditManual, testID: "day-menu-edit" });
+    items.push({ key: "move", label: "Move workout to another date", icon: "swap-horizontal", onPress: props.onMoveManual, testID: "day-menu-move" });
     items.push({ key: "delete", label: "Delete manual workout", icon: "trash", onPress: props.onDeleteManual, danger: true, testID: "day-menu-delete" });
   } else if (state === "replaced") {
     items.push({ key: "open", label: "Open manual workout", icon: "open-outline", onPress: props.onOpenManual, testID: "day-menu-open" });
     items.push({ key: "edit", label: "Edit manual workout", icon: "create", onPress: props.onEditManual, testID: "day-menu-edit" });
+    items.push({ key: "move", label: "Move workout to another date", icon: "swap-horizontal", onPress: props.onMoveManual, testID: "day-menu-move" });
     items.push({ key: "delete", label: "Delete manual & restore generated day", icon: "trash", onPress: props.onDeleteManual, danger: true, testID: "day-menu-delete" });
     items.push({ key: "restore", label: "Restore generated day", icon: "refresh", onPress: props.onRestoreDay, testID: "day-menu-restore" });
   } else if (state === "suppressed") {

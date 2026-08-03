@@ -186,6 +186,38 @@ async def coach_create_manual_workout(cid: str, body: ManualWorkoutBody,
 
     now = now_iso()
     wid = new_id()
+
+    # Phase 1A-fix — handle the "day already has a workout" case cleanly.
+    # If replace_day was requested by the DayActionsMenu, delete the existing
+    # non-manual workout for that date FIRST (does not touch flight support
+    # because flight support is stored in flight_support_overrides, never in
+    # db.workouts). If no override_mode was given but a workout already
+    # exists, return a clear 409 so the frontend can prompt the coach to
+    # use Replace instead of a raw 500 from the unique index.
+    existing_same_day = await db.workouts.find_one(
+        {"user_id": cid, "date": body.date}, {"_id": 0, "id": 1, "source": 1, "manual_lock": 1}
+    )
+    if existing_same_day:
+        if body.override_mode == "replace_day":
+            # Coach explicitly asked to replace — remove the existing row so
+            # the new manual workout can be inserted. Audit already captured
+            # via the day-override upsert further down.
+            await db.workouts.delete_many({"user_id": cid, "date": body.date})
+        else:
+            raise HTTPException(
+                409,
+                {
+                    "code": "day_already_has_workout",
+                    "message": (
+                        "This date already has a workout. Use Replace day with "
+                        "manual workout from the day-actions menu, or delete the "
+                        "existing workout first."
+                    ),
+                    "existing_workout_id": existing_same_day.get("id"),
+                    "existing_source": existing_same_day.get("source"),
+                },
+            )
+
     doc = {
         "id": wid,
         "user_id": cid,

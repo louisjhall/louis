@@ -708,6 +708,19 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
               : dayState === "replaced" ? { label: "REPLACED", color: "#f5b543" }
               : dayState === "suppressed" ? { label: "HIDDEN", color: "#8e8e93" }
               : null;
+
+  // Phase 1A-fix — visible affordance for the day-actions menu.
+  // Coach can tap: the date column, the roster column, OR the explicit
+  // "+ Manual" pill on the right. All three fire onPressDate → DayActionsMenu.
+  const dayCtaLabel =
+    dayState === "manual" || dayState === "replaced" ? "Edit day" :
+    dayState === "suppressed" ? "Restore" :
+    "+ Manual";
+  const dayCtaIcon =
+    dayState === "manual" || dayState === "replaced" ? "create-outline" :
+    dayState === "suppressed" ? "refresh" :
+    "add-circle-outline";
+
   return (
     <View style={[styles.dayRow, desktop ? styles.dayRowDesktop : styles.dayRowMobile]}>
       {/* Date column — Phase 1: clickable → DayActionsMenu */}
@@ -716,7 +729,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
         onPress={onPressDate}
         testID={`day-press-${row.date}`}
         accessibilityLabel={`Open day actions for ${row.date}`}
-        hitSlop={4}
+        hitSlop={12}
       >
         <Text style={styles.dateDow}>{dt.dow}</Text>
         <Text style={styles.dateD}>{dt.d}</Text>
@@ -727,8 +740,15 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
           </View>
         )}
       </Pressable>
-      {/* Roster / real life */}
-      <View style={[styles.rosterCol, desktop ? { flex: 1 } : {}]}>
+      {/* Roster / real life — also pressable so the coach has a large
+          tap target on the left half of every row. Does NOT alter roster
+          content — the press only opens the day-actions menu. */}
+      <Pressable
+        style={[styles.rosterCol, desktop ? { flex: 1 } : {}]}
+        onPress={onPressDate}
+        testID={`day-press-roster-${row.date}`}
+        accessibilityLabel={`Open day actions for ${row.date} (roster column)`}
+      >
         {row.schedule ? (
           <>
             <Text style={styles.rosterClassification}>{row.schedule.classification_label}</Text>
@@ -751,7 +771,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
         ) : (
           <Text style={styles.rosterMeta}>—</Text>
         )}
-      </View>
+      </Pressable>
       {/* Plan */}
       <View style={[styles.planCol, desktop ? { flex: 1 } : {}]}>
         {row.assignments.length === 0 && (row.v1_workouts || []).length === 0 ? (
@@ -830,6 +850,19 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
             ))}
           </View>
         ) : null}
+
+        {/* Phase 1A-fix — always-visible affordance so the coach can
+            unambiguously trigger the day-actions menu. Fires the same
+            onPressDate as the date/roster columns. */}
+        <Pressable
+          onPress={onPressDate}
+          style={styles.dayCta}
+          testID={`day-cta-${row.date}`}
+          accessibilityLabel={`${dayCtaLabel} for ${row.date}`}
+        >
+          <Ionicons name={dayCtaIcon as any} size={14} color={theme.color.brand} />
+          <Text style={styles.dayCtaText}>{dayCtaLabel}</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -1284,6 +1317,14 @@ const styles = StyleSheet.create({
   v1Hint: { color: "#f5b543", fontSize: 10, marginTop: 2, fontStyle: "italic" },
 
   planEmpty: { color: theme.color.textDim, fontStyle: "italic", fontSize: 12 },
+  // Phase 1A-fix — visible day-action CTA on every row
+  dayCta: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    gap: 6, marginTop: 8, paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 6, borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: "rgba(255,255,255,0.02)",
+  },
+  dayCtaText: { color: theme.color.brand, fontSize: 11, fontWeight: "700", letterSpacing: 0.4 },
   planCard: {
     backgroundColor: "#00000030", borderRadius: 6, borderWidth: 1, borderColor: theme.color.border,
     padding: 10, flexDirection: "row", alignItems: "center",

@@ -189,15 +189,15 @@ export default function CoachHomeScreen() {
       </View>
 
       {/* Prominent "New Manual Workout" call-to-action.
-          One tap → client picker (existing Clients tab). Second tap →
-          workspace where DayActionsMenu + ManualWorkoutBuilderSheet live. */}
+          Opens the existing Clients tab; coach then taps a client → workspace
+          where DayActionsMenu + ManualWorkoutBuilderSheet live per-day. */}
       <Pressable
-        onPress={() => router.push("/(coach)/clients?intent=manual_workout" as any)}
+        onPress={() => router.push("/(coach)/clients" as any)}
         style={styles.newManualBtn}
         testID="new-manual-workout-btn"
       >
-        <Ionicons name="add-circle" size={22} color="#fff" />
-        <Text style={styles.newManualBtnText}>New Manual Workout</Text>
+        <Ionicons name="people" size={22} color="#fff" />
+        <Text style={styles.newManualBtnText}>Open a client to add a manual workout</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
       </Pressable>
 

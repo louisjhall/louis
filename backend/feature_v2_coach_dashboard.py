@@ -772,6 +772,20 @@ async def workspace_month(
 
     days = [days_by_date[k] for k in sorted(days_by_date.keys())]
 
+    # Roster duty enrichment — attach flight/duty/hotel details from the
+    # existing parsed roster (db.rosters.days[]) to each schedule day so
+    # the coach can plan workouts around the real duty pattern instead of
+    # only a broad classification. Read-only. Flight Support unaffected.
+    try:
+        from feature_roster_duty_details import (
+            build_duty_details_map, enrich_schedule_with_duty,
+        )
+        duty_map = await build_duty_details_map(client_id, sd_str, ed_str)
+        for d in days:
+            d["schedule"] = enrich_schedule_with_duty(d.get("schedule"), duty_map.get(d["date"]))
+    except Exception as e:
+        logger.warning(f"duty details enrichment failed for {client_id}: {e}")
+
     # Iter 117 — Aviation Support (Phase B). Inject per-day flight support
     # into the workspace so the coach sees Roster + Training + Flight
     # Support all in one place. Never affects the counts below.

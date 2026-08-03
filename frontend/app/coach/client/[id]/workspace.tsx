@@ -49,6 +49,45 @@ type DayRow = {
     available_time_min?: number | null;
     overnight_location?: any;
     v1_source?: boolean;
+    needs_review?: boolean;
+    duty?: null | {
+      flights?: {
+        flight_number?: string;
+        origin?: string;
+        destination?: string;
+        dep_time?: string | null;
+        arr_time?: string | null;
+        positioning?: boolean;
+      }[];
+      report_time?: string | null;
+      release_time?: string | null;
+      pickup_time?: string | null;
+      duty_duration_min?: number | null;
+      layover_city?: string | null;
+      hotel?: null | {
+        name?: string | null;
+        city?: string | null;
+        confirmed?: boolean;
+        gym_available?: boolean | null;
+        equipment?: Record<string, boolean>;
+        pool?: boolean | null;
+        outdoor_safe?: boolean | null;
+        opening_hours?: string | null;
+        gym_confirmed_by_client?: string | null;
+      };
+      sector_count?: number;
+      is_overnight?: boolean;
+      is_turnaround?: boolean;
+      is_layover_day?: boolean;
+      arrival_next_day?: boolean;
+      is_out_of_base?: boolean;
+      timezone_note?: string | null;
+      day_type_raw?: string | null;
+      needs_review?: boolean;
+      client_label?: string | null;
+      warnings?: string[];
+      reason?: string | null;
+    };
   };
   assignments: {
     id: string;
@@ -684,6 +723,99 @@ function TabBar({ active, onChange }: { active: V2Tab; onChange: (t: V2Tab) => v
   );
 }
 
+/* --------------------------------------------------------------------
+ * DutyDetailsBlock — flight/duty/hotel details for one calendar day.
+ * Data comes from the roster duty enrichment attached by the workspace
+ * API. Purely read-only. Compact by default; expandable when there are
+ * more than 2 sectors.
+ * ------------------------------------------------------------------ */
+function DutyDetailsBlock({ duty }: { duty: DayRow["schedule"] extends null ? never : NonNullable<DayRow["schedule"]>["duty"] }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!duty) return null;
+  const flights = duty.flights || [];
+  const hasTimes = duty.report_time || duty.release_time || duty.duty_duration_min;
+  const hasLayover = duty.layover_city || duty.hotel;
+  if (!flights.length && !hasTimes && !hasLayover && !duty.day_type_raw) return null;
+
+  const displayed = flights.length > 2 && !expanded ? flights.slice(0, 1) : flights;
+
+  const fmtHM = (n?: number | null) => {
+    if (!n && n !== 0) return "";
+    const h = Math.floor(n / 60), m = n % 60;
+    return `${h}h${m ? ` ${m.toString().padStart(2, "0")}m` : ""}`;
+  };
+  return (
+    <View style={styles.dutyBlock}>
+      {displayed.map((f, i) => {
+        const num = (f.flight_number || "").trim();
+        const route = `${f.origin || "?"} → ${f.destination || "?"}`;
+        const dep = f.dep_time; const arr = f.arr_time;
+        const nextDay = i === flights.length - 1 && duty.arrival_next_day;
+        return (
+          <View key={i} style={styles.flightRow}>
+            <Text style={styles.flightLine}>
+              {num ? <Text style={styles.flightNum}>{num}</Text> : null}
+              {num ? "  " : ""}
+              <Text style={styles.flightRoute}>{route}</Text>
+              {f.positioning ? <Text style={styles.positioningTxt}>  · positioning</Text> : null}
+            </Text>
+            {(dep || arr) && (
+              <Text style={styles.flightTimes}>
+                {dep ? `Dep ${dep}` : ""}{dep && arr ? "  ·  " : ""}
+                {arr ? `Arr ${arr}${nextDay ? "+1" : ""}` : ""}
+              </Text>
+            )}
+          </View>
+        );
+      })}
+      {flights.length > 2 && !expanded && (
+        <Pressable onPress={() => setExpanded(true)} hitSlop={6} testID={`view-duty-details-${flights.length}`}>
+          <Text style={styles.viewDetailsBtn}>+ {flights.length - 1} more sectors  · View duty details</Text>
+        </Pressable>
+      )}
+      {expanded && flights.length > 2 && (
+        <Pressable onPress={() => setExpanded(false)} hitSlop={6}>
+          <Text style={styles.viewDetailsBtn}>Collapse</Text>
+        </Pressable>
+      )}
+
+      {hasTimes && (
+        <Text style={styles.dutyTimes}>
+          {duty.report_time ? `Report ${duty.report_time}` : ""}
+          {duty.report_time && duty.release_time ? "  ·  " : ""}
+          {duty.release_time ? `Release ${duty.release_time}` : ""}
+          {duty.duty_duration_min ? `  ·  ${fmtHM(duty.duty_duration_min)} duty` : ""}
+          {typeof duty.sector_count === "number" && duty.sector_count > 1
+            ? `  ·  ${duty.sector_count} sectors` : ""}
+        </Text>
+      )}
+      {duty.timezone_note && (
+        <Text style={styles.dutyMeta}>{duty.timezone_note}</Text>
+      )}
+      {(duty.layover_city || duty.hotel) && (
+        <View style={styles.hotelRow}>
+          <Ionicons name="bed-outline" size={12} color="#f5b543" style={{ marginRight: 4 }} />
+          <Text style={styles.hotelText}>
+            {duty.layover_city ? <Text style={styles.hotelCity}>{duty.layover_city}</Text> : null}
+            {duty.hotel?.confirmed && duty.hotel?.name ? (
+              <Text style={styles.hotelName}>{duty.layover_city ? "  ·  " : ""}{duty.hotel.name}</Text>
+            ) : duty.layover_city ? (
+              <Text style={styles.hotelUnknown}>  ·  Hotel not confirmed</Text>
+            ) : null}
+            {duty.hotel?.gym_available === true ? <Text style={styles.hotelGym}>  ·  Gym ✓</Text>
+             : duty.hotel?.gym_available === false ? <Text style={styles.hotelNoGym}>  ·  No gym</Text>
+             : null}
+          </Text>
+        </View>
+      )}
+      {(duty.warnings || []).slice(0, 2).map((w, i) => (
+        <Text key={i} style={styles.warnTxt}>⚠ {w}</Text>
+      ))}
+    </View>
+  );
+}
+
+
 function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenFlightSupport, onPressDate }: {
   row: DayRow; desktop: boolean;
   dayState: DayState;
@@ -741,7 +873,14 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
       >
         {row.schedule ? (
           <>
-            <Text style={styles.rosterClassification}>{row.schedule.classification_label}</Text>
+            <View style={styles.rosterTitleRow}>
+              <Text style={styles.rosterClassification}>{row.schedule.classification_label}</Text>
+              {(row.schedule.needs_review || row.schedule.duty?.needs_review) && (
+                <View style={styles.needsReviewPill}>
+                  <Text style={styles.needsReviewPillT}>REVIEW</Text>
+                </View>
+              )}
+            </View>
             {burden && (
               <View style={styles.burdenRow}>
                 <View style={[styles.burdenDot, { backgroundColor: BURDEN_TINT[burden] || "#888" }]} />
@@ -751,10 +890,11 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
                 )}
               </View>
             )}
-            {row.schedule.overnight_location?.city && (
+            <DutyDetailsBlock duty={row.schedule.duty} />
+            {row.schedule.overnight_location?.city && !row.schedule.duty?.layover_city && (
               <Text style={styles.rosterMeta}>Overnight: {row.schedule.overnight_location.city}</Text>
             )}
-            {row.schedule.v1_source && (
+            {row.schedule.v1_source && !row.schedule.duty?.flights?.length && (
               <Text style={styles.v1Hint}>V1 roster · read-only</Text>
             )}
           </>
@@ -1299,12 +1439,38 @@ const styles = StyleSheet.create({
   planCol: { paddingLeft: 4, paddingRight: 4, gap: 6 },
 
   rosterClassification: { color: theme.color.textHi, fontSize: 14, fontWeight: "700" },
+  rosterTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  needsReviewPill: {
+    paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3,
+    backgroundColor: "#f5b54322", borderWidth: StyleSheet.hairlineWidth, borderColor: "#f5b543",
+  },
+  needsReviewPillT: { color: "#f5b543", fontSize: 8, fontWeight: "800", letterSpacing: 0.5 },
   burdenRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
   burdenDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
   burdenTxt: { color: theme.color.textDim, fontSize: 11 },
   oppTxt: { color: theme.color.textDim, fontSize: 11 },
   rosterMeta: { color: theme.color.textDim, fontSize: 12, marginTop: 2 },
   v1Hint: { color: "#f5b543", fontSize: 10, marginTop: 2, fontStyle: "italic" },
+
+  // Duty / flight / hotel details
+  dutyBlock: { marginTop: 6, gap: 3 },
+  flightRow: { marginTop: 2 },
+  flightLine: { color: theme.color.textHi, fontSize: 12, lineHeight: 16 },
+  flightNum: { color: "#5aa9e6", fontWeight: "800", fontSize: 12 },
+  flightRoute: { color: theme.color.textHi, fontSize: 12, fontWeight: "600" },
+  positioningTxt: { color: theme.color.textDim, fontSize: 10, fontStyle: "italic" },
+  flightTimes: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
+  dutyTimes: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
+  dutyMeta: { color: theme.color.textDim, fontSize: 10, fontStyle: "italic", marginTop: 1 },
+  viewDetailsBtn: { color: theme.color.brand, fontSize: 11, marginTop: 2, fontWeight: "700" },
+  hotelRow: { flexDirection: "row", alignItems: "center", marginTop: 3, flexWrap: "wrap" },
+  hotelText: { color: theme.color.textDim, fontSize: 11, flex: 1, flexWrap: "wrap" },
+  hotelCity: { color: theme.color.textHi, fontWeight: "700", fontSize: 11 },
+  hotelName: { color: theme.color.textHi, fontSize: 11 },
+  hotelUnknown: { color: "#f5b543", fontSize: 11, fontStyle: "italic" },
+  hotelGym: { color: "#4ade80", fontSize: 10, fontWeight: "700" },
+  hotelNoGym: { color: "#ff6b6b", fontSize: 10, fontWeight: "700" },
+  warnTxt: { color: "#f5b543", fontSize: 10, marginTop: 2 },
 
   planEmpty: { color: theme.color.textDim, fontStyle: "italic", fontSize: 12 },
   // Phase 1A-fix — visible day-action CTA on every row

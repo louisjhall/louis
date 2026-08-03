@@ -86,25 +86,29 @@ export function DateField({
       <Modal transparent visible={nativeOpen} animationType="fade" onRequestClose={() => setNativeOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setNativeOpen(false)}>
           <Pressable style={styles.pickerCard} onPress={() => { /* absorb */ }}>
-            <DateTimePicker
-              value={dateObj}
-              mode="date"
-              // iOS: "inline" = Apple's proper calendar grid (respects dark mode).
-              // Android: "default" = native calendar dialog.
-              display={Platform.OS === "ios" ? "inline" : "default"}
-              // Force dark theme on iOS so text is legible on the dark card.
-              // (fixes the "black text on black background" invisibility bug)
-              themeVariant="dark"
-              textColor={theme.color.text}
-              accentColor={theme.color.brand}
-              onChange={(_: any, d?: Date) => {
-                if (Platform.OS === "android") setNativeOpen(false);
-                if (d) onChange(d.toISOString().slice(0, 10));
-              }}
-              minimumDate={min ? new Date(min + "T00:00:00") : undefined}
-              maximumDate={max ? new Date(max + "T00:00:00") : undefined}
-              style={Platform.OS === "ios" ? styles.iosInlinePicker : undefined}
-            />
+            {/* iOS DateTimePicker in "inline" mode ignores `themeVariant` on
+                many iOS versions and renders text using the SYSTEM appearance.
+                If the user's phone is in dark mode, the numerals render dark
+                on our dark card → invisible. Wrap in a fixed WHITE surface
+                and force `themeVariant="light"` so we get guaranteed
+                contrast regardless of the user's system theme. */}
+            <View style={styles.iosPickerLight}>
+              <DateTimePicker
+                value={dateObj}
+                mode="date"
+                display={Platform.OS === "ios" ? "inline" : "default"}
+                themeVariant="light"
+                textColor="#000"
+                accentColor={theme.color.brand}
+                onChange={(_: any, d?: Date) => {
+                  if (Platform.OS === "android") setNativeOpen(false);
+                  if (d) onChange(d.toISOString().slice(0, 10));
+                }}
+                minimumDate={min ? new Date(min + "T00:00:00") : undefined}
+                maximumDate={max ? new Date(max + "T00:00:00") : undefined}
+                style={Platform.OS === "ios" ? styles.iosInlinePicker : undefined}
+              />
+            </View>
             {Platform.OS === "ios" && (
               <Pressable onPress={() => setNativeOpen(false)} style={styles.doneBtn}>
                 <Text style={styles.doneText}>DONE</Text>
@@ -141,6 +145,14 @@ const styles = StyleSheet.create({
     // Ensure the inline calendar has room to render properly on iOS.
     width: "100%",
     minHeight: 340,
+  },
+  iosPickerLight: {
+    // Fixed light background so iOS's inline calendar always renders with
+    // legible text regardless of the user's system dark/light setting.
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
   },
   doneBtn: {
     marginTop: 10, paddingVertical: 12, borderRadius: 8,

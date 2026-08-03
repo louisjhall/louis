@@ -12645,6 +12645,7 @@ import feature_daily_briefing             # noqa: E402,F401  Iter 94u: Daily bri
 import feature_weekly_review              # noqa: E402,F401  Iter 94w: Sunday weekly review from Louis
 import feature_dual_session               # noqa: E402,F401  Iter 95a: Short-haul dual-session (airport activation) suggestions
 import feature_equipment_guard            # noqa: E402,F401  Iter 95h: Prevents equipment-mismatch workouts (client owns gear, gets bodyweight)
+import feature_client_summary             # noqa: E402,F401  Detailed Client Summary (renamed from Goals tab) + cached LLM coach briefing
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

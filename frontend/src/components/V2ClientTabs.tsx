@@ -25,14 +25,14 @@ import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { confirm, toast } from "@/src/lib/ux";
 
-export type V2Tab = "plan" | "checkins" | "messages" | "progress" | "history" | "goals" | "habits";
+export type V2Tab = "plan" | "checkins" | "messages" | "progress" | "history" | "summary" | "goals" | "habits";
 
 export function V2ClientTabs({ clientId, tab }: { clientId: string; tab: V2Tab }) {
   if (tab === "checkins") return <CheckinsPanel clientId={clientId} />;
   if (tab === "messages") return <MessagesPanel clientId={clientId} />;
   if (tab === "progress") return <ProgressPanel clientId={clientId} />;
   if (tab === "history")  return <HistoryPanel  clientId={clientId} />;
-  if (tab === "goals")    return <GoalsPanel    clientId={clientId} />;
+  if (tab === "summary" || tab === "goals") return <SummaryPanel clientId={clientId} />;
   if (tab === "habits")   return <HabitsPanel   clientId={clientId} />;
   return null;
 }
@@ -332,109 +332,349 @@ function HistoryPanel({ clientId }: { clientId: string }) {
   );
 }
 
-/* ---------------------------------------------------------------- GOALS */
+/* ---------------------------------------------------------------- SUMMARY */
+/* Detailed Client Summary — replaces the old Goals tab.
+ * Data source: GET /coach/clients/{cid}/summary (aggregate) +
+ *              POST /coach/clients/{cid}/summary/briefing (LLM narrative,
+ *              cached server-side; button forces refresh).
+ */
 
-function GoalsPanel({ clientId }: { clientId: string }) {
-  const [detail, setDetail] = useState<any>(null);
-  const [dna, setDna] = useState<any>(null);
-  const [event, setEvent] = useState<any>(null);
+function SummaryPanel({ clientId }: { clientId: string }) {
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  const [briefing, setBriefing] = useState<string | null>(null);
+  const [briefingMeta, setBriefingMeta] = useState<any>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [briefingErr, setBriefingErr] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      // Coach client detail (profile snapshot) + explicit DNA/events endpoints.
-      // Everything the Goals panel shows must come from the client's DNA —
-      // NOT from a coach-set V2 override.
-      const [d, ev] = await Promise.all([
-        api<any>(`/coach/clients/${clientId}`),
-        api<any>(`/coach/clients/${clientId}/event`).catch(() => null),
-      ]);
-      setDetail(d);
-      // The DNA record itself (assessments answers or dedicated dna doc)
-      // — profile is a projection; assessments hold the raw source of truth.
-      setDna(d?.client?.profile || {});
-      setEvent(ev?.event || d?.event || null);
+      const d = await api<any>(`/coach/clients/${clientId}/summary`);
+      setData(d);
     } catch (e: any) { setErr(e?.message || String(e)); }
     finally { setLoading(false); }
   }, [clientId]);
   useEffect(() => { load(); }, [load]);
 
+  const loadBriefing = useCallback(async (refresh: boolean) => {
+    setBriefingLoading(true); setBriefingErr(null);
+    try {
+      const r = await api<any>(
+        `/coach/clients/${clientId}/summary/briefing${refresh ? "?refresh=true" : ""}`,
+        { method: "POST" },
+      );
+      setBriefing(r?.briefing || null);
+      setBriefingMeta({ from_cache: r?.from_cache, generated_at: r?.generated_at });
+    } catch (e: any) {
+      setBriefingErr(e?.message || String(e));
+    } finally { setBriefingLoading(false); }
+  }, [clientId]);
+  // Load cached briefing on first mount (cheap: server returns cache when signature unchanged)
+  useEffect(() => { loadBriefing(false); }, [loadBriefing]);
+
   if (loading) return <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>;
   if (err)     return <View style={styles.center}><Text style={styles.err}>{err}</Text></View>;
+  if (!data)   return <View style={styles.center}><Text style={styles.err}>No client data.</Text></View>;
 
-  const profile = dna || {};
+  const c = data.client || {};
+  const p = c.profile || {};
+  const ev = data.event;
+  const ad = data.adherence || {};
+  const prog = c.progression_pill;
+  const hb = data.habits || {};
+  const dir = data.directives || [];
+  const ck = data.checkins || [];
 
-  // Resolve the primary goal from DNA — same precedence as the V2 kickoff
-  // engine: profile.main_goal → profile.primary_goal_id → profile.primary_goal
-  // → profile.goal → profile.event_type_pref → event.event_type
   const goalRaw =
-    profile.main_goal ||
-    profile.primary_goal_id ||
-    profile.primary_goal ||
-    profile.goal ||
-    profile.event_type_pref ||
-    event?.event_type ||
-    null;
+    p.main_goal || p.primary_goal_id || p.primary_goal ||
+    p.goal || p.event_type_pref || ev?.event_type || null;
   const goalLabel = goalRaw ? humanise(String(goalRaw)) : null;
-  const goalNotes = profile.goal_notes || profile.main_goal_notes || detail?.client?.goal_notes;
+
+  const identity = [
+    p.age ? `${p.age} yr` : null,
+    (p.sex || p.biological_sex) ? humanise(String(p.sex || p.biological_sex)) : null,
+    p.height_cm ? `${p.height_cm} cm` : null,
+    p.weight_kg ? `${p.weight_kg} kg` : null,
+  ].filter(Boolean).join(" · ");
 
   return (
-    <ScrollView contentContainerStyle={styles.body} testID="v2-goals-panel">
+    <ScrollView contentContainerStyle={styles.body} testID="v2-summary-panel">
+      {/* Identity header */}
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>PRIMARY GOAL (FROM DNA)</Text>
-        {goalLabel ? (
-          <>
-            <Text style={styles.pillStatus}>{goalLabel}</Text>
-            <Text style={styles.metricLabel}>
-              source: {profile.main_goal ? "profile.main_goal" :
-                       profile.primary_goal_id ? "profile.primary_goal_id" :
-                       profile.primary_goal ? "profile.primary_goal" :
-                       profile.event_type_pref ? "profile.event_type_pref" :
-                       "events collection"}
+        <View style={styles.cardHead}>
+          <Text style={styles.cardHeadText}>{c.name || "Client"}</Text>
+          {c.is_active === false ? (
+            <View style={[styles.badge, { backgroundColor: "#ff6b6b" }]}>
+              <Text style={styles.badgeText}>ARCHIVED</Text>
+            </View>
+          ) : null}
+        </View>
+        {c.email && <Text style={styles.notes}>{c.email}</Text>}
+        {!!identity && <Text style={styles.notes}>{identity}</Text>}
+        <View style={{ flexDirection: "row", gap: 12, marginTop: 6, flexWrap: "wrap" }}>
+          {c.created_at && <Text style={styles.metricLabel}>Joined {fmtDate(c.created_at)}</Text>}
+          {p.setup_completed_at && <Text style={styles.metricLabel}>Onboarded {fmtDate(p.setup_completed_at)}</Text>}
+          {c.last_login_at && <Text style={styles.metricLabel}>Last seen {fmtDate(c.last_login_at)}</Text>}
+        </View>
+      </View>
+
+      {/* COACH BRIEFING (LLM narrative) */}
+      <View style={styles.card}>
+        <View style={styles.cardHead}>
+          <Text style={styles.cardHeadText}>COACH BRIEFING</Text>
+          <Pressable
+            style={styles.smallBtn}
+            onPress={() => loadBriefing(true)}
+            disabled={briefingLoading}
+            testID="regenerate-briefing"
+          >
+            <Ionicons name="refresh-outline" size={12} color={theme.color.textHi} />
+            <Text style={styles.smallBtnText}>
+              {briefingLoading ? "…" : "Regenerate"}
             </Text>
+          </Pressable>
+        </View>
+        {briefingLoading && !briefing ? (
+          <ActivityIndicator color={theme.color.brand} style={{ marginTop: 8 }} />
+        ) : briefingErr ? (
+          <Text style={styles.err}>{briefingErr}</Text>
+        ) : briefing ? (
+          <>
+            <Text style={styles.briefingText}>{briefing}</Text>
+            {briefingMeta && (
+              <Text style={styles.metricLabel}>
+                {briefingMeta.from_cache ? "Cached" : "Freshly generated"}
+                {briefingMeta.generated_at ? ` · ${fmtDate(briefingMeta.generated_at)}` : ""}
+              </Text>
+            )}
           </>
         ) : (
-          <Text style={styles.notes}>No primary goal captured in DNA yet. Ask the client to complete onboarding.</Text>
+          <Text style={styles.notes}>Generating…</Text>
         )}
-        {goalNotes && <Text style={styles.notes}>{goalNotes}</Text>}
       </View>
 
-      {event ? (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>TARGET EVENT (FROM DNA)</Text>
-          <Text style={styles.pillStatus}>{humanise(event.event_type || event.title || event.name || "Event")}</Text>
+      {/* PRIMARY GOAL */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>PRIMARY GOAL</Text>
+        {goalLabel ? (
+          <Text style={styles.pillStatus}>{goalLabel}</Text>
+        ) : (
+          <Text style={styles.notes}>No primary goal captured in DNA yet.</Text>
+        )}
+        {(p.goal_notes || p.main_goal_notes) && (
+          <Text style={styles.notes}>{p.goal_notes || p.main_goal_notes}</Text>
+        )}
+        {!!_toList(p.secondary_goals || p.secondary_goal_ids).length && (
           <Text style={styles.notes}>
-            {event.event_date || "?"}
-            {event.phase_info?.phase ? ` · ${humanise(event.phase_info.phase)}` : ""}
-            {typeof event.phase_info?.weeks_out === "number" ? ` · ${event.phase_info.weeks_out}w out` : ""}
-            {event.priority ? ` · Priority ${event.priority}` : ""}
+            Secondary: {_toList(p.secondary_goals || p.secondary_goal_ids).map(humanise).join(", ")}
           </Text>
-          {event.distance && <Text style={styles.notes}>Distance: {event.distance}</Text>}
-          {event.notes && <Text style={styles.notes}>{event.notes}</Text>}
-        </View>
-      ) : (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>TARGET EVENT (FROM DNA)</Text>
-          <Text style={styles.notes}>No active target event in DNA.</Text>
-        </View>
-      )}
+        )}
+      </View>
 
-      {/* DNA fields the coach cares about */}
+      {/* TARGET EVENT */}
+      {ev ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>TARGET EVENT</Text>
+          <Text style={styles.pillStatus}>
+            {humanise(ev.event_type || ev.title || ev.name || "Event")}
+          </Text>
+          <Text style={styles.notes}>
+            {ev.event_date || "?"}
+            {ev.phase_info?.phase ? ` · ${humanise(ev.phase_info.phase)}` : ""}
+            {typeof ev.phase_info?.weeks_out === "number" ? ` · ${ev.phase_info.weeks_out}w out` : ""}
+            {ev.priority ? ` · Priority ${ev.priority}` : ""}
+          </Text>
+          {ev.distance && <Text style={styles.notes}>Distance: {ev.distance}</Text>}
+          {ev.notes && <Text style={styles.notes}>{ev.notes}</Text>}
+        </View>
+      ) : null}
+
+      {/* TRAINING DNA */}
       <View style={styles.card}>
         <Text style={styles.sectionTitle}>TRAINING DNA</Text>
-        <DnaRow label="Progression" val={profile.progression_speed} />
-        <DnaRow label="Days / week" val={profile.days_per_week || profile.training_days_per_week} />
-        <DnaRow label="Session length" val={profile.preferred_session_length || profile.max_home_minutes} />
-        <DnaRow label="Home base" val={profile.home_base} />
-        <DnaRow label="Airline" val={profile.airline} />
-        <DnaRow label="Equipment" val={_toList(profile.equipment || profile.home_equipment).slice(0, 6).join(", ")} />
-        <DnaRow label="Injuries" val={_toList(profile.injuries).join(", ")} />
-        <DnaRow label="Constraints" val={_toList(profile.constraints).join(", ")} />
+        <DnaRow label="Days / week" val={p.training_days_per_week || p.days_per_week || _toList(p.training_days).length || null} />
+        <DnaRow label="Session length" val={p.preferred_session_length || p.max_home_minutes} />
+        <DnaRow label="Progression" val={p.progression_speed} />
+        <DnaRow label="Experience" val={p.experience_level} />
+        <DnaRow label="Preferred times" val={_toList(p.preferred_times).join(", ")} />
+        <DnaRow label="Warmup style" val={p.warmup_style} />
       </View>
+
+      {/* AVIATION / ROSTER PATTERN */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>AVIATION & ROSTER</Text>
+        <DnaRow label="Role" val={p.job_title || p.crew_role} />
+        <DnaRow label="Airline" val={p.airline} />
+        <DnaRow label="Home base" val={p.home_base} />
+        <DnaRow label="Flying type" val={p.flying_type || p.haul_mix} />
+        <DnaRow label="Route focus" val={p.route_focus} />
+        <DnaRow label="Aircraft" val={p.aircraft_type} />
+        <DnaRow label="Time at home" val={p.time_home_min || p.time_home} />
+        <DnaRow label="Layover time" val={p.time_layover_min || p.time_layover} />
+        <DnaRow label="Timezone" val={p.timezone} />
+        <DnaRow label="Active roster" val={data.roster ? `${data.roster.days} days · exp ${data.roster.expiry || "?"}` : "None"} />
+      </View>
+
+      {/* EQUIPMENT */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>EQUIPMENT</Text>
+        <DnaRow label="Home" val={_toList(p.equipment_home || p.home_equipment || p.equipment).join(", ")} />
+        <DnaRow label="Hotel gym reliability" val={p.hotel_gym_reliability || p.hotel_gym_frequency || p.hotel_gyms} />
+      </View>
+
+      {/* INJURIES & CONSTRAINTS */}
+      {(_toList(p.injuries).length || p.injury_notes ||
+        _toList(p.no_go_movements).length || _toList(p.disliked_exercises).length ||
+        _toList(p.constraints).length || _toList(p.medical_flags).length) ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>INJURIES & CONSTRAINTS</Text>
+          <DnaRow label="Injuries" val={_toList(p.injuries).join(", ")} />
+          <DnaRow label="Injury notes" val={p.injury_notes} />
+          <DnaRow label="No-go movements" val={_toList(p.no_go_movements).join(", ")} />
+          <DnaRow label="Dislikes" val={_toList(p.disliked_exercises).join(", ")} />
+          <DnaRow label="Medical" val={_toList(p.medical_flags).join(", ")} />
+          <DnaRow label="Constraints" val={_toList(p.constraints).join(", ")} />
+        </View>
+      ) : null}
+
+      {/* ADHERENCE (last 28 days) */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>ADHERENCE · LAST {ad.window_days || 28} DAYS</Text>
+        <View style={styles.metricRow}>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{ad.adherence_pct ?? "—"}%</Text>
+            <Text style={styles.metricLabel}>completion</Text>
+          </View>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{ad.completed ?? 0}</Text>
+            <Text style={styles.metricLabel}>completed</Text>
+          </View>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{ad.scheduled_past ?? 0}</Text>
+            <Text style={styles.metricLabel}>scheduled</Text>
+          </View>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{ad.avg_rpe ?? "—"}</Text>
+            <Text style={styles.metricLabel}>avg RPE</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+          {Object.entries(ad.load_mix || {}).map(([band, n]: any) => (
+            n ? (
+              <View key={band} style={[styles.loadPill, { backgroundColor: loadColour(band) + "33", borderColor: loadColour(band) }]}>
+                <Text style={[styles.loadPillT, { color: loadColour(band) }]}>{band.toUpperCase()} · {n}</Text>
+              </View>
+            ) : null
+          ))}
+        </View>
+      </View>
+
+      {/* PROGRESSION PILL */}
+      {prog ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>PROGRESSION</Text>
+          <Text style={styles.pillStatus}>
+            {(prog.status_label || prog.status || "").toUpperCase()}
+            {prog.week_key ? `  ·  ${prog.week_key}` : ""}
+          </Text>
+          {prog.reason && <Text style={styles.notes}>{prog.reason}</Text>}
+          {prog.coach_note && <Text style={styles.notes}>Coach note: {prog.coach_note}</Text>}
+        </View>
+      ) : null}
+
+      {/* RECENT CHECK-INS */}
+      {ck.length ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>RECENT CHECK-INS · {ck.length}</Text>
+          {ck.slice(0, 3).map((c: any, i: number) => (
+            <View key={c.id || i} style={styles.checkinRow}>
+              <Text style={styles.metricLabel}>{fmtDate(c.created_at)}</Text>
+              <Text style={styles.notes}>
+                {c.rpe != null ? `RPE ${c.rpe}` : ""}{c.sleep != null ? ` · Sleep ${c.sleep}` : ""}
+                {c.energy != null ? ` · Energy ${c.energy}` : ""}{c.mood ? ` · ${c.mood}` : ""}
+              </Text>
+              {c.notes && <Text style={styles.notes}>“{c.notes}”</Text>}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* HABITS */}
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>HABITS</Text>
+        <View style={styles.metricRow}>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{hb.active_count ?? 0}</Text>
+            <Text style={styles.metricLabel}>active</Text>
+          </View>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{hb.paused_count ?? 0}</Text>
+            <Text style={styles.metricLabel}>paused</Text>
+          </View>
+          <View style={styles.metric}>
+            <Text style={styles.metricN}>{hb.archived_count ?? 0}</Text>
+            <Text style={styles.metricLabel}>archived</Text>
+          </View>
+        </View>
+        {(hb.top || []).map((h: any, i: number) => (
+          <View key={h.id || i} style={{ marginTop: 6 }}>
+            <Text style={styles.notes}>· {h.title}{h.frequency ? ` — ${h.frequency}` : ""}{h.streak ? `  🔥 ${h.streak}` : ""}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* COACH DIRECTIVES */}
+      {dir.length ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>COACH DIRECTIVES · {dir.length}</Text>
+          {dir.slice(-5).reverse().map((d: any, i: number) => (
+            <View key={d.id || i} style={{ marginTop: 4 }}>
+              <Text style={styles.metricLabel}>
+                {d.created_at ? fmtDate(d.created_at) : ""}{d.priority ? ` · ${String(d.priority).toUpperCase()}` : ""}
+              </Text>
+              <Text style={styles.notes}>{d.text || d.title || ""}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* OPEN TASKS */}
+      {data.open_coach_tasks ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>OPEN COACH TASKS</Text>
+          <Text style={styles.pillStatus}>{data.open_coach_tasks}</Text>
+          <Text style={styles.notes}>See the tasks inbox for details.</Text>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
+
+function fmtDate(iso?: string): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso).slice(0, 10);
+    return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  } catch { return String(iso).slice(0, 10); }
+}
+
+function loadColour(band: string): string {
+  switch ((band || "").toLowerCase()) {
+    case "green":  return "#4ade80";
+    case "amber":  return "#f5b543";
+    case "red":    return "#ff6b6b";
+    case "blue":   return "#5aa9e6";
+    case "purple": return "#a78bfa";
+    default:       return "#8e8e93";
+  }
+}
+
+/* ---------------------------------------------------------------- GOALS (legacy) */
+/* Retained for any deep-link that still passes tab=goals — routed to SummaryPanel. */
 
 function DnaRow({ label, val }: { label: string; val?: any }) {
   if (val == null || val === "" || (Array.isArray(val) && val.length === 0)) return null;
@@ -937,4 +1177,26 @@ const styles = StyleSheet.create({
   },
   dnaLabel: { color: theme.color.textDim, fontSize: 11, width: 110 },
   dnaVal: { color: theme.color.textHi, fontSize: 12, flex: 1 },
+
+  // Summary
+  smallBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 6, borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border, backgroundColor: "#00000030",
+  },
+  smallBtnText: { color: theme.color.textHi, fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
+  briefingText: {
+    color: theme.color.textHi, fontSize: 13, lineHeight: 20,
+    marginTop: 8, fontStyle: "italic",
+  },
+  loadPill: {
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  loadPillT: { fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  checkinRow: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.border,
+  },
 });

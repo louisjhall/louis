@@ -660,7 +660,7 @@ const TABS: { key: V2Tab; label: string; icon: any }[] = [
   { key: "messages",  label: "Messages",  icon: "chatbubble-outline" },
   { key: "progress",  label: "Progress",  icon: "trending-up-outline" },
   { key: "history",   label: "History",   icon: "time-outline" },
-  { key: "goals",     label: "Goals",     icon: "flag-outline" },
+  { key: "summary",   label: "Summary",   icon: "person-outline" },
 ];
 
 function TabBar({ active, onChange }: { active: V2Tab; onChange: (t: V2Tab) => void }) {

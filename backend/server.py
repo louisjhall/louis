@@ -12558,6 +12558,7 @@ import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach progr
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
 import feature_coach_manual_workouts     # noqa: E402,F401  Phase 1 Manual Workout Builder + day-level overrides
 import feature_manual_mode_reset         # noqa: E402,F401  Phase 1B programme reset (dry-run + execute)
+import feature_flight_support_coverage   # noqa: E402,F401  Manual Mode Stage C — Flight Support library backfill
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
 import feature_coach_roster_upload       # noqa: E402,F401  Phase A · A2: coach uploads roster on behalf of client
 import feature_v2_state_foundation        # noqa: E402,F401  V2 Phase 1: DRAFT/LIVE state layer (feature-flagged, off by default)

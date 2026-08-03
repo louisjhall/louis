@@ -1246,6 +1246,34 @@ async def ex_generate_content(
         result_payload["items"] = items
 
     await db.exercises_v2.update_one({"id": ex_id}, {"$set": updates})
+
+    # Manual Mode Stage D — Atlas alternatives: when the LLM returns
+    # alternative exercise names, they must become REAL library records
+    # (drafts if new) so the coach media queue and swap-menu can use them
+    # instead of dangling strings. Idempotent — dedup handled downstream.
+    if kind == "alternatives" and result_payload.get("items"):
+        try:
+            from feature_media_queue import resolve_or_draft_exercise
+            alt_ids: list[str] = []
+            for alt_name in result_payload["items"]:
+                xid = await resolve_or_draft_exercise(
+                    alt_name,
+                    user=admin,           # coach/admin is the requesting actor
+                    parent=ex,            # copy movement_pattern / body_area / kit
+                    reason=f"atlas_alternative_of:{ex.get('exercise_name') or ex_id}",
+                )
+                if xid:
+                    alt_ids.append(xid)
+            # Persist the resolved ids so the frontend can hop straight to
+            # each alternative's library entry without a re-lookup.
+            await db.exercises_v2.update_one(
+                {"id": ex_id},
+                {"$set": {"alternative_exercise_ids": alt_ids, "updated_at": now_iso()}},
+            )
+            result_payload["alternative_exercise_ids"] = alt_ids
+        except Exception:
+            logger.exception("atlas alternatives library backfill failed for %s", ex_id)
+
     await _log(ex_id, admin["id"], "content_generated", f"kind={kind}")
     # Record AI usage for telemetry.
     try:

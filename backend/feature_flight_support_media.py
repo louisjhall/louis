@@ -129,6 +129,23 @@ async def resolve_flight_support_frames(db, key: str, prefer: str = "pilot") -> 
             preferred_persona=prefer,
             preferred_missing=prefer_missing,
         )
+        # Manual Mode Stage F — also file a draft on the coach media queue
+        # (exercises_v2 request_count / demand queue) so Flight Support
+        # gaps show up alongside manual-workout gaps in the same coach UI.
+        # Never blocks the response.
+        try:
+            from feature_media_queue import scan_media_queue_for_sections
+            await scan_media_queue_for_sections(
+                {"id": None},
+                {"flight_support": [{
+                    "exercise_id": exercise_id,
+                    "name": ex.get("_name") or ex.get("name") or ex.get("exercise_name") or "",
+                }]},
+                workout_id=None,
+                reason="flight_support_media_gap",
+            )
+        except Exception:
+            logger.exception("flight_support: coach media queue backfill failed for %s", exercise_id)
 
     return {
         "exercise_id": exercise_id,

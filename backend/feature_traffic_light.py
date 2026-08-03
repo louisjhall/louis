@@ -224,6 +224,27 @@ def _green_from_workout(w: dict) -> dict:
     }
 
 
+async def _resolve_variant_library_ids(variant: dict, *, owner: dict, workout_id: str,
+                                       reason: str) -> None:
+    """Manual Mode Stage B — every exercise inside a variant must be
+    backed by an `exercises_v2` record so it appears in the coach media
+    queue and its media can be reviewed. Amber inherits Green's exercise
+    ids (already resolved). Red comes from hardcoded templates with names
+    only — we look each name up (or file a draft) so it becomes real.
+
+    Mutates `variant["exercises"]` in place. Never raises."""
+    try:
+        from feature_media_queue import backfill_exercise_ids
+        exs = variant.get("exercises") or []
+        if not exs:
+            return
+        await backfill_exercise_ids(
+            exs, user=owner, reason=reason, workout_id=workout_id,
+        )
+    except Exception:
+        logger.exception("traffic_light: variant library backfill failed for wid=%s", workout_id)
+
+
 async def derive_variants(w: dict) -> dict:
     """Algorithmic backfill for legacy workouts. Green from the primary
     fields, Amber via `_derive_amber`, Red from `_red_template` picked by
@@ -251,10 +272,46 @@ def _variants_populated(variants: Optional[dict]) -> bool:
 
 async def ensure_variants(w: dict, *, persist: bool = True) -> dict:
     """Guarantee `w['variants']` is fully populated. If not, derive them and
-    optionally persist to the DB. Idempotent."""
+    optionally persist to the DB. Idempotent.
+
+    Manual Mode Stage B/F — after deriving, we (a) resolve every variant
+    exercise name to a real `exercises_v2` record (creating a draft if
+    missing) so the coach media queue picks them up, and (b) scan the
+    combined variant sections through the shared media-queue helper so
+    missing media gets queued exactly once."""
     if _variants_populated(w.get("variants")):
         return w["variants"]
     variants = await derive_variants(w)
+
+    # Resolve library ids for every variant so the coach media queue works.
+    # `owner` is the client whose workout this is — we surface the user_id
+    # on the draft library rows so demand-based urgency scoring is correct.
+    owner: dict = {"id": w.get("user_id")}
+    wid = w.get("id") or ""
+    for v_key in VARIANT_KEYS:
+        try:
+            await _resolve_variant_library_ids(
+                variants.get(v_key) or {},
+                owner=owner, workout_id=wid,
+                reason=f"traffic_light_{v_key}_backfill",
+            )
+        except Exception:
+            logger.exception("ensure_variants: %s library backfill failed for wid=%s", v_key, wid)
+
+    # Media queue scan across all three variants — deduped internally.
+    try:
+        from feature_media_queue import scan_media_queue_for_sections
+        sections = {
+            k: (variants.get(k) or {}).get("exercises") or []
+            for k in VARIANT_KEYS
+        }
+        await scan_media_queue_for_sections(
+            owner, sections, workout_id=wid,
+            reason="traffic_light_variants",
+        )
+    except Exception:
+        logger.exception("ensure_variants: media queue scan failed for wid=%s", wid)
+
     if persist:
         try:
             await db.workouts.update_one(

@@ -167,57 +167,19 @@ def _merge_cooldown_into_exercises(main: list, cool: list) -> list:
 
 
 async def _scan_media_queue(client: dict, sections: dict, workout_id: str) -> list[dict]:
-    """For each exercise across all sections, if the exercises_v2 row is
-    missing approved media, ensure a deduped draft request exists in the
-    existing media queue. Returns list of {exercise_id, name} entries that
-    were queued (or bumped)."""
+    """Manual Mode Stage F — thin wrapper that delegates to the shared
+    `feature_media_queue.scan_media_queue_for_sections`. Kept in place so
+    existing call sites (create + patch) keep working while all writers
+    across the app share one canonical media-queue path."""
     try:
-        from feature_v2_resolver import create_exercise_request_if_missing
+        from feature_media_queue import scan_media_queue_for_sections
+        return await scan_media_queue_for_sections(
+            client, sections, workout_id=workout_id,
+            reason="coach_manual_workout",
+        )
     except Exception:
+        logger.exception("_scan_media_queue: shared helper failed for %s", workout_id)
         return []
-    queued: list[dict] = []
-    seen: set[str] = set()
-    for section, items in sections.items():
-        for e in items or []:
-            xid = e.get("exercise_id")
-            if not xid or xid in seen:
-                continue
-            seen.add(xid)
-            v2 = await db.exercises_v2.find_one({"id": xid}, {"_id": 0})
-            if not v2:
-                # No library record — file a fresh draft request keyed by name
-                try:
-                    await create_exercise_request_if_missing(
-                        {"name": e.get("name") or xid},
-                        user=client, programme_id=None, workout_id=workout_id,
-                        reason="coach_manual_workout",
-                    )
-                    queued.append({"exercise_id": xid, "name": e.get("name") or xid})
-                except Exception:
-                    logger.exception("media queue: create_exercise_request_if_missing failed for %s", xid)
-                continue
-            has_image = bool(v2.get("primary_image_url"))
-            has_video = bool(v2.get("primary_video_url"))
-            status = (v2.get("status") or "").lower()
-            approved = status in ("approved", "live")
-            if approved and (has_image or has_video):
-                continue
-            try:
-                await create_exercise_request_if_missing(
-                    {"name": v2.get("exercise_name") or e.get("name") or xid,
-                     "movement_pattern": v2.get("movement_pattern"),
-                     "body_area": v2.get("body_area"),
-                     "equipment_type": v2.get("equipment_type") or [],
-                     "difficulty_level": v2.get("difficulty_level"),
-                     "tags": v2.get("tags") or []},
-                    user=client, programme_id=None, workout_id=workout_id,
-                    reason="coach_manual_workout_missing_media",
-                )
-                queued.append({"exercise_id": xid,
-                               "name": v2.get("exercise_name") or e.get("name") or xid})
-            except Exception:
-                logger.exception("media queue: create_exercise_request_if_missing failed for %s", xid)
-    return queued
 
 
 # ---------------------------------------------------------------------------

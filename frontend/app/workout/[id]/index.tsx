@@ -242,9 +242,7 @@ export default function WorkoutDetail() {
         })()}
         {editing ? (
           <TextInput value={w.title} onChangeText={(v) => setW({ ...w, title: v })} style={styles.titleInput} testID="edit-title" />
-        ) : (
-          <Text style={styles.title}>{view.title}</Text>
-        )}
+        ) : null}
         <View style={styles.metaRow}>
           <View style={styles.metaChipRow}>
             <Ionicons name="location" size={11} color={theme.color.textMuted} />

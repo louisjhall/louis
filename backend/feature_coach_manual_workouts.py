@@ -75,6 +75,7 @@ def _norm_exercise(e: dict, section: str, idx: int) -> dict:
     if not e.get("exercise_id"):
         raise HTTPException(400, "every exercise must reference an exercise-library id")
     name = (e.get("name") or "").strip() or None
+    notes = e.get("notes")
     return {
         "exercise_id": e.get("exercise_id"),
         "name": name,
@@ -85,12 +86,55 @@ def _norm_exercise(e: dict, section: str, idx: int) -> dict:
         "rest_sec": e.get("rest_sec"),
         "tempo": e.get("tempo"),
         "rpe": e.get("rpe"),
-        "notes": e.get("notes"),
+        "notes": notes,
+        # Guided-flow compat — warmup drills use `cue` for the on-screen
+        # coaching prompt. Cool-down items also render cue when present.
+        # Copy coach's notes over so warmup / cool-down narration works.
+        "cue": notes,
         "equipment": e.get("equipment"),
         "alternative_exercise_id": e.get("alternative_exercise_id"),
         "section": section,
         "order": idx,
     }
+
+
+def _derive_logging_type(v2: dict | None) -> str:
+    """Map an exercises_v2 row to the `logging_type` the Guided Flow expects.
+    Returns 'cardio' for cardio/timed drills, 'weighted' otherwise. Guided
+    uses this to pick the right autopilot timer + narration path."""
+    if not v2:
+        return "weighted"
+    cat = (v2.get("category") or "").lower()
+    tt = (v2.get("training_type") or "").lower()
+    if cat == "cardio" or tt == "cardio":
+        return "cardio"
+    if cat in ("conditioning", "hiit", "endurance"):
+        return "cardio"
+    return "weighted"
+
+
+async def _enrich_for_guided(items: list[dict]) -> list[dict]:
+    """Batch-lookup exercises_v2 rows and copy Guided-Flow-required fields
+    onto every exercise row: logging_type + category. Idempotent."""
+    if not items:
+        return items
+    xids = list({e["exercise_id"] for e in items if e.get("exercise_id")})
+    if not xids:
+        return items
+    v2_by_id: dict[str, dict] = {}
+    async for row in db.exercises_v2.find(
+        {"id": {"$in": xids}},
+        {"_id": 0, "id": 1, "category": 1, "training_type": 1, "movement_pattern": 1},
+    ):
+        v2_by_id[row["id"]] = row
+    for e in items:
+        v2 = v2_by_id.get(e.get("exercise_id"))
+        e["logging_type"] = _derive_logging_type(v2)
+        if v2 and v2.get("category"):
+            e.setdefault("category", v2["category"])
+        if v2 and v2.get("movement_pattern"):
+            e.setdefault("movement_pattern", v2["movement_pattern"])
+    return items
 
 
 def _normalise_sections(warmup, exercises, cooldown) -> tuple[list, list, list]:
@@ -100,6 +144,26 @@ def _normalise_sections(warmup, exercises, cooldown) -> tuple[list, list, list]:
     if not main:
         raise HTTPException(400, "a manual workout must have at least one main exercise")
     return warm, main, cool
+
+
+def _merge_cooldown_into_exercises(main: list, cool: list) -> list:
+    """Guided Flow only iterates over `exercises[]` — it has no cool-down
+    phase. To keep cool-down drills playable in Guided, we append them to
+    `exercises[]` with an `is_cooldown: true` marker. The workout details
+    view still groups by `section` so cool-down remains visually distinct."""
+    if not cool:
+        return main
+    merged = list(main)
+    for i, e in enumerate(cool):
+        merged.append({
+            **e,
+            "is_cooldown": True,
+            "section": "cooldown",
+            "order": len(main) + i,
+            # Cool-down drills default to a short rest between reps
+            "rest_sec": e.get("rest_sec") or 15,
+        })
+    return merged
 
 
 async def _scan_media_queue(client: dict, sections: dict, workout_id: str) -> list[dict]:
@@ -184,6 +248,17 @@ async def coach_create_manual_workout(cid: str, body: ManualWorkoutBody,
         raise HTTPException(400, f"workout_type must be one of {sorted(_ALLOWED_TYPES)}")
     warm, main, cool = _normalise_sections(body.warmup, body.exercises, body.cooldown)
 
+    # Guided-Flow compat (2026-08-03):
+    #   • Enrich each exercise with logging_type + category from exercises_v2
+    #     so the Guided Flow autopilot picks the right timer/narration path.
+    #   • Copy cool-down items into `exercises[]` with is_cooldown:true so
+    #     Guided plays them after the main work (Guided has no cool-down
+    #     phase). The `cooldown[]` list is still stored for the details view.
+    await _enrich_for_guided(warm)
+    await _enrich_for_guided(main)
+    await _enrich_for_guided(cool)
+    main_with_cooldown = _merge_cooldown_into_exercises(main, cool)
+
     now = now_iso()
     wid = new_id()
 
@@ -231,7 +306,7 @@ async def coach_create_manual_workout(cid: str, body: ManualWorkoutBody,
         "rpe": body.rpe,
         "coach_notes": body.coach_notes,
         "warmup": warm,
-        "exercises": main,
+        "exercises": main_with_cooldown,
         "cooldown": cool,
         "alternatives": {},
         # Markers
@@ -336,8 +411,13 @@ async def coach_edit_manual_workout(wid: str, body: ManualWorkoutEditBody,
             {k: v for k, v in e.items() if k != "section"} for e in (w.get("cooldown") or [])
         ]
         warm, main, cool = _normalise_sections(warm_in, exs_in, cool_in)
+        # Guided-Flow compat (see create endpoint for rationale).
+        await _enrich_for_guided(warm)
+        await _enrich_for_guided(main)
+        await _enrich_for_guided(cool)
+        main_with_cooldown = _merge_cooldown_into_exercises(main, cool)
         updates["warmup"] = warm
-        updates["exercises"] = main
+        updates["exercises"] = main_with_cooldown
         updates["cooldown"] = cool
         scan_sections = {"warmup": warm, "main": main, "cooldown": cool}
 

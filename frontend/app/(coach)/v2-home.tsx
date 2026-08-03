@@ -264,6 +264,13 @@ export default function CoachHomeScreen() {
         </Text>
       </View>
 
+      {/* Build marker — helps confirm which frontend bundle is live in prod.
+          If this string is missing, the latest publish did NOT reach the
+          browser (stale cache or failed build). */}
+      <Text style={styles.buildMarker} testID="build-marker">
+        Build 20260803-094730Z · Manual Mode 1A · Sheet flex-basis fix · Perm delete fix
+      </Text>
+
       {/* Prominent "New Manual Workout" call-to-action.
           Opens the existing Clients tab; coach then taps a client → workspace
           where DayActionsMenu + ManualWorkoutBuilderSheet live per-day. */}
@@ -787,6 +794,10 @@ const styles = StyleSheet.create({
   manualBannerText: {
     color: "#f5b543", fontSize: 12, fontWeight: "700",
     letterSpacing: 0.3, flex: 1,
+  },
+  buildMarker: {
+    color: theme.color.textDim, fontSize: 10, fontFamily: "monospace" as any,
+    textAlign: "center", marginTop: 6, opacity: 0.7,
   },
   newManualBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,

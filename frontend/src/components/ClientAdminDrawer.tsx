@@ -176,7 +176,11 @@ export function ClientAdminDrawer({
     }
     setBusy("perm-delete");
     try {
-      await api(`/admin/clients/${clientId}/permanent-delete`, { method: "POST", body: {} });
+      // Backend requires `confirmation: "DELETE"` in the body — was missing.
+      await api(`/admin/clients/${clientId}/permanent-delete`, {
+        method: "POST",
+        body: { confirmation: "DELETE" },
+      });
       Alert.alert("Permanently deleted", `${data?.name} and all their data have been permanently deleted.`);
       setConfirmPerm(false); setPermText("");
       onClose();

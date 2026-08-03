@@ -26,7 +26,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import {
   Modal, View, Text, StyleSheet, Pressable, TextInput,
-  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform,
+  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform, Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
@@ -118,10 +118,21 @@ export function PostWorkoutRatingSheet({
       const doc = await api<any>(`/workouts/${workoutId}/complete`, { method: "POST", body: payload });
       setCompletedDoc(doc);
       setStage("confirm");
-    } catch {
-      // Non-fatal — still show confirmation so the client isn't stuck. The
-      // completion will retry via existing offline fallbacks if any.
-      setStage("confirm");
+    } catch (err: any) {
+      // Stage G iPhone Complete Workout bug — previously this catch
+      // silently swallowed errors and advanced to the confirm screen, so
+      // the client thought the workout was completed when the API call
+      // had actually failed (network drop, expired token, 5xx, etc.).
+      // Now: surface the error so the client can retry.
+      const msg = err?.message || String(err) || "Please try again.";
+      console.error("[complete-workout] failed:", err);
+      Alert.alert(
+        "Couldn't save this workout",
+        `${msg}\n\nYour tap didn't reach us — check your connection and try again.`,
+        [{ text: "OK" }],
+      );
+      // DO NOT advance to confirm stage — keep the client on the rating
+      // screen so they can retry without losing their input.
     } finally {
       setSubmitting(false);
     }

@@ -143,13 +143,20 @@ export function ProgrammeStatusCard({
       setState(r);
       onStateChanged?.(r);
       // Stage I — hide the "Louis is finalising your programme" card as soon
-      // as the client has ANY visible workout. Under Manual Mode, the first
-      // manual workout that lands from the coach is the trigger to dismiss.
-      try {
-        const wk = await api<{ workouts?: any[] } | any[]>("/workouts/week");
-        const rows = Array.isArray(wk) ? wk : (wk?.workouts || []);
-        setHasManualWorkout(rows.length > 0);
-      } catch { /* non-fatal */ }
+      // as the client has ANY visible workout. Only check when programme
+      // status is still "waiting_for_programme_approval" — otherwise skip
+      // the extra /workouts/week fetch to avoid unnecessary API traffic.
+      // The card also re-loads on screen focus (useFocusEffect below), so
+      // we don't need a fast poll to catch new workouts.
+      if (r.programme_status === "waiting_for_programme_approval") {
+        try {
+          const wk = await api<{ workouts?: any[] } | any[]>("/workouts/week");
+          const rows = Array.isArray(wk) ? wk : (wk?.workouts || []);
+          setHasManualWorkout(rows.length > 0);
+        } catch { /* non-fatal */ }
+      } else {
+        setHasManualWorkout(false);
+      }
       if (lastStateRef.current && lastStateRef.current !== r.programme_status) {
         onStateChanged?.(r);
       }

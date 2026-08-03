@@ -18,6 +18,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -132,6 +133,37 @@ export default function CoachHomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKind>("all");
 
+  // Phase 1B — Programme reset dry-run preview.
+  // DELIBERATELY exposes ONLY the dry-run. Execute must be done via
+  // curl using the returned token, so a mis-click cannot cause deletion.
+  const [resetPreviewOpen, setResetPreviewOpen] = useState(false);
+  const [resetPreview, setResetPreview] = useState<any>(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  // Reassurance-only counts (roster/client). NOT part of the delete set.
+  const [reassure, setReassure] = useState<{
+    clients: number | null; rosters: number | null;
+  }>({ clients: null, rosters: null });
+  const runResetDryRun = useCallback(async () => {
+    setResetBusy(true); setResetError(null); setResetPreview(null);
+    try {
+      const r = await api<any>("/admin/programme-reset/dry-run", { method: "POST" });
+      setResetPreview(r);
+      // Fetch reassurance counts separately (read-only endpoints).
+      try {
+        const clientsResp = await api<{ clients: any[] }>("/coach/clients");
+        const clientsCount = Array.isArray(clientsResp?.clients)
+          ? clientsResp.clients.length
+          : (Array.isArray(clientsResp) ? (clientsResp as any).length : null);
+        setReassure(prev => ({ ...prev, clients: clientsCount }));
+      } catch { /* non-fatal */ }
+    } catch (e: any) {
+      setResetError(e?.message || "Dry-run failed. Are you signed in as coach?");
+    } finally {
+      setResetBusy(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -200,6 +232,99 @@ export default function CoachHomeScreen() {
         <Text style={styles.newManualBtnText}>Open a client to add a manual workout</Text>
         <Ionicons name="arrow-forward" size={18} color="#fff" />
       </Pressable>
+
+      {/* Phase 1B — Read-only Preview Programme Reset. No execute button. */}
+      <Pressable
+        onPress={() => { setResetPreviewOpen(true); runResetDryRun(); }}
+        style={styles.resetPreviewBtn}
+        testID="reset-preview-btn"
+      >
+        <Ionicons name="eye-outline" size={18} color={theme.color.textHi} />
+        <Text style={styles.resetPreviewBtnText}>Preview Programme Reset (dry-run)</Text>
+      </Pressable>
+
+      <Modal
+        visible={resetPreviewOpen} transparent animationType="fade"
+        onRequestClose={() => setResetPreviewOpen(false)}
+      >
+        <View style={styles.resetOverlay}>
+          <View style={styles.resetBox}>
+            <View style={styles.resetHead}>
+              <Text style={styles.resetTitle}>Programme Reset — Dry-run</Text>
+              <Pressable onPress={() => setResetPreviewOpen(false)}>
+                <Ionicons name="close" size={20} color={theme.color.textHi} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 520 }} contentContainerStyle={{ padding: 14 }}>
+              {resetBusy && <ActivityIndicator color={theme.color.brand} style={{ margin: 16 }} />}
+              {resetError && <Text style={styles.resetError}>{resetError}</Text>}
+              {resetPreview && (
+                <>
+                  <Text style={styles.resetSubHead}>
+                    Total documents that WOULD be deleted:{" "}
+                    <Text style={{ color: theme.color.brand, fontWeight: "800" }}>
+                      {resetPreview.total_documents_to_clear}
+                    </Text>
+                  </Text>
+                  <Text style={styles.resetLabel}>Counts to clear (per collection)</Text>
+                  {Object.entries(resetPreview.counts_to_clear || {})
+                    .filter(([, v]: any) => v !== 0)
+                    .sort((a: any, b: any) => (b[1] as number) - (a[1] as number))
+                    .map(([name, n]: any) => (
+                      <View key={name} style={styles.resetRow}>
+                        <Text style={styles.resetRowName}>{name}</Text>
+                        <Text style={styles.resetRowN}>{n}</Text>
+                      </View>
+                    ))}
+                  <Text style={styles.resetLabel}>Flight Support (PROTECTED — will NOT be touched)</Text>
+                  {Object.entries(resetPreview.flight_support_preview || {}).map(([name, n]: any) => (
+                    <View key={name} style={[styles.resetRow, { borderColor: theme.color.green + "55" }]}>
+                      <Text style={[styles.resetRowName, { color: theme.color.green }]}>{name}</Text>
+                      <Text style={[styles.resetRowN, { color: theme.color.green }]}>{n}</Text>
+                    </View>
+                  ))}
+                  <Text style={styles.resetLabel}>Reassurance-only counts (NOT deleted)</Text>
+                  {Object.entries(resetPreview.reassurance_counts_not_deleted || {}).map(([name, n]: any) => (
+                    <View key={name} style={styles.resetRow}>
+                      <Text style={styles.resetRowName}>{name}</Text>
+                      <Text style={styles.resetRowN}>{n}</Text>
+                    </View>
+                  ))}
+                  <View style={styles.resetRow}>
+                    <Text style={styles.resetRowName}>clients (from /coach/clients)</Text>
+                    <Text style={styles.resetRowN}>
+                      {reassure.clients == null ? "—" : reassure.clients}
+                    </Text>
+                  </View>
+                  <Text style={styles.resetLabel}>Confirmation token</Text>
+                  <View style={styles.resetTokenBox}>
+                    <Text selectable style={styles.resetToken}>{resetPreview.expected_token}</Text>
+                  </View>
+                  <Text style={styles.resetLabel}>Backup collections that will be created (on execute)</Text>
+                  <Text style={styles.resetHint}>
+                    programme_reset_backup_&#123;iso_utc_ts&#125;_&#123;collection_name&#125;
+                    {"\n"}One backup collection per non-empty source collection.
+                  </Text>
+                  <Text style={styles.resetLabel}>How to execute (curl, run only after you approve)</Text>
+                  <View style={styles.resetCmdBox}>
+                    <Text selectable style={styles.resetCmd}>
+{`curl -X POST '\${YOUR_PROD_URL}/api/admin/programme-reset/execute' \\
+  -H 'Authorization: Bearer \${YOUR_COACH_TOKEN}' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"expected_token":"${resetPreview.expected_token}","confirm":"DELETE ALL PROGRAMMES"}'`}
+                    </Text>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+            <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: theme.color.border, alignItems: "flex-end" }}>
+              <Pressable onPress={() => setResetPreviewOpen(false)} style={styles.resetCloseBtn}>
+                <Text style={styles.resetCloseText}>Close</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Title strip */}
       <View style={styles.titleRow}>
@@ -464,6 +589,58 @@ const styles = StyleSheet.create({
   newManualBtnText: {
     color: "#fff", fontWeight: "800", fontSize: 15, letterSpacing: 0.4, flex: 1,
   },
+
+  /* Phase 1B — dry-run preview */
+  resetPreviewBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    marginHorizontal: 24, marginTop: 10, paddingVertical: 10, paddingHorizontal: 12,
+    borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: theme.color.card,
+  },
+  resetPreviewBtnText: { color: theme.color.textHi, fontSize: 13, fontWeight: "600" },
+  resetOverlay: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.75)",
+    alignItems: "center", justifyContent: "center", padding: 20,
+  },
+  resetBox: {
+    backgroundColor: theme.color.bg, borderRadius: 12, borderWidth: 1,
+    borderColor: theme.color.border, width: "100%", maxWidth: 560,
+  },
+  resetHead: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.border,
+  },
+  resetTitle: { color: theme.color.textHi, fontWeight: "800", fontSize: 15 },
+  resetSubHead: { color: theme.color.textHi, fontSize: 13, marginBottom: 10 },
+  resetLabel: {
+    color: theme.color.textDim, fontSize: 10, textTransform: "uppercase",
+    letterSpacing: 0.6, marginTop: 14, marginBottom: 6, fontWeight: "700",
+  },
+  resetRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingHorizontal: 10, paddingVertical: 7, borderWidth: 1,
+    borderColor: theme.color.border, borderRadius: 6, marginBottom: 4,
+    backgroundColor: theme.color.card,
+  },
+  resetRowName: { color: theme.color.textHi, fontSize: 12, flex: 1 },
+  resetRowN: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
+  resetError: { color: "#ff6b6b", fontSize: 12, padding: 10 },
+  resetTokenBox: {
+    backgroundColor: theme.color.card, borderRadius: 6, padding: 10,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  resetToken: { color: theme.color.brand, fontFamily: "monospace" as any, fontWeight: "700", fontSize: 13 },
+  resetCmdBox: {
+    backgroundColor: theme.color.card, borderRadius: 6, padding: 10,
+    borderWidth: 1, borderColor: theme.color.border, marginTop: 4,
+  },
+  resetCmd: { color: theme.color.textHi, fontFamily: "monospace" as any, fontSize: 10 },
+  resetHint: { color: theme.color.textDim, fontSize: 11, marginBottom: 4 },
+  resetCloseBtn: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6,
+    backgroundColor: theme.color.card, borderWidth: 1, borderColor: theme.color.border,
+  },
+  resetCloseText: { color: theme.color.textHi, fontWeight: "700" },
 
   optCard: {
     maxWidth: 480, backgroundColor: theme.color.surface2, borderRadius: 12,

@@ -109,6 +109,17 @@ async def programme_reset_dry_run(coach: dict = Depends(require_role("coach"))) 
         except Exception:
             fs[name] = -1
 
+    # Reassurance-only counts — NOT part of the delete set. Coach can
+    # confirm client/roster/flight-sector data still exists after execute.
+    reassure = {}
+    for name in ("users", "clients", "rosters", "duties", "flight_sectors",
+                 "coaching_dna", "assessments", "check_ins",
+                 "exercises_v2", "exercise_content"):
+        try:
+            reassure[name] = await db.get_collection(name).count_documents({})
+        except Exception:
+            reassure[name] = -1
+
     return {
         "ok": True,
         "mode": "dry_run",
@@ -117,6 +128,7 @@ async def programme_reset_dry_run(coach: dict = Depends(require_role("coach"))) 
         "total_documents_to_clear": sum(v for v in counts.values() if v >= 0),
         "protected_collections": _PROTECTED_COLLECTIONS,
         "flight_support_preview": fs,
+        "reassurance_counts_not_deleted": reassure,
         "expected_token": token,
         "next_step": (
             "Review counts above. If correct, call POST "

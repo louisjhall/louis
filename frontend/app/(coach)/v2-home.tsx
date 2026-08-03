@@ -23,6 +23,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -164,6 +165,49 @@ export default function CoachHomeScreen() {
     }
   }, []);
 
+  // Phase 1C — Full Client-Data Reset. Preview + execute gated on typing
+  // the confirmation phrase. Uses browser session — no token pasting.
+  const [clientResetOpen, setClientResetOpen] = useState(false);
+  const [clientResetPreview, setClientResetPreview] = useState<any>(null);
+  const [clientResetBusy, setClientResetBusy] = useState(false);
+  const [clientResetError, setClientResetError] = useState<string | null>(null);
+  const [clientResetConfirm, setClientResetConfirm] = useState("");
+  const [clientResetExecuting, setClientResetExecuting] = useState(false);
+  const [clientResetResult, setClientResetResult] = useState<any>(null);
+  const CLIENT_RESET_PHRASE = "DELETE ALL CLIENT DATA";
+  const runClientResetDryRun = useCallback(async () => {
+    setClientResetBusy(true); setClientResetError(null);
+    setClientResetPreview(null); setClientResetResult(null);
+    setClientResetConfirm("");
+    try {
+      const r = await api<any>("/admin/client-reset/dry-run", { method: "POST" });
+      setClientResetPreview(r);
+    } catch (e: any) {
+      setClientResetError(e?.message || "Dry-run failed. Are you signed in as coach?");
+    } finally {
+      setClientResetBusy(false);
+    }
+  }, []);
+  const runClientResetExecute = useCallback(async () => {
+    if (!clientResetPreview?.expected_token) return;
+    if (clientResetConfirm !== CLIENT_RESET_PHRASE) return;
+    setClientResetExecuting(true); setClientResetError(null);
+    try {
+      const r = await api<any>("/admin/client-reset/execute", {
+        method: "POST",
+        body: {
+          expected_token: clientResetPreview.expected_token,
+          confirm: CLIENT_RESET_PHRASE,
+        },
+      });
+      setClientResetResult(r);
+    } catch (e: any) {
+      setClientResetError(e?.message || "Execute failed.");
+    } finally {
+      setClientResetExecuting(false);
+    }
+  }, [clientResetPreview, clientResetConfirm]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -241,6 +285,18 @@ export default function CoachHomeScreen() {
       >
         <Ionicons name="eye-outline" size={18} color={theme.color.textHi} />
         <Text style={styles.resetPreviewBtnText}>Preview Programme Reset (dry-run)</Text>
+      </Pressable>
+
+      {/* Phase 1C — Full Client-Data Reset (preview + gated execute). */}
+      <Pressable
+        onPress={() => { setClientResetOpen(true); runClientResetDryRun(); }}
+        style={[styles.resetPreviewBtn, { borderColor: "#ff6b6b55" }]}
+        testID="client-reset-btn"
+      >
+        <Ionicons name="warning-outline" size={18} color="#ff6b6b" />
+        <Text style={[styles.resetPreviewBtnText, { color: "#ff6b6b" }]}>
+          Full Client Reset (delete every client + their data)
+        </Text>
       </Pressable>
 
       <Modal
@@ -325,6 +381,146 @@ export default function CoachHomeScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Phase 1C — Full Client-Data Reset Modal */}
+      <Modal
+        visible={clientResetOpen} transparent animationType="fade"
+        onRequestClose={() => setClientResetOpen(false)}
+      >
+        <View style={styles.resetOverlay}>
+          <View style={[styles.resetBox, { borderColor: "#ff6b6b55" }]}>
+            <View style={styles.resetHead}>
+              <Text style={[styles.resetTitle, { color: "#ff6b6b" }]}>Full Client Reset</Text>
+              <Pressable onPress={() => setClientResetOpen(false)}>
+                <Ionicons name="close" size={20} color={theme.color.textHi} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 560 }} contentContainerStyle={{ padding: 14 }}>
+              {clientResetBusy && <ActivityIndicator color={theme.color.brand} style={{ margin: 16 }} />}
+              {clientResetError && <Text style={styles.resetError}>{clientResetError}</Text>}
+              {clientResetResult && (
+                <>
+                  <Text style={[styles.resetSubHead, { color: theme.color.green }]}>
+                    ✔ Executed. Deleted {clientResetResult.total_users_deleted} client account
+                    {clientResetResult.total_users_deleted === 1 ? "" : "s"} and{" "}
+                    {clientResetResult.total_deleted} linked records.
+                  </Text>
+                  <Text style={styles.resetLabel}>Backup prefix</Text>
+                  <View style={styles.resetTokenBox}>
+                    <Text selectable style={styles.resetToken}>{clientResetResult.backup_prefix}</Text>
+                  </View>
+                  <Text style={styles.resetLabel}>Deleted user emails</Text>
+                  {(clientResetResult.deleted_user_emails || []).map((e: string, i: number) => (
+                    <View key={i} style={styles.resetRow}>
+                      <Text style={styles.resetRowName}>{e}</Text>
+                    </View>
+                  ))}
+                  <Text style={styles.resetLabel}>Protected accounts (still active)</Text>
+                  {(clientResetResult.protected_accounts || []).map((u: any) => (
+                    <View key={u.id} style={styles.resetRow}>
+                      <Text style={styles.resetRowName}>{u.email} ({u.role})</Text>
+                    </View>
+                  ))}
+                </>
+              )}
+              {clientResetPreview && !clientResetResult && (
+                <>
+                  <Text style={styles.resetSubHead}>
+                    This will delete{" "}
+                    <Text style={{ color: "#ff6b6b", fontWeight: "800" }}>
+                      {clientResetPreview.total_users_to_delete}
+                    </Text>{" "}
+                    client account{clientResetPreview.total_users_to_delete === 1 ? "" : "s"} and{" "}
+                    <Text style={{ color: "#ff6b6b", fontWeight: "800" }}>
+                      {clientResetPreview.total_client_linked_docs}
+                    </Text>{" "}
+                    linked records.
+                  </Text>
+
+                  <Text style={styles.resetLabel}>Client accounts to DELETE</Text>
+                  {(clientResetPreview.client_accounts_to_delete || []).length === 0 && (
+                    <Text style={styles.resetHint}>None</Text>
+                  )}
+                  {(clientResetPreview.client_accounts_to_delete || []).map((u: any) => (
+                    <View key={u.id} style={[styles.resetRow, { borderColor: "#ff6b6b55" }]}>
+                      <Text style={[styles.resetRowName, { color: "#ff6b6b" }]}>
+                        {u.email || "(no email)"}
+                      </Text>
+                      <Text style={[styles.resetRowN, { color: "#ff6b6b", fontSize: 10 }]}>{u.id}</Text>
+                    </View>
+                  ))}
+
+                  <Text style={styles.resetLabel}>Protected accounts (kept)</Text>
+                  {(clientResetPreview.protected_accounts || []).map((u: any) => (
+                    <View key={u.id} style={[styles.resetRow, { borderColor: theme.color.green + "55" }]}>
+                      <Text style={[styles.resetRowName, { color: theme.color.green }]}>
+                        {u.email} ({u.role})
+                      </Text>
+                      <Text style={[styles.resetRowN, { color: theme.color.green, fontSize: 10 }]}>
+                        {u.id}
+                      </Text>
+                    </View>
+                  ))}
+
+                  <Text style={styles.resetLabel}>Client-linked docs per collection (will be deleted)</Text>
+                  {Object.entries(clientResetPreview.client_linked_counts_by_collection || {})
+                    .filter(([, v]: any) => (v as number) > 0)
+                    .sort((a: any, b: any) => (b[1] as number) - (a[1] as number))
+                    .map(([name, n]: any) => (
+                      <View key={name} style={styles.resetRow}>
+                        <Text style={styles.resetRowName}>{name}</Text>
+                        <Text style={styles.resetRowN}>{n}</Text>
+                      </View>
+                    ))}
+
+                  <Text style={styles.resetLabel}>Preserved collections (will NOT change)</Text>
+                  {Object.entries(clientResetPreview.preserved_counts_will_not_change || {}).map(([name, n]: any) => (
+                    <View key={name} style={[styles.resetRow, { borderColor: theme.color.green + "55" }]}>
+                      <Text style={[styles.resetRowName, { color: theme.color.green }]}>{name}</Text>
+                      <Text style={[styles.resetRowN, { color: theme.color.green }]}>{n}</Text>
+                    </View>
+                  ))}
+
+                  <Text style={styles.resetLabel}>Confirmation token</Text>
+                  <View style={styles.resetTokenBox}>
+                    <Text selectable style={styles.resetToken}>{clientResetPreview.expected_token}</Text>
+                  </View>
+
+                  <Text style={styles.resetLabel}>To EXECUTE — type: {CLIENT_RESET_PHRASE}</Text>
+                  <TextInput
+                    style={[styles.executeInput, { marginTop: 4 }]}
+                    value={clientResetConfirm}
+                    onChangeText={setClientResetConfirm}
+                    placeholder="Type the phrase exactly to enable the delete button"
+                    placeholderTextColor="#666"
+                    autoCapitalize="characters"
+                    testID="client-reset-confirm-input"
+                  />
+                  <Pressable
+                    onPress={runClientResetExecute}
+                    disabled={clientResetConfirm !== CLIENT_RESET_PHRASE || clientResetExecuting}
+                    style={[
+                      styles.executeBtn,
+                      clientResetConfirm !== CLIENT_RESET_PHRASE && { opacity: 0.35 },
+                    ]}
+                    testID="client-reset-execute-btn"
+                  >
+                    {clientResetExecuting
+                      ? <ActivityIndicator color="#fff" />
+                      : <Text style={styles.executeBtnText}>EXECUTE — Delete all client data</Text>}
+                  </Pressable>
+                </>
+              )}
+            </ScrollView>
+            <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: theme.color.border, alignItems: "flex-end" }}>
+              <Pressable onPress={() => setClientResetOpen(false)} style={styles.resetCloseBtn}>
+                <Text style={styles.resetCloseText}>Close</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
 
       {/* Title strip */}
       <View style={styles.titleRow}>
@@ -641,6 +837,17 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.card, borderWidth: 1, borderColor: theme.color.border,
   },
   resetCloseText: { color: theme.color.textHi, fontWeight: "700" },
+  executeInput: {
+    backgroundColor: theme.color.card, color: theme.color.textHi,
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10,
+    borderWidth: 1, borderColor: "#ff6b6b55",
+    fontFamily: "monospace" as any, letterSpacing: 1,
+  },
+  executeBtn: {
+    marginTop: 12, backgroundColor: "#ff6b6b",
+    paddingVertical: 14, borderRadius: 8, alignItems: "center",
+  },
+  executeBtnText: { color: "#fff", fontWeight: "800", letterSpacing: 0.4 },
 
   optCard: {
     maxWidth: 480, backgroundColor: theme.color.surface2, borderRadius: 12,

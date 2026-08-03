@@ -18,13 +18,13 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, TextInput,
+  View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, TextInput, Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
-export type V2Tab = "plan" | "checkins" | "messages" | "progress" | "history" | "goals";
+export type V2Tab = "plan" | "checkins" | "messages" | "progress" | "history" | "goals" | "habits";
 
 export function V2ClientTabs({ clientId, tab }: { clientId: string; tab: V2Tab }) {
   if (tab === "checkins") return <CheckinsPanel clientId={clientId} />;
@@ -32,6 +32,7 @@ export function V2ClientTabs({ clientId, tab }: { clientId: string; tab: V2Tab }
   if (tab === "progress") return <ProgressPanel clientId={clientId} />;
   if (tab === "history")  return <HistoryPanel  clientId={clientId} />;
   if (tab === "goals")    return <GoalsPanel    clientId={clientId} />;
+  if (tab === "habits")   return <HabitsPanel   clientId={clientId} />;
   return null;
 }
 
@@ -443,6 +444,343 @@ function DnaRow({ label, val }: { label: string; val?: any }) {
     </View>
   );
 }
+
+/* ---------------------------------------------------------------- HABITS */
+/* Stage H — Coach control of habits (CRUD).
+ * Reuses:
+ *   GET    /coach/clients/{cid}/habits
+ *   POST   /coach/clients/{cid}/habits
+ *   PATCH  /coach/habits/{hid}                     (pause / archive / edit)
+ *   DELETE /coach/habits/{hid}?confirm=true
+ *   POST   /coach/clients/{cid}/habits/reorder
+ */
+
+type HabitRow = {
+  id: string; title: string; reason?: string;
+  frequency?: string; target?: any; unit?: string;
+  habit_type?: string; difficulty_level?: string;
+  status?: string; sort_order?: number;
+  streak?: number;
+};
+
+function HabitsPanel({ clientId }: { clientId: string }) {
+  const [active, setActive] = useState<HabitRow[]>([]);
+  const [paused, setPaused] = useState<HabitRow[]>([]);
+  const [archived, setArchived] = useState<HabitRow[]>([]);
+  const [completion, setCompletion] = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newReason, setNewReason] = useState("");
+  const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr(null);
+    try {
+      const d = await api<any>(`/coach/clients/${clientId}/habits`);
+      setActive(d?.active || []);
+      setPaused(d?.paused || []);
+      setArchived(d?.archived || []);
+      setCompletion(d?.completion || {});
+    } catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setLoading(false); }
+  }, [clientId]);
+  useEffect(() => { load(); }, [load]);
+
+  const markSaving = (id: string, on: boolean) => {
+    setSavingIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const doCreate = async () => {
+    const title = newTitle.trim();
+    if (!title) return;
+    try {
+      await api(`/coach/clients/${clientId}/habits`, {
+        method: "POST",
+        body: { title, reason: newReason.trim() || undefined, frequency: "daily" },
+      });
+      setNewTitle(""); setNewReason(""); setAdding(false);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Couldn't add habit", String(e?.message || e));
+    }
+  };
+
+  const setStatus = async (h: HabitRow, status: "active" | "paused" | "archived") => {
+    markSaving(h.id, true);
+    try {
+      await api(`/coach/habits/${h.id}`, { method: "PATCH", body: { status } });
+      await load();
+    } catch (e: any) {
+      Alert.alert("Couldn't update habit", String(e?.message || e));
+    } finally {
+      markSaving(h.id, false);
+    }
+  };
+
+  const doDelete = (h: HabitRow) => {
+    Alert.alert(
+      "Delete habit?",
+      `"${h.title}" will be permanently deleted along with its logs. This can't be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete", style: "destructive",
+          onPress: async () => {
+            markSaving(h.id, true);
+            try {
+              await api(`/coach/habits/${h.id}?confirm=true`, { method: "DELETE" });
+              await load();
+            } catch (e: any) {
+              Alert.alert("Delete failed", String(e?.message || e));
+            } finally {
+              markSaving(h.id, false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const reorder = async (idx: number, dir: -1 | 1) => {
+    const next = idx + dir;
+    if (next < 0 || next >= active.length) return;
+    const ordered = [...active];
+    const [item] = ordered.splice(idx, 1);
+    ordered.splice(next, 0, item);
+    setActive(ordered);   // optimistic
+    try {
+      await api(`/coach/clients/${clientId}/habits/reorder`, {
+        method: "POST",
+        body: { habit_ids: ordered.map((h) => h.id) },
+      });
+    } catch (e: any) {
+      Alert.alert("Couldn't reorder", String(e?.message || e));
+      await load();
+    }
+  };
+
+  if (loading) return <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>;
+  if (err) return <View style={styles.center}><Text style={styles.err}>{err}</Text></View>;
+
+  return (
+    <ScrollView contentContainerStyle={styles.body} testID="v2-habits-panel">
+      {/* Add new habit */}
+      <View style={styles.card}>
+        <View style={styles.cardHead}>
+          <Text style={styles.cardHeadText}>ADD HABIT</Text>
+          <Pressable onPress={() => setAdding((v) => !v)} testID="habit-add-toggle">
+            <Ionicons name={adding ? "chevron-up" : "add"} size={18} color={theme.color.brand} />
+          </Pressable>
+        </View>
+        {adding && (
+          <View style={{ gap: 8, marginTop: 6 }}>
+            <TextInput
+              value={newTitle} onChangeText={setNewTitle}
+              placeholder="Habit title (e.g. Sleep 7+ hrs)"
+              placeholderTextColor={theme.color.textDim}
+              style={hStyles.input} testID="habit-add-title"
+            />
+            <TextInput
+              value={newReason} onChangeText={setNewReason}
+              placeholder="Why (optional)"
+              placeholderTextColor={theme.color.textDim}
+              style={hStyles.input} testID="habit-add-reason"
+              multiline
+            />
+            <Pressable
+              onPress={doCreate}
+              style={[hStyles.primary, !newTitle.trim() && { opacity: 0.4 }]}
+              disabled={!newTitle.trim()}
+              testID="habit-add-submit"
+            >
+              <Ionicons name="checkmark" size={14} color="#000" />
+              <Text style={hStyles.primaryT}>ADD</Text>
+            </Pressable>
+          </View>
+        )}
+      </View>
+
+      {/* Active habits */}
+      <Text style={styles.sectionTitle}>ACTIVE · {active.length}</Text>
+      {active.length === 0 && (
+        <View style={styles.card}>
+          <Text style={styles.notes}>No active habits. Tap ADD HABIT to create one.</Text>
+        </View>
+      )}
+      {active.map((h, i) => {
+        const c = completion?.[h.id] || {};
+        const rate = typeof c.rate === "number" ? Math.round(c.rate * 100) : null;
+        const saving = savingIds.has(h.id);
+        return (
+          <View key={h.id} style={styles.card} testID={`habit-row-${h.id}`}>
+            <View style={styles.cardHead}>
+              <Text style={styles.cardHeadText} numberOfLines={1}>{h.title}</Text>
+              {h.streak && h.streak > 0 && (
+                <View style={hStyles.streak}>
+                  <Ionicons name="flame" size={10} color="#f5b543" />
+                  <Text style={hStyles.streakT}>{h.streak}</Text>
+                </View>
+              )}
+            </View>
+            {h.reason && <Text style={styles.notes} numberOfLines={2}>{h.reason}</Text>}
+            <View style={hStyles.metaRow}>
+              {h.frequency && <Text style={hStyles.meta}>{h.frequency}</Text>}
+              {h.target != null && <Text style={hStyles.meta}>· {String(h.target)}{h.unit ? " " + h.unit : ""}</Text>}
+              {rate != null && <Text style={hStyles.meta}>· {rate}% 28d</Text>}
+            </View>
+            <View style={hStyles.actionRow}>
+              <Pressable
+                onPress={() => reorder(i, -1)}
+                disabled={i === 0 || saving}
+                style={[hStyles.iconBtn, (i === 0 || saving) && { opacity: 0.3 }]}
+                testID={`habit-up-${h.id}`}
+              >
+                <Ionicons name="chevron-up" size={14} color={theme.color.textHi} />
+              </Pressable>
+              <Pressable
+                onPress={() => reorder(i, 1)}
+                disabled={i === active.length - 1 || saving}
+                style={[hStyles.iconBtn, (i === active.length - 1 || saving) && { opacity: 0.3 }]}
+                testID={`habit-down-${h.id}`}
+              >
+                <Ionicons name="chevron-down" size={14} color={theme.color.textHi} />
+              </Pressable>
+              <View style={{ flex: 1 }} />
+              <Pressable
+                onPress={() => setStatus(h, "paused")}
+                disabled={saving}
+                style={hStyles.iconBtn}
+                testID={`habit-pause-${h.id}`}
+              >
+                <Ionicons name="pause" size={13} color={theme.color.textHi} />
+                <Text style={hStyles.iconBtnT}>Pause</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setStatus(h, "archived")}
+                disabled={saving}
+                style={hStyles.iconBtn}
+                testID={`habit-archive-${h.id}`}
+              >
+                <Ionicons name="archive-outline" size={13} color={theme.color.textHi} />
+                <Text style={hStyles.iconBtnT}>Archive</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => doDelete(h)}
+                disabled={saving}
+                style={[hStyles.iconBtn, { borderColor: "#ff6b6b" }]}
+                testID={`habit-delete-${h.id}`}
+              >
+                <Ionicons name="trash-outline" size={13} color="#ff6b6b" />
+                <Text style={[hStyles.iconBtnT, { color: "#ff6b6b" }]}>Delete</Text>
+              </Pressable>
+            </View>
+          </View>
+        );
+      })}
+
+      {/* Paused */}
+      {paused.length > 0 && (
+        <>
+          <Text style={[styles.sectionTitle, { marginTop: 16 }]}>PAUSED · {paused.length}</Text>
+          {paused.map((h) => (
+            <View key={h.id} style={[styles.card, { opacity: 0.7 }]}>
+              <Text style={styles.cardHeadText}>{h.title}</Text>
+              <View style={hStyles.actionRow}>
+                <View style={{ flex: 1 }} />
+                <Pressable
+                  onPress={() => setStatus(h, "active")}
+                  style={hStyles.iconBtn}
+                  testID={`habit-resume-${h.id}`}
+                >
+                  <Ionicons name="play" size={13} color={theme.color.brand} />
+                  <Text style={hStyles.iconBtnT}>Resume</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => doDelete(h)}
+                  style={[hStyles.iconBtn, { borderColor: "#ff6b6b" }]}
+                  testID={`habit-delete-${h.id}`}
+                >
+                  <Ionicons name="trash-outline" size={13} color="#ff6b6b" />
+                  <Text style={[hStyles.iconBtnT, { color: "#ff6b6b" }]}>Delete</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </>
+      )}
+
+      {/* Archived */}
+      {archived.length > 0 && (
+        <>
+          <Text style={[styles.sectionTitle, { marginTop: 16 }]}>ARCHIVED · {archived.length}</Text>
+          {archived.map((h) => (
+            <View key={h.id} style={[styles.card, { opacity: 0.5 }]}>
+              <Text style={styles.cardHeadText}>{h.title}</Text>
+              <View style={hStyles.actionRow}>
+                <View style={{ flex: 1 }} />
+                <Pressable
+                  onPress={() => setStatus(h, "active")}
+                  style={hStyles.iconBtn}
+                  testID={`habit-restore-${h.id}`}
+                >
+                  <Ionicons name="refresh" size={13} color={theme.color.brand} />
+                  <Text style={hStyles.iconBtnT}>Restore</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => doDelete(h)}
+                  style={[hStyles.iconBtn, { borderColor: "#ff6b6b" }]}
+                  testID={`habit-delete-${h.id}`}
+                >
+                  <Ionicons name="trash-outline" size={13} color="#ff6b6b" />
+                  <Text style={[hStyles.iconBtnT, { color: "#ff6b6b" }]}>Delete</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </>
+      )}
+    </ScrollView>
+  );
+}
+
+const hStyles = StyleSheet.create({
+  input: {
+    backgroundColor: theme.color.bg, borderWidth: 1, borderColor: theme.color.border,
+    borderRadius: 6, paddingHorizontal: 10, paddingVertical: 8,
+    color: theme.color.textHi, fontSize: 13, minHeight: 40,
+  },
+  primary: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, backgroundColor: theme.color.brand,
+    paddingVertical: 10, borderRadius: 6,
+  },
+  primaryT: { color: "#000", fontWeight: "800", letterSpacing: 1.2, fontSize: 11 },
+  metaRow: { flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" },
+  meta: { color: theme.color.textDim, fontSize: 11, fontWeight: "600" },
+  streak: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+    backgroundColor: "#3b2a14", borderWidth: 1, borderColor: "#f5b543",
+  },
+  streakT: { color: "#f5b543", fontSize: 10, fontWeight: "800" },
+  actionRow: {
+    flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10,
+    flexWrap: "wrap",
+  },
+  iconBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 6, borderRadius: 5,
+    borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: theme.color.bg,
+  },
+  iconBtnT: { color: theme.color.textHi, fontSize: 11, fontWeight: "700" },
+});
 
 /* ------------------------------------------------------------- utilities */
 

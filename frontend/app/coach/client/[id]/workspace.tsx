@@ -656,6 +656,7 @@ function CountPill({ label, n, kind }: { label: string; n: number; kind: string 
 const TABS: { key: V2Tab; label: string; icon: any }[] = [
   { key: "plan",      label: "Plan",      icon: "calendar-outline" },
   { key: "checkins",  label: "Check-ins", icon: "heart-outline" },
+  { key: "habits",    label: "Habits",    icon: "checkmark-done-outline" },
   { key: "messages",  label: "Messages",  icon: "chatbubble-outline" },
   { key: "progress",  label: "Progress",  icon: "trending-up-outline" },
   { key: "history",   label: "History",   icon: "time-outline" },

@@ -18,11 +18,12 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, TextInput, Alert,
+  View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, TextInput,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { confirm, toast } from "@/src/lib/ux";
 
 export type V2Tab = "plan" | "checkins" | "messages" | "progress" | "history" | "goals" | "habits";
 
@@ -505,9 +506,10 @@ function HabitsPanel({ clientId }: { clientId: string }) {
         body: { title, reason: newReason.trim() || undefined, frequency: "daily" },
       });
       setNewTitle(""); setNewReason(""); setAdding(false);
+      toast("Habit added", "success");
       await load();
     } catch (e: any) {
-      Alert.alert("Couldn't add habit", String(e?.message || e));
+      toast(`Couldn't add habit: ${String(e?.message || e)}`, "error");
     }
   };
 
@@ -517,34 +519,52 @@ function HabitsPanel({ clientId }: { clientId: string }) {
       await api(`/coach/habits/${h.id}`, { method: "PATCH", body: { status } });
       await load();
     } catch (e: any) {
-      Alert.alert("Couldn't update habit", String(e?.message || e));
+      toast(`Couldn't update habit: ${String(e?.message || e)}`, "error");
     } finally {
       markSaving(h.id, false);
     }
   };
 
-  const doDelete = (h: HabitRow) => {
-    Alert.alert(
-      "Delete habit?",
-      `"${h.title}" will be permanently deleted along with its logs. This can't be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete", style: "destructive",
-          onPress: async () => {
-            markSaving(h.id, true);
-            try {
-              await api(`/coach/habits/${h.id}?confirm=true`, { method: "DELETE" });
-              await load();
-            } catch (e: any) {
-              Alert.alert("Delete failed", String(e?.message || e));
-            } finally {
-              markSaving(h.id, false);
-            }
-          },
-        },
-      ],
-    );
+  const doDelete = async (h: HabitRow) => {
+    // React Native Web does NOT render Alert.alert buttons — use the
+    // cross-platform confirm() helper so the destructive action actually
+    // fires on preview + web.
+    const ok = await confirm({
+      title: "Delete habit?",
+      message: `"${h.title}" will be permanently deleted along with its logs. This can't be undone.`,
+      confirmLabel: "Delete", cancelLabel: "Cancel", destructive: true,
+    });
+    if (!ok) return;
+    markSaving(h.id, true);
+    try {
+      await api(`/coach/habits/${h.id}?confirm=true`, { method: "DELETE" });
+      toast(`Deleted "${h.title}"`, "success");
+      await load();
+    } catch (e: any) {
+      toast(`Delete failed: ${String(e?.message || e)}`, "error");
+    } finally {
+      markSaving(h.id, false);
+    }
+  };
+
+  const doRegenerate = async (h: HabitRow) => {
+    const ok = await confirm({
+      title: "Regenerate this habit?",
+      message: `Atlas will suggest a fresh habit for "${h.title}" based on the client's goal. Streak and history are kept.`,
+      confirmLabel: "Regenerate", cancelLabel: "Cancel",
+    });
+    if (!ok) return;
+    markSaving(h.id, true);
+    try {
+      const r = await api<any>(`/coach/habits/${h.id}/regenerate`, { method: "POST" });
+      const nt = r?.habit?.title || h.title;
+      toast(nt === h.title ? "Regenerated (no change)" : `Now: "${nt}"`, "success");
+      await load();
+    } catch (e: any) {
+      toast(`Regenerate failed: ${String(e?.message || e)}`, "error");
+    } finally {
+      markSaving(h.id, false);
+    }
   };
 
   const reorder = async (idx: number, dir: -1 | 1) => {
@@ -560,7 +580,7 @@ function HabitsPanel({ clientId }: { clientId: string }) {
         body: { habit_ids: ordered.map((h) => h.id) },
       });
     } catch (e: any) {
-      Alert.alert("Couldn't reorder", String(e?.message || e));
+      toast(`Couldn't reorder: ${String(e?.message || e)}`, "error");
       await load();
     }
   };
@@ -652,6 +672,15 @@ function HabitsPanel({ clientId }: { clientId: string }) {
                 <Ionicons name="chevron-down" size={14} color={theme.color.textHi} />
               </Pressable>
               <View style={{ flex: 1 }} />
+              <Pressable
+                onPress={() => doRegenerate(h)}
+                disabled={saving}
+                style={hStyles.iconBtn}
+                testID={`habit-regen-${h.id}`}
+              >
+                <Ionicons name="sparkles-outline" size={13} color={theme.color.brand} />
+                <Text style={[hStyles.iconBtnT, { color: theme.color.brand }]}>Regenerate</Text>
+              </Pressable>
               <Pressable
                 onPress={() => setStatus(h, "paused")}
                 disabled={saving}

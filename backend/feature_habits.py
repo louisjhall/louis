@@ -829,6 +829,119 @@ async def coach_habit_reorder(
     return {"ok": True, "habits": saved}
 
 
+HABIT_REGEN_SYSTEM = (
+    "You are Atlas, an assistant coach for CrewFit. The coach wants you to REGENERATE ONE habit "
+    "for a client based on their current goal / linked_goal. Keep the linked_goal and habit_type the "
+    "same unless the current title is a clear mismatch. Produce a FRESH, small, specific, daily "
+    "habit that supports that goal — different from the current title.\n\n"
+    "RULES:\n"
+    "1. Never propose weekly workouts, calorie targets, or 'no X' rules — kind, doable, roster-aware.\n"
+    "2. Keep it under 60 characters. One warm supportive reason sentence.\n"
+    "3. Keep the frequency daily unless the current habit explicitly needs a specific day-type.\n"
+    "4. Use British English.\n\n"
+    "Return STRICT JSON: { \"habit\": { title, reason, linked_goal, habit_type, day_type_rules, "
+    "frequency, target, unit, difficulty_level } }. Nothing else."
+)
+
+
+@api.post("/coach/habits/{habit_id}/regenerate")
+async def coach_habit_regenerate(
+    habit_id: str,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Regenerate a single habit's content based on the client's DNA + current
+    linked_goal. Coach picks up the new suggestion in place — same habit id,
+    same streak, same logs — just refreshed title/reason/target. Falls back to
+    a deterministic pack when the LLM call fails so the button always
+    produces something usable."""
+    h = await db.habits.find_one({"id": habit_id}, {"_id": 0})
+    if not h:
+        raise HTTPException(404, "habit not found")
+    user = await db.users.find_one({"id": h["user_id"]},
+                                    {"_id": 0, "password_hash": 0}) or {}
+    dna = await db.coaching_dna.find_one(
+        {"user_id": h["user_id"]}, {"_id": 0}, sort=[("version", -1)],
+    ) or {}
+    ctx = {
+        "client_name": user.get("name"),
+        "crew_role": user.get("crew_role"),
+        "primary_goals": dna.get("primary_goals"),
+        "obstacles": dna.get("obstacles"),
+        "injury_history": dna.get("injury_history"),
+        "sleep_notes": dna.get("sleep_notes"),
+        "nutrition_notes": dna.get("nutrition_notes"),
+        "current_habit": {
+            "title": h.get("title"),
+            "reason": h.get("reason"),
+            "linked_goal": h.get("linked_goal"),
+            "habit_type": h.get("habit_type"),
+            "frequency": h.get("frequency"),
+        },
+        "sibling_titles": [],
+    }
+    # Avoid regenerating into an identical title to the client's other habits.
+    async for sib in db.habits.find(
+        {"user_id": h["user_id"], "status": "active", "id": {"$ne": habit_id}},
+        {"_id": 0, "title": 1},
+    ):
+        ctx["sibling_titles"].append(sib.get("title"))
+
+    proposed: dict[str, Any] = {}
+    try:
+        raw = await call_claude(
+            HABIT_REGEN_SYSTEM,
+            "Regenerate ONE fresh habit for this client based on their goal.\n\n"
+            "CONTEXT:\n" + json.dumps(ctx, default=str)[:5000],
+            max_out=600,
+        )
+        parsed = parse_json_from_text(raw) or {}
+        if isinstance(parsed, dict):
+            proposed = parsed.get("habit") or {}
+    except Exception:
+        logger.exception("habit_regenerate: LLM call failed for %s", habit_id)
+
+    bad, why = (True, "empty") if not proposed else _is_bad_habit(proposed)
+    if bad:
+        # Deterministic fallback pack — pick the first entry whose title
+        # differs from the current habit + siblings.
+        pack = _default_habit_pack(dna)
+        used = {str(h.get("title") or "").lower().strip()}
+        used |= {str(x or "").lower().strip() for x in ctx["sibling_titles"]}
+        proposed = None
+        for candidate in pack:
+            if str(candidate.get("title") or "").lower().strip() not in used:
+                proposed = candidate
+                break
+        if not proposed:
+            proposed = pack[0] if pack else {"title": h.get("title"), "reason": h.get("reason")}
+        why_note = f"fallback({why or 'llm_missing'})"
+    else:
+        why_note = "llm"
+
+    updates: dict[str, Any] = {
+        "title": (str(proposed.get("title") or h.get("title"))).strip(),
+        "reason": str(proposed.get("reason") or h.get("reason") or "").strip(),
+        "target": proposed.get("target") if proposed.get("target") is not None else h.get("target"),
+        "unit":   str(proposed.get("unit") or h.get("unit") or "").strip() or None,
+        "habit_type":  proposed.get("habit_type") or h.get("habit_type"),
+        "difficulty_level": proposed.get("difficulty_level") or h.get("difficulty_level"),
+        "linked_goal": proposed.get("linked_goal") or h.get("linked_goal"),
+        "day_type_rules": proposed.get("day_type_rules") or h.get("day_type_rules") or [],
+        "frequency": "daily",
+        "regenerated_at": now_iso(),
+        "regenerated_by": coach["id"],
+        "regenerated_source": why_note,
+        "updated_at": now_iso(),
+    }
+    await db.habits.update_one({"id": habit_id}, {"$set": updates})
+    saved = await db.habits.find_one({"id": habit_id}, {"_id": 0})
+    await _log_change(coach["id"], h["user_id"], "programme",
+                      f"Coach regenerated habit: {h.get('title')} → {saved.get('title')}", "",
+                      actor="coach",
+                      meta={"habit_id": habit_id, "source": why_note})
+    return {"ok": True, "habit": saved, "source": why_note}
+
+
 @api.post("/coach/habits/reviews/{review_id}/approve")
 async def coach_habit_review_approve(review_id: str, body: HabitReviewApproveBody, coach: dict = Depends(require_role("coach"))):
     r = await db.habit_reviews.find_one({"id": review_id}, {"_id": 0})

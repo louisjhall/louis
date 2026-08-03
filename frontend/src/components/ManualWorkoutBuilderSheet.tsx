@@ -269,8 +269,11 @@ function Field({ label, value, onChange, kbd, wide }: {
   label: string; value: string; onChange: (v: string) => void;
   kbd?: any; wide?: boolean;
 }) {
+  // `wide` = title / single-column field: render as a normal block so it
+  // sits above the meta row. `wide=false` = one of the meta-row grid cells
+  // (flexBasis 48% inside a flexDirection:"row" wrap parent).
   return (
-    <View style={[styles.field, wide && { flexBasis: "100%" }]}>
+    <View style={wide ? styles.fieldWide : styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
         style={styles.fieldInput}
@@ -458,6 +461,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: "row", alignItems: "center", padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.border, justifyContent: "space-between" },
   headTitle: { color: theme.color.textHi, fontSize: 16, fontWeight: "700" },
   field: { flexBasis: "48%", flexGrow: 1, marginBottom: 12, marginRight: 8 },
+  fieldWide: { width: "100%", marginBottom: 12 },
   fieldLabel: { color: theme.color.textDim, fontSize: 11, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 },
   fieldInput: { backgroundColor: theme.color.card, color: theme.color.textHi, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border },
   metaRow: { flexDirection: "row", flexWrap: "wrap", marginTop: 4 },

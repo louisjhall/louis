@@ -371,9 +371,52 @@ function ExercisePickerModal({ visible, onClose, onPick }: {
   const [rows, setRows] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // "Create new exercise" inline form state.
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createCategory, setCreateCategory] = useState<string>("strength");
+  const [createEquipment, setCreateEquipment] = useState<string>("");
+  const [createSaving, setCreateSaving] = useState(false);
+
+  const openCreate = useCallback((prefill: string) => {
+    setCreateName(prefill);
+    setCreateEquipment("");
+    setCreateCategory("strength");
+    setCreateOpen(true);
+  }, []);
+
+  const submitCreate = useCallback(async () => {
+    const name = (createName || "").trim();
+    if (!name) { Alert.alert("Name required", "Please enter an exercise name."); return; }
+    setCreateSaving(true);
+    try {
+      // Endpoint already exists: POST /exercise-content → inserts into
+      // db.exercises_v2 with content_status.images/video/coaching_points=false,
+      // so it appears in the coach media library's "Needs Media" filter.
+      const equipment = createEquipment
+        .split(",").map(e => e.trim()).filter(Boolean);
+      const res = await api<{ exercise: any }>("/exercise-content", {
+        method: "POST",
+        body: {
+          exercise_name: name,
+          category: createCategory,
+          equipment_type: equipment.length ? equipment : undefined,
+        },
+      });
+      const newEx = res.exercise;
+      // Auto-pick so it's added to the workout immediately.
+      onPick({ exercise_id: newEx.id, name: newEx.exercise_name });
+      setCreateOpen(false);
+    } catch (e: any) {
+      Alert.alert("Could not create", e?.message || "Try a different name.");
+    } finally {
+      setCreateSaving(false);
+    }
+  }, [createName, createCategory, createEquipment, onPick]);
+
   useEffect(() => {
     if (!visible) return;
-    setQ("");
+    setQ(""); setCreateOpen(false);
     let cancel = false;
     (async () => {
       setBusy(true);
@@ -416,17 +459,82 @@ function ExercisePickerModal({ visible, onClose, onPick }: {
             autoFocus
             testID="picker-search"
           />
+          {!createOpen ? (
+            <Pressable
+              style={styles.createNewRow}
+              onPress={() => openCreate(q)}
+              testID="picker-create-new"
+            >
+              <Ionicons name="add-circle" size={20} color={theme.color.brand} />
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.createNewTitle}>
+                  Create new exercise{q ? ` "${q}"` : ""}
+                </Text>
+                <Text style={styles.createNewSub}>
+                  Adds to library · appears in coach media queue for content generation
+                </Text>
+              </View>
+            </Pressable>
+          ) : (
+            <View style={styles.createBox}>
+              <Text style={styles.fieldLabel}>Exercise name</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={createName}
+                onChangeText={setCreateName}
+                placeholder="e.g. Single-arm Landmine Press"
+                placeholderTextColor="#666"
+                autoCapitalize="words"
+              />
+              <Text style={styles.fieldLabel}>Category</Text>
+              <View style={styles.typeRow}>
+                {["strength","cardio","mobility","warmup","core","conditioning"].map(c => (
+                  <Pressable
+                    key={c}
+                    style={[styles.typePill, createCategory === c && styles.typePillActive]}
+                    onPress={() => setCreateCategory(c)}
+                  >
+                    <Text style={[styles.typePillText, createCategory === c && styles.typePillTextActive]}>
+                      {c}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={styles.fieldLabel}>Equipment (comma-separated, optional)</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={createEquipment}
+                onChangeText={setCreateEquipment}
+                placeholder="e.g. barbell, bench"
+                placeholderTextColor="#666"
+              />
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                <Pressable
+                  style={[styles.footerCancel, { flex: 1 }]}
+                  onPress={() => setCreateOpen(false)}
+                  disabled={createSaving}
+                >
+                  <Text style={styles.footerCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.footerSave, { flex: 2 }]}
+                  onPress={submitCreate}
+                  disabled={createSaving || !(createName || "").trim()}
+                  testID="picker-create-submit"
+                >
+                  {createSaving
+                    ? <ActivityIndicator color="#000" />
+                    : <Text style={styles.footerSaveText}>Create + add to workout</Text>}
+                </Pressable>
+              </View>
+            </View>
+          )}
           <ScrollView style={{ maxHeight: 360 }}>
             {busy && <ActivityIndicator color={theme.color.brand} style={{ margin: 16 }} />}
-            {!busy && rows.length === 0 && (
+            {!busy && rows.length === 0 && !createOpen && (
               <View style={{ paddingHorizontal: 20, paddingVertical: 24 }}>
                 <Text style={styles.pickerEmpty}>
-                  No matching exercises found.
-                </Text>
-                <Text style={[styles.pickerEmpty, { fontSize: 11, marginTop: 6 }]}>
-                  Try a different search term. If the exercise library appears
-                  empty, ask your coach admin to seed the library or check that
-                  you are signed in.
+                  No matching exercises found. Use &ldquo;Create new exercise&rdquo; above.
                 </Text>
               </View>
             )}
@@ -497,4 +605,19 @@ const styles = StyleSheet.create({
   pickerName: { color: theme.color.textHi, fontWeight: "600" },
   pickerMeta: { color: theme.color.textDim, fontSize: 11 },
   pickerEmpty: { color: theme.color.textDim, textAlign: "center", padding: 24 },
+  /* Create new exercise (Manual Builder → picker → new exercise flow) */
+  createNewRow: {
+    flexDirection: "row", alignItems: "center", padding: 12,
+    marginHorizontal: 10, marginBottom: 4,
+    backgroundColor: theme.color.card,
+    borderWidth: 1, borderColor: theme.color.brand + "88",
+    borderRadius: 8,
+  },
+  createNewTitle: { color: theme.color.textHi, fontWeight: "700", fontSize: 13 },
+  createNewSub: { color: theme.color.textDim, fontSize: 10, marginTop: 2 },
+  createBox: {
+    marginHorizontal: 10, marginBottom: 8, padding: 12,
+    backgroundColor: theme.color.card, borderRadius: 8,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
 });

@@ -476,6 +476,16 @@ async def ex_create(body: ExerciseCreate, admin: dict = Depends(require_admin())
     }
     await db.exercises_v2.insert_one(doc)
     await _log(ex_id, admin["id"], "created", f"Created '{body.exercise_name}'")
+
+    # Auto-media generation — kick off standard image slots + coaching
+    # points as soon as the exercise is created. Non-blocking; coach
+    # still has to approve. Silent no-op if AUTO_MEDIA_GEN is disabled.
+    try:
+        from feature_auto_media_gen import auto_enqueue_media_for_exercise
+        await auto_enqueue_media_for_exercise(ex_id, triggered_by=admin["id"])
+    except Exception:
+        logger.exception("auto_media_gen: enqueue after coach-create failed (non-fatal)")
+
     doc.pop("_id", None)
     return {"exercise": doc}
 

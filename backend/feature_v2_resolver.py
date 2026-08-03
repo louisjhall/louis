@@ -354,6 +354,17 @@ async def create_exercise_request_if_missing(
     }
     await db.exercises_v2.insert_one(doc)
 
+    # Auto-media generation — coach preference: whenever a new draft
+    # exercise lands in the library, kick off the standard image slots
+    # (primary/start/end) + coaching-points draft automatically so the
+    # coach doesn't have to click Generate on every card. Non-blocking;
+    # coach still has to approve. Silent no-op if AUTO_MEDIA_GEN is off.
+    try:
+        from feature_auto_media_gen import auto_enqueue_media_for_exercise
+        await auto_enqueue_media_for_exercise(ex_id, triggered_by=user.get("id"))
+    except Exception:
+        logger.exception("auto_media_gen: enqueue after new-draft insert failed (non-fatal)")
+
     # 3) Coach task — one per newly-created draft so Louis sees it.
     # Delegates to feature_exercise_request_tasks which handles dedup + urgency
     # + payload merging + reconciliation. Fallback to inline task if the module

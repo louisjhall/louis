@@ -23,6 +23,7 @@ import { DualSessionCard } from "@/src/components/DualSessionCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
 import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
+import { ReportIssueSheet } from "@/src/components/ReportIssueSheet";
 import { RosterDayChip } from "@/src/components/RosterDayChip";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
@@ -148,6 +149,7 @@ export default function Home() {
   const [happenedSaving, setHappenedSaving] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<string>("normal");
   const [realityOpen, setRealityOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [prompts, setPrompts] = useState<any[]>([]);
   const [standbyToday, setStandbyToday] = useState<any>(null);
   const [addActivityOpen, setAddActivityOpen] = useState(false);
@@ -406,6 +408,15 @@ export default function Home() {
                 dayTitle={todaysWorkout ? todaysWorkout.title : "REST & RECOVER"}
                 isStandby={!!standbyToday?.is_standby}
               />
+
+              <Pressable
+                onPress={() => setReportOpen(true)}
+                style={styles.reportBtn}
+                testID="client-report-issue"
+              >
+                <Ionicons name="flag-outline" size={13} color={theme.color.brand} />
+                <Text style={styles.reportBtnT}>REPORT AN ISSUE</Text>
+              </Pressable>
 
               {todaysDay?.layover_city || todaysDay?.flights?.[0] || todaysDay?.day_type ? (
                 <View style={styles.dutyRow}>
@@ -1046,6 +1057,11 @@ export default function Home() {
         onClose={() => setRealityOpen(false)}
         onApplied={() => { setRealityOpen(false); load(); }}
       />
+      <ReportIssueSheet
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+        context={{ route: "/(client)/home" }}
+      />
       <TimeZoneConfirmModal user={user} />
       {/* Iter 94u — Louis's Daily Briefing (once per local day). */}
       <DailyBriefingModal />
@@ -1086,6 +1102,14 @@ const styles = StyleSheet.create({
   loadText: { color: theme.color.text, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
   hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
   dutyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" },
+  reportBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    alignSelf: "flex-start", marginTop: 10,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: `${theme.color.brand}15`,
+  },
+  reportBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
   duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
 
   // Iter 106 — Standalone Upload Roster button

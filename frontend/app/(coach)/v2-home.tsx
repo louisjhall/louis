@@ -294,6 +294,18 @@ export default function CoachHomeScreen() {
         <Text style={styles.resetPreviewBtnText}>Preview Programme Reset (dry-run)</Text>
       </Pressable>
 
+      {/* Client Issues inbox — reuses coach_tasks for badging + notifications. */}
+      <Pressable
+        onPress={() => router.push("/coach/client-issues")}
+        style={styles.resetPreviewBtn}
+        testID="client-issues-btn"
+      >
+        <Ionicons name="flag-outline" size={18} color={theme.color.brand} />
+        <Text style={[styles.resetPreviewBtnText, { color: theme.color.brand }]}>
+          Client Issues Inbox
+        </Text>
+      </Pressable>
+
       {/* Phase 1C — Full Client-Data Reset (preview + gated execute). */}
       <Pressable
         onPress={() => { setClientResetOpen(true); runClientResetDryRun(); }}

@@ -12600,6 +12600,7 @@ import feature_manual_mode_reset         # noqa: E402,F401  Phase 1B programme r
 import feature_flight_support_coverage   # noqa: E402,F401  Manual Mode Stage C — Flight Support library backfill
 import feature_exercise_pipeline_audit   # noqa: E402,F401  Manual Mode Stage A — pipeline audit + fuzzy dedup
 import feature_hotel_conversion_repair   # noqa: E402,F401  Hotel Gym conversion — library-first + validation
+import feature_client_issues             # noqa: E402,F401  Report an Issue — client bug report inbox
 import feature_coach_roster_months       # noqa: E402,F401  Phase 1: coach monthly roster/programme control centre
 import feature_coach_roster_upload       # noqa: E402,F401  Phase A · A2: coach uploads roster on behalf of client
 import feature_v2_state_foundation        # noqa: E402,F401  V2 Phase 1: DRAFT/LIVE state layer (feature-flagged, off by default)

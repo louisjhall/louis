@@ -30,7 +30,7 @@ from typing import Optional
 from fastapi import HTTPException, Depends, Body
 from pydantic import BaseModel, Field
 
-from server import api, db, current_user, require_role
+from server import api, db, current_user, require_role, logger
 from feature_v2_construction_v2 import build_session_spec
 
 
@@ -196,6 +196,25 @@ async def _apply_change_setup(*, user: dict, body: ChangeSetupBody, actor: str) 
         equipment_ctx = {"bodyweight"}
         canonical_equipment = []
 
+    # Hotel-Conversion Repair — pull the client's injury / no-go list so the
+    # deterministic constructor can avoid contraindicated patterns instead
+    # of receiving an empty avoid-set. Reuses existing profile fields.
+    from feature_hotel_conversion_repair import (
+        resolve_hotel_spec_with_library, validate_hotel_spec,
+        _canonical_allow_list,
+    )
+    profile = user.get("profile") or {}
+    injuries_str = str(profile.get("injuries") or "").lower()
+    no_go = profile.get("no_go_movements") or []
+    if isinstance(no_go, str):
+        no_go = [t.strip() for t in no_go.split(",") if t.strip()]
+    avoid_patterns: set[str] = set()
+    for kw in ("knee", "back", "shoulder", "elbow", "hip", "ankle", "wrist"):
+        if kw in injuries_str:
+            avoid_patterns.add(kw)
+    for m in no_go or []:
+        avoid_patterns.add(str(m).lower())
+
     # Reuse Engine V2's construction to deterministically rebuild the spec
     # payload under the new environment/equipment — WHAT/WHEN untouched.
     kind = placement.get("kind") or original_spec.get("kind") or "session"
@@ -212,7 +231,7 @@ async def _apply_change_setup(*, user: dict, body: ChangeSetupBody, actor: str) 
         new_spec_obj = build_session_spec(
             kind=kind, duration_min=duration, phase_kind=phase_kind,
             intensity_target=intensity, day_type=day_type_for_env,
-            equipment_ctx=equipment_ctx, avoid_patterns=set(),
+            equipment_ctx=equipment_ctx, avoid_patterns=avoid_patterns,
         )
         # SessionSpec dataclass → dict
         new_spec = {
@@ -240,6 +259,36 @@ async def _apply_change_setup(*, user: dict, body: ChangeSetupBody, actor: str) 
                                  + f"  |  Change Setup → {env} ({actor}) [fallback]."
         new_spec["adapted_from_original"] = True
         new_spec["original_environment"] = original_spec.get("environment")
+
+    # Hotel-Conversion Repair — library-first pass + hard equipment gate.
+    # 1) Every exercise in the spec is looked up in exercises_v2 first.
+    # 2) Missing exercises get a draft library record (dedup'd) and the
+    #    coach media queue is bumped with urgency based on workout date.
+    # 3) Deterministic validation refuses to save an invalid conversion.
+    allow_list = _canonical_allow_list(
+        canonical_equipment,
+        bodyweight_disabled=bool(profile.get("bodyweight_disabled")),
+    )
+    # Non-strength sessions (running / cycling / swim) don't carry an
+    # `exercises` list — skip the pass so we don't spuriously reject them.
+    _payload = new_spec.get("payload") or {}
+    if _payload.get("exercises"):
+        try:
+            new_spec, conv_summary = await resolve_hotel_spec_with_library(
+                new_spec, allow_list=allow_list, client=user,
+                workout_date=body.date, workout_id=None,
+            )
+        except Exception:
+            logger.exception("hotel_repair: library resolution failed — proceeding with best-effort spec")
+            conv_summary = {"warnings": ["library resolution errored — see server logs"]}
+        # Deterministic validation gate.
+        vres = validate_hotel_spec(new_spec, allow_list=allow_list)
+        if not vres.get("ok"):
+            raise HTTPException(
+                400,
+                "Converted workout failed equipment/library validation: "
+                + " · ".join(vres.get("errors") or []),
+            )
 
     # Resolve scope → valid_until
     valid_from = _now()

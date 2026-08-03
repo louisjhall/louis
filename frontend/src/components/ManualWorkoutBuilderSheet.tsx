@@ -386,7 +386,18 @@ function ExercisePickerModal({ visible, onClose, onPick }: {
           />
           <ScrollView style={{ maxHeight: 360 }}>
             {busy && <ActivityIndicator color={theme.color.brand} style={{ margin: 16 }} />}
-            {!busy && rows.length === 0 && <Text style={styles.pickerEmpty}>No results</Text>}
+            {!busy && rows.length === 0 && (
+              <View style={{ paddingHorizontal: 20, paddingVertical: 24 }}>
+                <Text style={styles.pickerEmpty}>
+                  No matching exercises found.
+                </Text>
+                <Text style={[styles.pickerEmpty, { fontSize: 11, marginTop: 6 }]}>
+                  Try a different search term. If the exercise library appears
+                  empty, ask your coach admin to seed the library or check that
+                  you are signed in.
+                </Text>
+              </View>
+            )}
             {!busy && rows.map((r) => (
               <Pressable
                 key={r.id}

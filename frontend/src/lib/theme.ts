@@ -14,6 +14,8 @@ export const theme = {
     bg: "#000000",
     textMuted: "#9CA3AF",
     textDim: "#6B7280",
+    /** Alias — elevated card background (used by V2 + manual builder). */
+    card: "#0E0E12",
     // Brand — CrewFit crimson wings on black
     brand: "#A3182E",
     brandDark: "#7A1122",

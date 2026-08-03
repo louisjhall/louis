@@ -473,6 +473,17 @@ export default function CoachHomeScreen() {
                       </View>
                     ))}
 
+                  {(clientResetPreview.discovered_collections_not_in_curated_list || []).length > 0 && (
+                    <>
+                      <Text style={styles.resetLabel}>
+                        Auto-discovered collections (verify these are truly client data)
+                      </Text>
+                      <Text style={styles.resetHint}>
+                        {(clientResetPreview.discovered_collections_not_in_curated_list || []).join(", ")}
+                      </Text>
+                    </>
+                  )}
+
                   <Text style={styles.resetLabel}>Preserved collections (will NOT change)</Text>
                   {Object.entries(clientResetPreview.preserved_counts_will_not_change || {}).map(([name, n]: any) => (
                     <View key={name} style={[styles.resetRow, { borderColor: theme.color.green + "55" }]}>

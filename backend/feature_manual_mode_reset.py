@@ -265,6 +265,13 @@ def _extra_protected_emails() -> list[str]:
     return [e.strip().lower() for e in raw.split(",") if e.strip()]
 
 
+# Extra protected user IDs supplied via env (comma-separated).
+# Use this for reviewers whose emails don't match any default pattern.
+def _extra_protected_ids() -> list[str]:
+    raw = os.getenv("PROTECTED_USER_IDS", "").strip()
+    return [i.strip() for i in raw.split(",") if i.strip()]
+
+
 def _email_looks_protected(email: str | None) -> bool:
     if not email:
         return False
@@ -329,6 +336,68 @@ _CLIENT_LINKED_COLLECTIONS: dict[str, list[str]] = {
     "notifications":                  ["user_id"],
 }
 
+# Standard field names that link a document to a specific user/client.
+# Used both for the hand-curated map above and for the auto-discovery pass
+# so newly-added collections are picked up without a code change.
+_LINK_FIELD_NAMES = [
+    "user_id", "client_id", "uid", "owner_id", "created_for",
+    "for_user", "for_user_id", "assigned_to", "target_user_id",
+    "subject_user_id", "recipient_user_id", "recipient_id",
+]
+
+# Collections that MUST NEVER be included in client-reset even if a sample
+# doc contains a user-like field (defensive allowlist).
+_NEVER_DELETE_COLLECTIONS = {
+    "users",                          # handled separately at the end
+    "exercises", "exercises_v2", "exercise_content",
+    "exercise_content_images", "exercise_content_log",
+    "exercise_videos", "exercise_video_blobs",
+    "media_queue", "hotels", "app_config", "app_config_audit",
+    "ai_usage", "auth_password_reset", "auth_sessions",
+    # Backup + audit collections written by this tool
+    "programme_reset_audit", "client_reset_audit",
+}
+
+
+async def _discover_client_linked_collections() -> dict[str, list[str]]:
+    """Scan every collection in the DB. For each one, sample a doc and
+    detect any standard user-linking fields. Return a name→fields map that
+    is the UNION of the hand-curated `_CLIENT_LINKED_COLLECTIONS` and any
+    newly detected client-linked collections. Collections listed in
+    `_NEVER_DELETE_COLLECTIONS` are excluded regardless of their fields.
+
+    Backup collections (`client_reset_backup_*`, `programme_reset_backup_*`)
+    are also excluded — never delete a previous backup by accident.
+    """
+    discovered: dict[str, list[str]] = {}
+    try:
+        names = await db.list_collection_names()
+    except Exception as e:
+        logger.warning("client-reset discovery: list_collection_names failed: %s", e)
+        return dict(_CLIENT_LINKED_COLLECTIONS)
+
+    for name in names:
+        if name in _NEVER_DELETE_COLLECTIONS:
+            continue
+        if name.startswith("client_reset_backup_") or name.startswith("programme_reset_backup_"):
+            continue
+        # Prefer hand-curated fields when present (more precise than sampling).
+        if name in _CLIENT_LINKED_COLLECTIONS:
+            discovered[name] = list(_CLIENT_LINKED_COLLECTIONS[name])
+            continue
+        # Otherwise sample a doc and detect standard link fields.
+        try:
+            sample = await db.get_collection(name).find_one({})
+        except Exception:
+            continue
+        if not sample:
+            continue
+        fields = [f for f in _LINK_FIELD_NAMES if f in sample]
+        if fields:
+            discovered[name] = fields
+    return discovered
+
+
 # Messages need special handling: rows where EITHER from_user_id OR to_user_id
 # is a target client are client-linked. Handled separately below.
 _MESSAGES_COLLECTION = "messages"
@@ -346,40 +415,69 @@ _PRESERVED_FOR_CLIENT_RESET = [
 
 
 async def _identify_users() -> dict:
-    """Return {protected: [...], targets: [...]} of user documents."""
+    """Return {protected: [...], targets: [...]} of user documents.
+
+    Protection is decided by the FIRST rule that matches:
+      1. role in {coach, admin, super_admin} → protected (reason: role)
+      2. id in PROTECTED_USER_IDS env → protected (reason: id_allowlist)
+      3. email matches PROTECTED_CLIENT_EMAILS env → protected (reason: email_allowlist)
+      4. email substring matches a default review pattern → protected (reason: email_pattern)
+      5. role == "client" or empty role → target for deletion
+      6. anything else → protected (reason: unknown_role — err on caution)
+    """
     protected: list[dict] = []
     targets: list[dict] = []
+    id_allowlist = set(_extra_protected_ids())
+    email_allowlist = set(_extra_protected_emails())
+
     async for u in db.users.find({}, {"_id": 0, "id": 1, "email": 1, "role": 1}):
         role = (u.get("role") or "").lower()
-        email = u.get("email")
-        # 1. Any coach/admin/super_admin role is protected.
+        email = (u.get("email") or "").lower()
+        uid = u.get("id") or ""
+
+        # 1. Role-based protection.
         if role in ("coach", "admin", "super_admin", "superadmin"):
-            protected.append(u)
+            protected.append({**u, "protection_reason": "role"})
             continue
-        # 2. Any user whose email matches a review pattern is protected.
+        # 2. Explicit ID allowlist.
+        if uid and uid in id_allowlist:
+            protected.append({**u, "protection_reason": "id_allowlist"})
+            continue
+        # 3. Explicit email allowlist.
+        if email and email in email_allowlist:
+            protected.append({**u, "protection_reason": "email_allowlist"})
+            continue
+        # 4. Email pattern (Apple/Google/TestFlight reviewer accounts).
         if _email_looks_protected(email):
-            protected.append(u)
+            protected.append({**u, "protection_reason": "email_pattern"})
             continue
-        # 3. Anyone else (typically role=client) is a target for deletion.
+        # 5. Client target.
         if role == "client" or role == "":
             targets.append(u)
-        else:
-            # Unknown role — err on the side of preservation.
-            protected.append({**u, "note": f"unknown role '{role}' preserved"})
+            continue
+        # 6. Anything else — preserve.
+        protected.append({**u, "protection_reason": f"unknown_role:{role}"})
     return {"protected": protected, "targets": targets}
 
 
-async def _count_client_linked(target_ids: list[str]) -> dict:
+async def _count_client_linked(
+    target_ids: list[str],
+    linked_map: dict[str, list[str]] | None = None,
+) -> dict:
     """Count docs in every client-linked collection whose link fields
-    reference any of target_ids. Read-only."""
+    reference any of target_ids. Read-only.
+
+    If `linked_map` is None, the auto-discovered map is used (recommended)."""
+    if linked_map is None:
+        linked_map = await _discover_client_linked_collections()
     counts: dict[str, int] = {}
     if not target_ids:
-        for c in _CLIENT_LINKED_COLLECTIONS:
+        for c in linked_map:
             counts[c] = 0
         counts[_MESSAGES_COLLECTION] = 0
         return counts
 
-    for c, fields in _CLIENT_LINKED_COLLECTIONS.items():
+    for c, fields in linked_map.items():
         try:
             or_clauses = [{f: {"$in": target_ids}} for f in fields]
             n = await db.get_collection(c).count_documents({"$or": or_clauses})
@@ -413,7 +511,10 @@ async def client_reset_dry_run(coach: dict = Depends(require_role("coach"))) -> 
     targets = ids["targets"]
     target_ids = [u["id"] for u in targets if u.get("id")]
 
-    counts = await _count_client_linked(target_ids)
+    # Programmatic discovery — includes the hand-curated map plus any
+    # newly-added collection detected by sampling.
+    linked_map = await _discover_client_linked_collections()
+    counts = await _count_client_linked(target_ids, linked_map)
 
     # Preserved-collection counts (should not change after execute).
     preserved: dict[str, int] = {}
@@ -428,6 +529,12 @@ async def client_reset_dry_run(coach: dict = Depends(require_role("coach"))) -> 
 
     total_linked_docs = sum(v for v in counts.values() if v >= 0)
     total_users_to_delete = len(target_ids)
+
+    # Highlight any collections that were discovered but NOT in the
+    # hand-curated map — coach should verify these are truly client data.
+    newly_discovered = sorted(
+        [c for c in linked_map if c not in _CLIENT_LINKED_COLLECTIONS]
+    )
 
     # Token binds targets + counts so a stale dry-run cannot execute against
     # a changed dataset (e.g. new client signed up in between).
@@ -444,9 +551,14 @@ async def client_reset_dry_run(coach: dict = Depends(require_role("coach"))) -> 
         "generated_at": now_iso(),
         "protected_accounts": [
             {"id": u.get("id"), "email": u.get("email"), "role": u.get("role"),
-             "note": u.get("note")}
+             "protection_reason": u.get("protection_reason")}
             for u in protected
         ],
+        "protection_env": {
+            "PROTECTED_USER_IDS_count": len(_extra_protected_ids()),
+            "PROTECTED_CLIENT_EMAILS_count": len(_extra_protected_emails()),
+            "default_email_patterns": _DEFAULT_PROTECTED_EMAIL_PATTERNS,
+        },
         "client_accounts_to_delete": [
             {"id": u.get("id"), "email": u.get("email"), "role": u.get("role")}
             for u in targets
@@ -454,8 +566,10 @@ async def client_reset_dry_run(coach: dict = Depends(require_role("coach"))) -> 
         "total_users_to_delete": total_users_to_delete,
         "client_linked_counts_by_collection": counts,
         "total_client_linked_docs": total_linked_docs,
+        "discovered_collections_not_in_curated_list": newly_discovered,
         "preserved_counts_will_not_change": preserved,
         "preserved_collections": _PRESERVED_FOR_CLIENT_RESET,
+        "never_delete_collections": sorted(_NEVER_DELETE_COLLECTIONS),
         "backup_prefix_pattern": (
             "client_reset_backup_{iso_utc_ts}_{collection_name}"
         ),
@@ -487,7 +601,8 @@ async def client_reset_execute(
     protected = ids["protected"]
     targets = ids["targets"]
     target_ids = [u["id"] for u in targets if u.get("id")]
-    counts_now = await _count_client_linked(target_ids)
+    linked_map = await _discover_client_linked_collections()
+    counts_now = await _count_client_linked(target_ids, linked_map)
     token_payload_now = {
         "target_ids": sorted(target_ids),
         "counts": counts_now,
@@ -533,7 +648,7 @@ async def client_reset_execute(
         }
 
     # 1. Delete client-linked records across all collections.
-    for c, fields in _CLIENT_LINKED_COLLECTIONS.items():
+    for c, fields in linked_map.items():
         if counts_now.get(c, 0) == 0:
             per_collection.append({"collection": c, "backed_up": 0, "deleted": 0, "note": "empty"})
             continue

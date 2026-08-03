@@ -176,66 +176,6 @@ export default function ManualWorkoutBuilderSheet(props: Props) {
   }, [canSave, title, workoutType, duration, location, equipmentContext, rpe,
       coachNotes, warmup, main, cool, isEdit, editing, date, clientId, replaceGenerated, onSaved, onClose]);
 
-  const Section = ({ label, section, items }: {
-    label: string; section: "warmup" | "main" | "cooldown"; items: ExerciseRow[];
-  }) => (
-    <View style={styles.section}>
-      <View style={styles.sectionHead}>
-        <Text style={styles.sectionTitle}>{label}</Text>
-        <Pressable
-          style={styles.addBtn}
-          onPress={() => setPickerOpen(section)}
-          testID={`manual-add-${section}`}
-        >
-          <Ionicons name="add" size={16} color="#fff" />
-          <Text style={styles.addBtnText}>Add exercise</Text>
-        </Pressable>
-      </View>
-      {items.length === 0 ? (
-        <Text style={styles.sectionEmpty}>No exercises yet</Text>
-      ) : items.map((e, i) => (
-        <View key={`${section}-${i}`} style={styles.exRow}>
-          <View style={styles.exHead}>
-            <Text style={styles.exName} numberOfLines={1}>{i + 1}. {e.name || e.exercise_id}</Text>
-            <View style={styles.exActions}>
-              <Pressable onPress={() => moveExercise(section, i, -1)} disabled={i === 0} style={styles.exIcon}>
-                <Ionicons name="arrow-up" size={14} color={i === 0 ? "#666" : theme.color.textHi} />
-              </Pressable>
-              <Pressable onPress={() => moveExercise(section, i, 1)} disabled={i === items.length - 1} style={styles.exIcon}>
-                <Ionicons name="arrow-down" size={14} color={i === items.length - 1 ? "#666" : theme.color.textHi} />
-              </Pressable>
-              <Pressable onPress={() => removeExercise(section, i)} style={styles.exIcon}>
-                <Ionicons name="trash" size={14} color="#ff6b6b" />
-              </Pressable>
-            </View>
-          </View>
-          <View style={styles.exFields}>
-            <Field label="Sets" value={e.sets ? String(e.sets) : ""}
-              onChange={v => updateExercise(section, i, { sets: v ? Number(v) : null })} kbd="number-pad" />
-            <Field label="Reps / time" value={e.reps || ""} onChange={v => updateExercise(section, i, { reps: v })} />
-            <Field label="Duration (sec)" value={e.duration_sec ? String(e.duration_sec) : ""}
-              onChange={v => updateExercise(section, i, { duration_sec: v ? Number(v) : null })} kbd="number-pad" />
-            <Field label="Load" value={e.load || ""} onChange={v => updateExercise(section, i, { load: v })} />
-            <Field label="Rest (sec)" value={e.rest_sec ? String(e.rest_sec) : ""}
-              onChange={v => updateExercise(section, i, { rest_sec: v ? Number(v) : null })} kbd="number-pad" />
-            <Field label="Tempo" value={e.tempo || ""} onChange={v => updateExercise(section, i, { tempo: v })} />
-            <Field label="RPE" value={e.rpe ? String(e.rpe) : ""}
-              onChange={v => updateExercise(section, i, { rpe: v ? Number(v) : null })} kbd="decimal-pad" />
-            <Field label="Equipment" value={e.equipment || ""} onChange={v => updateExercise(section, i, { equipment: v })} />
-          </View>
-          <TextInput
-            style={styles.notesInput}
-            value={e.notes || ""}
-            onChangeText={v => updateExercise(section, i, { notes: v })}
-            placeholder="Coaching notes"
-            placeholderTextColor="#666"
-            multiline
-          />
-        </View>
-      ))}
-    </View>
-  );
-
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -279,9 +219,21 @@ export default function ManualWorkoutBuilderSheet(props: Props) {
               multiline
             />
 
-            <Section label="Warm-up" section="warmup" items={warmup} />
-            <Section label="Main workout" section="main" items={main} />
-            <Section label="Cool-down" section="cooldown" items={cool} />
+            <Section
+              label="Warm-up" section="warmup" items={warmup}
+              onAdd={setPickerOpen} onMove={moveExercise}
+              onRemove={removeExercise} onUpdate={updateExercise}
+            />
+            <Section
+              label="Main workout" section="main" items={main}
+              onAdd={setPickerOpen} onMove={moveExercise}
+              onRemove={removeExercise} onUpdate={updateExercise}
+            />
+            <Section
+              label="Cool-down" section="cooldown" items={cool}
+              onAdd={setPickerOpen} onMove={moveExercise}
+              onRemove={removeExercise} onUpdate={updateExercise}
+            />
           </ScrollView>
 
           <View style={styles.footer}>
@@ -327,6 +279,83 @@ function Field({ label, value, onChange, kbd, wide }: {
         placeholderTextColor="#666"
         keyboardType={kbd}
       />
+    </View>
+  );
+}
+
+/**
+ * Module-scope Section — MUST NOT be redefined inside the parent component
+ * because that recreates the component reference on every parent re-render
+ * (which happens on every keystroke to Title/Duration/etc.), unmounts the
+ * TextInputs inside, and produces a "crash" on React Native Web where inputs
+ * become unresponsive after the first character.
+ */
+function Section({
+  label, section, items, onAdd, onMove, onRemove, onUpdate,
+}: {
+  label: string;
+  section: "warmup" | "main" | "cooldown";
+  items: ExerciseRow[];
+  onAdd: (s: "warmup" | "main" | "cooldown") => void;
+  onMove: (s: "warmup" | "main" | "cooldown", idx: number, dir: -1 | 1) => void;
+  onRemove: (s: "warmup" | "main" | "cooldown", idx: number) => void;
+  onUpdate: (s: "warmup" | "main" | "cooldown", idx: number, patch: Partial<ExerciseRow>) => void;
+}) {
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHead}>
+        <Text style={styles.sectionTitle}>{label}</Text>
+        <Pressable
+          style={styles.addBtn}
+          onPress={() => onAdd(section)}
+          testID={`manual-add-${section}`}
+        >
+          <Ionicons name="add" size={16} color="#fff" />
+          <Text style={styles.addBtnText}>Add exercise</Text>
+        </Pressable>
+      </View>
+      {items.length === 0 ? (
+        <Text style={styles.sectionEmpty}>No exercises yet</Text>
+      ) : items.map((e, i) => (
+        <View key={`${section}-${i}`} style={styles.exRow}>
+          <View style={styles.exHead}>
+            <Text style={styles.exName} numberOfLines={1}>{i + 1}. {e.name || e.exercise_id}</Text>
+            <View style={styles.exActions}>
+              <Pressable onPress={() => onMove(section, i, -1)} disabled={i === 0} style={styles.exIcon}>
+                <Ionicons name="arrow-up" size={14} color={i === 0 ? "#666" : theme.color.textHi} />
+              </Pressable>
+              <Pressable onPress={() => onMove(section, i, 1)} disabled={i === items.length - 1} style={styles.exIcon}>
+                <Ionicons name="arrow-down" size={14} color={i === items.length - 1 ? "#666" : theme.color.textHi} />
+              </Pressable>
+              <Pressable onPress={() => onRemove(section, i)} style={styles.exIcon}>
+                <Ionicons name="trash" size={14} color="#ff6b6b" />
+              </Pressable>
+            </View>
+          </View>
+          <View style={styles.exFields}>
+            <Field label="Sets" value={e.sets ? String(e.sets) : ""}
+              onChange={v => onUpdate(section, i, { sets: v ? Number(v) : null })} kbd="number-pad" />
+            <Field label="Reps / time" value={e.reps || ""} onChange={v => onUpdate(section, i, { reps: v })} />
+            <Field label="Duration (sec)" value={e.duration_sec ? String(e.duration_sec) : ""}
+              onChange={v => onUpdate(section, i, { duration_sec: v ? Number(v) : null })} kbd="number-pad" />
+            <Field label="Load" value={e.load || ""} onChange={v => onUpdate(section, i, { load: v })} />
+            <Field label="Rest (sec)" value={e.rest_sec ? String(e.rest_sec) : ""}
+              onChange={v => onUpdate(section, i, { rest_sec: v ? Number(v) : null })} kbd="number-pad" />
+            <Field label="Tempo" value={e.tempo || ""} onChange={v => onUpdate(section, i, { tempo: v })} />
+            <Field label="RPE" value={e.rpe ? String(e.rpe) : ""}
+              onChange={v => onUpdate(section, i, { rpe: v ? Number(v) : null })} kbd="decimal-pad" />
+            <Field label="Equipment" value={e.equipment || ""} onChange={v => onUpdate(section, i, { equipment: v })} />
+          </View>
+          <TextInput
+            style={styles.notesInput}
+            value={e.notes || ""}
+            onChangeText={v => onUpdate(section, i, { notes: v })}
+            placeholder="Coaching notes"
+            placeholderTextColor="#666"
+            multiline
+          />
+        </View>
+      ))}
     </View>
   );
 }

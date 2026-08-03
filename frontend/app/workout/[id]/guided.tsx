@@ -165,7 +165,7 @@ function adaptWorkoutForGuided(w: any): any {
 }
 
 export default function GuidedFlow() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, variant: variantParam } = useLocalSearchParams<{ id: string; variant?: string }>();
   const router = useRouter();
   const [workout, setWorkout] = useState<any>(null);
   const [phase, setPhase] = useState<Phase>("loading");
@@ -227,9 +227,39 @@ export default function GuidedFlow() {
         getSoundOn(),
         getVoiceOn(),
       ]);
+      // Traffic Light — overlay the selected variant (amber / red) onto the
+      // base workout so the guided flow plays the ADJUSTED session, not the
+      // base "green" one. If variants are missing from the doc we fetch
+      // them (the server backfills on demand).
+      let wWithVariant = w;
+      const vKey = String(variantParam || "").toLowerCase();
+      if (vKey === "amber" || vKey === "red") {
+        try {
+          let variantsBlob = w?.variants;
+          if (!variantsBlob || !variantsBlob.green || !variantsBlob[vKey]) {
+            const r = await api<any>(`/workouts/${id}/variants`);
+            variantsBlob = r?.variants || null;
+          }
+          const chosen = variantsBlob?.[vKey];
+          if (chosen && Array.isArray(chosen.exercises) && chosen.exercises.length) {
+            wWithVariant = {
+              ...w,
+              exercises: chosen.exercises,
+              warmup: chosen.warmup || w.warmup,
+              cooldown: chosen.cooldown || w.cooldown,
+              _variant_key: vKey,
+              _variant_label: chosen.label || null,
+              _variant_intensity_note: chosen.intensity_note || null,
+            };
+          }
+        } catch (_e) {
+          // Variant fetch failed — fall through to base workout. Never
+          // dead-end the client for a traffic-light UX hiccup.
+        }
+      }
       // Iter 115 — V2 workouts arrive without warmup[] / exercises[] shape.
       // The adapter is idempotent for legacy V1 workouts.
-      const wAdapted = adaptWorkoutForGuided(w);
+      const wAdapted = adaptWorkoutForGuided(wWithVariant);
       setWorkout(wAdapted);
       setAutoCont(ac);
       setAutoRest(ar);

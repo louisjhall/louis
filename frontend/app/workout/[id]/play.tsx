@@ -55,7 +55,7 @@ function parseMMSS(v: string): number | null {
 /*  Screen                                                                    */
 /* -------------------------------------------------------------------------- */
 export default function AtlasPlayer() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, variant: variantParam } = useLocalSearchParams<{ id: string; variant?: string }>();
   const router = useRouter();
   const [w, setW] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -80,9 +80,36 @@ export default function AtlasPlayer() {
         api<any>(`/workouts/${id}`),
         api<any>(`/workouts/${id}/sets`).catch(() => ({ sets: [] })),
       ]);
-      setW(ww); setSets(s.sets || []);
+      // Traffic Light — overlay the selected variant (amber / red) so
+      // Manual play shows the ADJUSTED session, not the base green one.
+      let final = ww;
+      const vKey = String(variantParam || "").toLowerCase();
+      if (vKey === "amber" || vKey === "red") {
+        try {
+          let variantsBlob = ww?.variants;
+          if (!variantsBlob || !variantsBlob.green || !variantsBlob[vKey]) {
+            const r = await api<any>(`/workouts/${id}/variants`);
+            variantsBlob = r?.variants || null;
+          }
+          const chosen = variantsBlob?.[vKey];
+          if (chosen && Array.isArray(chosen.exercises) && chosen.exercises.length) {
+            final = {
+              ...ww,
+              exercises: chosen.exercises,
+              warmup: chosen.warmup || ww.warmup,
+              cooldown: chosen.cooldown || ww.cooldown,
+              _variant_key: vKey,
+              _variant_label: chosen.label || null,
+              _variant_intensity_note: chosen.intensity_note || null,
+            };
+          }
+        } catch (_e) {
+          // Fall through to base workout on any variant fetch error.
+        }
+      }
+      setW(final); setSets(s.sets || []);
     } finally { setLoading(false); }
-  }, [id]);
+  }, [id, variantParam]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const exercises = (w?.exercises || []) as any[];

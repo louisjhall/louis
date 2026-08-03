@@ -89,23 +89,27 @@ export default function WorkoutDetail() {
   }, [w?.id, isCoach]);
 
   const startWorkout = useCallback(async () => {
-    // Route to the mode the user has remembered, or open the picker.
+    // Traffic Light — if the client selected amber/red, propagate it into
+    // the destination route so Guided / Manual play shows the adjusted
+    // session (not the base green one).
+    const vSuffix = variant && variant !== "green" ? `?variant=${variant}` : "";
     const remembered = await getRememberedMode();
     if (remembered === "guided") {
-      router.push(`/workout/${w.id}/guided` as any);
+      router.push(`/workout/${w.id}/guided${vSuffix}` as any);
     } else if (remembered === "manual") {
-      router.push(`/workout/${w.id}/play` as any);
+      router.push(`/workout/${w.id}/play${vSuffix}` as any);
     } else {
       setModeOpen(true);
     }
-  }, [router, w]);
+  }, [router, w, variant]);
 
   const chooseMode = (mode: WorkoutMode) => {
     setModeOpen(false);
+    const vSuffix = variant && variant !== "green" ? `?variant=${variant}` : "";
     if (mode === "guided") {
-      router.push(`/workout/${w.id}/guided` as any);
+      router.push(`/workout/${w.id}/guided${vSuffix}` as any);
     } else {
-      router.push(`/workout/${w.id}/play` as any);
+      router.push(`/workout/${w.id}/play${vSuffix}` as any);
     }
   };
 

@@ -134,6 +134,7 @@ export function ProgrammeStatusCard({
 }) {
   const router = useRouter();
   const [state, setState] = useState<ProgrammeStatus | null>(null);
+  const [hasManualWorkout, setHasManualWorkout] = useState<boolean>(false);
   const lastStateRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
@@ -141,9 +142,14 @@ export function ProgrammeStatusCard({
       const r = await api<ProgrammeStatus>("/programme/status");
       setState(r);
       onStateChanged?.(r);
-      // If the state has flipped (e.g. waiting → live), also fire the
-      // callback so home can reload workouts/roster to reveal the new plan
-      // without a full pull-to-refresh.
+      // Stage I — hide the "Louis is finalising your programme" card as soon
+      // as the client has ANY visible workout. Under Manual Mode, the first
+      // manual workout that lands from the coach is the trigger to dismiss.
+      try {
+        const wk = await api<{ workouts?: any[] } | any[]>("/workouts/week");
+        const rows = Array.isArray(wk) ? wk : (wk?.workouts || []);
+        setHasManualWorkout(rows.length > 0);
+      } catch { /* non-fatal */ }
       if (lastStateRef.current && lastStateRef.current !== r.programme_status) {
         onStateChanged?.(r);
       }
@@ -170,6 +176,11 @@ export function ProgrammeStatusCard({
 
   // Suppress card entirely when everything is normal.
   if (hideOnLive && ps === "programme_live" && today === "session_planned") return null;
+
+  // Stage I — Manual Mode dismissal. Once any workout is visible to the
+  // client, drop the "Louis is finalising your programme" holding card so
+  // the client sees their actual training instead of a stale approval banner.
+  if (ps === "waiting_for_programme_approval" && hasManualWorkout) return null;
 
   // no_roster_uploaded is handled by the existing empty-state block on
   // home — no need to double up.

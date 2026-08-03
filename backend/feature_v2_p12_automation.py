@@ -177,6 +177,8 @@ async def job_run(
     client_id: str, job_id: str,
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
+    from feature_v2_common import require_auto_gen_allowed
+    require_auto_gen_allowed()
     await require_client_and_flag(client_id, FLAG)
     job = await db.jobs.find_one({"id": job_id, "target_scope.client_id": client_id}, {"_id": 0})
     if not job:

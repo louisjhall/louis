@@ -356,6 +356,8 @@ async def plan_kickoff(
     Returns a fully-populated audit trail so the coach can see EXACTLY
     why the plan looks the way it does.
     """
+    from feature_v2_common import require_auto_gen_allowed
+    require_auto_gen_allowed()
     client = await db.users.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(404, "Client not found")

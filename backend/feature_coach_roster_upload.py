@@ -372,6 +372,27 @@ async def coach_pending_confirm(
     async def _worker():
         heartbeat_task = _asyncio.create_task(_generation_heartbeat(job_id))
 
+        # ---- MANUAL_MODE short-circuit (Phase 1A) ------------------------
+        # Roster is confirmed & saved, but automatic workout generation is
+        # paused. Roster/duty/hotel data + Flight Support all remain active.
+        from feature_v2_common import is_manual_mode
+        if is_manual_mode():
+            logger.info(
+                "coach-confirm: MANUAL_MODE active — skipping workout generation "
+                "for client=%s roster=%s", client_id, rid,
+            )
+            await _set_job(
+                job_id,
+                status="complete", stage="complete", progress=100,
+                message="Roster confirmed — manual programming mode (auto-generation paused)",
+                completed_at=now_iso(),
+                engine="manual",
+                workouts_generated=0,
+                manual_mode=True,
+            )
+            heartbeat_task.cancel()
+            return
+
         # ---- Engine V2 branch --------------------------------------------
         # For clients with engine_v2=True, skip the legacy V1 generation
         # entirely and run the Engine V2 kickoff instead. The Engine V2

@@ -12,11 +12,36 @@ Nothing in this file writes into V1 collections.
 from __future__ import annotations
 
 import datetime as _dt
+import os
 from typing import Any, Optional
 
 from fastapi import HTTPException
 
 from server import db, new_id, now_iso, logger
+
+
+# ---------------------------------------------------------------------------
+# MANUAL_MODE — strategic pivot pause switch (Phase M-1 / 1A).
+#
+# When MANUAL_MODE=true, all automatic programme-generation endpoints must
+# return 403. Roster upload/parse/confirm still work, but their downstream
+# workout-generation blocks are skipped. Flight Support is NOT affected.
+#
+# Reversible: unset the env var (or set to false) to restore auto-generation.
+# ---------------------------------------------------------------------------
+def is_manual_mode() -> bool:
+    return os.getenv("MANUAL_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def require_auto_gen_allowed() -> None:
+    """Raise 403 if MANUAL_MODE is active. Call at the top of every
+    endpoint that writes to db.workouts / db.plan_drafts_v2 / db.plan_live_v2
+    as part of automatic programme generation."""
+    if is_manual_mode():
+        raise HTTPException(
+            status_code=403,
+            detail="Manual mode active — automatic programme generation is paused.",
+        )
 
 
 V2_FLAGS = {

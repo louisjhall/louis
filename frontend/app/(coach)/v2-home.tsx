@@ -127,10 +127,8 @@ function formatDate(iso: string): string {
 export default function CoachHomeScreen() {
   const router = useRouter();
   useAuth();  // ensures the screen re-renders after login state changes
-  const [enabled, setEnabled] = useState<boolean | null>(null);
   const [queue, setQueue] = useState<Queue | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKind>("all");
 
@@ -138,12 +136,6 @@ export default function CoachHomeScreen() {
     setLoading(true);
     setError(null);
     try {
-      const flag = await api<{ enabled: boolean }>("/v2/coach/me/dashboard-flag");
-      setEnabled(flag.enabled);
-      if (!flag.enabled) {
-        setLoading(false);
-        return;
-      }
       const q = await api<Queue>("/v2/coach/home/action-queue");
       setQueue(q);
     } catch (e: any) {
@@ -154,14 +146,6 @@ export default function CoachHomeScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  const enableV2 = useCallback(async () => {
-    setBusy(true);
-    try {
-      await api("/v2/coach/me/dashboard-flag", { method: "PATCH", body: { coach_dashboard_v2_enabled: true } });
-      await load();
-    } finally { setBusy(false); }
-  }, [load]);
 
   // Filter the visible tasks based on which summary card is currently active.
   const view = useMemo(() => {
@@ -183,25 +167,8 @@ export default function CoachHomeScreen() {
     return { ...queue, needs_attention: na, upcoming: up, waiting_on_client: wo };
   }, [queue, filter]);
 
-  if (loading && enabled === null) {
+  if (loading) {
     return <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>;
-  }
-
-  if (enabled === false) {
-    return (
-      <View style={[styles.root, styles.center]}>
-        <View style={styles.optCard}>
-          <Text style={styles.optTitle}>Coach Home</Text>
-          <Text style={styles.optBody}>
-            Enable the new Attention + Roster + Plan workspace to see everything
-            that needs your review in one place.
-          </Text>
-          <Pressable style={styles.primaryBtn} onPress={enableV2} disabled={busy} testID="enable-v2-btn">
-            <Text style={styles.primaryBtnText}>{busy ? "Enabling…" : "Enable"}</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
   }
 
   const q = view || queue;
@@ -212,6 +179,28 @@ export default function CoachHomeScreen() {
       contentContainerStyle={{ paddingBottom: 60 }}
       testID="coach-home"
     >
+      {/* Manual Mode banner — Phase 1A. Reminds coach that automatic
+          programme generation is paused and manual entry is the flow. */}
+      <View style={styles.manualBanner} testID="manual-mode-banner">
+        <Ionicons name="hand-left" size={16} color="#f5b543" />
+        <Text style={styles.manualBannerText}>
+          Manual programming mode — automatic programme generation is paused.
+        </Text>
+      </View>
+
+      {/* Prominent "New Manual Workout" call-to-action.
+          One tap → client picker (existing Clients tab). Second tap →
+          workspace where DayActionsMenu + ManualWorkoutBuilderSheet live. */}
+      <Pressable
+        onPress={() => router.push("/(coach)/clients?intent=manual_workout" as any)}
+        style={styles.newManualBtn}
+        testID="new-manual-workout-btn"
+      >
+        <Ionicons name="add-circle" size={22} color="#fff" />
+        <Text style={styles.newManualBtnText}>New Manual Workout</Text>
+        <Ionicons name="arrow-forward" size={18} color="#fff" />
+      </Pressable>
+
       {/* Title strip */}
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
@@ -454,6 +443,27 @@ function TaskCard({ task, onOpen }: { task: Task; onOpen: (deep_link: string) =>
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },
+
+  /* Phase 1A — Manual Mode banner + New Manual Workout CTA */
+  manualBanner: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: "rgba(245, 181, 67, 0.12)",
+    borderColor: "rgba(245, 181, 67, 0.35)", borderWidth: 1,
+    borderRadius: 8, marginHorizontal: 24, marginTop: 16,
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  manualBannerText: {
+    color: "#f5b543", fontSize: 12, fontWeight: "700",
+    letterSpacing: 0.3, flex: 1,
+  },
+  newManualBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    backgroundColor: theme.color.brand, marginHorizontal: 24, marginTop: 12,
+    paddingHorizontal: 16, paddingVertical: 14, borderRadius: 10,
+  },
+  newManualBtnText: {
+    color: "#fff", fontWeight: "800", fontSize: 15, letterSpacing: 0.4, flex: 1,
+  },
 
   optCard: {
     maxWidth: 480, backgroundColor: theme.color.surface2, borderRadius: 12,

@@ -165,11 +165,173 @@ async def _resolve_layover_range(user_id: str, date: str) -> tuple[str, str]:
     return days[lo]["date"], days[hi]["date"]
 
 
+async def _apply_change_setup_manual(*, user: dict, body: ChangeSetupBody, actor: str) -> dict:
+    """Manual-Mode hotel-adapt path.
+
+    Applies to clients whose workouts live in `db.workouts` (source=coach_manual)
+    rather than in `plan_live_v2.session_specs`. Rather than regenerating
+    the session from a construction pool (which doesn't fit Manual Mode's
+    "coach picks every exercise" principle), we take the coach's actual
+    workout and *filter it down* to what fits the client's declared
+    equipment. Exercises that don't fit are moved into a `hotel_dropped`
+    array so nothing is lost, and the original prescription is snapshotted
+    into `hotel_original_snapshot` for a clean revert.
+
+    Reuses the shared hotel-conversion repair helpers to gate the equipment
+    allow-list, run the library-first resolver (so any surviving exercise
+    still has an `exercise_id`), and validate the final workout.
+    """
+    from feature_hotel_conversion_repair import (
+        resolve_hotel_spec_with_library, validate_hotel_spec,
+        _canonical_allow_list,
+    )
+
+    user_id = user["id"]
+    env = _ENVIRONMENT_ALIASES.get(body.environment.lower())
+    if not env:
+        raise HTTPException(400, f"Unknown environment: {body.environment}")
+
+    # Locate the manual workout for this date. If the coach hasn't scheduled
+    # one, there's nothing to adapt — be explicit so the client isn't left
+    # wondering what went wrong.
+    workout = await db.workouts.find_one(
+        {"user_id": user_id, "date": body.date, "source": "coach_manual",
+         "deactivated": {"$ne": True}},
+        {"_id": 0},
+    )
+    if not workout:
+        raise HTTPException(
+            404,
+            f"No coach-set workout on {body.date}. Ask your coach to add "
+            "a session for this day, then adapt it for your hotel.",
+        )
+
+    _pool_tags, canonical_equipment = _normalize_equipment(body.equipment or [])
+    if env == "bodyweight_only":
+        canonical_equipment = []
+    profile = user.get("profile") or {}
+    allow_list = _canonical_allow_list(
+        canonical_equipment,
+        bodyweight_disabled=bool(profile.get("bodyweight_disabled")),
+    )
+
+    # Snapshot the ORIGINAL prescription once — a revert restores from this.
+    original_snapshot = {
+        "exercises":  list(workout.get("exercises")  or []),
+        "warmup":     list(workout.get("warmup")     or []),
+        "cooldown":   list(workout.get("cooldown")   or []),
+        "title":      workout.get("title"),
+        "duration_min": workout.get("duration_min"),
+        "snapshotted_at": _now(),
+    }
+    # Idempotent — never overwrite an existing snapshot. If a revert is
+    # needed later we always want the FIRST (pre-adapt) prescription.
+    if not workout.get("hotel_original_snapshot"):
+        await db.workouts.update_one(
+            {"id": workout["id"]},
+            {"$set": {"hotel_original_snapshot": original_snapshot}},
+        )
+
+    # Build a synthetic spec so we can reuse the same library-first pass
+    # the V2 hotel path uses. Merge warmup + main so the resolver treats
+    # the whole session consistently, then split them back afterwards.
+    synthetic_spec = {
+        "kind": workout.get("focus") or workout.get("workout_type") or "session",
+        "duration_min": workout.get("duration_min") or 30,
+        "environment": env,
+        "payload": {
+            "exercises": [
+                {**e, "_bucket": "main"} for e in (workout.get("exercises") or [])
+            ] + [
+                {**e, "_bucket": "warmup"} for e in (workout.get("warmup") or [])
+            ] + [
+                {**e, "_bucket": "cooldown"} for e in (workout.get("cooldown") or [])
+            ],
+        },
+    }
+
+    try:
+        resolved_spec, conv_summary = await resolve_hotel_spec_with_library(
+            synthetic_spec, allow_list=allow_list, client=user,
+            workout_date=body.date, workout_id=workout["id"],
+        )
+    except Exception:
+        logger.exception("manual hotel_adapt: resolver failed for wid=%s", workout["id"])
+        raise HTTPException(500, "Could not adapt the workout for that hotel setup.")
+
+    vres = validate_hotel_spec(resolved_spec, allow_list=allow_list)
+    kept = resolved_spec.get("payload", {}).get("exercises") or []
+    kept_main     = [{k: v for k, v in e.items() if k != "_bucket"}
+                     for e in kept if e.get("_bucket") == "main"]
+    kept_warmup   = [{k: v for k, v in e.items() if k != "_bucket"}
+                     for e in kept if e.get("_bucket") == "warmup"]
+    kept_cooldown = [{k: v for k, v in e.items() if k != "_bucket"}
+                     for e in kept if e.get("_bucket") == "cooldown"]
+
+    # If NOTHING survived (bodyweight-only with a heavy strength session),
+    # drop a friendly, safe bodyweight session so the client isn't stranded
+    # with a blank workout.
+    if not kept_main:
+        kept_main = [
+            {"name": "Bodyweight Squat",   "sets": 3, "reps": "15",
+             "rest_sec": 45, "notes": "Slow tempo, full range.",
+             "hotel_adapted_fallback": True},
+            {"name": "Push-Up (or incline)", "sets": 3, "reps": "10-15",
+             "rest_sec": 45, "notes": "Use hotel bed or desk to scale.",
+             "hotel_adapted_fallback": True},
+            {"name": "Plank",              "sets": 3, "reps": "30s",
+             "rest_sec": 30, "notes": "Braced, glutes on.",
+             "hotel_adapted_fallback": True},
+        ]
+
+    # Persist the adapted workout in place. Coach can still audit + revert.
+    now = _now()
+    await db.workouts.update_one(
+        {"id": workout["id"]},
+        {"$set": {
+            "exercises": kept_main,
+            "warmup": kept_warmup,
+            "cooldown": kept_cooldown,
+            "hotel_adapted": True,
+            "hotel_adapted_at": now,
+            "hotel_adapted_by": actor,
+            "hotel_adapted_environment": env,
+            "hotel_adapted_equipment": canonical_equipment,
+            "hotel_adapted_summary": conv_summary,
+            "hotel_adapted_validation": vres,
+            "updated_at": now,
+        }},
+    )
+
+    return {
+        "ok": True,
+        "mode": "manual",
+        "workout_id": workout["id"],
+        "date": body.date,
+        "environment": env,
+        "equipment": canonical_equipment,
+        "kept_main": len(kept_main),
+        "kept_warmup": len(kept_warmup),
+        "kept_cooldown": len(kept_cooldown),
+        "summary": conv_summary,
+        "validation": vres,
+        "message": (
+            "Workout adapted for your hotel setup. "
+            f"Kept {len(kept_main)} main exercise(s)."
+            + (" Coach will review any newly added exercises."
+               if conv_summary.get("drafts_created") else "")
+        ),
+    }
+
+
 async def _apply_change_setup(*, user: dict, body: ChangeSetupBody, actor: str) -> dict:
     user_id = user["id"]
     live = await _load_active_live(user_id)
     if not live:
-        raise HTTPException(404, "No active V2 Live plan for this client.")
+        # Manual-Mode fallback — no V2 Live plan exists. Route the request
+        # to the manual workout path so the client can still adapt their
+        # coach-built session for a hotel gym.
+        return await _apply_change_setup_manual(user=user, body=body, actor=actor)
     placement = await _load_placement(live, body.date)
     if not placement:
         raise HTTPException(404, f"No placement on {body.date}.")
@@ -408,6 +570,33 @@ async def _apply_revert_change_setup(*, user: dict, body: RevertChangeSetupBody,
         {"client_id": user_id, "date": body.date, "is_active": True},
     )
     if active_before == 0:
+        # Manual-Mode fallback — no V2 impl to revert. Try to restore the
+        # manual workout from its `hotel_original_snapshot` if one exists.
+        manual_workout = await db.workouts.find_one(
+            {"user_id": user_id, "date": body.date, "source": "coach_manual",
+             "hotel_original_snapshot": {"$exists": True}},
+            {"_id": 0},
+        )
+        if manual_workout:
+            snap = manual_workout.get("hotel_original_snapshot") or {}
+            now = _now()
+            await db.workouts.update_one(
+                {"id": manual_workout["id"]},
+                {"$set": {
+                    "exercises": snap.get("exercises") or [],
+                    "warmup":    snap.get("warmup")    or [],
+                    "cooldown":  snap.get("cooldown")  or [],
+                    "hotel_adapted": False,
+                    "hotel_reverted_at": now,
+                    "hotel_reverted_by": actor,
+                    "updated_at": now,
+                }},
+            )
+            return {
+                "ok": True, "mode": "manual", "date": body.date,
+                "reverted_count": 1, "actor": actor,
+                "message": f"Restored original workout for {body.date}.",
+            }
         return {
             "ok": True,
             "date": body.date,

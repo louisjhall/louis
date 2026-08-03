@@ -399,30 +399,64 @@ async def resolve_hotel_spec_with_library(
         name = str(ex.get("name") or "").strip()
         if not name:
             continue
-        # Hard equipment gate first — pool entries use AND semantics
-        # (exercise requires EVERY listed implement). Also reject entries
-        # whose name reveals a forbidden implement.
         pool_equip = list(ex.get("equipment_used") or ex.get("equipment") or [])
-        if not _pool_equipment_satisfied(pool_equip, allow_list):
+        # If the exercise already carries a library id, trust the library
+        # row's equipment_type (OR semantics) instead of the manual/pool
+        # row's `equipment` field. Coach-set manual workouts often carry
+        # one specific implement (e.g. "kettlebell") on the row itself
+        # even though the underlying library exercise can be performed
+        # with any of several implements.
+        prelinked_id = ex.get("exercise_id")
+        prelinked_lib: Optional[dict] = None
+        if prelinked_id:
+            prelinked_lib = await db.exercises_v2.find_one(
+                {"id": prelinked_id}, {"_id": 0},
+            )
+        # Hard equipment gate — pool AND semantics only when we cannot
+        # rely on a linked library row.
+        if not prelinked_lib and not _pool_equipment_satisfied(pool_equip, allow_list):
             summary["dropped_by_equipment"] += 1
             summary["warnings"].append(
                 f"'{name}' dropped — needs {pool_equip} outside allow-list."
             )
             continue
+        # Name-based safety net — always applied.
         if _name_conflicts_with_allow_list(name, allow_list):
             summary["dropped_by_equipment"] += 1
             summary["warnings"].append(
                 f"'{name}' dropped — name references equipment outside allow-list."
             )
             continue
+        # When we DO have a prelinked library row, honour its OR-semantic
+        # equipment gate BEFORE the search step.
+        if prelinked_lib and not _library_equipment_matches(
+            prelinked_lib.get("equipment_type") or [], allow_list
+        ):
+            summary["dropped_by_equipment"] += 1
+            summary["warnings"].append(
+                f"'{name}' dropped — library equipment {prelinked_lib.get('equipment_type')} "
+                f"has no overlap with allow-list."
+            )
+            continue
+        if prelinked_lib and _injury_conflict(prelinked_lib, injuries):
+            summary["dropped_by_injury"] += 1
+            summary["warnings"].append(
+                f"'{name}' dropped — conflicts with client injury notes."
+            )
+            continue
         # Movement pattern is stored on the pool slot as `role` or `pattern`
         movement_pattern = (ex.get("pattern") or ex.get("role")
                              or ex.get("movement_pattern"))
-        # Library-first lookup
-        cand = await _find_library_match(
-            name=name, movement_pattern=movement_pattern,
-            allow_list=allow_list, injuries=injuries,
-        )
+        # Library-first lookup — prefer the prelinked library row when it
+        # exists and is APPROVED. This is the common Manual-Mode case.
+        cand = None
+        if prelinked_lib and (prelinked_lib.get("status") or "").lower() in ("approved", "live"):
+            cand = prelinked_lib
+        else:
+            cand = await _find_library_match(
+                name=name, movement_pattern=movement_pattern,
+                allow_list=allow_list, injuries=injuries,
+            )
         if cand:
             ex["exercise_id"] = cand["id"]
             ex["library_source"] = "approved_match"

@@ -9,6 +9,7 @@ feature_habits — extracted from server.py.
 # ---------------------------------------------------------------------------
 
 from fastapi import Depends, HTTPException
+from pydantic import BaseModel
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 import datetime as _dt
@@ -645,7 +646,7 @@ async def coach_habits_get(client_id: str, coach: dict = Depends(require_role("c
     client = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
     if not client:
         raise HTTPException(404, "client not found")
-    active = await db.habits.find({"user_id": client_id, "status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    active = await db.habits.find({"user_id": client_id, "status": "active"}, {"_id": 0}).sort([("sort_order", 1), ("created_at", 1)]).to_list(50)
     paused = await db.habits.find({"user_id": client_id, "status": "paused"}, {"_id": 0}).sort("paused_at", -1).to_list(50)
     archived = await db.habits.find({"user_id": client_id, "status": "archived"}, {"_id": 0}).sort("deleted_at", -1).to_list(30)
     tz_name = client.get("current_time_zone") or client.get("home_time_zone") or "Europe/London"
@@ -732,6 +733,100 @@ async def coach_habit_patch(habit_id: str, body: HabitCoachEditBody, coach: dict
                       f"Coach edited habit: {saved['title']}", "", actor="coach",
                       meta={"habit_id": habit_id, "diff": {k: v for k, v in updates.items() if k != "updated_at"}})
     return {"habit": saved}
+
+
+# ---------------------------------------------------------------------------
+# Stage H — additional coach CRUD:
+#   * DELETE  /coach/habits/{habit_id}?confirm=true    — hard delete
+#   * POST    /coach/clients/{cid}/habits/reorder       — set sort_order
+# The existing PATCH already handles pause / archive / reactivate via status.
+# ---------------------------------------------------------------------------
+
+@api.delete("/coach/habits/{habit_id}")
+async def coach_habit_delete(
+    habit_id: str,
+    confirm: bool = False,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Hard-delete a habit + its logs. Requires `?confirm=true` to guard
+    against accidental deletes from the coach UI. Also clears any pending
+    coach tasks referencing this habit."""
+    h = await db.habits.find_one({"id": habit_id}, {"_id": 0})
+    if not h:
+        raise HTTPException(404, "habit not found")
+    if not confirm:
+        raise HTTPException(400, "confirmation required (set confirm=true)")
+    # Best-effort: archive backup row so an accidental delete can be recovered.
+    try:
+        await db.habits_deleted_backup.insert_one({
+            **h,
+            "_deleted_at": now_iso(),
+            "_deleted_by": coach["id"],
+        })
+    except Exception:
+        logger.exception("habit_delete: backup insert failed for %s", habit_id)
+    logs_deleted = 0
+    try:
+        r = await db.habit_logs.delete_many({"habit_id": habit_id})
+        logs_deleted = int(r.deleted_count)
+    except Exception:
+        logger.exception("habit_delete: log delete failed for %s", habit_id)
+    await db.habits.delete_one({"id": habit_id})
+    # Dismiss any coach tasks that referenced this habit.
+    try:
+        await db.coach_tasks.update_many(
+            {"payload.habit_id": habit_id, "status": {"$in": ["todo", "in_progress"]}},
+            {"$set": {"status": "dismissed", "dismissed_at": now_iso(),
+                       "completed_at": now_iso()}},
+        )
+    except Exception:
+        logger.exception("habit_delete: coach_task cleanup failed for %s", habit_id)
+    await _log_change(coach["id"], h["user_id"], "programme",
+                      f"Coach deleted habit: {h.get('title')}", "", actor="coach",
+                      meta={"habit_id": habit_id, "logs_deleted": logs_deleted})
+    return {"ok": True, "deleted": True, "logs_deleted": logs_deleted}
+
+
+class HabitReorderBody(BaseModel):
+    habit_ids: list[str]
+
+
+@api.post("/coach/clients/{client_id}/habits/reorder")
+async def coach_habit_reorder(
+    client_id: str, body: HabitReorderBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Persist a new order for the client's ACTIVE habits. Writes a
+    `sort_order` int on each. Ignores unknown ids. Preserves relative
+    order of any active habits not in the list (appended after the
+    reordered subset)."""
+    if not body.habit_ids:
+        raise HTTPException(400, "habit_ids must be a non-empty list")
+    active = await db.habits.find(
+        {"user_id": client_id, "status": "active"},
+        {"_id": 0, "id": 1},
+    ).to_list(500)
+    known_ids = {h["id"] for h in active}
+    ordered = [hid for hid in body.habit_ids if hid in known_ids]
+    tail = [h["id"] for h in active if h["id"] not in set(ordered)]
+    final = ordered + tail
+    now = now_iso()
+    for i, hid in enumerate(final):
+        try:
+            await db.habits.update_one(
+                {"id": hid},
+                {"$set": {"sort_order": i, "updated_at": now}},
+            )
+        except Exception:
+            logger.exception("habit_reorder: update failed for %s", hid)
+    await _log_change(coach["id"], client_id, "programme",
+                      "Coach reordered habits", "", actor="coach",
+                      meta={"habit_order": final})
+    saved = await db.habits.find(
+        {"user_id": client_id, "status": "active"},
+        {"_id": 0},
+    ).sort([("sort_order", 1), ("created_at", 1)]).to_list(200)
+    return {"ok": True, "habits": saved}
 
 
 @api.post("/coach/habits/reviews/{review_id}/approve")

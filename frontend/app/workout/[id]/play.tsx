@@ -11,7 +11,7 @@ import {
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/lib/api";
+import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 import { RestTimer } from "@/src/components/RestTimer";
@@ -858,13 +858,76 @@ function WarmupCard({ item, index }: { item: any; index: number }) {
   const [done, setDone] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [content, setContent] = useState<any>(null);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [videoOpen, setVideoOpen] = useState(false);
 
   useEffect(() => {
     if (!item?.name) return;
-    api<any>(`/exercises/content?name=${encodeURIComponent(item.name)}`)
-      .then((r) => setContent(r?.exercise || null))
-      .catch(() => setContent(null));
+    let cancel = false;
+    (async () => {
+      // Manual mode writes exercises into exercises_v2 with an
+      // AI-generated primary_image_id — legacy /exercises/content only
+      // reads the V1 collection so it never finds them. Query V2 first,
+      // then fall back to V1 for legacy content that predates V2.
+      let ex: any = null;
+      try {
+        const r = await api<any>(
+          `/exercise-content?q=${encodeURIComponent(item.name)}&limit=5`,
+        );
+        const list: any[] = r?.exercises || [];
+        const wanted = String(item.name || "").trim().toLowerCase();
+        // Prefer exact case-insensitive match on exercise_name so
+        // "Band Pull-Apart" doesn't accidentally return "Band pull-apart or shoulder pass-through".
+        ex = list.find((e) => String(e?.exercise_name || "").trim().toLowerCase() === wanted)
+          || list[0]
+          || null;
+      } catch { /* silent */ }
+
+      let legacy: any = null;
+      try {
+        const r2 = await api<any>(
+          `/exercises/content?name=${encodeURIComponent(item.name)}`,
+        );
+        legacy = r2?.exercise || null;
+      } catch { /* silent */ }
+
+      if (cancel) return;
+      // Merge: prefer V2 for coaching content, keep legacy for backfill.
+      const merged: any = {
+        name: ex?.exercise_name || legacy?.name || item.name,
+        // V2 → coaching_points; V1 → cues. Use both when available.
+        cues: ex?.coaching_points || legacy?.cues || [],
+        instructions: ex?.instructions
+          ? (Array.isArray(ex.instructions) ? ex.instructions : [ex.instructions])
+          : (legacy?.instructions || []),
+        mistakes: ex?.common_mistakes || legacy?.mistakes || [],
+        custom_image_b64: legacy?.custom_image_b64 || null,
+        coach_image_url: legacy?.coach_image_url || null,
+        coach_video_url: ex?.coach_video_url || legacy?.coach_video_url || null,
+        video_url: ex?.primary_video_url || legacy?.video_url || null,
+        has_video_v2: !!(ex?.content_status?.video || ex?.primary_video_url),
+      };
+      setContent(merged);
+
+      // Build a tokenised stream URL for the V2 primary_image (or
+      // start/end fallback), matching ExerciseThumbnail so Manual-mode
+      // warm-ups get the exact same image the rest of the app shows.
+      const imgId: string | null =
+        ex?.primary_image_id || ex?.demo_start_image_id || ex?.demo_end_image_id || null;
+      if (imgId) {
+        const token = await getToken();
+        if (!cancel) {
+          setThumbUrl(
+            `${API_BASE}/exercise-content/images/${imgId}/stream${
+              token ? `?token=${encodeURIComponent(token)}` : ""
+            }`,
+          );
+        }
+      } else if (merged.custom_image_b64 || merged.coach_image_url) {
+        if (!cancel) setThumbUrl(merged.custom_image_b64 || merged.coach_image_url);
+      }
+    })();
+    return () => { cancel = true; };
   }, [item?.name]);
 
   const start = () => {
@@ -890,8 +953,8 @@ function WarmupCard({ item, index }: { item: any; index: number }) {
 
   const running = left !== null && left > 0;
   const pct = left !== null ? Math.round(((total - left) / total) * 100) : (done ? 100 : 0);
-  const thumb = content?.custom_image_b64 || content?.coach_image_url;
-  const hasVideo = !!content && (content.coach_video_url || content.video_url);
+  const thumb = thumbUrl;
+  const hasVideo = !!content && (content.coach_video_url || content.video_url || content.has_video_v2);
   const instrs: string[] = Array.isArray(content?.instructions)
     ? content.instructions.filter(Boolean)
     : (content?.instructions ? [String(content.instructions)] : []);

@@ -101,6 +101,7 @@ export function WorkoutMediaCarousel({
   showCoachDraftBadge = false,
   autoScroll = false,
   autoScrollIntervalMs = 4000,
+  contentFit = "cover",
 }: {
   exerciseName: string;
   height?: number;
@@ -115,6 +116,10 @@ export function WorkoutMediaCarousel({
   /** Interval in ms between auto-advances. 3–5s for standard exercises,
    * 5–7s for mobility / stretch. */
   autoScrollIntervalMs?: number;
+  /** How images fill the frame. Default "cover" (workout index / play).
+   * Guided flow passes "contain" so the whole exercise is visible without
+   * head / feet cropping on portrait phone screens. */
+  contentFit?: "cover" | "contain";
 }) {
   const [media, setMedia] = useState<ResolvedMedia | null | undefined>(undefined);
   const [page, setPage] = useState(0);
@@ -209,7 +214,7 @@ export function WorkoutMediaCarousel({
         <Image
           source={{ uri: slides[0].url }}
           style={StyleSheet.absoluteFillObject}
-          contentFit="cover"
+          contentFit={contentFit}
         />
         <View style={styles.labelPill}>
           <Text style={styles.labelPillT}>{slides[0].label}</Text>
@@ -232,7 +237,7 @@ export function WorkoutMediaCarousel({
       >
         {slides.map((s) => (
           <View key={s.slot} style={{ width, height }}>
-            <Image source={{ uri: s.url }} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+            <Image source={{ uri: s.url }} style={StyleSheet.absoluteFillObject} contentFit={contentFit} />
             <View style={styles.labelPill}>
               <Text style={styles.labelPillT}>{s.label}</Text>
             </View>

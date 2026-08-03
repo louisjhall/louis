@@ -781,9 +781,10 @@ function WarmupPanel({
       <View style={styles.mediaBox}>
         <WorkoutMediaCarousel
           exerciseName={item?.name || ""}
-          height={180}
+          height={260}
           autoScroll={!paused}
           autoScrollIntervalMs={6000}
+          contentFit="contain"
         />
       </View>
 
@@ -859,9 +860,10 @@ function WorkPanel({
       <View style={styles.mediaBox}>
         <WorkoutMediaCarousel
           exerciseName={ex?.name || ""}
-          height={200}
+          height={280}
           autoScroll={!paused && (isCardio || isMobilityLike(ex) || autopilot)}
           autoScrollIntervalMs={isMobilityLike(ex) ? 6000 : 4000}
+          contentFit="contain"
         />
       </View>
 

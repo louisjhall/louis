@@ -6642,13 +6642,27 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
     # Iter 114 — Engine V2 clients: route to the V2 helper which mutates
     # plan_live_v2 placements + session_specs. Legacy V1 clients continue
     # through the block below untouched.
+    #
+    # Manual-Mode fix — V2 clients may carry `v2_flags.v2_default=True` yet
+    # have NO active `plan_live_v2` doc (their workouts are coach-manual
+    # rows in `db.workouts`). Previously we blindly called
+    # `apply_reality_action_v2` for these clients, which returned
+    # `changed: False` for every action because there was no placement to
+    # mutate — so Today's Reality selections silently did nothing.
+    # We now only route to V2 when both (a) the flag is set AND (b) an
+    # active plan_live_v2 doc exists. Otherwise fall through to the V1 /
+    # manual `db.workouts` mutator below.
     try:
         from feature_v2_client_bridge import user_is_v2, apply_reality_action_v2
         user_doc = await db.users.find_one(
             {"id": user_id}, {"_id": 0, "id": 1, "profile.v2_flags": 1},
         )
         if user_doc and await user_is_v2(db, user_doc):
-            return await apply_reality_action_v2(db, user_id, action)
+            has_active_v2_plan = await db.plan_live_v2.find_one(
+                {"client_id": user_id, "active": True}, {"_id": 1},
+            )
+            if has_active_v2_plan:
+                return await apply_reality_action_v2(db, user_id, action)
     except Exception:
         logger.exception("V2 reality action routing failed — falling back to V1")
 
@@ -6678,9 +6692,31 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
         w = await _find(d)
         if not w:
             return change
-        if w.get("coach_locked") or w.get("completed"):
-            change["skipped_reason"] = "locked_or_completed"
+        # Today's Reality is a client-initiated SITUATIONAL adaptation — not a
+        # coach override. In Manual Mode every coach-manual workout carries
+        # `coach_locked=True`, so the earlier "refuse to mutate locked" gate
+        # blocked the entire feature. We now snapshot the original into
+        # `reality_original_snapshot` and allow the adaptation. Completed
+        # workouts are still protected — you can't retro-edit finished
+        # sessions.
+        if w.get("completed"):
+            change["skipped_reason"] = "completed"
             return change
+        if not w.get("reality_original_snapshot"):
+            snap = {k: w.get(k) for k in (
+                "title", "location", "duration_min", "focus", "day_load",
+                "warmup", "exercises", "cooldown", "alternatives",
+                "rationale", "key_session",
+            )}
+            snap["snapshotted_at"] = now_iso()
+            try:
+                await db.workouts.update_one(
+                    {"id": w["id"]},
+                    {"$set": {"reality_original_snapshot": snap}},
+                )
+                w["reality_original_snapshot"] = snap
+            except Exception:
+                logger.exception("reality: snapshot failed for wid=%s", w.get("id"))
         before = dict(w)
         patch = dict(w)
         if kind == "reduce":
@@ -6747,6 +6783,9 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
             patch["override_applied"] = True
 
         patch["override_applied"] = True
+        patch["reality_adapted"] = True
+        patch["reality_adapted_at"] = now_iso()
+        patch["reality_action_kind"] = kind
         patch["updated_at"] = now_iso()
         await db.workouts.update_one({"id": w["id"]}, {"$set": patch})
         change.update({"changed": True, "before": {k: before.get(k) for k in ("title", "duration_min", "focus", "day_load", "location", "exercises")},

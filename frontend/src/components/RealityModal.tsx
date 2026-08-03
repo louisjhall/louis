@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import {
-  View, Text, StyleSheet, Modal, Pressable, ScrollView, ActivityIndicator, TextInput, Alert,
+  View, Text, StyleSheet, Modal, Pressable, ScrollView, ActivityIndicator, TextInput,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
+import { toast } from "@/src/lib/ux";
 
 /* -------------------------------------------------------------------------- */
 /*  Reality Kinds + Icon Map                                                  */
@@ -84,7 +85,7 @@ export function RealityModal({
       setResult(r);
       setStage("review");
     } catch (e: any) {
-      Alert.alert("CrewFit couldn't analyse this", e?.message || "Please try again");
+      toast(`CrewFit couldn't analyse this — ${e?.message || "please try again"}`, "error");
       setStage("pick");
     }
   };
@@ -99,14 +100,14 @@ export function RealityModal({
         body: { reality_event_id: result.reality_event_id, option_id: optId },
       });
       if (r.status === "ask_coach") {
-        Alert.alert("Sent to your coach", "Your coach will review and get back to you.");
+        toast("Sent to your coach — they'll review and get back to you.", "success");
       } else {
-        Alert.alert("Plan updated", "CrewFit has adapted your programme.");
+        toast("Workout adapted to your current situation.", "success");
       }
       onApplied?.();
       onClose();
     } catch (e: any) {
-      Alert.alert("Couldn't apply", e?.message || "Please try again");
+      toast(`Couldn't adapt — ${e?.message || "your original workout is unchanged"}.`, "error");
       setStage("review");
     }
   };

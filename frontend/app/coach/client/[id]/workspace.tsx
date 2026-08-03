@@ -28,7 +28,6 @@ import { ClientAdminDrawer } from "@/src/components/ClientAdminDrawer";
 // EngineV2DraftPanel ribbon; the standalone GenerationStatusBanner and
 // ProgrammeSummaryPanel are no longer rendered in the Plan tab to reclaim
 // vertical space for the actual Roster/Plan grid.
-import { PublishPanel } from "@/src/components/PublishPanel";
 import { InlineWorkoutEditor } from "@/src/components/InlineWorkoutEditor";
 import { CoachRosterUploadButton } from "@/src/components/CoachRosterUploadButton";
 import { V2ClientTabs, V2Tab } from "@/src/components/V2ClientTabs";
@@ -147,7 +146,6 @@ export default function CoachWorkspaceScreen() {
   // Iter 117 — Coach flight-support override sheet target.
   const [fsSheet, setFsSheet] = useState<{ date: string; item: any } | null>(null);
   const [directiveOpen, setDirectiveOpen] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<V2Tab>("plan");
 
@@ -530,15 +528,6 @@ export default function CoachWorkspaceScreen() {
         onSaved={loadMonth}
       />
 
-      {/* Publish panel */}
-      <PublishPanel
-        clientId={String(clientId)}
-        month={month}
-        draftId={data?.programme?.draft_id}
-        visible={publishOpen}
-        onClose={() => setPublishOpen(false)}
-        onPublished={loadMonth}
-      />
       <ClientAdminDrawer
         visible={adminDrawerOpen}
         onClose={() => setAdminDrawerOpen(false)}

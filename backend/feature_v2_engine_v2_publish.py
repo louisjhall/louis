@@ -100,7 +100,6 @@ GOAL_CONFIG_STATUS: dict[str, dict[str, Any]] = {
     "strength.muscle_gain": {
         "status": "PARTIAL",
         "warnings": [
-            "Hypertrophy phase demand ≈ 5 strength days/wk but phase.strength_days_per_week_max defaults to 2 — programme will legitimately land in needs_review.",
             "Cadence rules use derived defaults.",
         ],
     },

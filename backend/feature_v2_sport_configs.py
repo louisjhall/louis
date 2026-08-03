@@ -860,6 +860,8 @@ _register(GoalConfig(
         "hypertrophy": PhaseSpec(
             phase_kind="hypertrophy", weeks_target=6, weeks_min=4, weeks_max=8,
             hard_days_per_week_max=4, key_days_per_week_max=2, consecutive_training_days_max=3,
+            # strength_upper(2) + strength_lower(2) + strength_hypertrophy(1) = 5/wk target
+            strength_days_per_week_max=5,
             quotas=(
                 QuotaRule("strength_upper",   (1, 2, 2), "KEY",       48, (45, 60, 75), "rpe8",
                           can_skip_if_missed=False),
@@ -875,6 +877,8 @@ _register(GoalConfig(
         "intensification": PhaseSpec(
             phase_kind="intensification", weeks_target=3, weeks_min=2, weeks_max=4,
             hard_days_per_week_max=4, key_days_per_week_max=2, consecutive_training_days_max=3,
+            # strength_upper(2) + strength_lower(2) + strength_power(1) = 5/wk target
+            strength_days_per_week_max=5,
             quotas=(
                 QuotaRule("strength_upper",   (1, 2, 2), "KEY",       48, (45, 60, 75), "rpe8-9",
                           can_skip_if_missed=False),

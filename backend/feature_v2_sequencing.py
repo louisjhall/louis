@@ -198,6 +198,7 @@ def validate_placement(
     bucket = session_load_bucket(kind)
     endurance_hard = bucket in (LOAD_BUCKET_ENDURANCE_KEY, LOAD_BUCKET_ENDURANCE_HARD)
     strength_hard = bucket == LOAD_BUCKET_STRENGTH_HARD
+    is_strength = is_strength_session(kind)
     is_support = bucket in (LOAD_BUCKET_EASY, LOAD_BUCKET_RECOVERY)  # mobility/activation/recovery
     key = is_key_intensity(kind)
     family = session_family(kind)
@@ -226,7 +227,15 @@ def validate_placement(
                 False, "weekly_endurance_hard_cap",
                 f"Week already has {phase.hard_days_per_week_max} endurance hard days",
             )
-    if strength_hard:
+    if is_strength:
+        # Counts ALL strength kinds (hard + moderate/maintenance/support) against
+        # the weekly cap — matches feature_v2_validators_v2.is_strength_session,
+        # which flags weekly_strength_cap_exceeded for every strength kind
+        # regardless of hard/moderate. Previously this only fired for
+        # bucket==strength_hard, so maintenance/support sessions could stack
+        # past the cap during placement and only get caught later by the
+        # validator, producing a week the scheduler itself thought was valid.
+        #
         # Check strength cap only if THIS date is not already a strength day
         # (multiple strength placements on same date is disallowed by same-day
         # family conflict below anyway, but this keeps the count clean).

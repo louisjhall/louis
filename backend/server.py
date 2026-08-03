@@ -4343,8 +4343,42 @@ async def exercise_alternatives(
 ):
     """Return Atlas-recommended alternatives for an exercise given the user's context.
 
+    Manual-mode exercises store their curated alternatives directly on the
+    `exercises_v2` doc (`alternatives: list[str]`). We surface those first
+    so coach-authored substitutions are honoured, then fall back to the
+    hardcoded ALT_CATALOG for legacy content.
+
     Filter priority: equipment match > location fit > general fallback.
     """
+    wanted = (name or "").strip()
+
+    # 1) Coach-authored alternatives stored on exercises_v2 --------------
+    try:
+        v2 = await db.exercises_v2.find_one(
+            {"exercise_name": {"$regex": f"^{re.escape(wanted)}$", "$options": "i"}},
+            {"_id": 0, "alternatives": 1, "exercise_name": 1},
+        )
+        if v2 and v2.get("alternatives"):
+            v2_alts: list[dict] = []
+            for a in v2["alternatives"]:
+                if isinstance(a, str) and a.strip():
+                    v2_alts.append({"name": a.strip(), "equipment": [], "why": "Coach-authored alternative."})
+                elif isinstance(a, dict) and a.get("name"):
+                    v2_alts.append({
+                        "name": a["name"],
+                        "equipment": a.get("equipment") or [],
+                        "why": a.get("why") or a.get("reason") or "Coach-authored alternative.",
+                    })
+            if v2_alts:
+                return {
+                    "source": "v2_library",
+                    "reason": "Louis has authored these alternatives for this exercise.",
+                    "alternatives": v2_alts,
+                }
+    except Exception as e:
+        logger.warning(f"v2 alternatives lookup failed for {wanted}: {e}")
+
+    # 2) Legacy hardcoded catalog -----------------------------------------
     key = _match_alt_key(name)
     have_equipment = set((equipment or "").lower().split(",")) if equipment else set()
     have_equipment.discard("")
@@ -9540,22 +9574,95 @@ async def coach_batch_content_cancel(coach: dict = Depends(require_role("coach")
 
 @api.get("/exercises/content")
 async def exercise_content_public(name: str, user: dict = Depends(current_user)):
-    """Client-facing lookup used by the Atlas Player HOW TO tile.
-    Returns coach-authored content (instructions/cues/mistakes/image) for the named exercise."""
-    ex = await db.exercises.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}}, {"_id": 0})
-    if not ex:
+    """Client-facing lookup used by workout preview / How-To / warm-up / guided
+    flow. Returns coach-authored content (instructions/cues/mistakes/image/
+    video/alternatives) for the named exercise.
+
+    Manual mode writes exercises to `exercises_v2`, not the legacy
+    `exercises` collection. We check V2 first with an exact-name preference,
+    then fall back to V1 for any legacy content that predates the V2 library.
+    """
+    wanted = (name or "").strip()
+    if not wanted:
         return {"exercise": None}
+
+    # ---- Try V2 (exercises_v2) first, exact match only -------------------
+    # We deliberately avoid a fuzzy fallback here — matching "Band Pull-Apart"
+    # to "Band pull-apart or shoulder pass-through" leaks wrong media into
+    # workouts. Exact case-insensitive only.
+    rx = {"$regex": f"^{re.escape(wanted)}$", "$options": "i"}
+    v2 = await db.exercises_v2.find_one({"exercise_name": rx}, {"_id": 0})
+
+    # Legacy V1 record
+    v1 = await db.exercises.find_one({"name": rx}, {"_id": 0})
+
+    if not v2 and not v1:
+        return {"exercise": None}
+
+    # Prefer V2 for coaching content; fall back to V1 per field.
+    def _pick(*vals):
+        for v in vals:
+            if v not in (None, "", []):
+                return v
+        return None
+
+    cp = (v2 or {}).get("coaching_points") or []
+    if isinstance(cp, str):
+        cp = [cp]
+    v1_cues = (v1 or {}).get("cues") or []
+    mistakes_v2 = (v2 or {}).get("common_mistakes") or []
+    if isinstance(mistakes_v2, str):
+        mistakes_v2 = [mistakes_v2]
+
+    # Alternatives — V2 stores as list[str], normalise to {name, equipment, why}.
+    alts_v2_raw = (v2 or {}).get("alternatives") or []
+    alts: list[dict] = []
+    for a in (alts_v2_raw if isinstance(alts_v2_raw, list) else []):
+        if isinstance(a, str):
+            alts.append({"name": a, "equipment": [], "why": None})
+        elif isinstance(a, dict) and a.get("name"):
+            alts.append({
+                "name": a.get("name"),
+                "equipment": a.get("equipment") or [],
+                "why": a.get("why") or a.get("reason") or None,
+            })
+
+    # Instructions: V2 uses a single `instructions` string usually; V1 stores list.
+    v2_instr = (v2 or {}).get("instructions")
+    if isinstance(v2_instr, str):
+        v2_instr = [line.strip() for line in v2_instr.split("\n") if line.strip()]
+    v1_instr = (v1 or {}).get("instructions") or []
+
     return {"exercise": {
-        "name": ex.get("name"),
-        "instructions": ex.get("instructions"),
-        "cues": ex.get("cues"),
-        "mistakes": ex.get("mistakes"),
-        "custom_image_b64": ex.get("custom_image_b64"),
-        "coach_image_url": ex.get("coach_image_url"),
-        "default_rest_sec": ex.get("default_rest_sec"),
-        "logging_type": ex.get("logging_type"),
-        "content_source": ex.get("content_source"),
-        "approved": ex.get("approved", True),
+        "name": _pick((v2 or {}).get("exercise_name"), (v1 or {}).get("name"), wanted),
+        # Cues -> coaching points (V2 preferred). If both exist, V2 wins and
+        # any V1 cues get appended so the coach never loses their old work.
+        "cues": (cp or []) + [c for c in v1_cues if c not in (cp or [])] if cp else v1_cues,
+        # Coaching points also exposed under their canonical name for
+        # any future consumer that reads coaching_points directly.
+        "coaching_points": cp or v1_cues,
+        "instructions": v2_instr or v1_instr,
+        "mistakes": mistakes_v2 or (v1 or {}).get("mistakes") or [],
+        "common_mistakes": mistakes_v2 or (v1 or {}).get("mistakes") or [],
+        "alternatives": alts,
+        # Image: expose the V2 image_id + a resolved stream URL so RN can
+        # render without a second round-trip. Legacy V1 fields kept for
+        # backwards compatibility with old callers.
+        "primary_image_id":    (v2 or {}).get("primary_image_id"),
+        "demo_start_image_id": (v2 or {}).get("demo_start_image_id"),
+        "demo_end_image_id":   (v2 or {}).get("demo_end_image_id"),
+        "custom_image_b64":    (v1 or {}).get("custom_image_b64"),
+        "coach_image_url":     (v1 or {}).get("coach_image_url"),
+        # Video: V2 preferred; V1 fallback.
+        "coach_video_url": _pick((v2 or {}).get("coach_video_url"), (v1 or {}).get("coach_video_url")),
+        "video_url":       _pick((v2 or {}).get("primary_video_url"), (v2 or {}).get("video_url"), (v1 or {}).get("video_url")),
+        "video_channel":   _pick((v2 or {}).get("video_channel"), (v1 or {}).get("video_channel")),
+        "default_rest_sec": (v1 or {}).get("default_rest_sec"),
+        "logging_type":     _pick((v2 or {}).get("logging_type"), (v1 or {}).get("logging_type")),
+        "content_source":   "v2" if v2 else "v1",
+        "content_status":   (v2 or {}).get("content_status"),
+        "approved":         (v1 or {}).get("approved", True) if not v2 else ((v2 or {}).get("status") in ("Approved", "Live")),
+        "v2_id":            (v2 or {}).get("id"),
     }}
 
 

@@ -5327,6 +5327,28 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
 
             # Record which model succeeded so we can track real-world accuracy.
             await _set_job(job_id, parser_used=parser_used)
+
+            # British Airways iOS-calendar adapter — isolated post-processor.
+            # Runs only when BA-specific signatures (Rpt:HH:MMz, ends HH:MM,
+            # BA route shape) score above the confidence threshold. Emirates /
+            # RAK / easyJet / Qatar rosters pass through untouched.
+            try:
+                from feature_ba_roster_adapter import maybe_apply as _ba_maybe_apply
+                _ba_res = _ba_maybe_apply(days, raw_text=raw)
+                if _ba_res.get("applied"):
+                    logger.info(
+                        "roster job %s: BA adapter applied (confidence=%s, trips=%d, leave=%d)",
+                        job_id,
+                        _ba_res["detection"]["confidence"],
+                        len(_ba_res.get("trips") or []),
+                        len(_ba_res.get("leave_blocks") or []),
+                    )
+                    days = _ba_res["days"]
+                    parser_used = f"{parser_used}+ba_adapter"
+                    await _set_job(job_id, parser_used=parser_used)
+            except Exception:
+                logger.exception("BA adapter check failed — falling back to LLM output as-is")
+
             await _set_job(job_id, stage="detecting", progress=50, message="Detecting layovers and turnarounds...")
             days.sort(key=lambda d: d.get("date") or "")
             # Iter 82 — sanity check parsed dates against printed day_of_week labels.

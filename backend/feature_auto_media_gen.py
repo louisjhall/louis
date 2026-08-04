@@ -120,11 +120,30 @@ async def auto_enqueue_media_for_exercise(
     except Exception as e:
         logger.warning(f"auto_media_gen: image queue failed for {ex_id}: {e}")
 
-    # ---- Coaching points (only if empty) ----
+    # ---- Written content — coaching points, common mistakes, alternatives,
+    # client-facing instructions. Each fires only if its field is empty on the
+    # exercise, and each runs as its own asyncio task so exercise creation
+    # returns immediately. Coach still has final say — nothing is published
+    # and the coach can regenerate any of them from the library UI.
+    _CONTENT_KINDS: tuple[str, ...] = (
+        "coaching_points",
+        "common_mistakes",
+        "alternatives",
+        "instructions",
+    )
     try:
-        if not (ex.get("coaching_points") or []):
-            asyncio.create_task(_auto_generate_coaching_points(ex_id))
-            queued_content.append("coaching_points")
+        for kind in _CONTENT_KINDS:
+            field = _kind_to_field(kind)
+            existing = ex.get(field)
+            # Skip if the coach has already authored content for this field.
+            already_populated = (
+                (isinstance(existing, list) and len(existing) > 0)
+                or (isinstance(existing, str) and existing.strip() != "")
+            )
+            if already_populated:
+                continue
+            asyncio.create_task(_auto_generate_content(ex_id, kind, creator))
+            queued_content.append(kind)
     except Exception as e:
         logger.warning(f"auto_media_gen: content queue failed for {ex_id}: {e}")
 
@@ -145,18 +164,69 @@ async def auto_enqueue_media_for_exercise(
     }
 
 
-async def _auto_generate_coaching_points(ex_id: str) -> None:
-    """Background — generate a coaching-points draft via Claude.
+# ---------------------------------------------------------------------------
+# Written content — unified generator (coaching points / mistakes / alt / instr)
+# ---------------------------------------------------------------------------
 
-    Mirrors the manual /exercise-content/{id}/generate-content endpoint
-    but runs without a coach in the loop. Never raises.
+def _kind_to_field(kind: str) -> str:
+    """Map the content kind to the exercises_v2 field name it writes to.
+    Mirrors the manual /exercise-content/{id}/generate-content field map so
+    both paths converge on the same schema."""
+    return {
+        "coaching_points":  "coaching_points",
+        "common_mistakes":  "common_mistakes",
+        "alternatives":     "alternatives",
+        "instructions":     "client_facing_instructions",
+    }[kind]
+
+
+# Same prompts as the manual endpoint. Keeping them in one place avoids
+# drift between auto and manual generation.
+_KIND_TASK_PROMPTS: dict[str, str] = {
+    "coaching_points": (
+        "Return 4–6 short concise coaching points (imperative, one line each). "
+        "Focus on technique cues an aviation-crew client can execute in a "
+        "hotel gym."
+    ),
+    "common_mistakes": (
+        "Return 3–5 common mistakes clients make with this exercise. "
+        "Each item is one short sentence."
+    ),
+    "alternatives": (
+        "Return 3–5 alternative exercises that train the same movement "
+        "pattern, ordered by similarity. Only the exercise names, no "
+        "explanation."
+    ),
+    "instructions": (
+        "Return 3–5 sentences of client-facing plain-English instructions "
+        "for how to perform the exercise, written warmly (as if Louis is "
+        "coaching the client through it)."
+    ),
+}
+
+
+async def _auto_generate_content(ex_id: str, kind: str, creator: str) -> None:
+    """Background — draft one content field via Claude. Idempotent.
+    Never raises; failure just logs so the coach can regenerate manually.
+
+    On `alternatives`, mirrors the manual endpoint by promoting each
+    alternative name into a real library draft via `resolve_or_draft_exercise`
+    so the media queue and swap-menu can reference them. Idempotent — the
+    resolver itself dedups.
     """
+    if kind not in _KIND_TASK_PROMPTS:
+        return
     try:
         ex = await db.exercises_v2.find_one({"id": ex_id})
         if not ex:
             return
-        if ex.get("coaching_points"):
-            return  # coach already added them; do nothing
+        field = _kind_to_field(kind)
+        # Coach may have written content while our task sat in the queue.
+        current = ex.get(field)
+        if (isinstance(current, list) and current) or (
+            isinstance(current, str) and current.strip()
+        ):
+            return
 
         name = ex.get("exercise_name") or "exercise"
         equipment = ", ".join(ex.get("equipment_type") or []) or "bodyweight"
@@ -169,53 +239,130 @@ async def _auto_generate_coaching_points(ex_id: str) -> None:
             "medical claims. Never diagnose. Always assume the client has limited "
             "equipment and is on the road."
         )
+        task = _KIND_TASK_PROMPTS[kind]
         prompt = (
             f"Exercise: {name}\nEquipment: {equipment}\nBody area: {body_area}\n"
-            f"Difficulty: {difficulty}\n\n"
-            "Return 4–6 short concise coaching points (imperative, one line each). "
-            "Focus on technique cues an aviation-crew client can execute in a "
-            "hotel gym.\n\n"
-            'OUTPUT: strict JSON {"items": ["string", ...]}. No prose outside the JSON.'
+            f"Difficulty: {difficulty}\n\n{task}\n\n"
+            'OUTPUT: strict JSON. For lists: {"items": ["string", ...]}. '
+            'For instructions: {"text": "one paragraph"}. '
+            "No prose outside the JSON."
         )
 
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
-            session_id=f"auto-content-{ex_id}",
+            session_id=f"auto-content-{ex_id}-{kind}",
             system_message=system,
         ).with_model("anthropic", "claude-sonnet-4-5-20250929").with_params(max_tokens=500)
         reply = await chat.send_message(UserMessage(text=prompt))
 
         text = str(reply or "").strip()
-        items: list[str] = []
+        parsed: dict = {}
         m = re.search(r"\{[\s\S]*\}", text)
         if m:
             try:
                 parsed = json.loads(m.group(0))
-                if isinstance(parsed.get("items"), list):
-                    items = [str(i).strip() for i in parsed["items"] if str(i).strip()][:6]
             except Exception:
-                pass
-        if not items and text:
-            items = [ln.lstrip("-• 0123456789.").strip() for ln in text.splitlines() if ln.strip()][:6]
+                parsed = {}
 
-        if items:
-            await db.exercises_v2.update_one(
-                {"id": ex_id},
-                {"$set": {
-                    "coaching_points": items,
-                    "content_status.coaching_points": True,
-                    "updated_at": now_iso(),
-                }},
+        updates: dict = {"updated_at": now_iso()}
+
+        if kind == "instructions":
+            val = str(parsed.get("text") or text).strip()
+            if not val:
+                return
+            updates[field] = val
+        else:
+            items = parsed.get("items") or []
+            if not isinstance(items, list):
+                items = []
+            if not items and text:
+                # Fallback: try to split lines when JSON parsing failed.
+                items = [
+                    ln.lstrip("-• 0123456789.").strip()
+                    for ln in text.splitlines()
+                    if ln.strip()
+                ][:6]
+            items = [str(i).strip() for i in items if str(i).strip()][:6]
+            if not items:
+                return
+            updates[field] = items
+            if kind == "coaching_points":
+                updates["content_status.coaching_points"] = True
+            if kind == "common_mistakes":
+                updates["content_status.common_mistakes"] = True
+            if kind == "alternatives":
+                updates["content_status.alternatives"] = True
+
+        if kind == "instructions":
+            updates["content_status.instructions"] = True
+
+        await db.exercises_v2.update_one({"id": ex_id}, {"$set": updates})
+
+        # Atlas alternatives library backfill — mirrors the manual endpoint.
+        # Each alternative name becomes (or resolves to) a real library
+        # draft so the swap-menu and media queue can address them by id.
+        if kind == "alternatives":
+            alt_names = updates.get(field) or []
+            if alt_names:
+                try:
+                    from feature_media_queue import resolve_or_draft_exercise
+                    alt_ids: list[str] = []
+                    # Use a lightweight "user" doc — resolve_or_draft_exercise
+                    # only needs an id for audit + parent for equipment copy.
+                    user_stub = {"id": creator, "role": "coach"}
+                    for alt_name in alt_names:
+                        try:
+                            xid = await resolve_or_draft_exercise(
+                                alt_name,
+                                user=user_stub,
+                                parent=ex,
+                                reason=f"atlas_alternative_of:{ex.get('exercise_name') or ex_id}",
+                            )
+                            if xid:
+                                alt_ids.append(xid)
+                        except Exception:
+                            logger.exception(
+                                "auto_media_gen: alt resolve failed for %s → %s",
+                                ex_id, alt_name,
+                            )
+                    if alt_ids:
+                        await db.exercises_v2.update_one(
+                            {"id": ex_id},
+                            {"$set": {
+                                "alternative_exercise_ids": alt_ids,
+                                "updated_at": now_iso(),
+                            }},
+                        )
+                except Exception:
+                    logger.exception(
+                        "auto_media_gen: alternatives backfill failed for %s", ex_id
+                    )
+
+        # Telemetry so we can see credit burn.
+        try:
+            await db.ai_usage.insert_one({
+                "user_id": creator,
+                "feature": f"auto_media_gen_{kind}",
+                "exercise_id": ex_id,
+                "tokens_estimate": 500,
+                "created_at": now_iso(),
+            })
+        except Exception:
+            pass
+
+        try:
+            from feature_exercise_content import _log
+            await _log(
+                ex_id, _AUTO_USER_ID, f"auto_{kind}",
+                f"auto-generated {kind}",
             )
-            try:
-                from feature_exercise_content import _log
-                await _log(ex_id, _AUTO_USER_ID, "auto_coaching_points",
-                           f"generated {len(items)} points")
-            except Exception:
-                pass
+        except Exception:
+            pass
     except Exception as e:
-        logger.warning(f"auto_media_gen: coaching-points generation failed for {ex_id}: {e}")
+        logger.warning(
+            f"auto_media_gen: {kind} generation failed for {ex_id}: {e}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +377,8 @@ async def auto_media_gen_status(_: dict = Depends(require_role("coach"))):
     return {
         "enabled": AUTO_MEDIA_GEN_ENABLED,
         "default_slots": list(_AUTO_SLOTS),
+        "auto_content_kinds": ["coaching_points", "common_mistakes",
+                                "alternatives", "instructions"],
         "note": "Toggle via AUTO_MEDIA_GEN env var. Coach still has to approve.",
     }
 
@@ -241,6 +390,190 @@ async def auto_media_gen_manual_trigger(
     """Explicit trigger — the coach can also force a re-queue if the
     background job never fired (e.g. AUTO_MEDIA_GEN was off at creation)."""
     return await auto_enqueue_media_for_exercise(ex_id, triggered_by=coach.get("id"))
+
+
+# ---------------------------------------------------------------------------
+# Backfill audit — active exercises missing any auto-generatable content
+# ---------------------------------------------------------------------------
+
+@api.get("/coach/auto-media-gen/backfill-report")
+async def auto_media_gen_backfill_report(
+    active_only: bool = True,
+    limit: int = 500,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Report every active exercise that is missing coaching_points,
+    common_mistakes, alternatives, client-facing instructions, or any of
+    the three standard image slots. Coach-facing — used to decide which
+    library entries need a backfill pass.
+
+    Purely read-only. Zero LLM credits.
+    """
+    query: dict = {}
+    if active_only:
+        # "Active" = anything that isn't archived / deleted / retired.
+        # `$nin` is case-sensitive so we normalise via $expr toLower.
+        query["$and"] = [
+            {"is_deleted": {"$ne": True}},
+            {"$expr": {
+                "$not": {"$in": [
+                    {"$toLower": {"$ifNull": ["$status", ""]}},
+                    ["archived", "retired", "deprecated"],
+                ]}
+            }},
+        ]
+
+    total = 0
+    missing_coaching = 0
+    missing_mistakes = 0
+    missing_alts = 0
+    missing_instr = 0
+    missing_primary = 0
+    missing_start = 0
+    missing_end = 0
+    approved = 0
+    draft = 0
+
+    per_ex: list[dict] = []
+    async for ex in db.exercises_v2.find(query, {
+        "_id": 0, "id": 1, "exercise_name": 1, "status": 1,
+        "coaching_points": 1, "common_mistakes": 1, "alternatives": 1,
+        "client_facing_instructions": 1,
+        "primary_image_id": 1, "demo_start_image_id": 1, "demo_end_image_id": 1,
+        "approval_status": 1, "approved_image_status": 1,
+        "body_area": 1, "equipment_type": 1,
+    }).limit(limit * 4):
+        total += 1
+        cp_missing = not (isinstance(ex.get("coaching_points"), list) and ex["coaching_points"])
+        cm_missing = not (isinstance(ex.get("common_mistakes"), list) and ex["common_mistakes"])
+        al_missing = not (isinstance(ex.get("alternatives"), list) and ex["alternatives"])
+        instr_val = ex.get("client_facing_instructions")
+        in_missing = not (isinstance(instr_val, str) and instr_val.strip())
+        p_missing = not ex.get("primary_image_id")
+        s_missing = not ex.get("demo_start_image_id")
+        e_missing = not ex.get("demo_end_image_id")
+
+        if cp_missing: missing_coaching += 1
+        if cm_missing: missing_mistakes += 1
+        if al_missing: missing_alts += 1
+        if in_missing: missing_instr += 1
+        if p_missing: missing_primary += 1
+        if s_missing: missing_start += 1
+        if e_missing: missing_end += 1
+
+        status = str(ex.get("status") or "").lower()
+        if status in ("approved", "live"):
+            approved += 1
+        else:
+            draft += 1
+
+        needs = [k for k, v in [
+            ("coaching_points", cp_missing),
+            ("common_mistakes", cm_missing),
+            ("alternatives",    al_missing),
+            ("instructions",    in_missing),
+            ("image_primary",   p_missing),
+            ("image_start",     s_missing),
+            ("image_end",       e_missing),
+        ] if v]
+
+        if needs and len(per_ex) < limit:
+            per_ex.append({
+                "id": ex.get("id"),
+                "name": ex.get("exercise_name"),
+                "status": ex.get("status"),
+                "body_area": ex.get("body_area"),
+                "equipment": ex.get("equipment_type"),
+                "needs": needs,
+            })
+
+    return {
+        "total_active_exercises": total,
+        "approved": approved,
+        "draft": draft,
+        "counts_missing": {
+            "coaching_points": missing_coaching,
+            "common_mistakes": missing_mistakes,
+            "alternatives":    missing_alts,
+            "instructions":    missing_instr,
+            "image_primary":   missing_primary,
+            "image_start":     missing_start,
+            "image_end":       missing_end,
+        },
+        "exercises_needing_backfill": per_ex,
+        "shown": len(per_ex),
+        "truncated": len(per_ex) >= limit,
+        "note": (
+            "Use POST /api/coach/exercises/{id}/auto-generate to re-queue "
+            "any exercise. Auto-media-gen is idempotent — populated fields "
+            "are never overwritten."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Bulk backfill runner — coach explicitly opts in per batch.
+# ---------------------------------------------------------------------------
+
+@api.post("/coach/auto-media-gen/backfill-run")
+async def auto_media_gen_backfill_run(
+    body: dict, coach: dict = Depends(require_role("coach")),
+):
+    """Manually run auto-generation for a list of exercise ids.
+
+    Body: {"exercise_ids": ["...", "..."], "dry_run": bool}
+
+    dry_run=true just reports what WOULD fire without spending credits.
+    Coach must send this explicitly per batch so we never accidentally
+    re-generate hundreds of exercises in one go.
+    """
+    ex_ids = (body or {}).get("exercise_ids") or []
+    dry_run = bool((body or {}).get("dry_run"))
+    if not isinstance(ex_ids, list) or not ex_ids:
+        return {"queued": 0, "skipped": [], "reason": "no exercise_ids"}
+    # Hard cap so a slip of the paste doesn't drain credits.
+    ex_ids = [str(x) for x in ex_ids][:50]
+
+    results = []
+    for ex_id in ex_ids:
+        if dry_run:
+            ex = await db.exercises_v2.find_one(
+                {"id": ex_id},
+                {"_id": 0, "id": 1, "exercise_name": 1,
+                 "coaching_points": 1, "common_mistakes": 1,
+                 "alternatives": 1, "client_facing_instructions": 1,
+                 "primary_image_id": 1, "demo_start_image_id": 1, "demo_end_image_id": 1},
+            )
+            if not ex:
+                results.append({"id": ex_id, "would_queue": [], "note": "not found"})
+                continue
+            would: list[str] = []
+            if not (isinstance(ex.get("coaching_points"), list) and ex["coaching_points"]):
+                would.append("coaching_points")
+            if not (isinstance(ex.get("common_mistakes"), list) and ex["common_mistakes"]):
+                would.append("common_mistakes")
+            if not (isinstance(ex.get("alternatives"), list) and ex["alternatives"]):
+                would.append("alternatives")
+            v = ex.get("client_facing_instructions")
+            if not (isinstance(v, str) and v.strip()):
+                would.append("instructions")
+            if not ex.get("primary_image_id"): would.append("image_primary")
+            if not ex.get("demo_start_image_id"): would.append("image_start")
+            if not ex.get("demo_end_image_id"): would.append("image_end")
+            results.append({
+                "id": ex_id, "name": ex.get("exercise_name"),
+                "would_queue": would,
+            })
+        else:
+            res = await auto_enqueue_media_for_exercise(
+                ex_id, triggered_by=coach.get("id"),
+            )
+            results.append({"id": ex_id, **res})
+    return {
+        "dry_run": dry_run,
+        "batch_size": len(ex_ids),
+        "results": results,
+    }
 
 
 logger.info(

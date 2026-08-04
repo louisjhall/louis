@@ -731,17 +731,55 @@ async def ex_img_stream(img_id: str,
     if not doc: raise HTTPException(404, "image not found")
     mime = doc.get("mime") or "image/png"
     key = doc.get("storage_key") or f"{_STORAGE_NS}/{img_id}.png"
+
+    # If the image is still cooking, serve a tiny transparent placeholder
+    # PNG with `no-store` so browsers/RN DO NOT cache the not-yet-ready
+    # response. This is the core fix for the "generated image never
+    # appears" bug — a 404 would get cached and later be shown as a broken
+    # tile even after the real file lands on disk.
+    status = str(doc.get("status") or "").lower()
+    async def _serve_placeholder(reason: str):
+        # 1×1 transparent PNG.
+        import base64
+        _placeholder = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lPAAAAAB"
+            "JRU5ErkJggg=="
+        )
+        return Response(
+            content=_placeholder,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store, must-revalidate",
+                "X-Image-Status": status or "unknown",
+                "X-Image-Reason": reason,
+            },
+        )
+    if status in ("generating", "queued", "pending"):
+        return await _serve_placeholder("still-generating")
+    if status == "failed":
+        return await _serve_placeholder("generation-failed")
+
     if _storage.is_cloud():
         data = await _storage.storage.read_bytes(key)
         if data is None:
             p = doc.get("storage_path")
             if p and Path(p).exists():
-                return FileResponse(p, media_type=mime)
-            raise HTTPException(404, "file missing")
-        return Response(content=data, media_type=mime)
+                return FileResponse(p, media_type=mime, headers={"Cache-Control": "public, max-age=300"})
+            # File not yet on disk (race between DB update and worker
+            # writing the file). Serve the placeholder with no-store so
+            # the next fetch will retry rather than caching a 404.
+            return await _serve_placeholder("file-not-yet-on-disk")
+        return Response(
+            content=data, media_type=mime,
+            headers={"Cache-Control": "public, max-age=300"},
+        )
     p = doc.get("storage_path") or str(IMG_ROOT / f"{img_id}.png")
-    if not Path(p).exists(): raise HTTPException(404, "file missing")
-    return FileResponse(p, media_type=mime)
+    if not Path(p).exists():
+        return await _serve_placeholder("file-not-yet-on-disk")
+    return FileResponse(
+        p, media_type=mime,
+        headers={"Cache-Control": "public, max-age=300"},
+    )
 
 
 @api.get("/exercise-content/images/{img_id}")

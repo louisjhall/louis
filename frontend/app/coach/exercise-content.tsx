@@ -473,15 +473,19 @@ export default function ExerciseContentScreen() {
               />
 
               <View style={styles.imgGrid}>
-                {resolveRequiredSlots(detail).map((slot) => (
-                  <ImgSlot
-                    key={slot}
-                    title={slot.toUpperCase()}
-                    url={imgUrl(imageIdForSlot(detail, slot, genGender))}
-                    onGen={() => genImage(slot as any)}
-                    busy={busy === `gen-${slot}` || busy === `prompt-${slot}`}
-                  />
-                ))}
+                {resolveRequiredSlots(detail).map((slot) => {
+                  const iid = imageIdForSlot(detail, slot, genGender) || null;
+                  return (
+                    <ImgSlot
+                      key={`${slot}-${iid || "none"}`}
+                      title={slot.toUpperCase()}
+                      url={imgUrl(iid)}
+                      imageId={iid}
+                      onGen={() => genImage(slot as any)}
+                      busy={busy === `gen-${slot}` || busy === `prompt-${slot}`}
+                    />
+                  );
+                })}
               </View>
 
               {/* Coaching points */}
@@ -821,12 +825,66 @@ function SlotPicker({
 }
 
 
-function ImgSlot({ title, url, onGen, busy }: any) {
+function ImgSlot({ title, url, onGen, busy, imageId }: any) {
+  // Nano-Banana generation can lag a few seconds behind the DB update
+  // (see feature_exercise_content._run_image_job). Meanwhile the stream
+  // endpoint returns a transparent placeholder with no-store. We poll
+  // the status API and, once the image lands, force a fresh fetch with
+  // a cache-buster so the tile shows the real artwork.
+  const [ready, setReady] = React.useState<boolean | null>(null);
+  const [bust, setBust] = React.useState<number>(0);
+  const [errored, setErrored] = React.useState(false);
+
+  React.useEffect(() => {
+    // Reset when either the image_id changes or a fresh gen was kicked off.
+    setReady(null); setBust(Date.now()); setErrored(false);
+    if (!imageId) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const r = await api<any>(`/exercise-content/images/${imageId}`);
+        const st = String(r?.image?.status || "").toLowerCase();
+        if (st === "ready") {
+          if (!cancelled) { setReady(true); setBust(Date.now()); setErrored(false); }
+          return;
+        }
+        if (st === "failed") {
+          if (!cancelled) { setReady(false); setErrored(true); }
+          return;
+        }
+      } catch { /* silent */ }
+      attempts += 1;
+      if (attempts < 40 && !cancelled) setTimeout(tick, 3000);
+    };
+    // Small initial delay so we don't hammer during obvious "just clicked".
+    const to = setTimeout(tick, 1500);
+    return () => { cancelled = true; clearTimeout(to); };
+  }, [imageId]);
+
+  const displayUrl = url ? `${url}${url.includes("?") ? "&" : "?"}v=${bust}` : null;
+  const showImg = displayUrl && !errored && (ready === true || ready === null);
+  const showPending = displayUrl && ready === false && !errored ? false : (displayUrl && ready === null && !errored);
   return (
     <View style={styles.imgSlot}>
       <View style={styles.imgBox}>
-        {url ? <Image source={{ uri: url }} style={{ width: "100%", height: "100%" }} contentFit="cover" /> : (
-          <Ionicons name="image-outline" size={22} color={theme.color.textDim} />
+        {showImg ? (
+          <Image
+            key={`${imageId}-${bust}`}
+            source={{ uri: displayUrl! }}
+            style={{ width: "100%", height: "100%" }}
+            contentFit="cover"
+            transition={200}
+            onError={() => setErrored(true)}
+          />
+        ) : (
+          <Ionicons name={errored ? "warning-outline" : "image-outline"} size={22} color={theme.color.textDim} />
+        )}
+        {showPending && (
+          <View style={{ position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.35)" }}>
+            <ActivityIndicator color={theme.color.brand} />
+          </View>
         )}
       </View>
       <Text style={styles.imgSlotT}>{title}</Text>

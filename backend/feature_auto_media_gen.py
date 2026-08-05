@@ -62,17 +62,20 @@ _KIND_LABELS: dict[str, str] = {
     "instructions":    "Client-facing instructions",
 }
 
-# Defaults — Primary image + all written content ON. Start/End frames OFF
-# by default because they double the image credit cost and most workout
-# screens only need the primary frame.
+# Defaults — MINIMAL by default to conserve credits. Only the primary
+# image and coaching points fire on new exercises; the coach can flip
+# additional kinds on from the Generation Control panel when they need
+# fuller coverage. Changing these defaults DOES NOT overwrite existing
+# coach preferences stored in db.settings — they only apply to fresh
+# environments that never opened the panel.
 _KIND_DEFAULTS: dict[str, bool] = {
     "image_primary":   True,
     "image_start":     False,
     "image_end":       False,
     "coaching_points": True,
-    "common_mistakes": True,
-    "alternatives":    True,
-    "instructions":    True,
+    "common_mistakes": False,
+    "alternatives":    False,
+    "instructions":    False,
 }
 
 # Env-var overrides (checked last as a hard kill-switch — flipping any of
@@ -133,6 +136,200 @@ async def _kind_enabled(kind: str) -> bool:
     return (await _load_kind_toggles()).get(kind, True)
 
 
+# ---------------------------------------------------------------------------
+# Budget safeguard — global pause when the LLM key runs out of credit.
+# ---------------------------------------------------------------------------
+#
+# When ANY auto-generation task detects a "Budget has been exceeded" error
+# (or one of its close cousins) we set a single `budget_paused_*` marker
+# in db.settings. Every subsequent auto-gen call short-circuits on that
+# marker so we don't burn through further failed API calls at ~1 credit each.
+#
+# The pause is coach-visible in the Generation Control panel and coach-
+# clearable via POST /coach/auto-media-gen/budget/resume once credits are
+# topped up. This is a global, cross-exercise flag — one blown budget stops
+# ALL kinds until the coach explicitly resumes.
+
+_BUDGET_MARKERS: tuple[str, ...] = (
+    "budget has been exceeded",
+    "budget exceeded",
+    "insufficient credits",
+    "quota exceeded",
+    "credit limit",
+    "402 payment required",
+)
+
+
+def _is_budget_error(err: object) -> bool:
+    """Cheap substring check on the error string. We accept `Exception`,
+    `HTTPException`, or any object whose `str()` includes a budget marker."""
+    if err is None:
+        return False
+    text = ""
+    try:
+        # HTTPException stores structured detail — inspect both.
+        detail = getattr(err, "detail", None)
+        if detail is not None:
+            text += " " + str(detail)
+    except Exception:
+        pass
+    try:
+        text += " " + str(err)
+    except Exception:
+        pass
+    text = text.lower()
+    return any(m in text for m in _BUDGET_MARKERS)
+
+
+async def is_budget_paused() -> bool:
+    """True if a budget-exceeded error has been recorded and NOT yet
+    resumed by the coach. Cheap read; called at the top of every auto-gen
+    task."""
+    try:
+        doc = await db.settings.find_one(
+            {"_id": _SETTINGS_DOC_ID},
+            {"_id": 0, "budget_paused_at": 1, "budget_resumed_at": 1},
+        ) or {}
+    except Exception:
+        return False
+    paused_at = doc.get("budget_paused_at")
+    resumed_at = doc.get("budget_resumed_at")
+    if not paused_at:
+        return False
+    # Resume must be strictly newer than the pause to clear it.
+    if resumed_at and str(resumed_at) > str(paused_at):
+        return False
+    return True
+
+
+async def _mark_budget_paused(reason: str, *, ex_id: Optional[str] = None,
+                              kind: Optional[str] = None) -> None:
+    """Record the pause once — noisy log level so it lands in supervisor
+    output. Coach dashboards poll `is_budget_paused()` to render the banner.
+    Also stamps the offending exercise so its media row can render a
+    "GENERATION PAUSED" chip instead of a blank slot."""
+    now = now_iso()
+    reason = (reason or "")[:400]
+    try:
+        already = await is_budget_paused()
+        await db.settings.update_one(
+            {"_id": _SETTINGS_DOC_ID},
+            {"$set": {
+                "budget_paused_at": now,
+                "budget_paused_reason": reason,
+                "budget_paused_by_kind": kind,
+                "budget_paused_by_exercise_id": ex_id,
+                "updated_at": now,
+            }},
+            upsert=True,
+        )
+        if not already:
+            logger.warning(
+                "auto_media_gen: BUDGET PAUSED — ex=%s kind=%s reason=%s",
+                ex_id, kind, reason,
+            )
+        # Also mark the offending exercise so per-row UI shows the pause.
+        if ex_id:
+            try:
+                await db.exercises_v2.update_one(
+                    {"id": ex_id},
+                    {"$set": {
+                        "auto_media_gen_paused": True,
+                        "auto_media_gen_paused_reason": reason,
+                        "auto_media_gen_paused_at": now,
+                    }},
+                )
+            except Exception:
+                logger.exception("auto_media_gen: failed to stamp exercise pause")
+    except Exception:
+        logger.exception("auto_media_gen: failed to record budget pause")
+
+
+async def _clear_budget_pause(by: str) -> dict:
+    """Coach explicitly resumes generation after topping up credits."""
+    now = now_iso()
+    await db.settings.update_one(
+        {"_id": _SETTINGS_DOC_ID},
+        {"$set": {"budget_resumed_at": now, "budget_resumed_by": by,
+                  "updated_at": now}},
+        upsert=True,
+    )
+    # Clear per-exercise pause flags so stale banners disappear next reload.
+    try:
+        await db.exercises_v2.update_many(
+            {"auto_media_gen_paused": True},
+            {"$set": {"auto_media_gen_paused": False,
+                      "auto_media_gen_resumed_at": now}},
+        )
+    except Exception:
+        logger.exception("auto_media_gen: failed to clear per-exercise pauses")
+    logger.warning("auto_media_gen: BUDGET pause CLEARED by %s", by)
+    return {"resumed_at": now, "resumed_by": by}
+
+
+
+async def _safe_run_image_job(image_id: str, prompt: str, *,
+                              ex_id: Optional[str] = None,
+                              slot: Optional[str] = None) -> None:
+    """Wrap the exercise-content image job with budget-aware error handling.
+
+    If the underlying image generator raises a budget-exceeded error we
+    stamp the global pause flag so nothing else fires, and mark the
+    image row as ``status=paused_budget`` so the UI can render the badge
+    (rather than a blank slot).
+    """
+    try:
+        from feature_exercise_content import _run_image_job
+    except Exception:
+        logger.exception("auto_media_gen: _run_image_job unavailable")
+        return
+
+    # Second-line defence: skip if the budget is already paused before we
+    # even queue an API call. Cheap DB read but avoids a wasted attempt.
+    if await is_budget_paused():
+        try:
+            await db.exercise_content_images.update_one(
+                {"id": image_id},
+                {"$set": {"status": "paused_budget",
+                          "error": "budget_paused",
+                          "updated_at": now_iso()}},
+            )
+        except Exception:
+            pass
+        return
+
+    try:
+        await _run_image_job(image_id, prompt, use_louis_ref=True)
+    except Exception as e:
+        # _run_image_job already writes status=failed on its own; we only
+        # need to trip the budget pause when the error smells budget-y.
+        if _is_budget_error(e):
+            await _mark_budget_paused(str(e), ex_id=ex_id, kind=f"image_{slot}")
+        # Otherwise leave the row's failure state as-is.
+
+    # _run_image_job doesn't raise on inner failures — it writes
+    # status=failed with `error`. Inspect it here to trip the pause.
+    try:
+        row = await db.exercise_content_images.find_one(
+            {"id": image_id}, {"_id": 0, "status": 1, "error": 1},
+        )
+        if row and row.get("status") == "failed" and _is_budget_error(row.get("error")):
+            await _mark_budget_paused(
+                str(row.get("error"))[:400], ex_id=ex_id, kind=f"image_{slot}",
+            )
+            # Retag the row as paused_budget so the UI can differentiate
+            # "we hit a budget wall" from "the image generator crashed".
+            try:
+                await db.exercise_content_images.update_one(
+                    {"id": image_id},
+                    {"$set": {"status": "paused_budget",
+                              "updated_at": now_iso()}},
+                )
+            except Exception:
+                pass
+    except Exception:
+        logger.exception("auto_media_gen: post-image budget check failed")
+
 
 async def auto_enqueue_media_for_exercise(
     ex_id: str, *, triggered_by: Optional[str] = None,
@@ -147,6 +344,11 @@ async def auto_enqueue_media_for_exercise(
     """
     if not AUTO_MEDIA_GEN_ENABLED:
         return {"skipped": True, "reason": "AUTO_MEDIA_GEN disabled"}
+
+    # Global budget pause — one blown budget stops all kinds until the
+    # coach clears it from the Generation Control panel.
+    if await is_budget_paused():
+        return {"skipped": True, "reason": "budget_paused"}
 
     ex = await db.exercises_v2.find_one({"id": ex_id})
     if not ex:
@@ -214,7 +416,9 @@ async def auto_enqueue_media_for_exercise(
                 set_updates[f"{slot_map_field}.{slot}"] = image_id
                 set_updates[legacy_key] = image_id
                 queued_images.append(slot)
-                asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=True))
+                asyncio.create_task(
+                    _safe_run_image_job(image_id, prompt, ex_id=ex_id, slot=slot)
+                )
 
             if set_updates:
                 set_updates["approved_image_status"] = "Needs Review"
@@ -328,6 +532,10 @@ async def _auto_generate_content(ex_id: str, kind: str, creator: str) -> None:
     # Belt-and-braces: honour the toggle at task start too, in case the
     # coach flipped it OFF between enqueue and execution.
     if not await _kind_enabled(kind):
+        return
+    # Global budget pause — abort ALL further generation once we've hit
+    # a budget-exceeded error, so we don't burn credits on error responses.
+    if await is_budget_paused():
         return
     try:
         ex = await db.exercises_v2.find_one({"id": ex_id})
@@ -473,6 +681,10 @@ async def _auto_generate_content(ex_id: str, kind: str, creator: str) -> None:
         except Exception:
             pass
     except Exception as e:
+        # Budget-exceeded errors trip the global pause and stop remaining
+        # tasks. Other exceptions just log so the coach can regen manually.
+        if _is_budget_error(e):
+            await _mark_budget_paused(str(e), ex_id=ex_id, kind=kind)
         logger.warning(
             f"auto_media_gen: {kind} generation failed for {ex_id}: {e}"
         )
@@ -488,6 +700,18 @@ from server import api, require_role
 @api.get("/coach/auto-media-gen/status")
 async def auto_media_gen_status(_: dict = Depends(require_role("coach"))):
     toggles = await _load_kind_toggles()
+    # Budget pause payload — surfaces the coach-facing banner.
+    paused = await is_budget_paused()
+    doc = {}
+    try:
+        doc = await db.settings.find_one(
+            {"_id": _SETTINGS_DOC_ID},
+            {"_id": 0, "budget_paused_at": 1, "budget_paused_reason": 1,
+             "budget_paused_by_kind": 1, "budget_paused_by_exercise_id": 1,
+             "budget_resumed_at": 1, "budget_resumed_by": 1},
+        ) or {}
+    except Exception:
+        pass
     return {
         "enabled": AUTO_MEDIA_GEN_ENABLED,
         "default_slots": list(_AUTO_SLOTS),
@@ -496,8 +720,25 @@ async def auto_media_gen_status(_: dict = Depends(require_role("coach"))):
         "toggles": toggles,
         "labels": _KIND_LABELS,
         "env_kill_switches": {k: v for k, v in _KIND_ENV_OFF.items() if v},
+        "budget_paused": paused,
+        "budget_paused_at": doc.get("budget_paused_at"),
+        "budget_paused_reason": doc.get("budget_paused_reason"),
+        "budget_paused_by_kind": doc.get("budget_paused_by_kind"),
+        "budget_paused_by_exercise_id": doc.get("budget_paused_by_exercise_id"),
+        "budget_resumed_at": doc.get("budget_resumed_at"),
         "note": "Toggle per kind via PATCH /coach/auto-media-gen/settings. Env var *_OFF still wins.",
     }
+
+
+@api.post("/coach/auto-media-gen/budget/resume")
+async def auto_media_gen_budget_resume(
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    """Clear the global budget-paused flag once the coach has topped up
+    credits on the Emergent Universal Key. Fresh auto-gen tasks will
+    resume on the next exercise-create trigger."""
+    payload = await _clear_budget_pause(by=coach.get("id") or "unknown")
+    return {"ok": True, **payload}
 
 
 @api.get("/coach/auto-media-gen/settings")

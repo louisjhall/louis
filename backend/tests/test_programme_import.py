@@ -701,8 +701,11 @@ def test_apply_replaces_existing_non_manual_workout(session, base_url, coach_hea
         _cleanup_test_workouts(session, base_url, coach_headers, [first_wid])
 
 
-def test_apply_rejects_already_applied_preview(session, base_url, coach_headers):
-    """After a successful apply, the same preview_id must return 409 on re-apply."""
+def test_apply_re_apply_is_resumable(session, base_url, coach_headers):
+    """A re-apply of an already-applied preview must be idempotent — the
+    second call returns 200 and marks every workout as already_imported.
+    This makes /apply resumable after a partial run (network interrupt)
+    without a special flag."""
     dates = ["2028-01-13"]
     env = _make_apply_envelope(dates)
     p = _preview_then_get(session, base_url, coach_headers, env)
@@ -711,8 +714,11 @@ def test_apply_rejects_already_applied_preview(session, base_url, coach_headers)
 
     try:
         r2 = _apply(session, base_url, coach_headers, p["preview_id"])
-        assert r2.status_code == 409, f"{r2.status_code}: {r2.text}"
-        assert "already_applied" in r2.text
+        assert r2.status_code == 200, f"expected resumable 200, got {r2.status_code}: {r2.text}"
+        body = r2.json()
+        assert body.get("resume") is True
+        assert body["counters"]["already_imported"] == 1
+        assert body["counters"]["inserted"] == 0
     finally:
         _cleanup_test_workouts(session, base_url, coach_headers, r1.json()["workout_ids"])
 
@@ -745,7 +751,10 @@ def test_apply_creates_drafts_for_unresolved_exercises(session, base_url, coach_
     """Exercises the resolver can't match must become draft library entries
     at apply time (not preview time)."""
     unique_marker = uuid.uuid4().hex[:8].upper()
-    unresolved_name = f"Very unique lift {unique_marker}"
+    # Use tokens that are extremely unlikely to score against any existing
+    # library / draft row — the reuse-first fuzzy matcher looks at token
+    # overlap, so real English words like "lift" can drift over threshold.
+    unresolved_name = f"Zxq{unique_marker}vwpm bmqrpz"
     env = {
         "$schema": "crewfit://programme-import/v1",
         "meta": {"client_email": CLIENT_EMAIL, "month": "2028-02",

@@ -647,6 +647,50 @@ async def _inline_media_scan(sections: dict[str, list[dict]]) -> list[dict]:
 # Preview orchestration
 # ---------------------------------------------------------------------------
 
+async def _load_draft_pool() -> list[dict]:
+    """Load the DRAFT / pending exercise pool for reuse-first matching.
+
+    We include everything in exercises_v2 that isn't already covered by
+    `get_approved_pool()` (i.e. not approved-and-client-visible). These
+    are typically draft rows queued via `create_exercise_request_if_missing`.
+    Reusing them prevents drafting the same movement twice when a coach
+    imports similar names across weeks / months.
+    """
+    try:
+        from feature_v2_resolver import _normalise_name, _tokens
+    except Exception:
+        logger.exception("programme_import: draft-pool helpers unavailable")
+        return []
+    try:
+        rows = await db.exercises_v2.find(
+            # Anything NOT in the approved-client-visible pool. Effectively:
+            # drafts, requested, hidden, etc.
+            {"$or": [
+                {"status": {"$nin": ["Approved", "Live"]}},
+                {"safe_for_programming": {"$ne": True}},
+                {"visibility": {"$ne": "client_visible"}},
+            ]},
+            {"_id": 0, "id": 1, "exercise_name": 1, "movement_pattern": 1,
+             "body_area": 1, "equipment_type": 1, "tags": 1, "status": 1,
+             "requested_name_norm": 1},
+        ).to_list(2000)
+    except Exception:
+        logger.exception("programme_import: draft-pool query failed")
+        return []
+    for r in rows:
+        r["_name_norm"] = _normalise_name(r.get("exercise_name"))
+        r["_name_tokens"] = _tokens(r.get("exercise_name"))
+        agg = " ".join([
+            str(r.get("movement_pattern") or ""),
+            str(r.get("body_area") or ""),
+            " ".join(r.get("equipment_type") or []),
+            " ".join(r.get("tags") or []),
+        ])
+        r["_meta_tokens"] = _tokens(agg)
+        r["_is_draft"] = True
+    return rows
+
+
 async def _process_workout(
     w: WorkoutEnvelopeItem,
     client: dict,
@@ -940,13 +984,20 @@ async def coach_programme_import_preview(
         logger.info("programme_import: %d dates outside %s: %s",
                     len(out_of_month), envelope.meta.month, out_of_month[:5])
 
-    # --- Load the approved exercise pool ONCE ---
+    # --- Load the widened exercise pool ONCE (approved + drafts) ---
+    # Strictly reuse-first: we match against BOTH approved-and-client-visible
+    # rows AND draft rows so a novel ChatGPT name that already has a queued
+    # draft (from a prior import) is reused instead of drafting a new one.
+    # This keeps db.exercises_v2 clean and prevents credit spend on duplicate
+    # image / content generation for the same underlying movement.
     try:
         from feature_v2_resolver import get_approved_pool
     except Exception as e:  # pragma: no cover
         logger.exception("programme_import: resolver unavailable at import")
         raise HTTPException(500, f"exercise resolver unavailable: {e}")
-    pool = await get_approved_pool()
+    approved_pool = await get_approved_pool()
+    draft_pool = await _load_draft_pool()
+    pool = approved_pool + draft_pool
 
     # --- Process every workout ---
     per_workout: list[dict] = []
@@ -1205,16 +1256,13 @@ async def coach_programme_import_apply(
                 "blocking_errors": preview["blocking_errors"],
             },
         )
-    if preview.get("applied_at"):
-        raise HTTPException(
-            409,
-            {
-                "code": "preview_already_applied",
-                "message": "this preview has already been applied",
-                "applied_at": preview["applied_at"],
-                "applied_workout_ids": preview.get("applied_workout_ids") or [],
-            },
-        )
+    # Note: Previously a re-apply of an already-applied preview returned 409.
+    # We now allow the retry so partial applies (interrupted by network / timeout)
+    # are naturally resumable — every workout carries `import_ref`, and each
+    # loop iteration checks whether the target day already has a workout with
+    # the same ref, returning `already_imported` for those and inserting the
+    # rest. This makes /apply idempotent + resumable without any special flag.
+    is_resume = bool(preview.get("applied_at"))
 
     # ------------------------------------------------------------------
     # 2. Reload client (in case the record changed since preview).
@@ -1660,6 +1708,7 @@ async def coach_programme_import_apply(
         "counters": counters,
         "workout_ids": inserted_ids,
         "results": results,
+        "resume": is_resume,
     }
 
 

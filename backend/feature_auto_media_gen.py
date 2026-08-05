@@ -45,6 +45,60 @@ _AUTO_SLOTS = ("primary", "start", "end")
 _AUTO_USER_ID = "system_auto_media_gen"
 
 
+# ---------------------------------------------------------------------------
+# Per-kind toggles — coach flips at runtime without a redeploy.
+# ---------------------------------------------------------------------------
+
+# All kinds we know about. Each maps to a friendly label the coach sees.
+_KIND_LABELS: dict[str, str] = {
+    "images":          "Images (Nano Banana × 3 slots)",
+    "coaching_points": "Coaching points (Louis-voice)",
+    "common_mistakes": "Common mistakes",
+    "alternatives":    "Alternative exercises (+ library drafts)",
+    "instructions":    "Client-facing instructions",
+}
+
+# Env-var overrides (checked last as a hard kill-switch — flipping any of
+# these to "false" beats the DB toggle so cost blow-outs can be stopped
+# via an env change even if the DB is unreachable).
+_KIND_ENV_OFF = {
+    "images":          str(os.environ.get("AUTO_MEDIA_GEN_IMAGES", "true")).lower()          not in ("1", "true", "yes", "on"),
+    "coaching_points": str(os.environ.get("AUTO_MEDIA_GEN_COACHING", "true")).lower()        not in ("1", "true", "yes", "on"),
+    "common_mistakes": str(os.environ.get("AUTO_MEDIA_GEN_MISTAKES", "true")).lower()        not in ("1", "true", "yes", "on"),
+    "alternatives":    str(os.environ.get("AUTO_MEDIA_GEN_ALTERNATIVES", "true")).lower()    not in ("1", "true", "yes", "on"),
+    "instructions":    str(os.environ.get("AUTO_MEDIA_GEN_INSTRUCTIONS", "true")).lower()    not in ("1", "true", "yes", "on"),
+}
+
+_SETTINGS_DOC_ID = "auto_media_gen"
+
+
+async def _load_kind_toggles() -> dict:
+    """Return {kind: bool} — merge of DB settings (source of truth) and
+    env-var kill switches (env-false ALWAYS wins). Falls back to all-on
+    when the DB doc is missing so behaviour matches the previous version."""
+    defaults = {k: True for k in _KIND_LABELS}
+    try:
+        doc = await db.settings.find_one({"_id": _SETTINGS_DOC_ID}) or {}
+    except Exception as e:
+        logger.warning(f"auto_media_gen: settings load failed ({e}), using defaults")
+        doc = {}
+    toggles: dict[str, bool] = {}
+    for k in _KIND_LABELS:
+        val = doc.get(k) if k in doc else defaults[k]
+        if not isinstance(val, bool):
+            val = defaults[k]
+        # Env kill-switch wins
+        if _KIND_ENV_OFF.get(k):
+            val = False
+        toggles[k] = val
+    return toggles
+
+
+async def _kind_enabled(kind: str) -> bool:
+    return (await _load_kind_toggles()).get(kind, True)
+
+
+
 async def auto_enqueue_media_for_exercise(
     ex_id: str, *, triggered_by: Optional[str] = None,
 ) -> dict:
@@ -70,55 +124,61 @@ async def auto_enqueue_media_for_exercise(
     creator = triggered_by or _AUTO_USER_ID
     queued_images: list[str] = []
     queued_content: list[str] = []
+    skipped_by_toggle: list[str] = []
+
+    toggles = await _load_kind_toggles()
 
     # ---- Images (only for slots that are still empty) ----
-    try:
-        from feature_exercise_content import (
-            _build_ex_prompt, _run_image_job, _resolve_persona,
-            _slot_map_field_for_persona,
-        )
-        persona = _resolve_persona(None, False)  # default male-louis frame
-        slot_map_field = _slot_map_field_for_persona(persona)
+    if not toggles.get("images", True):
+        skipped_by_toggle.append("images")
+    else:
+        try:
+            from feature_exercise_content import (
+                _build_ex_prompt, _run_image_job, _resolve_persona,
+                _slot_map_field_for_persona,
+            )
+            persona = _resolve_persona(None, False)  # default male-louis frame
+            slot_map_field = _slot_map_field_for_persona(persona)
 
-        legacy_key_by_slot = {
-            "primary": "primary_image_id",
-            "start":   "demo_start_image_id",
-            "end":     "demo_end_image_id",
-        }
-        set_updates: dict = {}
-        for slot in _AUTO_SLOTS:
-            legacy_key = legacy_key_by_slot[slot]
-            # Skip if already populated (via legacy or persona map).
-            if ex.get(legacy_key):
-                continue
-            slot_map = ex.get(slot_map_field) or {}
-            if slot_map.get(slot):
-                continue
+            legacy_key_by_slot = {
+                "primary": "primary_image_id",
+                "start":   "demo_start_image_id",
+                "end":     "demo_end_image_id",
+            }
+            set_updates: dict = {}
+            for slot in _AUTO_SLOTS:
+                legacy_key = legacy_key_by_slot[slot]
+                # Skip if already populated (via legacy or persona map).
+                if ex.get(legacy_key):
+                    continue
+                slot_map = ex.get(slot_map_field) or {}
+                if slot_map.get(slot):
+                    continue
 
-            image_id = new_id()
-            prompt = _build_ex_prompt(ex, slot, None, persona=persona)
-            await db.exercise_content_images.insert_one({
-                "id": image_id, "exercise_id": ex_id, "slot": slot,
-                "requested_slot": slot,
-                "gender": "male",
-                "persona": persona,
-                "prompt": prompt, "status": "generating",
-                "storage_path": None, "size_bytes": None, "mime": None,
-                "created_by": creator, "auto": True,
-                "created_at": now_iso(), "updated_at": now_iso(),
-            })
-            set_updates[f"{slot_map_field}.{slot}"] = image_id
-            set_updates[legacy_key] = image_id
-            queued_images.append(slot)
-            asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=True))
+                image_id = new_id()
+                prompt = _build_ex_prompt(ex, slot, None, persona=persona)
+                await db.exercise_content_images.insert_one({
+                    "id": image_id, "exercise_id": ex_id, "slot": slot,
+                    "requested_slot": slot,
+                    "gender": "male",
+                    "persona": persona,
+                    "prompt": prompt, "status": "generating",
+                    "storage_path": None, "size_bytes": None, "mime": None,
+                    "created_by": creator, "auto": True,
+                    "created_at": now_iso(), "updated_at": now_iso(),
+                })
+                set_updates[f"{slot_map_field}.{slot}"] = image_id
+                set_updates[legacy_key] = image_id
+                queued_images.append(slot)
+                asyncio.create_task(_run_image_job(image_id, prompt, use_louis_ref=True))
 
-        if set_updates:
-            set_updates["approved_image_status"] = "Needs Review"
-            set_updates["content_status.images"] = True
-            set_updates["updated_at"] = now_iso()
-            await db.exercises_v2.update_one({"id": ex_id}, {"$set": set_updates})
-    except Exception as e:
-        logger.warning(f"auto_media_gen: image queue failed for {ex_id}: {e}")
+            if set_updates:
+                set_updates["approved_image_status"] = "Needs Review"
+                set_updates["content_status.images"] = True
+                set_updates["updated_at"] = now_iso()
+                await db.exercises_v2.update_one({"id": ex_id}, {"$set": set_updates})
+        except Exception as e:
+            logger.warning(f"auto_media_gen: image queue failed for {ex_id}: {e}")
 
     # ---- Written content — coaching points, common mistakes, alternatives,
     # client-facing instructions. Each fires only if its field is empty on the
@@ -133,6 +193,9 @@ async def auto_enqueue_media_for_exercise(
     )
     try:
         for kind in _CONTENT_KINDS:
+            if not toggles.get(kind, True):
+                skipped_by_toggle.append(kind)
+                continue
             field = _kind_to_field(kind)
             existing = ex.get(field)
             # Skip if the coach has already authored content for this field.
@@ -152,7 +215,8 @@ async def auto_enqueue_media_for_exercise(
             from feature_exercise_content import _log
             await _log(
                 ex_id, creator, "auto_media_gen_enqueued",
-                f"images={','.join(queued_images) or '-'} content={','.join(queued_content) or '-'}",
+                f"images={','.join(queued_images) or '-'} content={','.join(queued_content) or '-'}"
+                + (f" skipped_by_toggle={','.join(skipped_by_toggle)}" if skipped_by_toggle else ""),
             )
         except Exception:
             pass
@@ -161,6 +225,7 @@ async def auto_enqueue_media_for_exercise(
         "skipped": False,
         "queued_images": queued_images,
         "queued_content": queued_content,
+        "skipped_by_toggle": skipped_by_toggle,
     }
 
 
@@ -215,6 +280,10 @@ async def _auto_generate_content(ex_id: str, kind: str, creator: str) -> None:
     resolver itself dedups.
     """
     if kind not in _KIND_TASK_PROMPTS:
+        return
+    # Belt-and-braces: honour the toggle at task start too, in case the
+    # coach flipped it OFF between enqueue and execution.
+    if not await _kind_enabled(kind):
         return
     try:
         ex = await db.exercises_v2.find_one({"id": ex_id})
@@ -374,12 +443,62 @@ from server import api, require_role
 
 @api.get("/coach/auto-media-gen/status")
 async def auto_media_gen_status(_: dict = Depends(require_role("coach"))):
+    toggles = await _load_kind_toggles()
     return {
         "enabled": AUTO_MEDIA_GEN_ENABLED,
         "default_slots": list(_AUTO_SLOTS),
         "auto_content_kinds": ["coaching_points", "common_mistakes",
                                 "alternatives", "instructions"],
-        "note": "Toggle via AUTO_MEDIA_GEN env var. Coach still has to approve.",
+        "toggles": toggles,
+        "labels": _KIND_LABELS,
+        "env_kill_switches": {k: v for k, v in _KIND_ENV_OFF.items() if v},
+        "note": "Toggle per kind via PATCH /coach/auto-media-gen/settings. Env var *_OFF still wins.",
+    }
+
+
+@api.get("/coach/auto-media-gen/settings")
+async def auto_media_gen_settings_get(_: dict = Depends(require_role("coach"))):
+    return {
+        "toggles": await _load_kind_toggles(),
+        "labels": _KIND_LABELS,
+        "env_kill_switches": {k: v for k, v in _KIND_ENV_OFF.items() if v},
+    }
+
+
+@api.patch("/coach/auto-media-gen/settings")
+async def auto_media_gen_settings_patch(
+    body: dict, coach: dict = Depends(require_role("coach")),
+):
+    """Coach flips one or more per-kind toggles.
+
+    Body: {"toggles": {"images": false, "alternatives": true, ...}}
+
+    Only the kinds sent in the body are changed; anything missing stays
+    at its current value. Env-var kill switches still win at read time.
+    """
+    incoming = (body or {}).get("toggles") or {}
+    if not isinstance(incoming, dict):
+        return {"ok": False, "error": "toggles must be an object"}
+    valid_kinds = set(_KIND_LABELS.keys())
+    cleaned: dict = {}
+    for k, v in incoming.items():
+        if k not in valid_kinds:
+            continue
+        cleaned[k] = bool(v)
+    if not cleaned:
+        return {"ok": False, "error": "no valid kinds provided"}
+
+    cleaned["updated_at"] = now_iso()
+    cleaned["updated_by"] = coach.get("id")
+    await db.settings.update_one(
+        {"_id": _SETTINGS_DOC_ID},
+        {"$set": cleaned},
+        upsert=True,
+    )
+    return {
+        "ok": True,
+        "toggles": await _load_kind_toggles(),
+        "changed": {k: v for k, v in cleaned.items() if k in valid_kinds},
     }
 
 
@@ -578,5 +697,6 @@ async def auto_media_gen_backfill_run(
 
 logger.info(
     f"feature_auto_media_gen: enabled={AUTO_MEDIA_GEN_ENABLED} "
-    f"slots={_AUTO_SLOTS}"
+    f"slots={_AUTO_SLOTS} kinds={list(_KIND_LABELS)} "
+    f"env_kill_switches={[k for k,v in _KIND_ENV_OFF.items() if v] or 'none'}"
 )

@@ -1,0 +1,283 @@
+/**
+ * /coach/admin/auto-media — Per-kind Auto-Media-Gen toggles.
+ *
+ * Louis flips which content kinds get auto-generated when a new
+ * exercise lands in the library. Coach still has to approve.
+ *
+ * Backed by:
+ *   GET  /api/coach/auto-media-gen/settings
+ *   PATCH /api/coach/auto-media-gen/settings
+ *
+ * Env kill-switches (AUTO_MEDIA_GEN_<KIND>=false) always win over the
+ * DB toggle — the screen shows them as locked with a badge.
+ */
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  View, Text, StyleSheet, ScrollView, Pressable, Switch,
+  ActivityIndicator, RefreshControl,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { api } from "@/src/lib/api";
+import { theme } from "@/src/lib/theme";
+import { toast } from "@/src/lib/ux";
+
+type SettingsPayload = {
+  toggles: Record<string, boolean>;
+  labels: Record<string, string>;
+  env_kill_switches?: Record<string, boolean>;
+};
+
+// Cost hint per kind so Louis can see credit impact at a glance.
+const COST_HINT: Record<string, string> = {
+  images:          "~3 Nano-Banana image gens (biggest cost)",
+  coaching_points: "1 Claude call (~500 tokens)",
+  common_mistakes: "1 Claude call (~500 tokens)",
+  alternatives:    "1 Claude call + auto-creates library drafts",
+  instructions:    "1 Claude call (~500 tokens)",
+};
+
+// Preferred display order (biggest cost first so it's easy to disable).
+const ORDER = ["images", "alternatives", "coaching_points", "common_mistakes", "instructions"];
+
+export default function AutoMediaSettingsScreen() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [data, setData] = useState<SettingsPayload | null>(null);
+  const [genStatus, setGenStatus] = useState<any>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [s, st] = await Promise.all([
+        api<SettingsPayload>("/coach/auto-media-gen/settings"),
+        api<any>("/coach/auto-media-gen/status").catch(() => null),
+      ]);
+      setData(s);
+      setGenStatus(st);
+    } catch (e: any) {
+      toast(e?.message || "Couldn't load auto-media settings.", "error");
+    } finally { setLoading(false); setRefreshing(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const flip = async (kind: string, next: boolean) => {
+    if (!data) return;
+    setSaving(kind);
+    // Optimistic
+    const prev = data.toggles[kind];
+    setData({ ...data, toggles: { ...data.toggles, [kind]: next } });
+    try {
+      const r = await api<any>("/coach/auto-media-gen/settings", {
+        method: "PATCH",
+        body: { toggles: { [kind]: next } },
+      });
+      if (r?.ok && r?.toggles) {
+        setData((d) => d ? { ...d, toggles: r.toggles } : d);
+      }
+      toast(`${data.labels[kind] || kind} → ${next ? "ON" : "OFF"}`, "success");
+    } catch (e: any) {
+      // Revert
+      setData((d) => d ? { ...d, toggles: { ...d.toggles, [kind]: prev } } : d);
+      toast(e?.message || "Couldn't save.", "error");
+    } finally { setSaving(null); }
+  };
+
+  const bulk = async (value: boolean) => {
+    if (!data) return;
+    setSaving("__bulk__");
+    const patch: Record<string, boolean> = {};
+    for (const k of Object.keys(data.labels)) {
+      if (!(data.env_kill_switches || {})[k]) patch[k] = value;
+    }
+    try {
+      const r = await api<any>("/coach/auto-media-gen/settings", {
+        method: "PATCH", body: { toggles: patch },
+      });
+      if (r?.toggles) setData((d) => d ? { ...d, toggles: r.toggles } : d);
+      toast(value ? "All kinds ON" : "All kinds OFF", "success");
+    } catch (e: any) {
+      toast(e?.message || "Couldn't save.", "error");
+    } finally { setSaving(null); }
+  };
+
+  const kinds = useMemo(() => {
+    if (!data) return [];
+    const known = Object.keys(data.labels);
+    const ordered = [...ORDER.filter((k) => known.includes(k)), ...known.filter((k) => !ORDER.includes(k))];
+    return ordered;
+  }, [data]);
+
+  const totalOn = useMemo(() => {
+    if (!data) return 0;
+    return Object.values(data.toggles).filter(Boolean).length;
+  }, [data]);
+
+  return (
+    <SafeAreaView style={styles.root} edges={["top"]}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} hitSlop={10}>
+          <Ionicons name="chevron-back" size={24} color={theme.color.text} />
+        </Pressable>
+        <Text style={styles.headerTitle}>AUTO-MEDIA GENERATION</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      {loading ? (
+        <ActivityIndicator color={theme.color.brand} style={{ marginTop: 40 }} />
+      ) : !data ? (
+        <View style={styles.card}><Text style={styles.emptyT}>Could not load settings.</Text></View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ padding: 16, paddingBottom: 60 }}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.color.brand} />}
+        >
+          <View style={styles.card}>
+            <Text style={styles.sectionT}>SUMMARY</Text>
+            <Text style={styles.sectionHint}>
+              When any new exercise is added anywhere in the app, the enabled
+              kinds below are queued in the background. Coach still has to
+              approve — nothing is published automatically.
+            </Text>
+            <View style={styles.statRow}>
+              <View style={styles.stat}>
+                <Text style={styles.statN}>{totalOn}</Text>
+                <Text style={styles.statL}>ON</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statN}>{Object.keys(data.labels).length - totalOn}</Text>
+                <Text style={styles.statL}>OFF</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={styles.statN}>{Object.keys(data.env_kill_switches || {}).length}</Text>
+                <Text style={styles.statL}>ENV LOCK</Text>
+              </View>
+              <View style={styles.stat}>
+                <Text style={[styles.statN, { color: genStatus?.enabled === false ? "#ff6b6b" : "#4ade80" }]}>
+                  {genStatus?.enabled === false ? "OFF" : "ON"}
+                </Text>
+                <Text style={styles.statL}>FEATURE</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Pressable style={styles.bulkBtn} onPress={() => bulk(true)} disabled={saving === "__bulk__"}>
+                <Text style={styles.bulkBtnT}>ALL ON</Text>
+              </Pressable>
+              <Pressable style={[styles.bulkBtn, styles.bulkBtnDark]} onPress={() => bulk(false)} disabled={saving === "__bulk__"}>
+                <Text style={styles.bulkBtnT}>ALL OFF</Text>
+              </Pressable>
+              {saving === "__bulk__" && <ActivityIndicator color={theme.color.brand} />}
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionT}>PER-KIND TOGGLES</Text>
+            <Text style={styles.sectionHint}>
+              Turn off any kind to save credits — coach can still generate
+              it manually per-exercise from the library.
+            </Text>
+            {kinds.map((k) => {
+              const label = data.labels[k] || k;
+              const isOn = !!data.toggles[k];
+              const envLocked = !!(data.env_kill_switches || {})[k];
+              return (
+                <View key={k} style={styles.row} testID={`toggle-${k}`}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={styles.rowTitle}>{label}</Text>
+                      {envLocked && (
+                        <View style={styles.envBadge}>
+                          <Text style={styles.envBadgeT}>ENV LOCK</Text>
+                        </View>
+                      )}
+                    </View>
+                    {COST_HINT[k] ? <Text style={styles.rowDesc}>{COST_HINT[k]}</Text> : null}
+                  </View>
+                  {saving === k ? (
+                    <ActivityIndicator color={theme.color.brand} />
+                  ) : (
+                    <Switch
+                      value={isOn}
+                      onValueChange={(next) => flip(k, next)}
+                      disabled={envLocked}
+                      trackColor={{ true: theme.color.brand, false: "#3a3a3a" }}
+                      thumbColor="#fff"
+                    />
+                  )}
+                </View>
+              );
+            })}
+          </View>
+
+          {Object.keys(data.env_kill_switches || {}).length > 0 && (
+            <View style={styles.card}>
+              <Text style={styles.sectionT}>ENV-LOCKED KINDS</Text>
+              <Text style={styles.sectionHint}>
+                These kinds are forced OFF by an environment variable
+                (AUTO_MEDIA_GEN_&lt;KIND&gt;=false) and cannot be flipped
+                from this panel. Update the env in your Emergent
+                deployment settings to unlock.
+              </Text>
+              {Object.keys(data.env_kill_switches || {}).map((k) => (
+                <Text key={k} style={styles.envLockedItem}>· {data.labels[k] || k}</Text>
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.footNote}>
+            All auto-generation goes to “Needs Review” — you still approve
+            everything before it lands in a client workout.
+          </Text>
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: theme.color.surface },
+  header: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
+  },
+  headerTitle: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900" },
+
+  card: {
+    backgroundColor: theme.color.surface2,
+    borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.color.border,
+    padding: 14, marginBottom: 12,
+  },
+  sectionT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900", marginBottom: 6 },
+  sectionHint: { color: theme.color.textMuted, fontSize: 11, lineHeight: 16, marginBottom: 10 },
+
+  statRow: { flexDirection: "row", gap: 12, marginTop: 6 },
+  stat: { flex: 1, alignItems: "center", padding: 8, backgroundColor: theme.color.surface3, borderRadius: 8 },
+  statN: { color: theme.color.text, fontSize: 20, fontWeight: "900" },
+  statL: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.2, fontWeight: "800", marginTop: 2 },
+
+  row: {
+    flexDirection: "row", alignItems: "center",
+    paddingVertical: 12, borderTopWidth: 1, borderTopColor: theme.color.border,
+  },
+  rowTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800", letterSpacing: 0.3 },
+  rowDesc: { color: theme.color.textMuted, fontSize: 11, lineHeight: 15, marginTop: 3 },
+
+  envBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3, backgroundColor: "#f5b54322", borderWidth: 1, borderColor: "#f5b543" },
+  envBadgeT: { color: "#f5b543", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
+
+  bulkBtn: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
+    backgroundColor: theme.color.brand,
+  },
+  bulkBtnDark: { backgroundColor: "#3a3a3a" },
+  bulkBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+
+  envLockedItem: { color: theme.color.textDim, fontSize: 12, paddingVertical: 3 },
+
+  emptyT: { color: theme.color.textMuted, fontSize: 12 },
+  footNote: { color: theme.color.textDim, fontSize: 10, textAlign: "center", marginTop: 8, marginBottom: 30, lineHeight: 14 },
+});

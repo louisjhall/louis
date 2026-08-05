@@ -322,6 +322,14 @@ export default function ExerciseContentScreen() {
         <Text style={styles.topT}>EXERCISE CONTENT</Text>
         <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
           <Pressable
+            testID="auto-media-settings-btn"
+            onPress={() => router.push("/coach/admin/auto-media" as any)}
+            hitSlop={12}
+            style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+          >
+            <Ionicons name="sparkles-outline" size={20} color={theme.color.brand} />
+          </Pressable>
+          <Pressable
             testID="demand-queue-btn"
             onPress={() => router.push("/coach/demand-queue" as any)}
             hitSlop={12}

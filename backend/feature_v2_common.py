@@ -33,15 +33,45 @@ def is_manual_mode() -> bool:
     return os.getenv("MANUAL_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
-def require_auto_gen_allowed() -> None:
+def require_auto_gen_allowed(override: bool = False) -> None:
     """Raise 403 if MANUAL_MODE is active. Call at the top of every
     endpoint that writes to db.workouts / db.plan_drafts_v2 / db.plan_live_v2
-    as part of automatic programme generation."""
+    as part of automatic programme generation.
+
+    `override=True` bypasses the gate — used for per-client manual draft
+    builds (e.g. restored clients where the coach explicitly wants a V2
+    draft shell that will be overwritten by a manual JSON import).
+    Callers must compute the override themselves via
+    `check_manual_override_for_client(client_id)` and pass the boolean in.
+    """
+    if override:
+        return
     if is_manual_mode():
         raise HTTPException(
             status_code=403,
             detail="Manual mode active — automatic programme generation is paused.",
         )
+
+
+async def check_manual_override_for_client(client_id: str) -> bool:
+    """Return True if this client has `profile.v2_flags.manual_draft_override`
+    set, permitting a one-off V2 kickoff / publish while MANUAL_MODE is
+    still globally active. Safe to call under any mode — returns False if
+    the user or flag is missing.
+    """
+    if not client_id:
+        return False
+    try:
+        u = await db.users.find_one(
+            {"id": client_id},
+            {"_id": 0, "profile": 1},
+        )
+    except Exception:
+        return False
+    if not u:
+        return False
+    flags = ((u.get("profile") or {}).get("v2_flags") or {})
+    return bool(flags.get("manual_draft_override"))
 
 
 V2_FLAGS = {

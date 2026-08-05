@@ -478,8 +478,14 @@ async def endpoint_engine_v2_publish(
     body: EngineV2PublishBody,
     coach: dict = Depends(require_role("coach")),
 ) -> dict:
-    from feature_v2_common import require_auto_gen_allowed
-    require_auto_gen_allowed()
+    from feature_v2_common import require_auto_gen_allowed, check_manual_override_for_client
+    _override = await check_manual_override_for_client(client_id)
+    require_auto_gen_allowed(override=_override)
+    if _override:
+        logger.info(
+            "engine_v2_publish MANUAL-OVERRIDE-USED "
+            f"client_id={client_id} coach={coach.get('email')}"
+        )
     # 1. Load draft & confirm it's current (only consider active drafts)
     latest = await db.plan_drafts_v2.find_one(
         {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},

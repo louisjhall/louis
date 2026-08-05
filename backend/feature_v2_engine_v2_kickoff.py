@@ -158,8 +158,14 @@ async def engine_v2_kickoff(
     expensive work. Stale locks older than 180s are considered abandoned
     and force-cleared.
     """
-    from feature_v2_common import require_auto_gen_allowed
-    require_auto_gen_allowed()
+    from feature_v2_common import require_auto_gen_allowed, check_manual_override_for_client
+    _override = await check_manual_override_for_client(client_id)
+    require_auto_gen_allowed(override=_override)
+    if _override:
+        logger.info(
+            "engine_v2_kickoff MANUAL-OVERRIDE-USED "
+            f"client_id={client_id} coach={coach.get('email')}"
+        )
     if not await _is_engine_v2_enabled(client_id):
         logger.warning(
             "engine_v2_kickoff EARLY-EXIT flag_disabled "

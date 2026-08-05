@@ -124,12 +124,21 @@ export function WorkoutMediaCarousel({
   const [media, setMedia] = useState<ResolvedMedia | null | undefined>(undefined);
   const [page, setPage] = useState(0);
   const [autoPaused, setAutoPaused] = useState(false);
+  // Iter 94t — Track slides whose image failed to load (expo-image onError).
+  // Any slot key in this set is filtered out of the render so the client
+  // never sees a broken/empty frame; if every slide fails we fall through
+  // to the placeholder.
+  const [brokenSlots, setBrokenSlots] = useState<Set<string>>(new Set());
   const width = Dimensions.get("window").width - 32;
   const scrollRef = useRef<ScrollView | null>(null);
   const resumeTimerRef = useRef<any>(null);
 
   useEffect(() => {
     let cancel = false;
+    // Reset broken tracking whenever the exercise changes so a new
+    // exercise gets a fair chance to load its media.
+    setBrokenSlots(new Set());
+    setPage(0);
     (async () => {
       const r = await resolveMediaForName(exerciseName);
       if (!cancel) setMedia(r);
@@ -137,7 +146,29 @@ export function WorkoutMediaCarousel({
     return () => { cancel = true; };
   }, [exerciseName]);
 
-  const slides = media?.slides || [];
+  const markBroken = (slot: string) => {
+    setBrokenSlots((prev) => {
+      if (prev.has(slot)) return prev;
+      const next = new Set(prev);
+      next.add(slot);
+      return next;
+    });
+  };
+
+  const allSlides = media?.slides || [];
+  const slides = useMemo(
+    () => allSlides.filter((s) => !brokenSlots.has(s.slot)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [media, brokenSlots],
+  );
+
+  // Keep the page index in-bounds when slides shrink due to load errors.
+  useEffect(() => {
+    if (page >= slides.length && slides.length > 0) {
+      setPage(slides.length - 1);
+      scrollRef.current?.scrollTo({ x: (slides.length - 1) * width, animated: false });
+    }
+  }, [slides.length, page, width]);
 
   // Iter 94t (Phase 2) — Auto-advance the carousel every N ms while enabled
   // and while the client hasn't recently swiped. Pauses when off-screen or
@@ -193,8 +224,8 @@ export function WorkoutMediaCarousel({
     );
   }
 
-  // Fallback — no approved media
-  if (!media || !media.hasApprovedMedia) {
+  // Fallback — no approved media, or every slide failed to load.
+  if (!media || !media.hasApprovedMedia || slides.length === 0) {
     return (
       <View style={[styles.wrap, { height }]}>
         <View style={styles.placeholder}>
@@ -215,6 +246,7 @@ export function WorkoutMediaCarousel({
           source={{ uri: slides[0].url }}
           style={StyleSheet.absoluteFillObject}
           contentFit={contentFit}
+          onError={() => markBroken(slides[0].slot)}
         />
         <View style={styles.labelPill}>
           <Text style={styles.labelPillT}>{slides[0].label}</Text>
@@ -237,7 +269,12 @@ export function WorkoutMediaCarousel({
       >
         {slides.map((s) => (
           <View key={s.slot} style={{ width, height }}>
-            <Image source={{ uri: s.url }} style={StyleSheet.absoluteFillObject} contentFit={contentFit} />
+            <Image
+              source={{ uri: s.url }}
+              style={StyleSheet.absoluteFillObject}
+              contentFit={contentFit}
+              onError={() => markBroken(s.slot)}
+            />
             <View style={styles.labelPill}>
               <Text style={styles.labelPillT}>{s.label}</Text>
             </View>

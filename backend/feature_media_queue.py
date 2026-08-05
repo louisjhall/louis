@@ -94,6 +94,7 @@ async def scan_media_queue_for_sections(
     workout_id: Optional[str] = None,
     *,
     reason: str = "coach_media_queue_scan",
+    dry_run: bool = False,
 ) -> list[dict]:
     """For each exercise across the given section lists, queue a draft
     request if the exercises_v2 row is missing or has no media yet.
@@ -102,6 +103,11 @@ async def scan_media_queue_for_sections(
     "cooldown": [...], "amber": [...], "red": [...]}. Dedup'd across the
     whole payload by exercise_id (so amber ↔ green overlap doesn't double-
     file).
+
+    When ``dry_run=True`` (Phase 1 programme-import preview) NOTHING is
+    written — we just walk the same evaluation path and return the list
+    of items that WOULD have been queued. Callers use the length as a
+    "media_queue_new_items" counter.
     """
     try:
         from feature_v2_resolver import create_exercise_request_if_missing
@@ -120,6 +126,10 @@ async def scan_media_queue_for_sections(
             seen.add(xid)
             v2 = await db.exercises_v2.find_one({"id": xid}, {"_id": 0})
             if not v2:
+                if dry_run:
+                    queued.append({"exercise_id": xid, "name": e.get("name") or xid,
+                                   "reason": "missing_library_row"})
+                    continue
                 try:
                     await create_exercise_request_if_missing(
                         {"name": e.get("name") or xid},
@@ -135,6 +145,13 @@ async def scan_media_queue_for_sections(
             status = (v2.get("status") or "").lower()
             approved = status in ("approved", "live")
             if approved and (has_image or has_video):
+                continue
+            if dry_run:
+                queued.append(
+                    {"exercise_id": xid,
+                     "name": v2.get("exercise_name") or e.get("name") or xid,
+                     "reason": "missing_media"}
+                )
                 continue
             try:
                 await create_exercise_request_if_missing(

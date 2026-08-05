@@ -11843,6 +11843,69 @@ async def _startup():
             )
     except Exception:
         logger.exception("Slice 2 coach/assignment migration failed (non-fatal)")
+    # ------------------------------------------------------------------
+    # Iter 140a — one-off idempotent flag for restored client
+    # `pietrosangermano1992@hotmail.com` (production user id
+    # bd7f3e31-2bba-49b6-980b-e60a539c927b). Sets
+    # `profile.v2_flags.manual_draft_override = true` so the coach can
+    # build a V2 Draft + publish for this restored client while global
+    # MANUAL_MODE remains active. Runs at every startup — but a) skips
+    # cleanly if the user id doesn't exist in this DB (e.g. dev pod),
+    # and b) no-ops if the flag is already Boolean True. Every outcome
+    # is logged so the value is verifiable from deploy logs.
+    # ------------------------------------------------------------------
+    try:
+        _PIETRO_PROD_ID = "bd7f3e31-2bba-49b6-980b-e60a539c927b"
+        _u_before = await db.users.find_one(
+            {"id": _PIETRO_PROD_ID},
+            {"_id": 0, "id": 1, "email": 1, "profile.v2_flags": 1},
+        )
+        if not _u_before:
+            logger.info(
+                f"startup_migration[manual_override_pietro]: user id={_PIETRO_PROD_ID} "
+                f"not present in this database — skipping (harmless on dev pod)."
+            )
+        else:
+            _current = (((_u_before.get("profile") or {}).get("v2_flags") or {})
+                        .get("manual_draft_override"))
+            if _current is True:
+                logger.info(
+                    f"startup_migration[manual_override_pietro]: already True for "
+                    f"{_u_before.get('email')} — no-op (idempotent)."
+                )
+            else:
+                _now_str = now_iso()
+                _res = await db.users.update_one(
+                    {"id": _PIETRO_PROD_ID},
+                    {"$set": {
+                        "profile.v2_flags.manual_draft_override": True,
+                        "profile.v2_flags.manual_draft_override_at": _now_str,
+                        "profile.v2_flags.manual_draft_override_by":
+                            "startup_migration:iter-140a",
+                        "profile.v2_flags.manual_draft_override_reason": (
+                            "Restored client — one-off V2 draft build during "
+                            "global MANUAL_MODE=true so ChatGPT-generated "
+                            "monthly JSON can be imported with replace_conflicts."
+                        ),
+                        "updated_at": _now_str,
+                    }},
+                )
+                # Read the document back and log the STORED value + Python type
+                # so the receipt is verifiable from deploy logs.
+                _u_after = await db.users.find_one(
+                    {"id": _PIETRO_PROD_ID},
+                    {"_id": 0, "email": 1, "profile.v2_flags": 1},
+                )
+                _stored = (((_u_after or {}).get("profile") or {})
+                           .get("v2_flags") or {}).get("manual_draft_override")
+                logger.info(
+                    f"startup_migration[manual_override_pietro]: "
+                    f"matched={_res.matched_count} modified={_res.modified_count} "
+                    f"stored_value={_stored!r} python_type={type(_stored).__name__} "
+                    f"email={(_u_after or {}).get('email')!r}"
+                )
+    except Exception:
+        logger.exception("startup_migration[manual_override_pietro] failed (non-fatal)")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 

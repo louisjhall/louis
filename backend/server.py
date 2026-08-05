@@ -11844,68 +11844,91 @@ async def _startup():
     except Exception:
         logger.exception("Slice 2 coach/assignment migration failed (non-fatal)")
     # ------------------------------------------------------------------
-    # Iter 140a — one-off idempotent flag for restored client
+    # Iter 140a — one-off idempotent setup for restored client
     # `pietrosangermano1992@hotmail.com` (production user id
-    # bd7f3e31-2bba-49b6-980b-e60a539c927b). Sets
-    # `profile.v2_flags.manual_draft_override = true` so the coach can
-    # build a V2 Draft + publish for this restored client while global
-    # MANUAL_MODE remains active. Runs at every startup — but a) skips
-    # cleanly if the user id doesn't exist in this DB (e.g. dev pod),
-    # and b) no-ops if the flag is already Boolean True. Every outcome
-    # is logged so the value is verifiable from deploy logs.
+    # bd7f3e31-2bba-49b6-980b-e60a539c927b). Sets the three flags his
+    # workspace needs so the coach can build a V2 Draft + publish while
+    # global MANUAL_MODE remains active:
+    #     profile.v2_flags.engine_v2            = True   (unlocks kickoff)
+    #     profile.v2_flags.manual_draft_override = True  (bypass MANUAL_MODE)
+    #     profile.main_goal                     = "running.marathon"
+    #     profile.primary_goal_type             = "running.marathon"
+    # Runs at every startup but a) skips cleanly if the user id isn't in
+    # this DB (dev pod), and b) no-ops any field that's already at the
+    # target value. Every outcome is logged for verification from deploy
+    # logs.
     # ------------------------------------------------------------------
     try:
         _PIETRO_PROD_ID = "bd7f3e31-2bba-49b6-980b-e60a539c927b"
         _u_before = await db.users.find_one(
             {"id": _PIETRO_PROD_ID},
-            {"_id": 0, "id": 1, "email": 1, "profile.v2_flags": 1},
+            {"_id": 0, "id": 1, "email": 1, "profile": 1},
         )
         if not _u_before:
             logger.info(
-                f"startup_migration[manual_override_pietro]: user id={_PIETRO_PROD_ID} "
+                f"startup_migration[pietro_v2_setup]: user id={_PIETRO_PROD_ID} "
                 f"not present in this database — skipping (harmless on dev pod)."
             )
         else:
-            _current = (((_u_before.get("profile") or {}).get("v2_flags") or {})
-                        .get("manual_draft_override"))
-            if _current is True:
+            _profile_before = _u_before.get("profile") or {}
+            _flags_before = _profile_before.get("v2_flags") or {}
+            _needs_engine_v2 = _flags_before.get("engine_v2") is not True
+            _needs_override = _flags_before.get("manual_draft_override") is not True
+            _needs_main_goal = (
+                _profile_before.get("main_goal") != "running.marathon"
+                or _profile_before.get("primary_goal_type") != "running.marathon"
+            )
+            if not (_needs_engine_v2 or _needs_override or _needs_main_goal):
                 logger.info(
-                    f"startup_migration[manual_override_pietro]: already True for "
-                    f"{_u_before.get('email')} — no-op (idempotent)."
+                    f"startup_migration[pietro_v2_setup]: all fields already at "
+                    f"target values for {_u_before.get('email')} — no-op (idempotent)."
                 )
             else:
                 _now_str = now_iso()
+                _updates: dict = {
+                    "profile.v2_flags.engine_v2": True,
+                    "profile.v2_flags.manual_draft_override": True,
+                    "profile.v2_flags.manual_draft_override_at": _now_str,
+                    "profile.v2_flags.manual_draft_override_by":
+                        "startup_migration:iter-140a",
+                    "profile.v2_flags.manual_draft_override_reason": (
+                        "Restored client — one-off V2 draft build during "
+                        "global MANUAL_MODE=true so ChatGPT-generated "
+                        "monthly JSON can be imported with replace_conflicts."
+                    ),
+                    "profile.v2_flags.updated_at": _now_str,
+                    "profile.v2_flags.updated_by": "startup_migration:iter-140a",
+                    "profile.main_goal": "running.marathon",
+                    "profile.primary_goal_type": "running.marathon",
+                    "profile.main_goal_set_at": _now_str,
+                    "profile.main_goal_set_by": "startup_migration:iter-140a",
+                    "updated_at": _now_str,
+                }
                 _res = await db.users.update_one(
                     {"id": _PIETRO_PROD_ID},
-                    {"$set": {
-                        "profile.v2_flags.manual_draft_override": True,
-                        "profile.v2_flags.manual_draft_override_at": _now_str,
-                        "profile.v2_flags.manual_draft_override_by":
-                            "startup_migration:iter-140a",
-                        "profile.v2_flags.manual_draft_override_reason": (
-                            "Restored client — one-off V2 draft build during "
-                            "global MANUAL_MODE=true so ChatGPT-generated "
-                            "monthly JSON can be imported with replace_conflicts."
-                        ),
-                        "updated_at": _now_str,
-                    }},
+                    {"$set": _updates},
                 )
-                # Read the document back and log the STORED value + Python type
-                # so the receipt is verifiable from deploy logs.
+                # Read the document back and log the STORED values + Python
+                # types so the receipt is verifiable from deploy logs.
                 _u_after = await db.users.find_one(
                     {"id": _PIETRO_PROD_ID},
-                    {"_id": 0, "email": 1, "profile.v2_flags": 1},
+                    {"_id": 0, "email": 1, "profile": 1},
                 )
-                _stored = (((_u_after or {}).get("profile") or {})
-                           .get("v2_flags") or {}).get("manual_draft_override")
+                _p_after = (_u_after or {}).get("profile") or {}
+                _flags_after = _p_after.get("v2_flags") or {}
+                _stored_eng = _flags_after.get("engine_v2")
+                _stored_over = _flags_after.get("manual_draft_override")
+                _stored_goal = _p_after.get("main_goal")
                 logger.info(
-                    f"startup_migration[manual_override_pietro]: "
+                    f"startup_migration[pietro_v2_setup]: "
                     f"matched={_res.matched_count} modified={_res.modified_count} "
-                    f"stored_value={_stored!r} python_type={type(_stored).__name__} "
+                    f"engine_v2={_stored_eng!r}({type(_stored_eng).__name__}) "
+                    f"manual_draft_override={_stored_over!r}({type(_stored_over).__name__}) "
+                    f"main_goal={_stored_goal!r} "
                     f"email={(_u_after or {}).get('email')!r}"
                 )
     except Exception:
-        logger.exception("startup_migration[manual_override_pietro] failed (non-fatal)")
+        logger.exception("startup_migration[pietro_v2_setup] failed (non-fatal)")
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 

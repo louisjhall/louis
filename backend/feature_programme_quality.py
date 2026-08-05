@@ -1377,8 +1377,9 @@ async def coach_programme_regenerate(
     gen_jobs collection for progress via GET /workouts/job/{job_id}.
     """
     import asyncio as _asyncio
-    from feature_v2_common import require_auto_gen_allowed
-    require_auto_gen_allowed()
+    from feature_v2_common import require_auto_gen_allowed, check_manual_override_for_client
+    _override = await check_manual_override_for_client(client_id)
+    require_auto_gen_allowed(override=_override)
 
     client = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
     if not client:

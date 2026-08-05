@@ -356,8 +356,9 @@ async def plan_kickoff(
     Returns a fully-populated audit trail so the coach can see EXACTLY
     why the plan looks the way it does.
     """
-    from feature_v2_common import require_auto_gen_allowed
-    require_auto_gen_allowed()
+    from feature_v2_common import require_auto_gen_allowed, check_manual_override_for_client
+    _override = await check_manual_override_for_client(client_id)
+    require_auto_gen_allowed(override=_override)
     client = await db.users.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(404, "Client not found")

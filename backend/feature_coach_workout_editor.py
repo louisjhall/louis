@@ -595,9 +595,9 @@ async def coach_programme_regenerate_apply(
     completed workouts are preserved via the same guard rails used by
     delete-and-restart.
     """
-    from feature_v2_common import require_auto_gen_allowed
-    require_auto_gen_allowed()
-    client = await _load_client(client_id)
+    from feature_v2_common import require_auto_gen_allowed, check_manual_override_for_client
+    _override = await check_manual_override_for_client(client_id)
+    require_auto_gen_allowed(override=_override)
     roster = await db.rosters.find_one(
         {"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)],
     )

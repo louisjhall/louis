@@ -134,6 +134,100 @@ export function ClientAdminDrawer({
     } finally { setBusy(null); }
   }, [clientId, data]);
 
+  // Iter 140b — Manual Draft Override + Bulk Delete Workouts.
+  const [mdoState, setMdoState] = useState<{ enabled: boolean; updated_by?: string | null; updated_at?: string | null; reason?: string | null } | null>(null);
+  const [mdoConfirm, setMdoConfirm] = useState<null | "enable" | "disable">(null);
+  const [mdoReason, setMdoReason] = useState("");
+  const [bulkConfirm, setBulkConfirm] = useState(false);
+  const [bulkStart, setBulkStart] = useState("");
+  const [bulkEnd, setBulkEnd] = useState("");
+  const [bulkSource, setBulkSource] = useState<"all" | "coach_manual" | "imported">("all");
+  const [bulkReason, setBulkReason] = useState("");
+
+  const loadMdo = useCallback(async () => {
+    try {
+      const r = await api<any>(`/v2/coach/clients/${clientId}/manual-draft-override`);
+      setMdoState({
+        enabled: !!r?.enabled,
+        updated_by: r?.updated_by,
+        updated_at: r?.updated_at,
+        reason: r?.reason,
+      });
+    } catch {
+      setMdoState({ enabled: false });
+    }
+  }, [clientId]);
+
+  useEffect(() => { if (visible && clientId) loadMdo(); }, [visible, clientId, loadMdo]);
+
+  const submitMdoToggle = useCallback(async () => {
+    if (!mdoConfirm) return;
+    const target = mdoConfirm === "enable";
+    if (target && !mdoReason.trim()) {
+      Alert.alert("Reason required", "Please enter a reason for enabling the override.");
+      return;
+    }
+    setBusy("mdo");
+    try {
+      await api(`/v2/coach/clients/${clientId}/manual-draft-override`, {
+        method: "PATCH",
+        body: { enabled: target, reason: mdoReason.trim() || undefined },
+      });
+      setMdoConfirm(null);
+      setMdoReason("");
+      await loadMdo();
+      Alert.alert(
+        target ? "Override enabled" : "Override disabled",
+        target
+          ? "V2 kickoff / publish / regenerate now work for this client even while Manual Mode is active globally."
+          : "This client is back under the global Manual Mode gate."
+      );
+    } catch (e: any) {
+      Alert.alert("Failed", e?.message || "Try again.");
+    } finally { setBusy(null); }
+  }, [clientId, mdoConfirm, mdoReason, loadMdo]);
+
+  const submitBulkDelete = useCallback(async () => {
+    // Basic validation
+    const iso = /^\d{4}-\d{2}-\d{2}$/;
+    if (!iso.test(bulkStart) || !iso.test(bulkEnd)) {
+      Alert.alert("Bad dates", "Both dates must be in YYYY-MM-DD format.");
+      return;
+    }
+    if (bulkEnd < bulkStart) {
+      Alert.alert("Bad range", "End date must be on or after start date.");
+      return;
+    }
+    if (!bulkReason.trim() || bulkReason.trim().length < 3) {
+      Alert.alert("Reason required", "Please give a short reason (audit trail).");
+      return;
+    }
+    setBusy("bulk-delete");
+    try {
+      const body: any = {
+        start_date: bulkStart,
+        end_date: bulkEnd,
+        reason: bulkReason.trim(),
+        confirm: true,
+      };
+      if (bulkSource === "coach_manual") body.sources = ["coach_manual"];
+      if (bulkSource === "imported") body.import_ref_prefix = "";  // any non-null import_ref via the regex ^
+      // For "imported", we want workouts that have import_ref set — use a prefix
+      // regex that matches everything. Backend does `^${prefix}` so `""` matches all.
+      const res: any = await api(`/coach/clients/${clientId}/workouts/bulk-delete`, {
+        method: "POST", body,
+      });
+      setBulkConfirm(false);
+      setBulkStart(""); setBulkEnd(""); setBulkReason(""); setBulkSource("all");
+      Alert.alert(
+        "Workouts deleted",
+        `Deleted ${res?.deleted_count ?? 0} workout${(res?.deleted_count ?? 0) === 1 ? "" : "s"}.`
+      );
+    } catch (e: any) {
+      Alert.alert("Delete failed", e?.message || "Try again.");
+    } finally { setBusy(null); }
+  }, [clientId, bulkStart, bulkEnd, bulkReason, bulkSource]);
+
   const doArchive = useCallback(async () => {
     setBusy("archive");
     try {
@@ -338,6 +432,53 @@ export function ClientAdminDrawer({
                 </Pressable>
               </View>
 
+              {/* PROGRAMME OVERRIDES (Iter 140b) */}
+              <Text style={[styles.section, { marginTop: 20 }]}>PROGRAMME OVERRIDES</Text>
+              <View style={[styles.row, mdoState?.enabled && { borderColor: theme.color.brand }]} testID="admin-drawer-mdo-row">
+                <Ionicons
+                  name={mdoState?.enabled ? "flash" : "flash-outline"}
+                  size={18}
+                  color={mdoState?.enabled ? theme.color.brand : theme.color.textHi}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowLabel}>
+                    Allow V2 draft/publish during Manual Mode
+                  </Text>
+                  <Text style={styles.rowSub}>
+                    {mdoState?.enabled
+                      ? `ON · unlocks Build plan + Publish for this client only. Set by ${mdoState.updated_by || "coach"}.`
+                      : "OFF · this client is blocked by the global MANUAL_MODE gate."}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => {
+                    setMdoReason("");
+                    setMdoConfirm(mdoState?.enabled ? "disable" : "enable");
+                  }}
+                  disabled={busy === "mdo"}
+                  style={[styles.smallBtn, mdoState?.enabled && { backgroundColor: "#c44" }]}
+                  testID="admin-drawer-mdo-toggle"
+                >
+                  <Text style={[styles.smallBtnText, mdoState?.enabled && { color: "#fff" }]}>
+                    {busy === "mdo" ? "…" : (mdoState?.enabled ? "TURN OFF" : "TURN ON")}
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* BULK ACTIONS (Iter 140b) */}
+              <Text style={[styles.section, { marginTop: 20 }]}>BULK ACTIONS</Text>
+              <Row
+                icon="trash-bin-outline"
+                label="Delete workouts in a date range"
+                sub="Wipe imported or manual workouts across a window. Completed sessions are protected."
+                busy={busy === "bulk-delete"}
+                onPress={() => {
+                  setBulkStart(""); setBulkEnd(""); setBulkReason(""); setBulkSource("all");
+                  setBulkConfirm(true);
+                }}
+                testID="admin-drawer-bulk-delete"
+              />
+
               {/* CLIENT STATUS */}
               <Text style={[styles.section, { marginTop: 20 }]}>CLIENT STATUS</Text>
               {data?.archived || data?.status === "archived" ? (
@@ -420,6 +561,132 @@ export function ClientAdminDrawer({
                   <Pressable onPress={() => { setConfirmPerm(false); setPermText(""); }} style={styles.ghostBtn}><Text style={styles.ghostBtnText}>Cancel</Text></Pressable>
                   <Pressable onPress={doPermanentDelete} disabled={busy === "perm-delete"} style={styles.dangerBtn} testID="admin-drawer-perm-confirm"><Text style={styles.dangerBtnText}>{busy === "perm-delete" ? "Deleting…" : "PERMANENT DELETE"}</Text></Pressable>
                 </View>
+              </View>
+            </View>
+          )}
+          {/* Iter 140b — Manual Draft Override toggle confirm */}
+          {mdoConfirm && (
+            <View style={styles.confirmBackdrop}>
+              <View style={styles.confirmCard}>
+                <Text style={styles.confirmTitle}>
+                  {mdoConfirm === "enable" ? "Enable V2 override" : "Disable V2 override"}
+                </Text>
+                <Text style={styles.confirmBody}>
+                  {mdoConfirm === "enable"
+                    ? "This lets Build plan / Publish / Regenerate run for this client only while Manual Mode is active globally. Every use is audit-logged."
+                    : "This client will go back under the global MANUAL_MODE gate — Build plan will refuse until you re-enable the override."}
+                </Text>
+                {mdoConfirm === "enable" && (
+                  <>
+                    <Text style={styles.fieldLabel}>Reason (required)</Text>
+                    <TextInput
+                      value={mdoReason} onChangeText={setMdoReason}
+                      placeholder="e.g. Onboarding new client during manual mode"
+                      placeholderTextColor="#666"
+                      style={[styles.confirmInput, { minHeight: 60 }]}
+                      multiline
+                      testID="admin-drawer-mdo-reason"
+                    />
+                  </>
+                )}
+                <View style={styles.confirmRow}>
+                  <Pressable
+                    onPress={() => { setMdoConfirm(null); setMdoReason(""); }}
+                    style={styles.ghostBtn}
+                  >
+                    <Text style={styles.ghostBtnText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={submitMdoToggle}
+                    disabled={busy === "mdo"}
+                    style={mdoConfirm === "enable" ? styles.primaryBtn : styles.dangerBtn}
+                    testID="admin-drawer-mdo-submit"
+                  >
+                    <Text style={mdoConfirm === "enable" ? styles.primaryBtnText : styles.dangerBtnText}>
+                      {busy === "mdo" ? "Working…" : (mdoConfirm === "enable" ? "ENABLE" : "DISABLE")}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Iter 140b — Bulk delete workouts confirm */}
+          {bulkConfirm && (
+            <View style={styles.confirmBackdrop}>
+              <View style={[styles.confirmCard, { maxHeight: "85%" }]}>
+                <ScrollView>
+                  <Text style={styles.confirmTitle}>Delete workouts in range</Text>
+                  <Text style={styles.confirmBody}>
+                    Removes workouts on this client between the two dates (inclusive). Completed sessions are refused with a 409. Every deletion is audit-logged.
+                  </Text>
+
+                  <Text style={styles.fieldLabel}>Start date (YYYY-MM-DD)</Text>
+                  <TextInput
+                    value={bulkStart} onChangeText={setBulkStart}
+                    placeholder="2026-08-01" placeholderTextColor="#666"
+                    autoCapitalize="none"
+                    style={styles.confirmInput}
+                    testID="admin-drawer-bulk-start"
+                  />
+
+                  <Text style={styles.fieldLabel}>End date (YYYY-MM-DD)</Text>
+                  <TextInput
+                    value={bulkEnd} onChangeText={setBulkEnd}
+                    placeholder="2026-08-31" placeholderTextColor="#666"
+                    autoCapitalize="none"
+                    style={styles.confirmInput}
+                    testID="admin-drawer-bulk-end"
+                  />
+
+                  <Text style={styles.fieldLabel}>Which workouts?</Text>
+                  <View style={styles.pillRow}>
+                    {(["all", "coach_manual", "imported"] as const).map((s) => (
+                      <Pressable
+                        key={s}
+                        onPress={() => setBulkSource(s)}
+                        style={[styles.pillChoice, bulkSource === s && styles.pillChoiceActive]}
+                        testID={`admin-drawer-bulk-src-${s}`}
+                      >
+                        <Text style={[styles.pillChoiceText, bulkSource === s && styles.pillChoiceTextActive]}>
+                          {s === "all" ? "All" : s === "coach_manual" ? "Manual only" : "Imported only"}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={styles.fieldHint}>
+                    Imported only targets workouts that came from the JSON importer (have import_ref). Manual only targets everything with source=coach_manual including hand-built and imported. All wipes every non-completed row in the window.
+                  </Text>
+
+                  <Text style={styles.fieldLabel}>Reason (required, min 3 chars)</Text>
+                  <TextInput
+                    value={bulkReason} onChangeText={setBulkReason}
+                    placeholder="e.g. Old restored programme — wiping to import new August JSON"
+                    placeholderTextColor="#666"
+                    style={[styles.confirmInput, { minHeight: 60 }]}
+                    multiline
+                    testID="admin-drawer-bulk-reason"
+                  />
+
+                  <View style={styles.confirmRow}>
+                    <Pressable
+                      onPress={() => setBulkConfirm(false)}
+                      style={styles.ghostBtn}
+                    >
+                      <Text style={styles.ghostBtnText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={submitBulkDelete}
+                      disabled={busy === "bulk-delete"}
+                      style={styles.dangerBtn}
+                      testID="admin-drawer-bulk-submit"
+                    >
+                      <Text style={styles.dangerBtnText}>
+                        {busy === "bulk-delete" ? "Deleting…" : "DELETE"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
               </View>
             </View>
           )}

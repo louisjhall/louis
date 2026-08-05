@@ -12811,6 +12811,7 @@ import feature_reassessment_micro    # noqa: E402,F401  Short kind-specific reas
 import feature_coach_programme_overview  # noqa: E402,F401  Plan C3: coach programme overview + timeline
 import feature_coach_workout_editor      # noqa: E402,F401  Plan C4-C7: coach workout editor, exercise swap, single/programme regen
 import feature_coach_manual_workouts     # noqa: E402,F401  Phase 1 Manual Workout Builder + day-level overrides
+import feature_coach_admin_actions       # noqa: E402,F401  Iter 140b: manual_draft_override toggle + workouts bulk-delete
 import feature_programme_import          # noqa: E402,F401  Phase 1: Monthly programme JSON import (preview / dry-run)
 import feature_manual_mode_reset         # noqa: E402,F401  Phase 1B programme reset (dry-run + execute)
 import feature_flight_support_coverage   # noqa: E402,F401  Manual Mode Stage C — Flight Support library backfill

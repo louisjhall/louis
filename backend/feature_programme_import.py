@@ -820,12 +820,26 @@ async def _process_workout(
             {"_id": 0, "id": 1, "date": 1},
         )
         if existing_import:
-            conflict = {
-                "has_conflict": True,
-                "action": "already_imported",
-                "existing_workout_id": existing_import["id"],
-                "existing_source": "programme_import",
-            }
+            # Under `replace_conflicts` the coach has explicitly opted in to
+            # OVERWRITING previous imports — treat the row as replace-able
+            # so a re-import of the same envelope with edited content
+            # actually lands, instead of getting silently marked as
+            # "already imported". Under other policies we still short-circuit
+            # to `already_imported` for idempotency.
+            if policy == "replace_conflicts":
+                conflict = {
+                    "has_conflict": True,
+                    "action": "replace",
+                    "existing_workout_id": existing_import["id"],
+                    "existing_source": "programme_import",
+                }
+            else:
+                conflict = {
+                    "has_conflict": True,
+                    "action": "already_imported",
+                    "existing_workout_id": existing_import["id"],
+                    "existing_source": "programme_import",
+                }
     if conflict is None:
         conflict = await _detect_conflict(client["id"], w.date, policy)
     if conflict.get("action") == "error":
@@ -1366,10 +1380,13 @@ async def coach_programme_import_apply(
 
         # -------------------------------------------------------------
         # 4a. Idempotency check — same client + external_ref already
-        # written? Skip silently. This makes re-runs safe.
+        # written? Skip silently. This makes re-runs safe. Under
+        # `replace_conflicts` however the coach has explicitly opted into
+        # overwriting previous imports, so we let the row fall through to
+        # the replace branch below (which deletes + reinserts atomically).
         # -------------------------------------------------------------
         ext_ref = tw.get("external_ref")
-        if ext_ref:
+        if ext_ref and action != "replace":
             already = await db.workouts.find_one(
                 {"user_id": client["id"], "import_ref": ext_ref},
                 {"_id": 0, "id": 1},
@@ -1480,34 +1497,61 @@ async def coach_programme_import_apply(
         # -------------------------------------------------------------
         replaced_workout_id: Optional[str] = None
         if action == "replace":
+            # Under replace_conflicts the coach has opted into overwriting
+            # any prior row on this date OR any prior row previously written
+            # for the same external_ref (handles the case where the ChatGPT
+            # envelope moved a workout to a different day).
             existing = await db.workouts.find_one(
                 {"user_id": client["id"], "date": date},
-                {"_id": 0, "id": 1, "source": 1, "manual_lock": 1, "completed": 1},
+                {"_id": 0, "id": 1, "source": 1, "manual_lock": 1,
+                 "completed": 1, "import_ref": 1},
             )
-            if existing:
-                if existing.get("completed"):
+            existing_by_ref = None
+            if ext_ref:
+                existing_by_ref = await db.workouts.find_one(
+                    {"user_id": client["id"], "import_ref": ext_ref},
+                    {"_id": 0, "id": 1, "date": 1, "source": 1,
+                     "manual_lock": 1, "completed": 1, "import_ref": 1},
+                )
+            protector = existing or existing_by_ref
+            if protector:
+                if protector.get("completed"):
                     results.append({
                         "date": date, "status": "skipped_completed",
                         "reason": "existing workout is completed — cannot overwrite",
                     })
                     counters["skipped"] += 1
                     continue
-                if (existing.get("source") == MANUAL_SOURCE
-                        or existing.get("manual_lock")):
+                # Prior-import rows are marked source=coach_manual + manual_lock
+                # by design (to keep the auto-media generator from touching
+                # them). Re-importing under `replace_conflicts` should still
+                # be allowed for those — we only truly protect hand-authored
+                # manual rows (which have no `import_ref`).
+                is_prior_import = bool(protector.get("import_ref"))
+                if not is_prior_import and (
+                    protector.get("source") == MANUAL_SOURCE
+                    or protector.get("manual_lock")
+                ):
                     # Defence in depth against a race between preview and apply.
                     results.append({
                         "date": date, "status": "skipped_manual_lock",
                         "reason": (
-                            "target date has a manual workout — delete it first "
-                            "or set override_policy=skip_conflicts."
+                            "target date has a hand-authored manual workout — "
+                            "delete it first or set override_policy=skip_conflicts."
                         ),
                     })
                     counters["skipped"] += 1
                     continue
-                replaced_workout_id = existing["id"]
+                replaced_workout_id = (existing or existing_by_ref)["id"]
+                # Delete anything on this date (fresh slate) AND anything
+                # matching this import_ref elsewhere (moved-date case).
                 await db.workouts.delete_many(
                     {"user_id": client["id"], "date": date},
                 )
+                if ext_ref:
+                    await db.workouts.delete_many(
+                        {"user_id": client["id"], "import_ref": ext_ref},
+                    )
 
         # -------------------------------------------------------------
         # 4e. Merge cool-down into exercises[] for Guided Flow parity

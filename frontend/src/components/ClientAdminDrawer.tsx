@@ -578,6 +578,9 @@ export function ClientAdminDrawer({
                 </Text>
                 {mdoConfirm === "enable" && (
                   <>
+                    <Text style={styles.confirmBody}>
+                      Also enables Engine V2 on this client (the two flags are pointless separately).
+                    </Text>
                     <Text style={styles.fieldLabel}>Reason (required)</Text>
                     <TextInput
                       value={mdoReason} onChangeText={setMdoReason}

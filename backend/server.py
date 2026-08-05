@@ -11929,6 +11929,51 @@ async def _startup():
                 )
     except Exception:
         logger.exception("startup_migration[pietro_v2_setup] failed (non-fatal)")
+    # ------------------------------------------------------------------
+    # Iter 140b — backfill: any client whose coach turned on
+    # `manual_draft_override` via the workspace toggle BEFORE we started
+    # coupling engine_v2 in the same PATCH is stuck with the override ON
+    # but engine_v2 missing → Build plan returns 409 "Engine V2 not
+    # enabled". This idempotent sweep flips engine_v2=True on every such
+    # client. Safe to run every startup.
+    # ------------------------------------------------------------------
+    try:
+        _fix_q = {
+            "profile.v2_flags.manual_draft_override": True,
+            "$or": [
+                {"profile.v2_flags.engine_v2": {"$exists": False}},
+                {"profile.v2_flags.engine_v2": False},
+                {"profile.v2_flags.engine_v2": None},
+            ],
+        }
+        _fix_count = await db.users.count_documents(_fix_q)
+        if _fix_count:
+            _now = now_iso()
+            _res = await db.users.update_many(
+                _fix_q,
+                {"$set": {
+                    "profile.v2_flags.engine_v2": True,
+                    "profile.v2_flags.engine_v2_backfilled_at": _now,
+                    "profile.v2_flags.engine_v2_backfilled_by":
+                        "startup_migration:iter-140b",
+                    "updated_at": _now,
+                }},
+            )
+            logger.info(
+                f"startup_migration[override_engine_v2_backfill]: "
+                f"scanned={_fix_count} matched={_res.matched_count} "
+                f"modified={_res.modified_count} — flipped engine_v2=True "
+                f"on clients with manual_draft_override already on."
+            )
+        else:
+            logger.info(
+                "startup_migration[override_engine_v2_backfill]: "
+                "no clients need engine_v2 backfill — no-op (idempotent)."
+            )
+    except Exception:
+        logger.exception(
+            "startup_migration[override_engine_v2_backfill] failed (non-fatal)"
+        )
     # Kick off the weekly-reminder scheduler (respects quiet hours + IANA time zones).
     asyncio.create_task(_reminder_scheduler_loop())
 

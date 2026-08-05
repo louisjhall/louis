@@ -78,6 +78,13 @@ async def toggle_manual_draft_override(
 
     if body.enabled:
         set_fields = {
+            # Enable both the override AND the engine_v2 flag itself — they
+            # are pointless separately. The override just bypasses global
+            # MANUAL_MODE, but the kickoff endpoint checks `engine_v2` first
+            # and returns 409 "Engine V2 not enabled for this client" if
+            # missing. Coaches enabling the override are always trying to
+            # run Engine V2 on that client, so this is the right coupling.
+            "profile.v2_flags.engine_v2": True,
             "profile.v2_flags.manual_draft_override": True,
             "profile.v2_flags.manual_draft_override_at": now,
             "profile.v2_flags.manual_draft_override_by": f"coach:{coach_email}",
@@ -88,7 +95,10 @@ async def toggle_manual_draft_override(
         await db.users.update_one({"id": client_id}, {"$set": set_fields})
         outcome = "ENABLED"
     else:
-        # $unset removes the fields entirely so the flag reads False naturally.
+        # $unset removes the override fields entirely so the flag reads
+        # False naturally. We DO NOT unset engine_v2 — that's a separate
+        # capability flag and other flows may depend on it. Coaches who
+        # want to fully disable Engine V2 should use a different action.
         await db.users.update_one(
             {"id": client_id},
             {

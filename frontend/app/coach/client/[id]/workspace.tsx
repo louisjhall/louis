@@ -458,6 +458,15 @@ export default function CoachWorkspaceScreen() {
             onComplete={loadMonth}
             compact
           />
+          {/* Phase 3 — Monthly Programme Import (ChatGPT JSON paste). */}
+          <Pressable
+            style={styles.tbBtn}
+            onPress={() => router.push(`/coach/client/${clientId}/import`)}
+            testID="import-programme-btn"
+          >
+            <Ionicons name="download-outline" size={13} color={theme.color.text} />
+            <Text style={styles.tbBtnText}>Import</Text>
+          </Pressable>
           {data.counts?.ready > 0 && (
             <Pressable
               style={styles.approveMini}

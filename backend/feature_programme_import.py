@@ -762,9 +762,25 @@ async def _process_workout(
         })
 
     # ------------------------------------------------------------------
-    # 5. Conflict scan.
+    # 5. Conflict scan — but check import_ref idempotency FIRST so a
+    # re-preview of an already-applied envelope doesn't get tripped up
+    # by the manual-lock on rows we ourselves wrote.
     # ------------------------------------------------------------------
-    conflict = await _detect_conflict(client["id"], w.date, policy)
+    conflict = None
+    if w.external_ref:
+        existing_import = await db.workouts.find_one(
+            {"user_id": client["id"], "import_ref": w.external_ref},
+            {"_id": 0, "id": 1, "date": 1},
+        )
+        if existing_import:
+            conflict = {
+                "has_conflict": True,
+                "action": "already_imported",
+                "existing_workout_id": existing_import["id"],
+                "existing_source": "programme_import",
+            }
+    if conflict is None:
+        conflict = await _detect_conflict(client["id"], w.date, policy)
     if conflict.get("action") == "error":
         errors.append({**conflict.get("error", {}),
                        "existing_workout_id": conflict.get("existing_workout_id"),
@@ -788,6 +804,8 @@ async def _process_workout(
         status = "blocked"
     elif conflict.get("action") == "skip":
         status = "skip"
+    elif conflict.get("action") == "already_imported":
+        status = "already_imported"
 
     preview = {
         "date": w.date,
@@ -957,6 +975,8 @@ async def coach_programme_import_preview(
             counters["workouts_ready"] += 1
         elif p["status"] == "skip":
             counters["workouts_skipped"] += 1
+        elif p["status"] == "already_imported":
+            counters["workouts_skipped"] += 1
         else:
             counters["workouts_blocked"] += 1
 
@@ -1074,6 +1094,568 @@ async def coach_programme_import_preview(
     }
 
 
+# ---------------------------------------------------------------------------
+# HTTP endpoint — POST /coach/programme-import/apply (Phase 2)
+# ---------------------------------------------------------------------------
+
+class ApplyBody(BaseModel):
+    """Request body for /apply.
+
+    Only requires ``preview_id`` — everything else lives on the preview
+    doc so the request stays tiny and the coach can't sneak past the
+    preview's validation gate.
+    """
+    preview_id: str
+
+
+async def _ensure_apply_indexes() -> None:
+    """Partial unique index on (user_id, import_ref) so re-imports are
+    idempotent. A workout that has already been written by an import
+    can never be inserted a second time — the second attempt is caught
+    up-front (idempotency check below) or by this index as a defence
+    in depth. Legacy workouts without ``import_ref`` are unaffected
+    thanks to the partial filter."""
+    try:
+        await db.workouts.create_index(
+            [("user_id", 1), ("import_ref", 1)],
+            unique=True,
+            name="workouts_user_import_ref_uniq",
+            partialFilterExpression={
+                "import_ref": {"$exists": True, "$type": "string"},
+            },
+        )
+    except Exception:  # pragma: no cover — non-fatal (index may already exist)
+        logger.exception(
+            "programme_import: ensure_apply_indexes failed (non-fatal)"
+        )
+
+
+def _clean_row_for_write(
+    row: dict[str, Any], section: str, idx: int,
+) -> dict[str, Any]:
+    """Strip preview-internal metadata; keep group_* and prescription fields.
+
+    We deliberately don't route through ``feature_coach_manual_workouts._norm_exercise``
+    because it strips group metadata (it doesn't know about supersets/circuits).
+    Our transformed rows already have the shape ``_norm_exercise`` would
+    produce PLUS the six group_* fields — we just clean the diagnostic
+    ``_import_meta`` and reset ``section``/``order``.
+    """
+    out = dict(row)
+    out.pop("_import_meta", None)
+    out["section"] = section
+    out["order"] = idx
+    return out
+
+
+@api.post("/coach/programme-import/apply")
+async def coach_programme_import_apply(
+    body: ApplyBody,
+    coach: dict = Depends(require_role("coach")),
+) -> dict:
+    """Apply a validated preview to db.workouts.
+
+    Contract:
+      * The preview MUST exist, MUST belong to the calling coach, MUST NOT
+        be expired, MUST have blocking_errors == 0, and MUST NOT have been
+        applied already.
+      * For every transformed_workout on the preview:
+        - unresolved exercise rows are turned into draft library entries
+          via the shared ``create_exercise_request_if_missing`` helper,
+        - existing non-manual rows on the target date are deleted when
+          the conflict_action is ``replace`` (manual rows always error),
+        - the workout is inserted with source=coach_manual + manual_lock,
+        - cool-down items are copied into ``exercises[]`` via the shared
+          Guided-Flow helper,
+        - the shared media-queue scanner is invoked with the real (not
+          dry-run) flag,
+        - a per-workout audit-log entry is written.
+      * A single batch audit-log entry is written at the end.
+    """
+    # ------------------------------------------------------------------
+    # 1. Load and gate the preview.
+    # ------------------------------------------------------------------
+    preview = await db.programme_import_previews.find_one(
+        {"id": body.preview_id}, {"_id": 0},
+    )
+    if not preview:
+        raise HTTPException(404, f"preview {body.preview_id!r} not found")
+    if preview.get("coach_id") != coach.get("id"):
+        raise HTTPException(403, "preview belongs to a different coach")
+
+    # Expiry check (defensive — TTL job may lag by up to ~60s).
+    expires_at = preview.get("expires_at")
+    if isinstance(expires_at, datetime):
+        exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > exp:
+            raise HTTPException(410, "preview expired — re-run /preview")
+
+    if preview.get("blocking_errors", 0) > 0:
+        raise HTTPException(
+            400,
+            {
+                "code": "blocking_errors_present",
+                "message": (
+                    f"preview has {preview['blocking_errors']} blocking error(s); "
+                    "fix the envelope and re-preview."
+                ),
+                "blocking_errors": preview["blocking_errors"],
+            },
+        )
+    if preview.get("applied_at"):
+        raise HTTPException(
+            409,
+            {
+                "code": "preview_already_applied",
+                "message": "this preview has already been applied",
+                "applied_at": preview["applied_at"],
+                "applied_workout_ids": preview.get("applied_workout_ids") or [],
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # 2. Reload client (in case the record changed since preview).
+    # ------------------------------------------------------------------
+    client = await db.users.find_one(
+        {"id": preview["client_id"]}, {"_id": 0, "password_hash": 0},
+    )
+    if not client:
+        raise HTTPException(404, "client no longer exists")
+
+    # ------------------------------------------------------------------
+    # 3. Ensure indexes + import shared helpers.
+    # ------------------------------------------------------------------
+    await _ensure_apply_indexes()
+
+    try:
+        from feature_v2_resolver import create_exercise_request_if_missing
+        from feature_coach_manual_workouts import (
+            _enrich_for_guided, _merge_cooldown_into_exercises,
+        )
+        from feature_media_queue import scan_media_queue_for_sections
+    except Exception as e:  # pragma: no cover
+        logger.exception("programme_import_apply: shared helpers unavailable")
+        raise HTTPException(500, f"shared helpers unavailable: {e}")
+
+    # Try to grab _log_change directly (avoids `import server` cycles at
+    # module top). Falls through to a no-op logger if unavailable.
+    try:
+        from server import _log_change  # type: ignore
+    except Exception:  # pragma: no cover
+        _log_change = None  # type: ignore
+
+    now_str = now_iso()
+    coach_id = coach.get("id")
+
+    results: list[dict[str, Any]] = []
+    counters: dict[str, int] = {
+        "inserted": 0,
+        "replaced": 0,
+        "skipped": 0,
+        "already_imported": 0,
+        "failed": 0,
+        "drafts_created": 0,
+        "media_queue_added": 0,
+    }
+    inserted_ids: list[str] = []
+
+    envelope_meta = (preview.get("envelope") or {}).get("meta") or {}
+    import_source_label = (
+        envelope_meta.get("generated_by") or "programme_import"
+    )
+
+    # ------------------------------------------------------------------
+    # 4. Walk every transformed workout.
+    # ------------------------------------------------------------------
+    for tw in preview.get("transformed_workouts", []):
+        date = tw.get("date")
+        title = (tw.get("title") or "Imported workout").strip() or "Imported workout"
+
+        # Defensive: skip anything that was flagged blocked in the preview.
+        if tw.get("_blocked"):
+            results.append({
+                "date": date, "status": "skipped_blocked",
+                "reason": "workout had blocking errors in preview",
+            })
+            counters["skipped"] += 1
+            continue
+
+        action = tw.get("_conflict_action") or "insert"
+        if action == "skip":
+            results.append({
+                "date": date, "status": "skipped_conflict",
+                "reason": "override_policy=skip_conflicts and date has existing workout",
+            })
+            counters["skipped"] += 1
+            continue
+        if action == "already_imported":
+            # Preview already spotted the import_ref match — surface the
+            # existing workout id in the results and move on.
+            existing_id = None
+            if ext_ref := tw.get("external_ref"):
+                _existing = await db.workouts.find_one(
+                    {"user_id": client["id"], "import_ref": ext_ref},
+                    {"_id": 0, "id": 1},
+                )
+                existing_id = (_existing or {}).get("id")
+            results.append({
+                "date": date, "status": "already_imported",
+                "workout_id": existing_id,
+                "reason": "workout with this external_ref already exists",
+            })
+            counters["already_imported"] += 1
+            continue
+        if action == "error":
+            results.append({
+                "date": date, "status": "skipped_error",
+                "reason": "preview marked this date as an error",
+            })
+            counters["skipped"] += 1
+            continue
+
+        # -------------------------------------------------------------
+        # 4a. Idempotency check — same client + external_ref already
+        # written? Skip silently. This makes re-runs safe.
+        # -------------------------------------------------------------
+        ext_ref = tw.get("external_ref")
+        if ext_ref:
+            already = await db.workouts.find_one(
+                {"user_id": client["id"], "import_ref": ext_ref},
+                {"_id": 0, "id": 1},
+            )
+            if already:
+                results.append({
+                    "date": date, "status": "already_imported",
+                    "workout_id": already["id"],
+                    "reason": f"workout with external_ref={ext_ref!r} already exists",
+                })
+                counters["already_imported"] += 1
+                continue
+
+        # -------------------------------------------------------------
+        # 4b. Draft-create any unresolved rows so every write row has an
+        # exercise_id. `create_exercise_request_if_missing` dedupes by
+        # normalised name so the same "Cluster deadlift" across 5 days
+        # only ever produces 1 draft.
+        # -------------------------------------------------------------
+        drafts_created_here = 0
+
+        async def _resolve_row(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+            nonlocal drafts_created_here
+            if row.get("exercise_id"):
+                return row
+            raw_name = (
+                (row.get("_import_meta") or {}).get("raw_name")
+                or row.get("name")
+            )
+            if not raw_name:
+                # No name at all — cannot draft. Drop the row.
+                return None
+            try:
+                draft_id = await create_exercise_request_if_missing(
+                    {"name": raw_name},
+                    user=client, programme_id=None, workout_id=None,
+                    reason="programme_import_apply",
+                )
+            except Exception:
+                logger.exception(
+                    "programme_import_apply: draft create failed for %r", raw_name,
+                )
+                return None
+            if not draft_id:
+                return None
+            row["exercise_id"] = draft_id
+            row["name"] = raw_name
+            drafts_created_here += 1
+            return row
+
+        raw_warm = tw.get("warmup") or []
+        raw_main = tw.get("exercises") or []
+        raw_cool = tw.get("cooldown") or []
+        warmup_rows: list[dict] = []
+        for r in raw_warm:
+            out = await _resolve_row(dict(r))
+            if out is not None:
+                warmup_rows.append(out)
+        main_rows: list[dict] = []
+        for r in raw_main:
+            out = await _resolve_row(dict(r))
+            if out is not None:
+                main_rows.append(out)
+        cooldown_rows: list[dict] = []
+        for r in raw_cool:
+            out = await _resolve_row(dict(r))
+            if out is not None:
+                cooldown_rows.append(out)
+
+        if not main_rows:
+            results.append({
+                "date": date, "status": "skipped_empty",
+                "reason": "no main exercises left after draft resolution",
+            })
+            counters["skipped"] += 1
+            continue
+
+        # -------------------------------------------------------------
+        # 4c. Clean rows (strip preview metadata) — preserves group_*
+        # fields intact so supersets / circuits / EMOM / AMRAP persist.
+        # -------------------------------------------------------------
+        warmup_rows = [_clean_row_for_write(r, "warmup", i)
+                       for i, r in enumerate(warmup_rows)]
+        main_rows = [_clean_row_for_write(r, "main", i)
+                     for i, r in enumerate(main_rows)]
+        cooldown_rows = [_clean_row_for_write(r, "cooldown", i)
+                         for i, r in enumerate(cooldown_rows)]
+
+        # Guided-Flow enrichment (logging_type, category, movement_pattern).
+        try:
+            await _enrich_for_guided(warmup_rows)
+            await _enrich_for_guided(main_rows)
+            await _enrich_for_guided(cooldown_rows)
+        except Exception:
+            logger.exception(
+                "programme_import_apply: _enrich_for_guided failed for %s", date,
+            )
+
+        # -------------------------------------------------------------
+        # 4d. Conflict handling — replace policy deletes existing non-
+        # manual rows on the target date. Manual rows always error
+        # (never silently overwritten), even if the preview somehow got
+        # a stale read.
+        # -------------------------------------------------------------
+        replaced_workout_id: Optional[str] = None
+        if action == "replace":
+            existing = await db.workouts.find_one(
+                {"user_id": client["id"], "date": date},
+                {"_id": 0, "id": 1, "source": 1, "manual_lock": 1, "completed": 1},
+            )
+            if existing:
+                if existing.get("completed"):
+                    results.append({
+                        "date": date, "status": "skipped_completed",
+                        "reason": "existing workout is completed — cannot overwrite",
+                    })
+                    counters["skipped"] += 1
+                    continue
+                if (existing.get("source") == MANUAL_SOURCE
+                        or existing.get("manual_lock")):
+                    # Defence in depth against a race between preview and apply.
+                    results.append({
+                        "date": date, "status": "skipped_manual_lock",
+                        "reason": (
+                            "target date has a manual workout — delete it first "
+                            "or set override_policy=skip_conflicts."
+                        ),
+                    })
+                    counters["skipped"] += 1
+                    continue
+                replaced_workout_id = existing["id"]
+                await db.workouts.delete_many(
+                    {"user_id": client["id"], "date": date},
+                )
+
+        # -------------------------------------------------------------
+        # 4e. Merge cool-down into exercises[] for Guided Flow parity
+        # with the manual builder.
+        # -------------------------------------------------------------
+        main_with_cooldown = _merge_cooldown_into_exercises(
+            main_rows, cooldown_rows,
+        )
+
+        # -------------------------------------------------------------
+        # 4f. Build + insert the workout doc.
+        # -------------------------------------------------------------
+        wid = new_id()
+        doc: dict[str, Any] = {
+            "id": wid,
+            "user_id": client["id"],
+            "date": date,
+            "title": title,
+            "focus": tw.get("workout_type") or "other",
+            "workout_type": tw.get("workout_type") or "other",
+            "location": tw.get("location"),
+            "equipment_context": tw.get("equipment_context"),
+            "duration_min": tw.get("duration_min"),
+            "rpe": tw.get("rpe"),
+            "coach_notes": tw.get("coach_notes"),
+            "warmup": warmup_rows,
+            "exercises": main_with_cooldown,
+            "cooldown": cooldown_rows,
+            "alternatives": {},
+            # Manual markers — identical to coach_create_manual_workout.
+            "source": MANUAL_SOURCE,
+            "manual_lock": True,
+            "coach_locked": True,
+            "coach_locked_by": coach_id,
+            "coach_locked_at": now_str,
+            "coach_id": coach_id,
+            "coach_edited": True,
+            "edited_by": coach_id,
+            "edited_at": now_str,
+            "created_at": now_str,
+            "updated_at": now_str,
+            "original_date": date,
+            # Programme-import stamps.
+            "import_source": import_source_label,
+            "import_preview_id": preview["id"],
+            "import_envelope_hash": preview.get("envelope_hash"),
+            "audit": [{
+                "action": "programme_import_create",
+                "by": coach_id,
+                "at": now_str,
+                "preview_id": preview["id"],
+                "replaced_workout_id": replaced_workout_id,
+            }],
+        }
+        if ext_ref:
+            doc["import_ref"] = ext_ref
+
+        try:
+            await db.workouts.insert_one(doc)
+        except Exception as e:
+            logger.exception(
+                "programme_import_apply: insert failed for %s", date,
+            )
+            results.append({
+                "date": date, "status": "failed_insert",
+                "reason": str(e)[:200],
+            })
+            counters["failed"] += 1
+            continue
+
+        inserted_ids.append(wid)
+        if replaced_workout_id:
+            counters["replaced"] += 1
+        else:
+            counters["inserted"] += 1
+        counters["drafts_created"] += drafts_created_here
+
+        # -------------------------------------------------------------
+        # 4g. Media queue scan (real writes).
+        # -------------------------------------------------------------
+        media_added: list[dict] = []
+        try:
+            media_added = await scan_media_queue_for_sections(
+                client,
+                {
+                    "warmup": warmup_rows,
+                    "main": main_rows,
+                    "cooldown": cooldown_rows,
+                },
+                workout_id=wid,
+                reason="programme_import_apply",
+            )
+            counters["media_queue_added"] += len(media_added or [])
+        except Exception:
+            logger.exception(
+                "programme_import_apply: media queue scan failed for %s", wid,
+            )
+
+        # -------------------------------------------------------------
+        # 4h. Per-workout audit entry.
+        # -------------------------------------------------------------
+        if _log_change:
+            try:
+                await _log_change(
+                    coach_id=coach_id, client_id=client["id"],
+                    category="workout", kind="programme_import_workout",
+                    title=f"Programme-import workout for {date}",
+                    description=(
+                        f"{title} · {len(main_rows)} main exercises · "
+                        f"from preview {preview['id']}"
+                    ),
+                    actor="coach",
+                    meta={
+                        "workout_id": wid,
+                        "date": date,
+                        "preview_id": preview["id"],
+                        "action": "replaced" if replaced_workout_id else "inserted",
+                        "replaced_workout_id": replaced_workout_id,
+                        "drafts_created": drafts_created_here,
+                        "missing_media_count": len(media_added or []),
+                        "external_ref": ext_ref,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "programme_import_apply: _log_change (per-workout) failed for %s",
+                    wid,
+                )
+
+        results.append({
+            "date": date,
+            "status": "replaced" if replaced_workout_id else "inserted",
+            "workout_id": wid,
+            "replaced_workout_id": replaced_workout_id,
+            "drafts_created": drafts_created_here,
+            "media_queue_added": len(media_added or []),
+        })
+
+    # ------------------------------------------------------------------
+    # 5. Batch audit log — one row per import so the whole month is
+    # visible as a single event alongside per-workout entries.
+    # ------------------------------------------------------------------
+    if _log_change:
+        try:
+            await _log_change(
+                coach_id=coach_id, client_id=client["id"],
+                category="workout", kind="programme_import",
+                title=(
+                    f"Programme import applied · {counters['inserted']} inserted"
+                    f", {counters['replaced']} replaced"
+                ),
+                description=(
+                    f"Preview {preview['id']} · month {preview.get('month')} · "
+                    f"{len(inserted_ids)} workouts written"
+                ),
+                actor="coach",
+                meta={
+                    "preview_id": preview["id"],
+                    "month": preview.get("month"),
+                    "workout_ids": inserted_ids,
+                    "counters": counters,
+                    "envelope_hash": preview.get("envelope_hash"),
+                    "override_policy": preview.get("override_policy"),
+                    "import_source": import_source_label,
+                    "per_workout": results,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "programme_import_apply: batch _log_change failed for preview %s",
+                preview["id"],
+            )
+
+    # ------------------------------------------------------------------
+    # 6. Mark preview applied so it can never be replayed.
+    # ------------------------------------------------------------------
+    try:
+        await db.programme_import_previews.update_one(
+            {"id": preview["id"]},
+            {"$set": {
+                "applied_at": now_str,
+                "applied_by": coach_id,
+                "applied_workout_ids": inserted_ids,
+                "apply_counters": counters,
+            }},
+        )
+    except Exception:
+        logger.exception(
+            "programme_import_apply: preview stamp failed for %s", preview["id"],
+        )
+
+    return {
+        "ok": True,
+        "preview_id": preview["id"],
+        "client_id": client["id"],
+        "client_email": client.get("email"),
+        "month": preview.get("month"),
+        "counters": counters,
+        "workout_ids": inserted_ids,
+        "results": results,
+    }
+
+
 __all__ = [
     "SCHEMA_ID",
     "MAX_WORKOUTS",
@@ -1090,5 +1672,7 @@ __all__ = [
     "SingleMainExercise",
     "GroupMemberItem",
     "GroupBlock",
+    "ApplyBody",
     "coach_programme_import_preview",
+    "coach_programme_import_apply",
 ]

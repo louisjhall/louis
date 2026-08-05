@@ -742,9 +742,12 @@ async def _process_workout(
                  for i, (it, m) in enumerate(zip(w.cooldown, cool_matches))]
 
     # ------------------------------------------------------------------
-    # 3. Structural validation — every workout must have >=1 main row.
+    # 3. Structural validation — every workout must have >=1 main row,
+    #    EXCEPT recovery days (rest days, walks, etc.) which are allowed
+    #    to have empty exercises[]. The importer still writes a workout
+    #    doc so the calendar day is "owned" by the coach.
     # ------------------------------------------------------------------
-    if not main_rows and not errors:
+    if not main_rows and not errors and (w.workout_type or "").lower() != "recovery":
         # (If earlier errors already exist we bubble those up first.)
         errors.append({
             "code": "empty_main",
@@ -1388,7 +1391,11 @@ async def coach_programme_import_apply(
             if out is not None:
                 cooldown_rows.append(out)
 
-        if not main_rows:
+        # Recovery workouts (rest days) may legitimately have zero main
+        # exercises — we still write the workout doc so the coach "owns"
+        # that calendar day. Everything else must have at least one row.
+        workout_type = (tw.get("workout_type") or "").lower()
+        if not main_rows and workout_type != "recovery":
             results.append({
                 "date": date, "status": "skipped_empty",
                 "reason": "no main exercises left after draft resolution",

@@ -413,6 +413,34 @@ def test_preview_row_persists(session, base_url, coach_headers):
     assert body["expires_at"].endswith("Z") or "+" in body["expires_at"]
 
 
+def test_recovery_workout_with_empty_exercises_is_ready(session, base_url, coach_headers):
+    """Rest days: workout_type=recovery with exercises=[] must preview cleanly,
+    NOT be flagged as 'empty_main', and be applyable."""
+    env = _make_envelope(workouts=[
+        {
+            "date": "2028-03-01",
+            "title": "Rest day",
+            "workout_type": "recovery",
+            "duration_min": 0,
+            "coach_notes": "Full rest — sleep, hydrate, walk if you feel like it.",
+            "warmup": [],
+            "exercises": [],
+            "cooldown": [],
+            "external_ref": f"recovery-test-{uuid.uuid4().hex[:6]}",
+        }
+    ])
+    r = session.post(
+        f"{base_url}/api/coach/programme-import/preview",
+        json=env, headers=coach_headers, timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    wp = body["per_workout"][0]
+    assert wp["status"] == "ready", f"expected ready, got {wp['status']}. errors={wp['errors']}"
+    assert not any(e.get("code") == "empty_main" for e in wp["errors"])
+    assert body["blocking_errors"] == 0
+
+
 # ============================================================================
 # APPLY endpoint tests (Phase 2)
 # ============================================================================

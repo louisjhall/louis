@@ -142,6 +142,18 @@ export default function Login() {
                 )}
               </Pressable>
 
+              {/* Forgot Password — routes to a simple support screen. Once a
+                * public email-based reset flow is wired (Resend integration),
+                * point this at /(auth)/forgot-password with an email input. */}
+              <Pressable
+                testID="login-forgot-password"
+                onPress={() => router.push("/(auth)/forgot-password")}
+                hitSlop={6}
+                style={styles.forgotRow}
+              >
+                <Text style={styles.forgotLink}>Forgot password?</Text>
+              </Pressable>
+
               <Pressable
                 testID="login-signup-link"
                 onPress={() => router.push("/(auth)/signup")}
@@ -263,6 +275,17 @@ const styles = StyleSheet.create({
   linkRow: { flexDirection: "row", justifyContent: "center", marginTop: theme.space.lg },
   linkDim: { color: theme.color.textMuted },
   link: { color: theme.color.brand, fontWeight: "700" },
+  forgotRow: {
+    marginTop: theme.space.md,
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  forgotLink: {
+    color: theme.color.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
   publicLinksRow: {
     flexDirection: "row",
     justifyContent: "center",

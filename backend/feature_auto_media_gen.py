@@ -50,23 +50,47 @@ _AUTO_USER_ID = "system_auto_media_gen"
 # ---------------------------------------------------------------------------
 
 # All kinds we know about. Each maps to a friendly label the coach sees.
+# Images are split per-slot so the coach can enable Primary only (default)
+# and add Start/End when they specifically need the two-frame flow.
 _KIND_LABELS: dict[str, str] = {
-    "images":          "Images (Nano Banana × 3 slots)",
+    "image_primary":   "Images · Primary frame",
+    "image_start":     "Images · Start frame",
+    "image_end":       "Images · End frame",
     "coaching_points": "Coaching points (Louis-voice)",
     "common_mistakes": "Common mistakes",
     "alternatives":    "Alternative exercises (+ library drafts)",
     "instructions":    "Client-facing instructions",
 }
 
+# Defaults — Primary image + all written content ON. Start/End frames OFF
+# by default because they double the image credit cost and most workout
+# screens only need the primary frame.
+_KIND_DEFAULTS: dict[str, bool] = {
+    "image_primary":   True,
+    "image_start":     False,
+    "image_end":       False,
+    "coaching_points": True,
+    "common_mistakes": True,
+    "alternatives":    True,
+    "instructions":    True,
+}
+
 # Env-var overrides (checked last as a hard kill-switch — flipping any of
 # these to "false" beats the DB toggle so cost blow-outs can be stopped
 # via an env change even if the DB is unreachable).
+def _env_off(name: str) -> bool:
+    return str(os.environ.get(name, "true")).lower() not in ("1", "true", "yes", "on")
+
 _KIND_ENV_OFF = {
-    "images":          str(os.environ.get("AUTO_MEDIA_GEN_IMAGES", "true")).lower()          not in ("1", "true", "yes", "on"),
-    "coaching_points": str(os.environ.get("AUTO_MEDIA_GEN_COACHING", "true")).lower()        not in ("1", "true", "yes", "on"),
-    "common_mistakes": str(os.environ.get("AUTO_MEDIA_GEN_MISTAKES", "true")).lower()        not in ("1", "true", "yes", "on"),
-    "alternatives":    str(os.environ.get("AUTO_MEDIA_GEN_ALTERNATIVES", "true")).lower()    not in ("1", "true", "yes", "on"),
-    "instructions":    str(os.environ.get("AUTO_MEDIA_GEN_INSTRUCTIONS", "true")).lower()    not in ("1", "true", "yes", "on"),
+    # Legacy `AUTO_MEDIA_GEN_IMAGES` still kills all three image slots
+    # so an existing env var keeps working.
+    "image_primary":   _env_off("AUTO_MEDIA_GEN_IMAGE_PRIMARY") or _env_off("AUTO_MEDIA_GEN_IMAGES"),
+    "image_start":     _env_off("AUTO_MEDIA_GEN_IMAGE_START")   or _env_off("AUTO_MEDIA_GEN_IMAGES"),
+    "image_end":       _env_off("AUTO_MEDIA_GEN_IMAGE_END")     or _env_off("AUTO_MEDIA_GEN_IMAGES"),
+    "coaching_points": _env_off("AUTO_MEDIA_GEN_COACHING"),
+    "common_mistakes": _env_off("AUTO_MEDIA_GEN_MISTAKES"),
+    "alternatives":    _env_off("AUTO_MEDIA_GEN_ALTERNATIVES"),
+    "instructions":    _env_off("AUTO_MEDIA_GEN_INSTRUCTIONS"),
 }
 
 _SETTINGS_DOC_ID = "auto_media_gen"
@@ -74,19 +98,30 @@ _SETTINGS_DOC_ID = "auto_media_gen"
 
 async def _load_kind_toggles() -> dict:
     """Return {kind: bool} — merge of DB settings (source of truth) and
-    env-var kill switches (env-false ALWAYS wins). Falls back to all-on
-    when the DB doc is missing so behaviour matches the previous version."""
-    defaults = {k: True for k in _KIND_LABELS}
+    env-var kill switches (env-false ALWAYS wins). Falls back to the
+    _KIND_DEFAULTS above when the DB doc is missing.
+
+    Migration note: if the DB doc still carries the legacy `images`
+    key from an older release we honour it — its value seeds the three
+    new per-slot toggles unless the coach has already saved per-slot
+    values."""
     try:
         doc = await db.settings.find_one({"_id": _SETTINGS_DOC_ID}) or {}
     except Exception as e:
         logger.warning(f"auto_media_gen: settings load failed ({e}), using defaults")
         doc = {}
+
+    legacy_images = doc.get("images")
     toggles: dict[str, bool] = {}
-    for k in _KIND_LABELS:
-        val = doc.get(k) if k in doc else defaults[k]
-        if not isinstance(val, bool):
-            val = defaults[k]
+    for k, default in _KIND_DEFAULTS.items():
+        if k in doc and isinstance(doc[k], bool):
+            val = doc[k]
+        elif isinstance(legacy_images, bool) and k in ("image_primary", "image_start", "image_end"):
+            # Seed all three from the legacy single toggle. Coach can
+            # refine individually once they open the panel.
+            val = legacy_images if k == "image_primary" else False
+        else:
+            val = default
         # Env kill-switch wins
         if _KIND_ENV_OFF.get(k):
             val = False
@@ -128,9 +163,15 @@ async def auto_enqueue_media_for_exercise(
 
     toggles = await _load_kind_toggles()
 
-    # ---- Images (only for slots that are still empty) ----
-    if not toggles.get("images", True):
-        skipped_by_toggle.append("images")
+    # ---- Images (only for slots that are still empty AND enabled) ----
+    per_slot_toggle = {
+        "primary": toggles.get("image_primary", True),
+        "start":   toggles.get("image_start",   False),
+        "end":     toggles.get("image_end",     False),
+    }
+    if not any(per_slot_toggle.values()):
+        for slot in _AUTO_SLOTS:
+            skipped_by_toggle.append(f"image_{slot}")
     else:
         try:
             from feature_exercise_content import (
@@ -147,6 +188,9 @@ async def auto_enqueue_media_for_exercise(
             }
             set_updates: dict = {}
             for slot in _AUTO_SLOTS:
+                if not per_slot_toggle.get(slot):
+                    skipped_by_toggle.append(f"image_{slot}")
+                    continue
                 legacy_key = legacy_key_by_slot[slot]
                 # Skip if already populated (via legacy or persona map).
                 if ex.get(legacy_key):

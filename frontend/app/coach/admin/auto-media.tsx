@@ -31,15 +31,18 @@ type SettingsPayload = {
 
 // Cost hint per kind so Louis can see credit impact at a glance.
 const COST_HINT: Record<string, string> = {
-  images:          "~3 Nano-Banana image gens (biggest cost)",
+  image_primary:   "1 Nano-Banana image gen (single frame)",
+  image_start:     "1 Nano-Banana image gen (extra frame)",
+  image_end:       "1 Nano-Banana image gen (extra frame)",
   coaching_points: "1 Claude call (~500 tokens)",
   common_mistakes: "1 Claude call (~500 tokens)",
   alternatives:    "1 Claude call + auto-creates library drafts",
   instructions:    "1 Claude call (~500 tokens)",
 };
 
-// Preferred display order (biggest cost first so it's easy to disable).
-const ORDER = ["images", "alternatives", "coaching_points", "common_mistakes", "instructions"];
+// Split the toggles into two groups so images sit under their own section.
+const IMAGE_KINDS = ["image_primary", "image_start", "image_end"];
+const CONTENT_KINDS = ["coaching_points", "common_mistakes", "alternatives", "instructions"];
 
 export default function AutoMediaSettingsScreen() {
   const router = useRouter();
@@ -104,17 +107,57 @@ export default function AutoMediaSettingsScreen() {
     } finally { setSaving(null); }
   };
 
-  const kinds = useMemo(() => {
-    if (!data) return [];
+  const imageKinds = useMemo(() => {
+    if (!data) return [] as string[];
+    return IMAGE_KINDS.filter((k) => k in data.labels);
+  }, [data]);
+  const contentKinds = useMemo(() => {
+    if (!data) return [] as string[];
     const known = Object.keys(data.labels);
-    const ordered = [...ORDER.filter((k) => known.includes(k)), ...known.filter((k) => !ORDER.includes(k))];
-    return ordered;
+    const inGroup = new Set([...IMAGE_KINDS, ...CONTENT_KINDS]);
+    return [
+      ...CONTENT_KINDS.filter((k) => known.includes(k)),
+      ...known.filter((k) => !inGroup.has(k)),
+    ];
   }, [data]);
 
   const totalOn = useMemo(() => {
     if (!data) return 0;
     return Object.values(data.toggles).filter(Boolean).length;
   }, [data]);
+
+  const renderRow = (k: string) => {
+    if (!data) return null;
+    const label = data.labels[k] || k;
+    const isOn = !!data.toggles[k];
+    const envLocked = !!(data.env_kill_switches || {})[k];
+    return (
+      <View key={k} style={styles.row} testID={`toggle-${k}`}>
+        <View style={{ flex: 1, marginRight: 12 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={styles.rowTitle}>{label}</Text>
+            {envLocked && (
+              <View style={styles.envBadge}>
+                <Text style={styles.envBadgeT}>ENV LOCK</Text>
+              </View>
+            )}
+          </View>
+          {COST_HINT[k] ? <Text style={styles.rowDesc}>{COST_HINT[k]}</Text> : null}
+        </View>
+        {saving === k ? (
+          <ActivityIndicator color={theme.color.brand} />
+        ) : (
+          <Switch
+            value={isOn}
+            onValueChange={(next) => flip(k, next)}
+            disabled={envLocked}
+            trackColor={{ true: theme.color.brand, false: "#3a3a3a" }}
+            thumbColor="#fff"
+          />
+        )}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
@@ -174,42 +217,22 @@ export default function AutoMediaSettingsScreen() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionT}>PER-KIND TOGGLES</Text>
+            <Text style={styles.sectionT}>IMAGE FRAMES</Text>
             <Text style={styles.sectionHint}>
-              Turn off any kind to save credits — coach can still generate
-              it manually per-exercise from the library.
+              Which Nano-Banana frames get generated automatically. Coach
+              can still manually generate any frame per-exercise from the
+              library.
             </Text>
-            {kinds.map((k) => {
-              const label = data.labels[k] || k;
-              const isOn = !!data.toggles[k];
-              const envLocked = !!(data.env_kill_switches || {})[k];
-              return (
-                <View key={k} style={styles.row} testID={`toggle-${k}`}>
-                  <View style={{ flex: 1, marginRight: 12 }}>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <Text style={styles.rowTitle}>{label}</Text>
-                      {envLocked && (
-                        <View style={styles.envBadge}>
-                          <Text style={styles.envBadgeT}>ENV LOCK</Text>
-                        </View>
-                      )}
-                    </View>
-                    {COST_HINT[k] ? <Text style={styles.rowDesc}>{COST_HINT[k]}</Text> : null}
-                  </View>
-                  {saving === k ? (
-                    <ActivityIndicator color={theme.color.brand} />
-                  ) : (
-                    <Switch
-                      value={isOn}
-                      onValueChange={(next) => flip(k, next)}
-                      disabled={envLocked}
-                      trackColor={{ true: theme.color.brand, false: "#3a3a3a" }}
-                      thumbColor="#fff"
-                    />
-                  )}
-                </View>
-              );
-            })}
+            {imageKinds.map((k) => renderRow(k))}
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionT}>WRITTEN CONTENT</Text>
+            <Text style={styles.sectionHint}>
+              Text fields drafted by Claude in Louis’s voice. Every field
+              lands as a draft — coach approves before it reaches clients.
+            </Text>
+            {contentKinds.map((k) => renderRow(k))}
           </View>
 
           {Object.keys(data.env_kill_switches || {}).length > 0 && (

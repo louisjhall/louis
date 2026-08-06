@@ -1008,31 +1008,43 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
           <Text style={styles.planEmpty}>Rest</Text>
         ) : null}
         {row.assignments.map((a) => (
-          <Pressable
+          // Iter 144 — the whole card WAS a <Pressable>, with the bin nested
+          // inside. On React-Native-Web, nested Pressables don't reliably
+          // honour stopPropagation, so clicking the bin either fired the
+          // parent's onPress (navigating to workout detail and unmounting
+          // the confirm modal) or cancelled the whole event. De-nested so
+          // the bin is a sibling of the open-workout target — no nesting,
+          // no propagation quirk. Native behaviour is unchanged.
+          <View
             key={a.id}
             style={styles.planCard}
-            onPress={() => onOpenWorkout(a.id)}
-            testID={`open-workout-${a.id}`}
+            testID={`assignment-row-${a.id}`}
           >
-            <View style={{ flex: 1 }}>
-              <View style={styles.planCardTop}>
-                {a.key_session && (
-                  <Ionicons name="star" size={12} color="#f5b543" style={{ marginRight: 4 }} />
-                )}
-                <Text style={styles.planTitle} numberOfLines={1}>{humanise(a.kind || a.kind_label)}</Text>
-                {a.exposure_sequence ? (
-                  <Text style={styles.exposureTxt}> · #{a.exposure_sequence}</Text>
-                ) : null}
+            <Pressable
+              style={{ flex: 1, flexDirection: "row", alignItems: "center" }}
+              onPress={() => onOpenWorkout(a.id)}
+              testID={`open-workout-${a.id}`}
+            >
+              <View style={{ flex: 1 }}>
+                <View style={styles.planCardTop}>
+                  {a.key_session && (
+                    <Ionicons name="star" size={12} color="#f5b543" style={{ marginRight: 4 }} />
+                  )}
+                  <Text style={styles.planTitle} numberOfLines={1}>{humanise(a.kind || a.kind_label)}</Text>
+                  {a.exposure_sequence ? (
+                    <Text style={styles.exposureTxt}> · #{a.exposure_sequence}</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.planMeta} numberOfLines={1}>
+                  {a.duration_min ? `${a.duration_min} min` : ""}
+                  {a.equipment && a.equipment.length > 0 ? ` · ${a.equipment.slice(0, 3).join(", ")}` : ""}
+                </Text>
               </View>
-              <Text style={styles.planMeta} numberOfLines={1}>
-                {a.duration_min ? `${a.duration_min} min` : ""}
-                {a.equipment && a.equipment.length > 0 ? ` · ${a.equipment.slice(0, 3).join(", ")}` : ""}
-              </Text>
-            </View>
+            </Pressable>
             <View style={styles.planRight}>
               <StatusChip kind={a.status_kind} label={a.status_label} />
               <Pressable
-                onPress={(e) => { e.stopPropagation?.(); hardDeleteCard({ assignmentId: a.id, title: humanise(a.kind || a.kind_label) }); }}
+                onPress={() => hardDeleteCard({ assignmentId: a.id, title: humanise(a.kind || a.kind_label) })}
                 hitSlop={8}
                 style={styles.cardBin}
                 testID={`bin-assignment-${a.id}`}
@@ -1040,7 +1052,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
                 <Ionicons name="trash-outline" size={14} color="#c44" />
               </Pressable>
             </View>
-          </Pressable>
+          </View>
         ))}
         {(row.v1_workouts || []).map((w: any) => (
           <View key={w.id} style={[styles.planCard, { opacity: 0.85 }]}>

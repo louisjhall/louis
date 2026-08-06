@@ -432,10 +432,13 @@ async def hard_delete_workout(
         if target_doc:
             target_coll = "plan_live_v2"
         else:
-            # 2. Fall back to in-review drafts
+            # 2. Fall back to in-review or already-published drafts (Iter 147:
+            # 'published' added — some coach workflows keep the draft doc as
+            # the authoritative source even after publication until it's
+            # superseded).
             target_doc = await db.plan_drafts_v2.find_one(
                 {"id": source_id, "client_id": client_id,
-                 "status": {"$in": ["needs_review", "ready_for_review"]}},
+                 "status": {"$in": ["needs_review", "ready_for_review", "published"]}},
                 {"_id": 0},
             )
             if target_doc:

@@ -1479,14 +1479,44 @@ async def coach_programme_import_apply(
         # -------------------------------------------------------------
         replaced_workout_id: Optional[str] = None
         if action == "replace":
-            # Iter 140c: replace_conflicts is the source of truth. Overwrite
-            # any non-completed row on this date OR any prior row previously
-            # written for the same external_ref (handles the case where the
-            # ChatGPT envelope moved a workout to a different day).
-            # Hand-authored manual rows are ALSO overwritable under this
-            # policy — the coach explicitly opted in by choosing
-            # replace_conflicts. The only inviolable protection is
-            # `completed: true` (would destroy client history).
+            # Iter 147 — Full-Month Replace safety guard:
+            # Flight Support sessions live in db.flight_support_activity /
+            # db.flight_support_overrides (and occasionally on workout rows
+            # with `is_flight_support: true`). They MUST NEVER be overwritten
+            # or deleted by an importer replace. If the target date holds
+            # any active flight support, skip this date entirely; other
+            # dates continue to be replaced.
+            fs_activity = await db.flight_support_activity.find_one(
+                {"user_id": client["id"], "date": date}, {"_id": 0, "id": 1},
+            )
+            fs_override = await db.flight_support_overrides.find_one(
+                {"user_id": client["id"], "date": date,
+                 "hidden": {"$ne": True}},
+                {"_id": 0, "id": 1},
+            )
+            fs_workout = await db.workouts.find_one(
+                {"user_id": client["id"], "date": date,
+                 "is_flight_support": True},
+                {"_id": 0, "id": 1},
+            )
+            if fs_activity or fs_override or fs_workout:
+                results.append({
+                    "date": date, "status": "skipped_flight_support",
+                    "reason": ("Flight Support session present on this date — "
+                               "importer will not overwrite it. Other dates "
+                               "in the month continue to be replaced."),
+                })
+                counters["skipped"] += 1
+                continue
+            # Iter 140c / 147: replace_conflicts is the source of truth.
+            # Overwrite any non-completed row on this date OR any prior row
+            # previously written for the same external_ref (handles the
+            # case where the ChatGPT envelope moved a workout to a different
+            # day). Hand-authored manual rows AND coaching_system rows are
+            # both overwritable under this policy — the coach explicitly
+            # opted in. The only inviolable protections are `completed:true`
+            # (would destroy client history) and flight-support (handled
+            # above).
             existing = await db.workouts.find_one(
                 {"user_id": client["id"], "date": date},
                 {"_id": 0, "id": 1, "source": 1, "manual_lock": 1,

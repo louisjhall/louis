@@ -346,10 +346,10 @@ async def synth_workout_by_wid(db, wid: str, user_id: str) -> Optional[dict]:
     )
     src_is_draft = False
     if not src:
-        # 2. In-review draft fallback (Iter 146)
+        # 2. In-review OR already-published draft fallback (Iter 146/147)
         src = await db.plan_drafts_v2.find_one(
             {"id": source_id, "client_id": user_id,
-             "status": {"$in": ["needs_review", "ready_for_review"]}},
+             "status": {"$in": ["needs_review", "ready_for_review", "published"]}},
             {"_id": 0},
         )
         src_is_draft = bool(src)

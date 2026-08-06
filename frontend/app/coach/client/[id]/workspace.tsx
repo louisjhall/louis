@@ -1046,7 +1046,16 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
             <View style={styles.planRight}>
               <StatusChip kind={a.status_kind} label={a.status_label} />
               <Pressable
-                onPress={() => onHardDelete({ assignmentId: a.id, title: humanise(a.kind || a.kind_label) })}
+                onPress={() => onHardDelete(
+                  // Iter 147 — v2p:{source_id}:{exposure_id} ids are synthetic
+                  // (they live in plan_live_v2 / plan_drafts_v2, not
+                  // workout_assignments). Route them through workout_id so the
+                  // backend Branch A0 fires. Real assignment_ids go through
+                  // assignmentId as before.
+                  String(a.id).startsWith("v2p:")
+                    ? { workoutId: a.id, title: humanise(a.kind || a.kind_label) }
+                    : { assignmentId: a.id, title: humanise(a.kind || a.kind_label) }
+                )}
                 hitSlop={8}
                 style={styles.cardBin}
                 testID={`bin-assignment-${a.id}`}

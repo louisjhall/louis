@@ -1,0 +1,103 @@
+{
+  "generated_at": "2026-08-06T12:16:51Z",
+  "guard_env": "true",
+  "active_clients": [
+    {
+      "id": "u_reviewer_63d24c1c",
+      "email": "reviewer@crewfit.net",
+      "name": "App Store Reviewer"
+    },
+    {
+      "id": "7a708652-5635-4c3a-a8cc-033220f1f03d",
+      "email": "louishallpt@outlook.com",
+      "name": "Louis Hall"
+    },
+    {
+      "id": "0b0651e2-3453-4c39-b858-b377e8284f8c",
+      "email": "client@crewfit.com",
+      "name": "Alex Rivera"
+    },
+    {
+      "id": "6f945cdb-1a64-4411-bf47-058d0e3160ec",
+      "email": "pietrosangermano1992@hotmail.com",
+      "name": "Pietro Sangermano"
+    }
+  ],
+  "excluded_deleted_client": {
+    "id": "8d24515c-5255-483d-9f10-2261c8d86400",
+    "email": "deleted+8d24515c@crewfit.deleted",
+    "workouts_still_in_db": 1,
+    "user_row_exists": true
+  },
+  "snapshot_before": {
+    "exercises_v2_total": 4500,
+    "approved_or_live": 14,
+    "needs_review": 3,
+    "needs_media": 0,
+    "in_progress": 0,
+    "drafts": 4479,
+    "exercise_content_images_total": 4333
+  },
+  "snapshot_after_delete": {
+    "exercises_v2_total": 79,
+    "approved_or_live": 14,
+    "needs_review": 0,
+    "needs_media": 0,
+    "in_progress": 0,
+    "drafts": 65,
+    "exercise_content_images_total": 141
+  },
+  "snapshot_after_rescan": {
+    "exercises_v2_total": 79,
+    "approved_or_live": 14,
+    "needs_review": 0,
+    "needs_media": 0,
+    "in_progress": 0,
+    "drafts": 65,
+    "exercise_content_images_total": 141
+  },
+  "totals": {
+    "exercises_v2_final_total": 79,
+    "approved_or_live_final": 14,
+    "retained_because_referenced_final": 65,
+    "needs_review_final": 0,
+    "needs_media_final": 0,
+    "in_progress_final": 0,
+    "rows_deleted": 4421,
+    "media_metadata_rows_deleted": 4192,
+    "drafts_recreated_during_rescan": 0,
+    "duplicate_normalised_names_after_cleanup": 20,
+    "dangling_exercise_references_after_cleanup": 0
+  },
+  "rescan_result": {
+    "scanned_workouts": 26,
+    "created": 0,
+    "linked": 264
+  },
+  "render_check_active_clients": {
+    "reviewer@crewfit.net": {
+      "workouts_total": 5,
+      "workouts_checked": 5,
+      "broken_exercise_refs": 0,
+      "renders_correctly": true
+    },
+    "louishallpt@outlook.com": {
+      "workouts_total": 2,
+      "workouts_checked": 2,
+      "broken_exercise_refs": 0,
+      "renders_correctly": true
+    },
+    "client@crewfit.com": {
+      "workouts_total": 11,
+      "workouts_checked": 11,
+      "broken_exercise_refs": 0,
+      "renders_correctly": true
+    },
+    "pietrosangermano1992@hotmail.com": {
+      "workouts_total": 30,
+      "workouts_checked": 30,
+      "broken_exercise_refs": 0,
+      "renders_correctly": true
+    }
+  }
+}

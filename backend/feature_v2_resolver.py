@@ -967,6 +967,7 @@ async def backfill_missing_exercise_requests_from_workouts(
     days_back: int = 14,
     days_forward: int = 21,
     max_new: int = 100,
+    only_user_ids: Optional[list[str]] = None,
 ) -> dict:
     """Iter 95k — Walk every workout in the window and ensure every exercise
     name has a matching row in exercises_v2 (approved OR draft). Any name that
@@ -976,8 +977,21 @@ async def backfill_missing_exercise_requests_from_workouts(
 
     Cheap and idempotent — the dedup path inside
     ``create_exercise_request_if_missing`` handles repeated calls.
+
+    Phase C guard (Iter 141a): when the env flag ``EXERCISE_BACKFILL_DISABLED``
+    is set truthy, this function short-circuits with a no-op. This prevents
+    the historical draft-repopulation loop that was polluting exercises_v2.
+    Legitimate creations still flow through ``create_exercise_request_if_missing``
+    directly (JSON import, manual builder, live V2 generation).
     """
     import datetime as _dt
+    import os as _os
+
+    if str(_os.environ.get("EXERCISE_BACKFILL_DISABLED", "")).lower() in ("1", "true", "yes"):
+        logger.info(
+            "backfill_missing_exercise_requests_from_workouts: skipped (EXERCISE_BACKFILL_DISABLED=true)"
+        )
+        return {"scanned_workouts": 0, "created": 0, "linked": 0, "guarded": True}
 
     today = _dt.date.today()
     from_iso = (today - _dt.timedelta(days=days_back)).isoformat()
@@ -1002,7 +1016,8 @@ async def backfill_missing_exercise_requests_from_workouts(
     seen_norms_this_run: set[str] = set()
 
     async for w in db.workouts.find(
-        {"date": {"$gte": from_iso, "$lte": to_iso}},
+        {"date": {"$gte": from_iso, "$lte": to_iso},
+         **({"user_id": {"$in": list(only_user_ids)}} if only_user_ids else {})},
         {"_id": 0, "id": 1, "user_id": 1, "date": 1,
          "programme_id": 1, "exercises": 1, "warmup": 1},
     ):

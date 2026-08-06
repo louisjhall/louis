@@ -233,6 +233,10 @@ async def coach_list_protocols(
             "duration_min": p.duration_min,
             "duration_range": list(p.duration_range),
             "cues": p.cues, "equipment": p.equipment,
+            # Iter 140d — surface the composable inner block list so the
+            # coach preview renders the actual exercises inside each
+            # protocol card (previously only the title/cues showed).
+            "blocks": p.blocks,
         })
     return {"protocols": out, "role": role}
 

@@ -1075,6 +1075,20 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
               {w.completed && <StatusChip kind="approved" label="Done" />}
               {!w.completed && w.approved && <StatusChip kind="live" label="Live" />}
               {!w.completed && !w.approved && <StatusChip kind="review" label="Review" />}
+              {/* Iter 148 — inline Approve button on V1 workouts that were
+                  hand-added (Manual Builder) and haven't been marked approved
+                  yet. Only renders when !w.approved && !w.completed. */}
+              {!w.completed && !w.approved && (
+                <Pressable
+                  onPress={() => onApproveWorkout(w.id)}
+                  hitSlop={8}
+                  style={styles.cardApprove}
+                  testID={`approve-workout-${w.id}`}
+                >
+                  <Ionicons name="checkmark" size={12} color="#2a9152" />
+                  <Text style={styles.cardApproveT}>APPROVE</Text>
+                </Pressable>
+              )}
               <Pressable
                 onPress={() => onHardDelete({ workoutId: w.id, title: (w.title || w.focus || "workout") })}
                 hitSlop={8}

@@ -1587,6 +1587,14 @@ async def coach_programme_import_apply(
             "coach_edited": True,
             "edited_by": coach_id,
             "edited_at": now_str,
+            # Iter 148 — Auto-Approve. Imported workouts are the coach's
+            # explicit source of truth so they go Live immediately with no
+            # extra approval step. Coach can still un-approve individually
+            # from the calendar if needed.
+            "approved": True,
+            "approved_by": coach_id,
+            "approved_at": now_str,
+            "approved_source": "programme_import_auto",
             "created_at": now_str,
             "updated_at": now_str,
             "original_date": date,

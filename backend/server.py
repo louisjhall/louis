@@ -6693,6 +6693,60 @@ def _next_day(d: str) -> str:
         return d
 
 
+async def _reality_resolve_exercises(
+    items: list[dict], *, user_id: str, workout_id: Optional[str], reason: str,
+) -> list[dict]:
+    """Iter 143 — Route every exercise item that appears inside a Today's
+    Reality applied workout through the unified Exercise Library pipeline.
+
+    Reuses ``resolve_or_draft_exercise`` (Iter 141/142) — no new resolver
+    logic. Phase B fuzzy dedup applies. Approved rows are reused; genuinely
+    new names get a draft filed. Every returned item carries a valid
+    ``exercise_id`` and ``library_source`` so ``db.workouts`` never stores
+    plain-text names via this path.
+    """
+    if not items:
+        return items or []
+    from feature_media_queue import resolve_or_draft_exercise
+    user_stub = await db.users.find_one({"id": user_id}, {"_id": 0}) or {"id": user_id}
+    out: list[dict] = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            out.append(raw)
+            continue
+        item = dict(raw)
+        name = item.get("name") or item.get("exercise_name")
+        if not name:
+            out.append(item)
+            continue
+        try:
+            ex_id = await resolve_or_draft_exercise(
+                name, user=user_stub, reason=reason, workout_id=workout_id,
+            )
+        except Exception:
+            logger.exception("reality_resolve: failed for %r", name)
+            ex_id = None
+        item["exercise_name"] = name
+        if ex_id:
+            item["exercise_id"] = ex_id
+            row = await db.exercises_v2.find_one(
+                {"id": ex_id},
+                {"_id": 0, "status": 1, "approval_status": 1, "exercise_name": 1},
+            ) or {}
+            item["library_source"] = (
+                "approved_match"
+                if str(row.get("status")) in ("Approved", "Live")
+                or str(row.get("approval_status")).lower() == "approved"
+                else "draft"
+            )
+            if row.get("exercise_name"):
+                item["exercise_name_display"] = row["exercise_name"]
+        else:
+            item["library_source"] = "unresolved"
+        out.append(item)
+    return out
+
+
 async def _apply_reality_action(user_id: str, action: dict) -> dict:
     """Execute a single Reality action against db.workouts. Returns a change record."""
     # Iter 114 — Engine V2 clients: route to the V2 helper which mutates
@@ -6806,6 +6860,18 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
             patch["rationale"] = (w.get("rationale") or "") + f"  |  Replaced: {action.get('new_title')}"
         elif kind == "convert_mobility":
             mob = _build_mobility_workout(d, "Client reality: mobility session prescribed by CrewFit Intelligence.")
+            # Iter 143 — route every mobility exercise through the unified
+            # Exercise Library pipeline before persisting.
+            mob["exercises"] = await _reality_resolve_exercises(
+                mob.get("exercises") or [],
+                user_id=user_id, workout_id=w.get("id"),
+                reason=f"reality_convert_mobility:{action.get('date') or ''}",
+            )
+            mob["warmup"] = await _reality_resolve_exercises(
+                mob.get("warmup") or [],
+                user_id=user_id, workout_id=w.get("id"),
+                reason=f"reality_convert_mobility_warmup:{action.get('date') or ''}",
+            )
             for k in ("day_load", "title", "location", "duration_min", "focus", "warmup", "exercises",
                      "alternatives", "rationale", "key_session", "override_generated", "override_reason"):
                 patch[k] = mob.get(k, patch.get(k))
@@ -6817,9 +6883,12 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
             patch["duration_min"] = 20
             patch["focus"] = "recovery"
             patch["warmup"] = []
-            patch["exercises"] = [
-                {"name": "Easy walk or spin", "sets": 1, "reps": "20 min", "notes": "Nose-only breathing, zone 1"},
-            ]
+            # Iter 143 — resolve exercise through Library pipeline.
+            patch["exercises"] = await _reality_resolve_exercises(
+                [{"name": "Easy walk or spin", "sets": 1, "reps": "20 min", "notes": "Nose-only breathing, zone 1"}],
+                user_id=user_id, workout_id=w.get("id"),
+                reason=f"reality_convert_recovery:{action.get('date') or ''}",
+            )
             patch["rationale"] = (w.get("rationale") or "") + "  |  Converted to recovery."
         elif kind == "convert_walk":
             target = int(action.get("target_min") or 30)
@@ -6829,7 +6898,12 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
             patch["duration_min"] = target
             patch["focus"] = "recovery"
             patch["warmup"] = []
-            patch["exercises"] = [{"name": "Steady walk", "sets": 1, "reps": f"{target} min", "notes": "Easy pace"}]
+            # Iter 143 — resolve exercise through Library pipeline.
+            patch["exercises"] = await _reality_resolve_exercises(
+                [{"name": "Steady walk", "sets": 1, "reps": f"{target} min", "notes": "Easy pace"}],
+                user_id=user_id, workout_id=w.get("id"),
+                reason=f"reality_convert_walk:{action.get('date') or ''}",
+            )
             patch["rationale"] = (w.get("rationale") or "") + f"  |  Converted to {target}m walk."
         elif kind == "skip":
             rest = _build_rest_workout(d, action.get("reason") or "Client reality: skip today.")

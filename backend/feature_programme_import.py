@@ -556,22 +556,9 @@ async def _detect_conflict(client_id: str, date: str, policy: str) -> dict:
             "existing_source": src,
         }
 
-    # replace_conflicts — the default. Manual rows are never silently
-    # overwritten; the coach must delete them explicitly.
-    if src == MANUAL_SOURCE:
-        return {
-            "has_conflict": True,
-            "action": "error",
-            "existing_workout_id": existing["id"],
-            "existing_source": src,
-            "error": {
-                "code": "conflict_manual",
-                "message": (
-                    "Cannot silently overwrite a manual workout — delete it "
-                    "first or set override_policy=skip_conflicts."
-                ),
-            },
-        }
+    # replace_conflicts — the JSON is the source of truth. Overwrite any
+    # non-completed row on this date regardless of source or manual_lock.
+    # (Coach explicit intent per iter-140c: "zero placement restrictions".)
     return {
         "has_conflict": True,
         "action": "replace",
@@ -786,26 +773,26 @@ async def _process_workout(
                  for i, (it, m) in enumerate(zip(w.cooldown, cool_matches))]
 
     # ------------------------------------------------------------------
-    # 3. Structural validation — every workout must have >=1 main row,
-    #    EXCEPT recovery days (rest days, walks, etc.) which are allowed
-    #    to have empty exercises[]. The importer still writes a workout
-    #    doc so the calendar day is "owned" by the coach.
+    # 3. Structural validation (iter-140c: coach's JSON is the source of
+    #    truth — we no longer BLOCK on empty main / unknown workout_type;
+    #    instead we surface these as WARNINGS so the coach knows the row
+    #    was inserted with degraded structure, and can decide whether to
+    #    edit it in the workspace after import).
     # ------------------------------------------------------------------
-    if not main_rows and not errors and (w.workout_type or "").lower() != "recovery":
-        # (If earlier errors already exist we bubble those up first.)
-        errors.append({
+    if not main_rows and (w.workout_type or "").lower() != "recovery":
+        warnings.append({
             "code": "empty_main",
-            "message": "workout has no main exercises after group expansion",
+            "message": ("Workout has no main exercises — will be inserted "
+                        "as a placeholder row for the day."),
         })
 
-    # ------------------------------------------------------------------
-    # 4. workout_type enum validation.
-    # ------------------------------------------------------------------
     if w.workout_type not in ALLOWED_WORKOUT_TYPES:
-        errors.append({
+        warnings.append({
             "code": "invalid_workout_type",
             "workout_type": w.workout_type,
             "allowed": sorted(ALLOWED_WORKOUT_TYPES),
+            "message": (f"Unknown workout_type={w.workout_type!r} — kept as-is "
+                        "on the row, but may render as 'other' in the client app."),
         })
 
     # ------------------------------------------------------------------
@@ -1456,17 +1443,12 @@ async def coach_programme_import_apply(
             if out is not None:
                 cooldown_rows.append(out)
 
-        # Recovery workouts (rest days) may legitimately have zero main
-        # exercises — we still write the workout doc so the coach "owns"
-        # that calendar day. Everything else must have at least one row.
+        # Iter 140c: no empty-check gate. Coach's JSON is source of truth.
+        # If they specified a workout on a date, we write it even if it
+        # has no exercises (surfaces as a placeholder row in the calendar).
+        # Recovery days already legitimately empty; other types just get
+        # a warning in preview but are still inserted.
         workout_type = (tw.get("workout_type") or "").lower()
-        if not main_rows and workout_type != "recovery":
-            results.append({
-                "date": date, "status": "skipped_empty",
-                "reason": "no main exercises left after draft resolution",
-            })
-            counters["skipped"] += 1
-            continue
 
         # -------------------------------------------------------------
         # 4c. Clean rows (strip preview metadata) — preserves group_*
@@ -1497,10 +1479,14 @@ async def coach_programme_import_apply(
         # -------------------------------------------------------------
         replaced_workout_id: Optional[str] = None
         if action == "replace":
-            # Under replace_conflicts the coach has opted into overwriting
-            # any prior row on this date OR any prior row previously written
-            # for the same external_ref (handles the case where the ChatGPT
-            # envelope moved a workout to a different day).
+            # Iter 140c: replace_conflicts is the source of truth. Overwrite
+            # any non-completed row on this date OR any prior row previously
+            # written for the same external_ref (handles the case where the
+            # ChatGPT envelope moved a workout to a different day).
+            # Hand-authored manual rows are ALSO overwritable under this
+            # policy — the coach explicitly opted in by choosing
+            # replace_conflicts. The only inviolable protection is
+            # `completed: true` (would destroy client history).
             existing = await db.workouts.find_one(
                 {"user_id": client["id"], "date": date},
                 {"_id": 0, "id": 1, "source": 1, "manual_lock": 1,
@@ -1519,26 +1505,6 @@ async def coach_programme_import_apply(
                     results.append({
                         "date": date, "status": "skipped_completed",
                         "reason": "existing workout is completed — cannot overwrite",
-                    })
-                    counters["skipped"] += 1
-                    continue
-                # Prior-import rows are marked source=coach_manual + manual_lock
-                # by design (to keep the auto-media generator from touching
-                # them). Re-importing under `replace_conflicts` should still
-                # be allowed for those — we only truly protect hand-authored
-                # manual rows (which have no `import_ref`).
-                is_prior_import = bool(protector.get("import_ref"))
-                if not is_prior_import and (
-                    protector.get("source") == MANUAL_SOURCE
-                    or protector.get("manual_lock")
-                ):
-                    # Defence in depth against a race between preview and apply.
-                    results.append({
-                        "date": date, "status": "skipped_manual_lock",
-                        "reason": (
-                            "target date has a hand-authored manual workout — "
-                            "delete it first or set override_policy=skip_conflicts."
-                        ),
                     })
                     counters["skipped"] += 1
                     continue

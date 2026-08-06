@@ -620,7 +620,8 @@ export default function CoachWorkspaceScreen() {
               onOpenWorkout={(aid) => setDrawerAssignmentId(aid)}
               onOpenFlightSupport={(date, fs) => setFsSheet({ date, item: fs })}
               onDisableFlightSupport={disableFlightSupport}
-              onPressDate={() => setDayMenuDate(d.date)} />
+              onPressDate={() => setDayMenuDate(d.date)}
+              onHardDelete={hardDeleteCard} />
           ))}
 
           {/* Exceptions block */}
@@ -915,7 +916,7 @@ function DutyDetailsBlock({ duty }: { duty: DayRow["schedule"] extends null ? ne
 }
 
 
-function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenFlightSupport, onDisableFlightSupport, onPressDate }: {
+function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenFlightSupport, onDisableFlightSupport, onPressDate, onHardDelete }: {
   row: DayRow; desktop: boolean;
   dayState: DayState;
   manualStub: any | undefined;
@@ -923,6 +924,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
   onOpenFlightSupport: (date: string, item: any) => void;
   onDisableFlightSupport: (date: string, item: any) => void;
   onPressDate: () => void;
+  onHardDelete: (opts: { workoutId?: string; assignmentId?: string; title?: string }) => void;
 }) {
   const dt = fmtDate(row.date);
   const burden = row.schedule?.duty_burden_band;
@@ -1044,7 +1046,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
             <View style={styles.planRight}>
               <StatusChip kind={a.status_kind} label={a.status_label} />
               <Pressable
-                onPress={() => hardDeleteCard({ assignmentId: a.id, title: humanise(a.kind || a.kind_label) })}
+                onPress={() => onHardDelete({ assignmentId: a.id, title: humanise(a.kind || a.kind_label) })}
                 hitSlop={8}
                 style={styles.cardBin}
                 testID={`bin-assignment-${a.id}`}
@@ -1065,7 +1067,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
               {!w.completed && w.approved && <StatusChip kind="live" label="Live" />}
               {!w.completed && !w.approved && <StatusChip kind="review" label="Review" />}
               <Pressable
-                onPress={() => hardDeleteCard({ workoutId: w.id, title: (w.title || w.focus || "workout") })}
+                onPress={() => onHardDelete({ workoutId: w.id, title: (w.title || w.focus || "workout") })}
                 hitSlop={8}
                 style={styles.cardBin}
                 testID={`bin-workout-${w.id}`}

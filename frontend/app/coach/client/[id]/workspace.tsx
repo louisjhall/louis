@@ -20,6 +20,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/lib/api";
+import { confirm, toast } from "@/src/lib/ux";
 import { theme } from "@/src/lib/theme";
 import { CommandBar } from "@/src/components/CommandBar";
 import { DirectiveEditor } from "@/src/components/DirectiveEditor";
@@ -288,19 +289,20 @@ export default function CoachWorkspaceScreen() {
     } finally { setBusy(false); }
   }, [clientId, loadMonth]);
 
-  // Iter 140d — per-card hard-delete. Accepts either workout_id (v1/JSON
-  // rows) or assignment_id (V2 plan) and confirms with the coach before
-  // firing. Force flag bypasses all guards (completed / coach_locked /
-  // manual_lock) so the coach can wipe any card they choose.
+  // Iter 140d — per-card hard-delete. Uses web-safe confirm() + toast()
+  // so bin icons work identically on web and native (Alert.alert with
+  // buttons is silently swallowed on React Native Web).
   const hardDeleteCard = useCallback((opts: {
     workoutId?: string; assignmentId?: string; title?: string;
-    force?: boolean;
   }) => {
     const label = opts.title || "this workout";
     const doDelete = async (force: boolean) => {
       setBusy(true);
       try {
-        const body: any = { reason: "Coach bin-icon delete on calendar card", force };
+        const body: any = {
+          reason: "Coach bin-icon delete on calendar card",
+          force,
+        };
         if (opts.workoutId) body.workout_id = opts.workoutId;
         if (opts.assignmentId) body.assignment_id = opts.assignmentId;
         const res: any = await api(
@@ -309,38 +311,36 @@ export default function CoachWorkspaceScreen() {
         );
         await loadMonth();
         if (res?.guards_bypassed?.length) {
-          Alert.alert(
-            "Deleted (with force)",
-            `Bypassed: ${res.guards_bypassed.join(", ")}.`
-          );
+          toast(`Deleted (force). Bypassed: ${res.guards_bypassed.join(", ")}`, "warning");
+        } else {
+          toast(`Deleted ${label}`, "success");
         }
       } catch (e: any) {
         const msg = e?.message || String(e);
-        // 409 = guarded — offer to force
         if (/force=true/i.test(msg) || /protected by/i.test(msg)) {
-          Alert.alert(
-            "Workout is protected",
-            `${msg}\n\nDelete anyway?`,
-            [
-              { text: "Cancel", style: "cancel" },
-              { text: "Force delete", style: "destructive",
-                onPress: () => doDelete(true) },
-            ]
-          );
+          const forceOk = await confirm({
+            title: "Workout is protected",
+            message: `${msg}\n\nDelete anyway with force?`,
+            confirmLabel: "FORCE DELETE",
+            cancelLabel: "CANCEL",
+            destructive: true,
+          });
+          if (forceOk) await doDelete(true);
         } else {
-          Alert.alert("Delete failed", msg);
+          toast(`Delete failed: ${msg}`, "error");
         }
       } finally { setBusy(false); }
     };
-    Alert.alert(
-      "Delete workout?",
-      `Permanently remove ${label}. This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive",
-          onPress: () => doDelete(!!opts.force) },
-      ]
-    );
+    (async () => {
+      const ok = await confirm({
+        title: "Delete workout?",
+        message: `Permanently remove ${label}. This cannot be undone.`,
+        confirmLabel: "DELETE",
+        cancelLabel: "CANCEL",
+        destructive: true,
+      });
+      if (ok) await doDelete(false);
+    })();
   }, [clientId, loadMonth]);
 
   const stepMonth = useCallback((delta: number) => {
@@ -434,10 +434,45 @@ export default function CoachWorkspaceScreen() {
       setUndoBanner(null);
       await loadManualAndOverrides();
       await loadMonth();
+      toast("Move undone", "success");
     } catch (e: any) {
-      Alert.alert("Could not undo move", e?.message || "Please try again.");
+      toast(`Could not undo move: ${e?.message || "please try again"}`, "error");
     } finally { setBusy(false); }
   }, [undoBanner, loadManualAndOverrides, loadMonth]);
+
+  // Iter 140e — quick-disable a single Flight Support session via the
+  // existing override endpoint (action=disable). Bin icon on the FS card
+  // uses this so the coach can wipe a single session without opening the
+  // full override sheet.
+  const disableFlightSupport = useCallback((date: string, item: any) => {
+    (async () => {
+      const label = item?.title || "this session";
+      const ok = await confirm({
+        title: "Disable this Flight Support?",
+        message: `Removes ${label} on ${date}. You can restore it later via the override sheet.`,
+        confirmLabel: "DISABLE",
+        cancelLabel: "CANCEL",
+        destructive: true,
+      });
+      if (!ok) return;
+      setBusy(true);
+      try {
+        await api(`/v2/coach/clients/${clientId}/flight-support/override`, {
+          method: "POST",
+          body: {
+            date,
+            action: "disable",
+            protocol_key: item?.protocol_key,
+            reason: "Coach bin-icon disable on Flight Support card",
+          },
+        });
+        await loadMonth();
+        toast(`Disabled ${label}`, "success");
+      } catch (e: any) {
+        toast(`Failed to disable: ${e?.message || String(e)}`, "error");
+      } finally { setBusy(false); }
+    })();
+  }, [clientId, loadMonth]);
 
   if (!clientId) {
     return <View style={styles.center}><Text style={styles.err}>No client id</Text></View>;
@@ -584,6 +619,7 @@ export default function CoachWorkspaceScreen() {
               manualStub={manualByDate[d.date]}
               onOpenWorkout={(aid) => setDrawerAssignmentId(aid)}
               onOpenFlightSupport={(date, fs) => setFsSheet({ date, item: fs })}
+              onDisableFlightSupport={disableFlightSupport}
               onPressDate={() => setDayMenuDate(d.date)} />
           ))}
 
@@ -672,11 +708,10 @@ export default function CoachWorkspaceScreen() {
             await loadMonth();
             const n = (result?.missing_media || []).length;
             if (n > 0) {
-              try {
-                const { Alert } = require("react-native");
-                Alert.alert("Media queued",
-                  `${n} exercise${n === 1 ? " has" : "s have"} been added to the media queue.`);
-              } catch {}
+              toast(
+                `${n} exercise${n === 1 ? " has" : "s have"} been added to the media queue.`,
+                "info"
+              );
             }
           }}
           clientId={String(clientId)}
@@ -880,12 +915,13 @@ function DutyDetailsBlock({ duty }: { duty: DayRow["schedule"] extends null ? ne
 }
 
 
-function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenFlightSupport, onPressDate }: {
+function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenFlightSupport, onDisableFlightSupport, onPressDate }: {
   row: DayRow; desktop: boolean;
   dayState: DayState;
   manualStub: any | undefined;
   onOpenWorkout: (aid: string) => void;
   onOpenFlightSupport: (date: string, item: any) => void;
+  onDisableFlightSupport: (date: string, item: any) => void;
   onPressDate: () => void;
 }) {
   const dt = fmtDate(row.date);
@@ -1034,29 +1070,38 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
           <View style={styles.fsWrap}>
             <Text style={styles.fsLabel}>FLIGHT SUPPORT</Text>
             {row.flight_support.map((fs) => (
-              <Pressable
-                key={fs.id}
-                onPress={() => onOpenFlightSupport(row.date, fs)}
-                style={styles.fsCard}
-                testID={`fs-open-${row.date}-${fs.protocol_key}`}
-              >
-                <Ionicons name="airplane-outline" size={11} color="#8e8e93" style={{ marginRight: 6 }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.fsTitleTxt} numberOfLines={1}>
-                    {fs.title}
-                    {fs.is_bundle ? " · bundle" : ""}
-                  </Text>
-                  {fs.trigger_reason ? (
-                    <Text style={styles.fsReasonTxt} numberOfLines={1}>{fs.trigger_reason}</Text>
+              <View key={fs.id} style={styles.fsCard}>
+                <Pressable
+                  onPress={() => onOpenFlightSupport(row.date, fs)}
+                  style={styles.fsCardBody}
+                  testID={`fs-open-${row.date}-${fs.protocol_key}`}
+                >
+                  <Ionicons name="airplane-outline" size={11} color="#8e8e93" style={{ marginRight: 6 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fsTitleTxt} numberOfLines={1}>
+                      {fs.title}
+                      {fs.is_bundle ? " · bundle" : ""}
+                    </Text>
+                    {fs.trigger_reason ? (
+                      <Text style={styles.fsReasonTxt} numberOfLines={1}>{fs.trigger_reason}</Text>
+                    ) : null}
+                  </View>
+                  <Text style={styles.fsDurTxt}>{fs.duration_min}m</Text>
+                  {fs.completion_status === "completed" ? (
+                    <Ionicons name="checkmark-circle" size={12} color="#61c982" style={{ marginLeft: 4 }} />
+                  ) : fs.completion_status === "skipped" ? (
+                    <Ionicons name="close-circle" size={12} color="#8e8e93" style={{ marginLeft: 4 }} />
                   ) : null}
-                </View>
-                <Text style={styles.fsDurTxt}>{fs.duration_min}m</Text>
-                {fs.completion_status === "completed" ? (
-                  <Ionicons name="checkmark-circle" size={12} color="#61c982" style={{ marginLeft: 4 }} />
-                ) : fs.completion_status === "skipped" ? (
-                  <Ionicons name="close-circle" size={12} color="#8e8e93" style={{ marginLeft: 4 }} />
-                ) : null}
-              </Pressable>
+                </Pressable>
+                <Pressable
+                  onPress={(e) => { e.stopPropagation?.(); onDisableFlightSupport(row.date, fs); }}
+                  hitSlop={8}
+                  style={[styles.cardBin, { marginLeft: 4 }]}
+                  testID={`fs-bin-${row.date}-${fs.protocol_key}`}
+                >
+                  <Ionicons name="trash-outline" size={12} color="#c44" />
+                </Pressable>
+              </View>
             ))}
           </View>
         ) : null}
@@ -1585,6 +1630,9 @@ const styles = StyleSheet.create({
     borderRadius: 6, backgroundColor: "#00000022",
     borderLeftWidth: 2, borderLeftColor: theme.color.brand,
   },
+  fsCardBody: {
+    flexDirection: "row", alignItems: "center", flex: 1,
+  },
   fsTitleTxt: { color: theme.color.textHi, fontSize: 11, fontWeight: "600" },
   fsReasonTxt: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
   fsDurTxt: {
@@ -1736,6 +1784,54 @@ function FlightSupportOverrideSheet({
                 <Text style={styles.planMeta}>{target.item.duration_min}m · {target.item.family}</Text>
               </View>
             </View>
+
+            {/* Iter 140e — render inner exercises so the coach can see what
+                the intervention actually contains before overriding. Handles
+                two shapes: a single protocol with `blocks[]` OR a bundle
+                whose `sub_items[]` each carry their own title + blocks. */}
+            {(() => {
+              const item = target.item;
+              const isBundle = !!item.is_bundle && Array.isArray(item.sub_items);
+              const groups: Array<{ title?: string; blocks: any[] }> = isBundle
+                ? (item.sub_items || []).map((s: any) => ({
+                    title: s.title, blocks: s.blocks || [],
+                  }))
+                : [{ title: undefined, blocks: item.blocks || [] }];
+              const anyBlocks = groups.some((g) => (g.blocks || []).length > 0);
+              if (!anyBlocks) return null;
+              return (
+                <View style={{ marginTop: 8 }}>
+                  {groups.map((g, gi) => (
+                    <View key={`fs-grp-${gi}`}>
+                      {g.title ? (
+                        <Text style={[styles.planMeta, { marginTop: 8, fontWeight: "700", color: theme.color.textHi }]}>
+                          {g.title}
+                        </Text>
+                      ) : null}
+                      {(g.blocks || []).map((b: any, bi: number) => (
+                        <View key={`fs-blk-${gi}-${bi}`} style={styles.excCard}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.planTitle} numberOfLines={2}>
+                              {b.name || b.exercise_name || "Exercise"}
+                            </Text>
+                            <Text style={styles.planMeta} numberOfLines={2}>
+                              {[
+                                b.duration_sec ? `${b.duration_sec}s` : null,
+                                b.reps ? `${b.reps} reps` : null,
+                                b.sets ? `${b.sets} sets` : null,
+                                b.rest_sec ? `${b.rest_sec}s rest` : null,
+                                b.cue,
+                              ].filter(Boolean).join(" · ")}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
+
             {err ? (
               <View style={styles.editErrorBanner}>
                 <Text style={styles.editErrorText}>{err}</Text>

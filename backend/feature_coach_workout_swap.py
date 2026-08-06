@@ -235,14 +235,65 @@ async def coach_workout_apply_swap(
     if not preset:
         raise HTTPException(400, f"Unknown preset_id '{body.preset_id}'")
 
-    # Preserve identity fields; replace content.
+    # Iter 142 — every preset exercise MUST route through the unified
+    # Exercise Library pipeline. Phase B fuzzy dedup reuses approved rows;
+    # unknown names file a draft. Plain-text exercise names are NEVER
+    # written to `db.workouts` any more.
+    from feature_media_queue import resolve_or_draft_exercise
+
+    owner = await db.users.find_one({"id": workout.get("user_id")}, {"_id": 0}) or {}
+    resolved_exercises: list[dict] = []
+    library_summary = {"reused_approved": 0, "matched_fuzzy": 0, "drafts_created": 0, "unresolved": 0}
+    for raw in (preset.get("exercises") or []):
+        item = dict(raw)
+        name = item.get("name") or item.get("exercise_name")
+        if not name:
+            continue
+        try:
+            ex_id = await resolve_or_draft_exercise(
+                name,
+                user=owner or {"id": coach.get("id"), "role": "coach"},
+                reason=f"coach_preset_swap:{body.preset_id}",
+                workout_id=wid,
+            )
+        except Exception:
+            logger.exception("apply-swap: resolve_or_draft failed for %r", name)
+            ex_id = None
+        item["exercise_name"] = name
+        if ex_id:
+            item["exercise_id"] = ex_id
+            row = await db.exercises_v2.find_one(
+                {"id": ex_id},
+                {"_id": 0, "status": 1, "approval_status": 1, "exercise_name": 1},
+            ) or {}
+            item["library_source"] = (
+                "approved_match"
+                if str(row.get("status")) in ("Approved", "Live")
+                or str(row.get("approval_status")).lower() == "approved"
+                else "draft"
+            )
+            # Display the canonical library name if it differs — coach
+            # sees the actual library entry, not the preset alias.
+            if row.get("exercise_name"):
+                item["exercise_name_display"] = row["exercise_name"]
+            if item["library_source"] == "approved_match":
+                library_summary["reused_approved"] += 1
+            else:
+                library_summary["drafts_created"] += 1
+        else:
+            item["library_source"] = "unresolved"
+            library_summary["unresolved"] += 1
+            logger.warning("apply-swap: could not resolve %r for wid=%s", name, wid)
+        resolved_exercises.append(item)
+
+    # Preserve identity fields; replace content with library-linked rows.
     patch = {
         "title": preset["title"],
         "focus": preset["focus"],
         "duration_min": preset["duration_min"],
         "location": preset["location"],
         "rationale": preset["rationale"],
-        "exercises": preset["exercises"],
+        "exercises": resolved_exercises,
         "warmup": workout.get("warmup") or [],
         "updated_at": now_iso(),
         "coach_swap_from": {
@@ -252,6 +303,7 @@ async def coach_workout_apply_swap(
         },
         "coach_swap_preset": body.preset_id,
         "coach_swap_reason": body.reason,
+        "coach_swap_library_summary": library_summary,
         "coach_swap_at": now_iso(),
         "coach_swap_by": coach.get("id"),
         # Reset approval so the new content flows through the normal review.

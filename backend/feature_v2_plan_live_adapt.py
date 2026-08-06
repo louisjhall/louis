@@ -270,19 +270,51 @@ async def _apply_change_setup_manual(*, user: dict, body: ChangeSetupBody, actor
 
     # If NOTHING survived (bodyweight-only with a heavy strength session),
     # drop a friendly, safe bodyweight session so the client isn't stranded
-    # with a blank workout.
+    # with a blank workout. Iter 142 — every rescue item now routes through
+    # the Exercise Library so `db.workouts` never contains plain-text names.
     if not kept_main:
-        kept_main = [
-            {"name": "Bodyweight Squat",   "sets": 3, "reps": "15",
+        from feature_media_queue import resolve_or_draft_exercise
+        rescue_specs = [
+            {"name": "Bodyweight Squat", "sets": 3, "reps": "15",
              "rest_sec": 45, "notes": "Slow tempo, full range.",
              "hotel_adapted_fallback": True},
             {"name": "Push-Up (or incline)", "sets": 3, "reps": "10-15",
              "rest_sec": 45, "notes": "Use hotel bed or desk to scale.",
              "hotel_adapted_fallback": True},
-            {"name": "Plank",              "sets": 3, "reps": "30s",
+            {"name": "Plank", "sets": 3, "reps": "30s",
              "rest_sec": 30, "notes": "Braced, glutes on.",
              "hotel_adapted_fallback": True},
         ]
+        kept_main = []
+        for spec in rescue_specs:
+            try:
+                ex_id = await resolve_or_draft_exercise(
+                    spec["name"], user=user,
+                    reason="hotel_adapt_rescue_fallback",
+                    workout_id=workout["id"],
+                )
+            except Exception:
+                logger.exception("hotel_adapt rescue: resolve failed for %r", spec["name"])
+                ex_id = None
+            item = dict(spec)
+            item["exercise_name"] = spec["name"]
+            if ex_id:
+                item["exercise_id"] = ex_id
+                row = await db.exercises_v2.find_one(
+                    {"id": ex_id},
+                    {"_id": 0, "status": 1, "approval_status": 1, "exercise_name": 1},
+                ) or {}
+                item["library_source"] = (
+                    "approved_match"
+                    if str(row.get("status")) in ("Approved", "Live")
+                    or str(row.get("approval_status")).lower() == "approved"
+                    else "draft"
+                )
+                if row.get("exercise_name"):
+                    item["exercise_name_display"] = row["exercise_name"]
+            else:
+                item["library_source"] = "unresolved"
+            kept_main.append(item)
 
     # Persist the adapted workout in place. Coach can still audit + revert.
     now = _now()

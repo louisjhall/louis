@@ -72,6 +72,215 @@ def _normalise_name(s: Optional[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Iter 140g · Phase B — smarter duplicate detection
+# ---------------------------------------------------------------------------
+# Runs BEFORE any new draft is inserted, AFTER the exact-match short-circuit.
+# Backward-compatible: never mutates existing rows; never overrides an exact
+# match; only redirects would-be-new-drafts onto an existing library entry
+# when both name similarity AND movement pattern agree.
+# ---------------------------------------------------------------------------
+
+# English plural rules — deliberately conservative. We only strip when the
+# resulting singular exists as a valid movement noun; the algorithm below
+# handles this by tokenising and matching against candidate token sets.
+_PLURAL_KEEP = {
+    # Words that end in 's' but ARE their own singular — never strip.
+    "abs", "biceps", "triceps", "lats", "quads", "delts", "glutes",
+    "kettlebells", "dumbbells",  # equipment names — user is naming the tool
+    "aerobics", "gymnastics",
+}
+
+
+def _singularise_token(t: str) -> str:
+    """Return the singular form of a single lowercase token, using a short
+    set of hand-picked English patterns. Never returns an empty string."""
+    if not t or t in _PLURAL_KEEP or len(t) <= 2:
+        return t
+    # -ies → -y  (curls doesn't hit this; "activities" → "activity")
+    if t.endswith("ies") and len(t) > 4:
+        return t[:-3] + "y"
+    # -sses → -ss  (kisses → kiss)  — no-op for most movement tokens.
+    if t.endswith("sses"):
+        return t[:-2]
+    # -shes / -ches / -xes → drop -es  (crunches → crunch, boxes → box)
+    if t.endswith(("ches", "shes", "xes")) and len(t) > 5:
+        return t[:-2]
+    # -oes → -o  (potatoes → potato — irrelevant here but cheap)
+    if t.endswith("oes") and len(t) > 4:
+        return t[:-2]
+    # trailing -s  (swings → swing, squats → squat, curls → curl, rows → row)
+    if t.endswith("s") and not t.endswith("ss"):
+        return t[:-1]
+    return t
+
+
+def _canonical_tokens(s: Optional[str]) -> tuple[str, ...]:
+    """Return an ORDERED tuple of singularised, normalised tokens. Used as a
+    stable dedup key that survives capitalisation, punctuation, extra spaces
+    AND English plural/singular variance."""
+    return tuple(_singularise_token(t) for t in _WORD_RE.findall(str(s or "").lower()))
+
+
+# Side/laterality markers — we deliberately keep these DISTINCT rather than
+# collapse them, because the coaching video needs to show the correct side.
+# If any of these tokens appear in ONE candidate but not the other (or vice
+# versa), the two rows are NOT considered duplicates.
+_SIDE_MARKERS = {"left", "right", "l", "r", "lh", "rh", "unilateral"}
+
+
+def _has_side_marker(tokens: set[str]) -> Optional[str]:
+    for t in tokens:
+        if t in _SIDE_MARKERS:
+            return t
+    return None
+
+
+def _fuzzy_match_key(name: str) -> str:
+    """Canonical fingerprint used for O(1) fuzzy lookup: singularised tokens
+    joined by spaces, in original order. Not stored on rows (no schema
+    change), just computed at match time."""
+    return " ".join(_canonical_tokens(name))
+
+
+# Token-set Jaccard similarity threshold. 0.85 requires strong overlap while
+# still allowing "Bodyweight Forward Lunges" ↔ "Forward Lunges" style trims
+# because the shared token count vastly outweighs the extras.
+_FUZZY_SIMILARITY_THRESHOLD = 0.85
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    inter = len(a & b)
+    union = len(a | b)
+    return (inter / union) if union else 0.0
+
+
+async def _find_fuzzy_match(
+    requested_name: str,
+    incoming_movement_pattern: Optional[str],
+    incoming_equipment_types: Optional[list],
+) -> Optional[dict]:
+    """Iter 140g · Phase B — return an existing exercises_v2 row that is
+    highly likely to be the SAME movement as `requested_name`, or None.
+
+    Two-gate check (both must pass):
+      1. Canonical-token equality  OR  Jaccard similarity ≥ 0.85 on the
+         singularised token set.
+      2. `movement_pattern` agrees when both sides have one populated.
+
+    Additional guards (any one of these DISQUALIFIES a match):
+      • side markers (left/right/unilateral) present on exactly one side
+      • equipment name tokens (kettlebell/dumbbell/barbell/cable/machine)
+        appear on exactly one side — treated as a distinct equipment
+        variant.
+      • intensity markers (easy/hard/moderate/recovery/tempo/threshold)
+        appear on exactly one side — different training intent.
+      • qualifier markers (walking/jog/run) that IMPLY a different exercise
+        family regardless of shared tokens.
+    """
+    if not requested_name:
+        return None
+    req_tokens_all = _tokens(requested_name)
+    req_canon = _canonical_tokens(requested_name)
+    req_canon_set = set(req_canon)
+    req_side = _has_side_marker(req_tokens_all)
+
+    _EQUIP_TOKENS = {
+        "kettlebell", "kettlebells", "dumbbell", "dumbbells", "barbell",
+        "cable", "machine", "band", "bands", "trx", "smith",
+    }
+    _INTENSITY_TOKENS = {
+        "easy", "hard", "moderate", "recovery", "tempo", "threshold",
+        "sprint", "explosive", "slow", "fast",
+    }
+    # Locomotion family: walk vs run vs jog are different family members
+    # even when other tokens overlap ("Easy Walk" vs "Easy Run").
+    _LOCOMOTION_FAMILIES = ({"walk", "walking"}, {"run", "running", "jog", "jogging"})
+    req_family: Optional[frozenset] = None
+    for fam in _LOCOMOTION_FAMILIES:
+        if req_tokens_all & fam:
+            req_family = frozenset(fam)
+            break
+    req_equip = req_tokens_all & _EQUIP_TOKENS
+    req_intensity = req_tokens_all & _INTENSITY_TOKENS
+
+    # Pull the candidate pool. Only search rows sharing at least one token
+    # to keep this O(few dozen) per call rather than O(4500).
+    or_clauses: list[dict] = []
+    for t in req_canon_set:
+        if len(t) >= 3:
+            or_clauses.append({"exercise_name": {"$regex": re.escape(t),
+                                                 "$options": "i"}})
+    if not or_clauses:
+        return None
+    cursor = db.exercises_v2.find(
+        {"$or": or_clauses,
+         "status": {"$nin": ["rejected", "archived", "merged"]}},
+        {"_id": 0, "id": 1, "exercise_name": 1, "movement_pattern": 1,
+         "equipment_type": 1, "status": 1, "tags": 1},
+    ).limit(60)
+    best: Optional[tuple[float, dict]] = None
+    async for cand in cursor:
+        cand_name = cand.get("exercise_name") or ""
+        cand_tokens_all = _tokens(cand_name)
+        cand_canon_set = set(_canonical_tokens(cand_name))
+
+        # --- Disqualifiers ----------------------------------------------
+        cand_side = _has_side_marker(cand_tokens_all)
+        if (req_side is not None) ^ (cand_side is not None):
+            continue  # one side-scoped, one not — keep separate
+        if req_side and cand_side and req_side != cand_side:
+            continue  # left vs right — keep separate
+
+        cand_equip = cand_tokens_all & _EQUIP_TOKENS
+        if req_equip and cand_equip and req_equip != cand_equip:
+            continue  # different equipment name → different library entry
+        if bool(req_equip) ^ bool(cand_equip):
+            continue  # one names equipment, the other doesn't → distinct
+
+        cand_intensity = cand_tokens_all & _INTENSITY_TOKENS
+        if req_intensity and cand_intensity and req_intensity != cand_intensity:
+            continue  # "Easy X" vs "Hard X" → distinct
+        if bool(req_intensity) ^ bool(cand_intensity):
+            continue
+
+        cand_family: Optional[frozenset] = None
+        for fam in _LOCOMOTION_FAMILIES:
+            if cand_tokens_all & fam:
+                cand_family = frozenset(fam)
+                break
+        if req_family != cand_family:
+            continue  # walk vs run vs neither → distinct
+
+        # Movement pattern gate — only enforce when BOTH have one populated.
+        cand_mp = (cand.get("movement_pattern") or "").strip().lower()
+        req_mp = (incoming_movement_pattern or "").strip().lower()
+        if req_mp and cand_mp and req_mp != cand_mp:
+            continue
+
+        # --- Similarity score -------------------------------------------
+        # Exact canonical-token match: guaranteed dupe.
+        if cand_canon_set == req_canon_set:
+            score = 1.0
+        else:
+            score = _jaccard(cand_canon_set, req_canon_set)
+        if score >= _FUZZY_SIMILARITY_THRESHOLD:
+            if best is None or score > best[0]:
+                best = (score, cand)
+
+    if best is not None:
+        logger.info(
+            "exercise_dedup[fuzzy_match] requested=%r matched=%r score=%.3f id=%s",
+            requested_name, best[1].get("exercise_name"), best[0],
+            best[1].get("id"),
+        )
+        return {"score": best[0], **best[1]}
+    return None
+
+
+
+# ---------------------------------------------------------------------------
 # Backfill visibility / safe_for_programming on legacy approved exercises.
 # Idempotent — runs on module import; safe to call multiple times.
 # ---------------------------------------------------------------------------
@@ -303,6 +512,62 @@ async def create_exercise_request_if_missing(
         except Exception:
             logger.exception("hook_exercise_request_task (dedup path) failed — non-fatal")
         return existing["id"]
+
+    # ------------------------------------------------------------------
+    # Iter 140g · Phase B — fuzzy dedup gate.
+    # Runs ONLY when the exact-match short-circuit above found nothing.
+    # If a highly-similar existing row exists (singular/plural, punctuation
+    # variance, near-identical tokens with the same movement_pattern) we
+    # RE-USE it instead of filing another draft. Never overrides the exact
+    # match; never mutates schema; never merges/deletes historical rows.
+    # ------------------------------------------------------------------
+    try:
+        fuzzy = await _find_fuzzy_match(
+            requested_name,
+            item.get("movement_pattern"),
+            item.get("equipment_type") or [],
+        )
+    except Exception:
+        logger.exception("fuzzy dedup lookup failed — falling back to insert")
+        fuzzy = None
+    if fuzzy:
+        matched_id = fuzzy["id"]
+        matched_name = fuzzy.get("exercise_name")
+        score = fuzzy.get("score")
+        usage_ctx = {
+            "user_id": user.get("id"),
+            "programme_id": programme_id,
+            "workout_id": workout_id,
+            "substitute_used_id": (substitute_used or {}).get("id"),
+            "substitute_used_name": (substitute_used or {}).get("exercise_name"),
+            "reason": reason,
+            "matched_fuzzy": True,
+            "matched_requested_name": requested_name,
+            "matched_score": score,
+            "at": now_iso(),
+        }
+        add_to_set: dict[str, Any] = {"requested_for_user_ids": user.get("id")}
+        if programme_id:
+            add_to_set["requested_for_programme_ids"] = programme_id
+        if workout_id:
+            add_to_set["requested_for_workout_ids"] = workout_id
+        await db.exercises_v2.update_one(
+            {"id": matched_id},
+            {"$inc": {"request_count": 1},
+             "$push": {"request_history": usage_ctx},
+             "$addToSet": add_to_set,
+             "$set": {"updated_at": now_iso()}},
+        )
+        logger.info(
+            "exercise_dedup[phase_b_fuzzy_reused] matched_fuzzy=true "
+            "requested=%r matched=%r score=%s id=%s user=%s programme=%s workout=%s",
+            requested_name, matched_name, score, matched_id,
+            user.get("id"), programme_id, workout_id,
+        )
+        return matched_id
+    # ------------------------------------------------------------------
+    # END iter-140g fuzzy gate — beyond this point behaviour unchanged.
+    # ------------------------------------------------------------------
 
     # 2) Create fresh draft candidate.
     ex_id = new_id()

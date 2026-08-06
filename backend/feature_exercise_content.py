@@ -496,6 +496,8 @@ async def ex_list(
     training_type: Optional[str] = None, status: Optional[str] = None,
     body_area: Optional[str] = None, missing_content: bool = False,
     used_tomorrow: bool = False, approved_only: bool = False,
+    needs_review: bool = False, in_progress: bool = False,
+    needs_media: bool = False,
     limit: int = 200, _: dict = Depends(current_user),
 ):
     query: dict = {}
@@ -505,6 +507,29 @@ async def ex_list(
     if status: query["status"] = status
     if approved_only: query["status"] = {"$in": ["Approved", "Live"]}
     if used_tomorrow: query["used_in_tomorrow_workouts_count"] = {"$gt": 0}
+    # Iter 140f — Phase A: absorb Demand Queue into Exercise Library UI.
+    # No schema change; these are just view filters over the existing
+    # `exercises_v2` statuses + content_status flags.
+    if needs_review:
+        # Old Demand Queue view — drafts + coach-review candidates.
+        query["status"] = {"$in": ["draft_requested", "coach_review_needed"]}
+    if in_progress:
+        # Anything actively transitioning: coach-review candidates, or an
+        # exercise currently mid-generation (image/content job in flight).
+        query["$or"] = [
+            {"status": "coach_review_needed"},
+            {"active_generation_job": True},
+            {"approved_video_status": {"$in": ["queued", "generating"]}},
+        ]
+    if needs_media:
+        # Approved rows that still have gaps in required content.
+        query["status"] = {"$in": ["Approved", "Live"]}
+        query["$or"] = [
+            {"content_status.images": False},
+            {"content_status.coaching_points": False},
+            {"content_status.video": False},
+            {"approved_video_status": {"$in": [None, "", "missing"]}},
+        ]
     if missing_content:
         query["$or"] = [
             {"content_status.images": False},

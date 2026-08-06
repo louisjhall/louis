@@ -13,7 +13,7 @@ import {
 import { Image } from "expo-image";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { confirm, toast } from "@/src/lib/ux";
@@ -60,6 +60,12 @@ type Exercise = {
 
 const FILTERS: { key: string; label: string; q: Record<string, string | boolean> }[] = [
   { key: "all", label: "ALL", q: {} },
+  // Iter 140f — Phase A: absorb Demand Queue into Exercise Library.
+  // Three new status/workflow tabs sit next to ALL so category filters
+  // remain untouched further down the row.
+  { key: "needs_review", label: "NEEDS REVIEW", q: { needs_review: true } },
+  { key: "in_progress", label: "IN PROGRESS", q: { in_progress: true } },
+  { key: "needs_media", label: "NEEDS MEDIA", q: { needs_media: true } },
   { key: "warmup", label: "WARM-UP", q: { training_type: "warmup" } },
   { key: "mobility", label: "MOBILITY", q: { category: "mobility" } },
   { key: "strength", label: "STRENGTH", q: { training_type: "strength" } },
@@ -73,10 +79,14 @@ const FILTERS: { key: string; label: string; q: Record<string, string | boolean>
 
 export default function ExerciseContentScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ tab?: string }>();
   const [items, setItems] = useState<Exercise[]>([]);
   const [selected, setSelected] = useState<Exercise | null>(null);
   const [detail, setDetail] = useState<Exercise | null>(null);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState(
+    // Iter 140f — deep-link support so /coach/demand-queue → /coach/exercise-content?tab=needs_review lands on the right tab
+    typeof params.tab === "string" && FILTERS.some((f) => f.key === params.tab) ? (params.tab as string) : "all"
+  );
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [token, setToken] = useState<string | null>(null);
@@ -331,7 +341,7 @@ export default function ExerciseContentScreen() {
           </Pressable>
           <Pressable
             testID="demand-queue-btn"
-            onPress={() => router.push("/coach/demand-queue" as any)}
+            onPress={() => setFilter("needs_review")}
             hitSlop={12}
             style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
           >

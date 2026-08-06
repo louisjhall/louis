@@ -1,0 +1,71 @@
+{
+  "generated_at": "2026-08-06T12:11:27Z",
+  "db_name": "crewfit_v1",
+  "backup_dir": "/app/backend/backups/phase_c_20260806_121126Z",
+  "totals": {
+    "exercises_v2_total": 4500,
+    "retain_total": 81,
+    "retain_approved_core": 14,
+    "retain_referenced_only": 67,
+    "delete_total": 4419
+  },
+  "delete_breakdown": {
+    "other_unreferenced_rows": 213,
+    "unapproved_generated_drafts": 4206
+  },
+  "duplicate_rows_within_delete_pile": 322,
+  "active_clients": [
+    {
+      "id": "u_reviewer_63d24c1c",
+      "email": "reviewer@crewfit.net",
+      "name": "App Store Reviewer"
+    },
+    {
+      "id": "8d24515c-5255-483d-9f10-2261c8d86400",
+      "email": "deleted+8d24515c@crewfit.deleted",
+      "name": "[deleted client 8d24515c]"
+    },
+    {
+      "id": "7a708652-5635-4c3a-a8cc-033220f1f03d",
+      "email": "louishallpt@outlook.com",
+      "name": "Louis Hall"
+    },
+    {
+      "id": "0b0651e2-3453-4c39-b858-b377e8284f8c",
+      "email": "client@crewfit.com",
+      "name": "Alex Rivera"
+    },
+    {
+      "id": "6f945cdb-1a64-4411-bf47-058d0e3160ec",
+      "email": "pietrosangermano1992@hotmail.com",
+      "name": "Pietro Sangermano"
+    }
+  ],
+  "workouts_scanned": 49,
+  "programmes_scanned": 0,
+  "active_workout_exercise_refs": {
+    "unique_ids": 37,
+    "unique_canonical_names": 56
+  },
+  "unique_required_exercises_across_clients": 56,
+  "rebuild_needed_after_reset": 0,
+  "orphan_refs": {
+    "workout_ids_pointing_to_missing_rows": 1,
+    "workout_names_with_no_matching_row": 0
+  },
+  "unsafe_deletes_detected": 0,
+  "obsolete_exercise_content_images": 4192,
+  "status_counts": {
+    "Draft": 7,
+    "Archived": 2,
+    "Approved": 12,
+    "draft": 223,
+    "draft_requested": 4256
+  },
+  "approval_status_counts": {
+    "pending": 4,
+    "approved": 14,
+    "(none)": 4479,
+    "needs_review": 3
+  }
+}

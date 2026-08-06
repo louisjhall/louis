@@ -410,8 +410,73 @@ async def hard_delete_workout(
         if blockers:
             summary["guards_bypassed"].extend([f"{kind}:{b}" for b in blockers])
 
+    # ----- Branch A0: synthetic v2p:{source_id}:{exposure_id} id -----
+    # These ids don't exist in db.workouts — they synth from either
+    # plan_live_v2 (published) or plan_drafts_v2 (in-flight review).
+    # Delete = pull the placement out of the placements array and
+    # unset the corresponding session_specs entry. Preserve the doc
+    # itself; bump `version` on drafts so downstream state endpoints
+    # notice the change.
+    if body.workout_id and str(body.workout_id).startswith("v2p:"):
+        parts = str(body.workout_id).split(":", 2)
+        if len(parts) < 3:
+            raise HTTPException(400, "malformed v2p workout id")
+        source_id, exposure_id = parts[1], parts[2]
+
+        target_coll = None      # "plan_live_v2" or "plan_drafts_v2"
+        target_doc = None
+        # 1. Try live first
+        target_doc = await db.plan_live_v2.find_one(
+            {"id": source_id, "client_id": client_id}, {"_id": 0},
+        )
+        if target_doc:
+            target_coll = "plan_live_v2"
+        else:
+            # 2. Fall back to in-review drafts
+            target_doc = await db.plan_drafts_v2.find_one(
+                {"id": source_id, "client_id": client_id,
+                 "status": {"$in": ["needs_review", "ready_for_review"]}},
+                {"_id": 0},
+            )
+            if target_doc:
+                target_coll = "plan_drafts_v2"
+        if not target_coll or not target_doc:
+            raise HTTPException(404, "v2p source not found in plan_live_v2 or plan_drafts_v2")
+
+        # Guard: is this specific placement completed / coach_locked?
+        placement = next(
+            (p for p in (target_doc.get("placements") or [])
+             if p.get("exposure_id") == exposure_id),
+            None,
+        )
+        if placement:
+            _check_guard(placement, f"{target_coll} placement:{exposure_id[:8]}")
+        else:
+            raise HTTPException(404, f"exposure_id {exposure_id} not found in {target_coll} placements")
+
+        update = {
+            "$pull": {"placements": {"exposure_id": exposure_id}},
+            "$unset": {f"session_specs.{exposure_id}": ""},
+            "$set": {"updated_at": now, "last_edit_kind": "hard_delete",
+                     "last_edit_by": coach_id},
+        }
+        coll = getattr(db, target_coll)
+        r = await coll.update_one({"id": source_id}, update)
+        # Count success as one "workout deletion" for the summary.
+        summary["workouts_deleted"] = 1 if r.modified_count else 0
+
+        # Bump version on drafts so the coach dashboard sees a fresh signature.
+        if target_coll == "plan_drafts_v2":
+            new_version = int(target_doc.get("version") or 0) + 1
+            await db.plan_drafts_v2.update_one(
+                {"id": source_id},
+                {"$set": {"version": new_version, "updated_at": now}},
+            )
+            summary["plan_version_bumped"] = True
+            summary["new_plan_version"] = new_version
+
     # ----- Branch A: workout_id (db.workouts) -----
-    if body.workout_id:
+    elif body.workout_id:
         w = await db.workouts.find_one(
             {"id": body.workout_id, "user_id": client_id},
             {"_id": 0},

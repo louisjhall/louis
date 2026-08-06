@@ -323,47 +323,68 @@ async def synth_workouts_for_user(
 
 
 async def synth_workout_by_wid(db, wid: str, user_id: str) -> Optional[dict]:
-    """Resolve a `v2p:{live_id}:{exposure_id}` id back to a legacy-shaped
-    workout row, or None if the source doc no longer matches."""
+    """Resolve a `v2p:{source_id}:{exposure_id}` id back to a legacy-shaped
+    workout row, or None if the source doc no longer matches.
+
+    Iter 146 — sources checked in order:
+      1. plan_live_v2 (published, active)
+      2. plan_drafts_v2 where status ∈ {needs_review, ready_for_review}
+    This lets the client-side workout viewer render draft placements the
+    coach hasn't yet published, matching the coach dashboard's own visibility.
+    """
     if not (wid or "").startswith(V2_WORKOUT_ID_PREFIX):
         return None
     parts = wid.split(":", 2)
     if len(parts) < 3:
         return None
-    live_id = parts[1]
+    source_id = parts[1]
     exposure_id = parts[2]
-    live = await db.plan_live_v2.find_one(
-        {"id": live_id, "client_id": user_id, "active": True}, {"_id": 0},
+
+    # 1. Live plan first
+    src = await db.plan_live_v2.find_one(
+        {"id": source_id, "client_id": user_id, "active": True}, {"_id": 0},
     )
-    if not live:
+    src_is_draft = False
+    if not src:
+        # 2. In-review draft fallback (Iter 146)
+        src = await db.plan_drafts_v2.find_one(
+            {"id": source_id, "client_id": user_id,
+             "status": {"$in": ["needs_review", "ready_for_review"]}},
+            {"_id": 0},
+        )
+        src_is_draft = bool(src)
+    if not src:
         return None
-    for p in (live.get("placements") or []):
+    for p in (src.get("placements") or []):
         if p.get("exposure_id") == exposure_id:
-            spec = (live.get("session_specs") or {}).get(exposure_id) or {}
-            # Iter 118 — Change Setup override takes precedence.
-            override = await db.plan_live_v2_implementations.find_one(
-                {"client_id": user_id, "exposure_id": exposure_id,
-                 "is_active": True,
-                 "$or": [
-                     {"date": p.get("date")},
-                     {"$and": [
-                         {"date_range_start": {"$lte": p.get("date")}},
-                         {"date_range_end":   {"$gte": p.get("date")}},
+            spec = (src.get("session_specs") or {}).get(exposure_id) or {}
+            # Overrides only exist for live plans — skip lookup for drafts.
+            if not src_is_draft:
+                override = await db.plan_live_v2_implementations.find_one(
+                    {"client_id": user_id, "exposure_id": exposure_id,
+                     "is_active": True,
+                     "$or": [
+                         {"date": p.get("date")},
+                         {"$and": [
+                             {"date_range_start": {"$lte": p.get("date")}},
+                             {"date_range_end":   {"$gte": p.get("date")}},
+                         ]},
                      ]},
-                 ]},
-                {"_id": 0, "spec_snapshot": 1},
-                sort=[("created_at", -1)],
-            )
-            if override and override.get("spec_snapshot"):
-                spec = override["spec_snapshot"]
-            # Iter 130c — apply per-exercise swaps on the single-workout path too
-            swaps = await db.plan_live_v2_exercise_swaps.find(
-                {"client_id": user_id, "exposure_id": exposure_id,
-                 "date": p.get("date"), "is_active": True},
-                {"_id": 0},
-            ).to_list(50)
+                    {"_id": 0, "spec_snapshot": 1},
+                    sort=[("created_at", -1)],
+                )
+                if override and override.get("spec_snapshot"):
+                    spec = override["spec_snapshot"]
+                # Per-exercise swaps also live only against live plans.
+                swaps = await db.plan_live_v2_exercise_swaps.find(
+                    {"client_id": user_id, "exposure_id": exposure_id,
+                     "date": p.get("date"), "is_active": True},
+                    {"_id": 0},
+                ).to_list(50)
+            else:
+                swaps = []
             return synth_workout_from_placement(
-                live_id=live_id, placement=p, spec=spec, user_id=user_id,
+                live_id=source_id, placement=p, spec=spec, user_id=user_id,
                 exercise_swaps=swaps,
             )
     return None

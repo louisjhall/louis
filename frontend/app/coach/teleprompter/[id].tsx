@@ -9,27 +9,41 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, Alert, Platform,
+  View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, Alert, Platform, TextInput,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
 type Phase = "idle" | "countdown" | "recording" | "preview" | "sending";
+
+// Iter 145 — slower default (was 40 px/s). Coach explicitly asked for a
+// substantially slower default. Persisted per-coach via AsyncStorage.
+const SPEED_DEFAULT = 15;   // px/second
+const SPEED_MIN = 5;
+const SPEED_MAX = 60;
+const SPEED_STEP = 5;
+const SPEED_STORAGE_KEY = "crewfit.teleprompter.speed";
 
 export default function Teleprompter() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [ci, setCi] = useState<any>(null);
   const [script, setScript] = useState("");
+  const [scriptDraft, setScriptDraft] = useState("");
+  const [editingScript, setEditingScript] = useState(false);
+  const [savingScript, setSavingScript] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [countdown, setCountdown] = useState(0);
   const [elapsed, setElapsed] = useState(0);
-  const [scrollSpeed, setScrollSpeed] = useState(40); // px per second
+  const [scrollSpeed, setScrollSpeed] = useState(SPEED_DEFAULT);
+  const [paused, setPaused] = useState(false);
   const [recordingBlob, setRecordingBlob] = useState<Blob | string | null>(null);
   const [permissionOk, setPermissionOk] = useState(false);
+  const currentOffset = useRef(0);   // manual-scroll aware offset
 
   const videoRef = useRef<any>(null);              // preview
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -45,9 +59,49 @@ export default function Teleprompter() {
       try {
         const r = await api<any>(`/coach/checkins/${id}`);
         setCi(r.check_in);
-        setScript(r.check_in?.weekly_video_script || "");
+        const s = r.check_in?.weekly_video_script || "";
+        setScript(s);
+        setScriptDraft(s);
       } catch (e: any) { Alert.alert("Load failed", e?.message || ""); }
+      // Restore last-used speed
+      try {
+        const stored = await AsyncStorage.getItem(SPEED_STORAGE_KEY);
+        if (stored) {
+          const n = parseInt(stored, 10);
+          if (n >= SPEED_MIN && n <= SPEED_MAX) setScrollSpeed(n);
+        }
+      } catch { /* ignore */ }
     })();
+  }, [id]);
+
+  // Persist speed whenever the coach changes it (deferred, tolerant of failures)
+  useEffect(() => {
+    AsyncStorage.setItem(SPEED_STORAGE_KEY, String(scrollSpeed)).catch(() => {});
+  }, [scrollSpeed]);
+
+  // Save script edits back to the check-in row (Iter 145)
+  const saveScriptEdit = useCallback(async () => {
+    if (scriptDraft === script) { setEditingScript(false); return; }
+    setSavingScript(true);
+    try {
+      await api<any>(`/coach/checkins/${id}/script`, {
+        method: "PUT",
+        body: { weekly_video_script: scriptDraft },
+      });
+      setScript(scriptDraft);
+      setEditingScript(false);
+    } catch (e: any) { Alert.alert("Save failed", e?.message || ""); }
+    finally { setSavingScript(false); }
+  }, [id, script, scriptDraft]);
+
+  const resetScriptToOriginal = useCallback(async () => {
+    setSavingScript(true);
+    try {
+      const r = await api<any>(`/coach/checkins/${id}/script/reset`, { method: "POST", body: {} });
+      const s = r.check_in?.weekly_video_script || "";
+      setScript(s); setScriptDraft(s); setEditingScript(false);
+    } catch (e: any) { Alert.alert("Reset failed", e?.message || "No original script preserved."); }
+    finally { setSavingScript(false); }
   }, [id]);
 
   // Set up camera stream (web + expo web)
@@ -108,11 +162,12 @@ export default function Teleprompter() {
       recorderRef.current = rec;
       setPhase("recording");
       setElapsed(0);
-      // Start teleprompter scroll
-      let offset = 0;
+      // Start teleprompter scroll (respects pause + tracks offset for manual override)
+      currentOffset.current = 0;
       scrollTimer.current = setInterval(() => {
-        offset += scrollSpeed / 10;
-        scriptScroll.current?.scrollTo?.({ y: offset, animated: false });
+        if (paused) return;
+        currentOffset.current += scrollSpeed / 10;
+        scriptScroll.current?.scrollTo?.({ y: currentOffset.current, animated: false });
       }, 100);
       elapsedTimer.current = setInterval(() => setElapsed((s) => s + 1), 1000);
     } catch (e: any) {
@@ -130,8 +185,17 @@ export default function Teleprompter() {
   const retake = () => {
     setRecordingBlob(null);
     setElapsed(0);
+    currentOffset.current = 0;
+    setPaused(false);
     scriptScroll.current?.scrollTo?.({ y: 0, animated: false });
     setPhase("idle");
+  };
+
+  // Iter 145 — restart the teleprompter scroll from the top (works both
+  // while idle and mid-recording).
+  const restartFromTop = () => {
+    currentOffset.current = 0;
+    scriptScroll.current?.scrollTo?.({ y: 0, animated: false });
   };
 
   const sendVideo = async () => {
@@ -185,24 +249,85 @@ export default function Teleprompter() {
         )}
       </View>
 
-      {/* Teleprompter script */}
+      {/* Teleprompter script — Iter 145: editable inline before recording */}
       <View style={styles.promptWrap}>
-        <Text style={styles.promptEyebrow}>SCRIPT · SPEED {scrollSpeed}px/s</Text>
-        <ScrollView ref={scriptScroll} style={styles.promptScroll} showsVerticalScrollIndicator={false}>
-          <Text style={styles.promptText}>{script}</Text>
-          <View style={{ height: 200 }} />
-        </ScrollView>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingRight: 12 }}>
+          <Text style={styles.promptEyebrow}>SCRIPT · SPEED {scrollSpeed}px/s{paused ? " · PAUSED" : ""}</Text>
+          {phase === "idle" && !editingScript && (
+            <Pressable onPress={() => { setScriptDraft(script); setEditingScript(true); }} testID="edit-script-inline" hitSlop={8}>
+              <Text style={styles.editT}>EDIT</Text>
+            </Pressable>
+          )}
+          {phase === "idle" && editingScript && (
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <Pressable onPress={resetScriptToOriginal} hitSlop={8} testID="reset-script">
+                <Text style={styles.editT}>RESET</Text>
+              </Pressable>
+              <Pressable onPress={saveScriptEdit} disabled={savingScript} hitSlop={8} testID="save-script-inline">
+                {savingScript ? <ActivityIndicator color={theme.color.brand} size="small" /> : <Text style={[styles.editT, { color: theme.color.green }]}>SAVE</Text>}
+              </Pressable>
+              <Pressable onPress={() => { setScriptDraft(script); setEditingScript(false); }} hitSlop={8}>
+                <Text style={styles.editT}>CANCEL</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+        {editingScript ? (
+          <TextInput
+            value={scriptDraft}
+            onChangeText={setScriptDraft}
+            multiline
+            style={styles.scriptEdit}
+            placeholderTextColor={theme.color.textDim}
+            testID="script-editor"
+          />
+        ) : (
+          <ScrollView
+            ref={scriptScroll}
+            style={styles.promptScroll}
+            showsVerticalScrollIndicator={paused}
+            scrollEnabled={paused || phase === "idle"}
+            onScroll={paused ? (e) => { currentOffset.current = e.nativeEvent.contentOffset.y; } : undefined}
+            scrollEventThrottle={16}
+          >
+            <Text style={styles.promptText}>{script}</Text>
+            <View style={{ height: 200 }} />
+          </ScrollView>
+        )}
       </View>
 
-      {/* Controls */}
+      {/* Controls — Iter 145: slower/faster/pause/resume/restart */}
       <View style={styles.controls}>
-        {phase === "idle" && (
-          <>
-            <SpeedBtn label="SLOW" v={25} cur={scrollSpeed} set={setScrollSpeed} />
-            <SpeedBtn label="NORMAL" v={40} cur={scrollSpeed} set={setScrollSpeed} />
-            <SpeedBtn label="FAST" v={60} cur={scrollSpeed} set={setScrollSpeed} />
-          </>
-        )}
+        <Pressable
+          onPress={() => setScrollSpeed((s) => Math.max(SPEED_MIN, s - SPEED_STEP))}
+          style={styles.speedBtn}
+          disabled={scrollSpeed <= SPEED_MIN}
+          testID="speed-slower"
+        >
+          <Ionicons name="remove" size={14} color={theme.color.text} />
+          <Text style={styles.speedT}>SLOWER</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setPaused((p) => !p)}
+          style={[styles.speedBtn, paused && styles.speedBtnOn]}
+          testID="speed-pause-toggle"
+        >
+          <Ionicons name={paused ? "play" : "pause"} size={14} color={paused ? "#fff" : theme.color.text} />
+          <Text style={[styles.speedT, paused && styles.speedTOn]}>{paused ? "RESUME" : "PAUSE"}</Text>
+        </Pressable>
+        <Pressable onPress={restartFromTop} style={styles.speedBtn} testID="speed-restart">
+          <Ionicons name="refresh" size={14} color={theme.color.text} />
+          <Text style={styles.speedT}>TOP</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setScrollSpeed((s) => Math.min(SPEED_MAX, s + SPEED_STEP))}
+          style={styles.speedBtn}
+          disabled={scrollSpeed >= SPEED_MAX}
+          testID="speed-faster"
+        >
+          <Ionicons name="add" size={14} color={theme.color.text} />
+          <Text style={styles.speedT}>FASTER</Text>
+        </Pressable>
       </View>
 
       <View style={styles.mainAction}>
@@ -238,13 +363,6 @@ export default function Teleprompter() {
   );
 }
 
-function SpeedBtn({ label, v, cur, set }: { label: string; v: number; cur: number; set: (n: number) => void }) {
-  return (
-    <Pressable onPress={() => set(v)} style={[styles.speedBtn, cur === v && styles.speedBtnOn]}>
-      <Text style={[styles.speedT, cur === v && styles.speedTOn]}>{label}</Text>
-    </Pressable>
-  );
-}
 function fmt(sec: number): string { const m = Math.floor(sec / 60); const s = sec % 60; return `${m}:${String(s).padStart(2, "0")}`; }
 
 const styles = StyleSheet.create({
@@ -263,8 +381,10 @@ const styles = StyleSheet.create({
   promptEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, padding: 12 },
   promptScroll: { flex: 1, paddingHorizontal: 20 },
   promptText: { color: theme.color.text, fontSize: 22, lineHeight: 34, fontWeight: "700" },
+  editT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, paddingHorizontal: 8, paddingVertical: 4 },
+  scriptEdit: { flex: 1, marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 8, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 18, lineHeight: 26, textAlignVertical: "top" },
   controls: { flexDirection: "row", gap: 8, padding: 12, justifyContent: "center", backgroundColor: theme.color.surface2 },
-  speedBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
+  speedBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
   speedBtnOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   speedT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
   speedTOn: { color: "#fff" },

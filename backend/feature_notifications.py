@@ -379,6 +379,71 @@ async def _tick_roster_and_workout_reminders() -> None:
                                               risk_level="medium",
                                               category="reviews",
                                               payload={"week_start": ws_prev})
+
+            # Iter 145 — unified weekly check-in reminder schedule ------------
+            # Client-local times, respecting quiet hours and notif toggles.
+            # Dedupe keys prevent duplicate delivery on any 10-minute tick.
+            # Reminders stop the moment a submission exists.
+            if settings.get("check_ins", True) and not in_quiet:
+                ws_this, _we_this = _current_week_bounds(u)
+                submitted = await db.check_ins.find_one(
+                    {"user_id": u["id"], "week_start": ws_this}, {"id": 1},
+                )
+                if not submitted:
+                    weekday = local_now.weekday()  # Sun=6, Mon=0
+                    hh = local_now.hour
+                    mm = local_now.minute
+                    plan_reminder: Optional[tuple[str, str, str]] = None
+                    # Sunday 08:00 — "your check-in is ready"
+                    if weekday == 6 and hh == 8 and mm < 10:
+                        plan_reminder = ("weekly_check_in_available",
+                                         "Weekly Check-in ready",
+                                         "Your weekly review is ready. Takes 90 seconds — tap to complete.")
+                    # Sunday 20:00 — first reminder if still incomplete
+                    elif weekday == 6 and hh == 20 and mm < 10:
+                        plan_reminder = ("reminder_1",
+                                         "Weekly Check-in reminder",
+                                         "Quick reminder — your weekly check-in is still waiting.")
+                    # Monday 09:00 — final reminder
+                    elif weekday == 0 and hh == 9 and mm < 10:
+                        plan_reminder = ("reminder_last",
+                                         "Last chance — Weekly Check-in",
+                                         "Final nudge: complete your weekly check-in so Louis can prepare your video.")
+                    if plan_reminder:
+                        dedupe = f"{plan_reminder[0]}::{ws_this}"
+                        await enqueue_notification(u["id"], plan_reminder[0],
+                                                   plan_reminder[1], plan_reminder[2],
+                                                   action_url="/checkin",
+                                                   related_id=ws_this,
+                                                   dedupe_key=dedupe)
+
+            # ---- Coach reminder: video unrecorded for 24h ------------------
+            # For every check-in with weekly_video_status == 'script_ready'
+            # that was submitted > 24h ago and doesn't yet have a video row,
+            # nudge the coach once (dedupe by check-in id).
+            if local_now.hour == 10 and local_now.minute < 10:
+                stale_cutoff = (now_utc - _dt.timedelta(hours=24)).isoformat()
+                stale = await db.check_ins.find_one({
+                    "user_id": u["id"],
+                    "submitted_at": {"$lt": stale_cutoff},
+                    "weekly_video_status": "script_ready",
+                    "weekly_video_id": None,
+                }, {"_id": 0, "id": 1, "user_name": 1})
+                if stale:
+                    ci_id = stale["id"]
+                    already = await db.coach_tasks.find_one({
+                        "check_in_id": ci_id,
+                        "task_type": "record_weekly_video_reminder",
+                    })
+                    if not already:
+                        await _create_coach_task(
+                            u, "record_weekly_video_reminder",
+                            f"Weekly video overdue · {stale.get('user_name')}",
+                            "Client checked in more than 24h ago and no video has been recorded yet.",
+                            priority="high",
+                            category="reviews",
+                            check_in_id=ci_id,
+                        )
         except Exception:
             logger.exception("_tick_roster_and_workout_reminders failed for a user")
 

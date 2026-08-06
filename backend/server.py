@@ -12535,11 +12535,20 @@ async def checkin_submit(body: CheckinSubmitBody, user: dict = Depends(current_u
         "injury_flag": coach_summary.get("injury_flag"),
         "nutrition_flag": body.answers.get("nutrition") in ["Poor", "Mixed"],
         "urgent_safety_flag": urgent_flag or coach_summary.get("urgent_safety_flag"),
+        # Iter 145 — preserve original Atlas outputs alongside the editable
+        # working copies. The main `atlas_client_summary` / `weekly_video_script`
+        # fields hold the coach-approved version shown to the client; the
+        # `_original` fields hold Atlas's untouched first draft so the coach
+        # can always reset.
         "atlas_client_summary": parsed.get("atlas_client_summary"),
+        "atlas_client_summary_original": parsed.get("atlas_client_summary"),
         "atlas_coach_summary": coach_summary,
         "next_week_focus": parsed.get("next_week_focus"),
         "suggested_programme_adjustments": parsed.get("suggested_programme_adjustments"),
         "weekly_video_script": parsed.get("weekly_video_script"),
+        "weekly_video_script_original": parsed.get("weekly_video_script"),
+        "summary_edited_by": None, "summary_edited_at": None,
+        "script_edited_by":  None, "script_edited_at":  None,
         "whatsapp_short": parsed.get("whatsapp_short"),
         "push_notification": parsed.get("push_notification"),
         "coach_review_status": "pending",
@@ -12549,6 +12558,31 @@ async def checkin_submit(body: CheckinSubmitBody, user: dict = Depends(current_u
         "reviewed_by": None,
         "reviewed_at": None,
     }
+    # Iter 145 — unified weekly aggregation. Store the same numeric review
+    # that the legacy Weekly Review would compute, so both surfaces read
+    # from a single record. Reuses the existing helpers in
+    # feature_weekly_review.py — no duplicate LLM call, no duplicate query
+    # logic. Failure is non-fatal; the check-in still submits.
+    try:
+        from feature_weekly_review import (
+            _training_stats, _nutrition_stats, _habit_stats,
+            _roster_summary, _has_progress_this_week,
+        )
+        import datetime as _dt
+        ws_d = _dt.date.fromisoformat(ws)
+        we_d = _dt.date.fromisoformat(we)
+        doc["weekly_review_snapshot"] = {
+            "training":  await _training_stats(user["id"], ws_d, we_d),
+            "nutrition": await _nutrition_stats(user["id"], ws_d, we_d),
+            "habits":    await _habit_stats(user["id"], ws_d, we_d),
+            "roster_summary": await _roster_summary(user["id"], ws_d, we_d),
+            "has_progress": await _has_progress_this_week(user["id"], ws_d, we_d),
+            "generated_at": now_iso(),
+            "source": "checkin_submit_unified",
+        }
+    except Exception:
+        logger.exception("unified weekly aggregation failed — non-fatal")
+        doc["weekly_review_snapshot"] = None
     await db.check_ins.insert_one(doc)
 
     # Create coach tasks
@@ -12645,9 +12679,73 @@ class ScriptEditBody(BaseModel):
 
 @api.put("/coach/checkins/{checkin_id}/script")
 async def coach_edit_script(checkin_id: str, body: ScriptEditBody, coach: dict = Depends(require_role("coach"))):
-    await db.check_ins.update_one({"id": checkin_id}, {"$set": {
+    # Iter 145 — first edit preserves the original if the pre-Iter-145 row
+    # didn't capture one. Subsequent edits just update the working copy.
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0, "weekly_video_script_original": 1, "weekly_video_script": 1})
+    if not ci:
+        raise HTTPException(404, "check-in not found")
+    updates: dict[str, Any] = {
         "weekly_video_script": body.weekly_video_script,
         "script_edited_by": coach["id"], "script_edited_at": now_iso(),
+    }
+    if not ci.get("weekly_video_script_original"):
+        updates["weekly_video_script_original"] = ci.get("weekly_video_script") or ""
+    await db.check_ins.update_one({"id": checkin_id}, {"$set": updates})
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
+    return {"check_in": ci}
+
+
+# Iter 145 — editable client-facing summary with original preservation.
+class SummaryEditBody(BaseModel):
+    atlas_client_summary: str
+
+
+@api.put("/coach/checkins/{checkin_id}/summary")
+async def coach_edit_summary(checkin_id: str, body: SummaryEditBody,
+                             coach: dict = Depends(require_role("coach"))):
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0,
+                                     "atlas_client_summary_original": 1,
+                                     "atlas_client_summary": 1})
+    if not ci:
+        raise HTTPException(404, "check-in not found")
+    updates: dict[str, Any] = {
+        "atlas_client_summary": body.atlas_client_summary,
+        "summary_edited_by": coach["id"], "summary_edited_at": now_iso(),
+    }
+    if not ci.get("atlas_client_summary_original"):
+        updates["atlas_client_summary_original"] = ci.get("atlas_client_summary") or ""
+    await db.check_ins.update_one({"id": checkin_id}, {"$set": updates})
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
+    return {"check_in": ci}
+
+
+@api.post("/coach/checkins/{checkin_id}/script/reset")
+async def coach_reset_script(checkin_id: str, coach: dict = Depends(require_role("coach"))):
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0, "weekly_video_script_original": 1})
+    if not ci:
+        raise HTTPException(404, "check-in not found")
+    original = ci.get("weekly_video_script_original")
+    if not original:
+        raise HTTPException(400, "no original Atlas script preserved for this check-in")
+    await db.check_ins.update_one({"id": checkin_id}, {"$set": {
+        "weekly_video_script": original,
+        "script_edited_by": None, "script_edited_at": None,
+    }})
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
+    return {"check_in": ci}
+
+
+@api.post("/coach/checkins/{checkin_id}/summary/reset")
+async def coach_reset_summary(checkin_id: str, coach: dict = Depends(require_role("coach"))):
+    ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0, "atlas_client_summary_original": 1})
+    if not ci:
+        raise HTTPException(404, "check-in not found")
+    original = ci.get("atlas_client_summary_original")
+    if not original:
+        raise HTTPException(400, "no original Atlas summary preserved for this check-in")
+    await db.check_ins.update_one({"id": checkin_id}, {"$set": {
+        "atlas_client_summary": original,
+        "summary_edited_by": None, "summary_edited_at": None,
     }})
     ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
     return {"check_in": ci}
@@ -12704,9 +12802,17 @@ async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(r
         "watched_at": None,
     }
     await db.weekly_videos.insert_one(doc)
-    await db.check_ins.update_one({"id": body.check_in_id}, {"$set": {
-        "weekly_video_id": video_id, "weekly_video_status": doc["status"],
-    }})
+    # Iter 145 — prevent orphan uploads: only attach to a check_in that
+    # doesn't already have a SENT video. If the check_in already has a
+    # different sent video, this becomes a new draft attached but the
+    # sent record stays authoritative.
+    ci_row = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0, "weekly_video_status": 1})
+    current_status = str((ci_row or {}).get("weekly_video_status") or "")
+    if current_status != "sent":
+        set_updates = {"weekly_video_id": video_id, "weekly_video_status": doc["status"]}
+        if file_url:
+            set_updates["weekly_video_uploaded_at"] = doc["created_at"]
+        await db.check_ins.update_one({"id": body.check_in_id}, {"$set": set_updates})
     doc.pop("_id", None)
     return {"video": doc}
 
@@ -12716,6 +12822,13 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
     v = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0})
     if not v:
         raise HTTPException(404, "video not found")
+    # Iter 145 — idempotent re-send guard: if already sent, return the
+    # existing sent_at without firing another push notification or
+    # creating another message record.
+    if v.get("status") == "sent" and v.get("sent_at"):
+        return {"ok": True, "sent_at": v["sent_at"], "already_sent": True}
+    if not v.get("file_url"):
+        raise HTTPException(400, "video has no uploaded file — cannot send")
     now = now_iso()
     await db.weekly_videos.update_one({"id": video_id}, {"$set": {"status": "sent", "sent_at": now}})
     await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
@@ -12743,6 +12856,24 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
         "read_at": None,
     })
     return {"ok": True, "sent_at": now}
+
+
+# Iter 145 — client marks the video as viewed (first-view analytics only).
+@api.post("/coach/videos/{video_id}/viewed")
+async def video_viewed(video_id: str, user: dict = Depends(current_user)):
+    v = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0, "user_id": 1, "watched_at": 1, "check_in_id": 1})
+    if not v:
+        raise HTTPException(404, "video not found")
+    if v.get("user_id") != user["id"]:
+        raise HTTPException(403, "not your video")
+    if v.get("watched_at"):
+        return {"ok": True, "first_view": False}
+    now = now_iso()
+    await db.weekly_videos.update_one({"id": video_id}, {"$set": {"watched_at": now, "status": "viewed"}})
+    await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
+        "weekly_video_status": "viewed", "weekly_video_viewed_at": now,
+    }})
+    return {"ok": True, "first_view": True, "watched_at": now}
 
 
 @api.get("/coach/videos/{video_id}/file")

@@ -20,7 +20,9 @@ export default function CoachCheckinReview() {
   const [ci, setCi] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [script, setScript] = useState("");
+  const [clientSummary, setClientSummary] = useState("");   // editable client summary (Iter 145)
   const [saving, setSaving] = useState(false);
+  const [savingSummary, setSavingSummary] = useState(false);
   const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
@@ -28,6 +30,7 @@ export default function CoachCheckinReview() {
       const r = await api<any>(`/coach/checkins/${id}`);
       setCi(r.check_in);
       setScript(r.check_in?.weekly_video_script || "");
+      setClientSummary(r.check_in?.atlas_client_summary || "");
     } catch (e: any) {
       Alert.alert("Could not load", e?.message || "");
     } finally { setLoading(false); }
@@ -39,6 +42,24 @@ export default function CoachCheckinReview() {
     try {
       await api<any>(`/coach/checkins/${id}/script`, { method: "PUT", body: { weekly_video_script: script } });
     } catch (e: any) { Alert.alert("Save failed", e?.message || ""); } finally { setSaving(false); }
+  };
+
+  // Iter 145 — editable client-facing summary
+  const saveSummary = async () => {
+    setSavingSummary(true);
+    try {
+      const r = await api<any>(`/coach/checkins/${id}/summary`, { method: "PUT", body: { atlas_client_summary: clientSummary } });
+      setCi(r.check_in);
+    } catch (e: any) { Alert.alert("Save failed", e?.message || ""); } finally { setSavingSummary(false); }
+  };
+  const resetSummary = async () => {
+    setSavingSummary(true);
+    try {
+      const r = await api<any>(`/coach/checkins/${id}/summary/reset`, { method: "POST", body: {} });
+      setCi(r.check_in);
+      setClientSummary(r.check_in?.atlas_client_summary || "");
+    } catch (e: any) { Alert.alert("Reset failed", e?.message || "No original Atlas summary preserved."); }
+    finally { setSavingSummary(false); }
   };
 
   const createDraftAndSend = async () => {
@@ -123,6 +144,31 @@ export default function CoachCheckinReview() {
               <Text style={styles.answerV}>{String(v)}</Text>
             </View>
           ))}
+        </View>
+
+        {/* Iter 145 — Client-facing editable summary */}
+        <View style={styles.block}>
+          <Text style={styles.blockH}>CLIENT-FACING SUMMARY (shown on the client dashboard)</Text>
+          <Text style={styles.hint}>Editable. Reset returns Atlas&apos;s original wording.</Text>
+          <TextInput
+            value={clientSummary}
+            onChangeText={setClientSummary}
+            multiline
+            style={styles.scriptInput}
+            placeholder="Client-facing weekly summary shown alongside the video."
+            placeholderTextColor={theme.color.textDim}
+            testID="client-summary-input"
+          />
+          <View style={styles.scriptActions}>
+            <Pressable onPress={saveSummary} disabled={savingSummary} style={styles.saveBtn} testID="save-summary">
+              {savingSummary ? <ActivityIndicator color={theme.color.brand} size="small" /> : <Ionicons name="save" size={14} color={theme.color.brand} />}
+              <Text style={styles.saveBtnT}>SAVE SUMMARY</Text>
+            </Pressable>
+            <Pressable onPress={resetSummary} disabled={savingSummary} style={[styles.saveBtn, { backgroundColor: "transparent" }]} testID="reset-summary">
+              <Ionicons name="refresh" size={14} color={theme.color.brand} />
+              <Text style={styles.saveBtnT}>RESET</Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* Editable Script */}

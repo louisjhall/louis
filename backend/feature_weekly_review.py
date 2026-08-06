@@ -350,6 +350,40 @@ async def _maybe_create_video_task(user: dict, review: dict) -> Optional[str]:
 
 @api.get("/weekly-review/current")
 async def weekly_review_current(user: dict = Depends(current_user)):
+    # Iter 145 — unified read: if this week's check-in already carries a
+    # weekly_review_snapshot, serve that as the primary record. Falls back
+    # to the legacy weekly_reviews collection for pre-unification weeks.
+    # No new writes are made to `weekly_reviews` from this path — new
+    # aggregations are written directly onto the check-in row at submit
+    # time. Historical rows remain readable via /admin/weekly-reviews.
+    today = _dt.date.today()
+    ws, we = _week_bounds(today)
+    ci = await db.check_ins.find_one(
+        {"user_id": user["id"], "week_start": ws.isoformat()},
+        {"_id": 0},
+    )
+    snap = (ci or {}).get("weekly_review_snapshot") if ci else None
+    if ci and snap:
+        return {
+            "id": ci.get("id"),
+            "user_id": user["id"],
+            "week_start": ci.get("week_start"),
+            "week_end": ci.get("week_end"),
+            "training": snap.get("training"),
+            "nutrition": snap.get("nutrition"),
+            "habits": snap.get("habits"),
+            "roster_summary": snap.get("roster_summary"),
+            "has_progress": snap.get("has_progress"),
+            "checkin_status": "complete",
+            "atlas_client_summary": ci.get("atlas_client_summary"),
+            "next_week_focus": ci.get("next_week_focus"),
+            "weekly_video_status": ci.get("weekly_video_status"),
+            "weekly_video_id": ci.get("weekly_video_id"),
+            "source": "unified_check_in",
+            "created_at": ci.get("submitted_at"),
+            "updated_at": snap.get("generated_at"),
+        }
+    # Legacy fallback — historical weeks / clients who haven't checked in
     doc = await _get_or_build(user)
     return doc
 

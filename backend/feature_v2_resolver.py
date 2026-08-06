@@ -451,6 +451,7 @@ async def create_exercise_request_if_missing(
     workout_id: Optional[str] = None,
     substitute_used: Optional[dict] = None,
     reason: str = "",
+    suppress_auto_media_kinds: tuple[str, ...] = (),
 ) -> Optional[str]:
     """Idempotently record a draft-exercise request.
 
@@ -460,6 +461,13 @@ async def create_exercise_request_if_missing(
     rather than creating a duplicate.
 
     Returns the exercise_v2 doc id (existing or newly created).
+
+    `suppress_auto_media_kinds` (recursion guard, Iter 141b): tuple of
+    kind names to FORCE OFF in the auto-media-gen enqueue that fires when
+    a genuinely new draft is inserted. Callers auto-generating alternatives
+    MUST pass ``("alternatives",)`` to prevent recursive fan-out. Ignored
+    on the exact-match and Phase B fuzzy-reuse branches (no new row created,
+    so no auto-media enqueue happens either).
     """
     requested_name = (item.get("name") or item.get("exercise_name") or "").strip()
     if not requested_name:
@@ -626,7 +634,11 @@ async def create_exercise_request_if_missing(
     # coach still has to approve. Silent no-op if AUTO_MEDIA_GEN is off.
     try:
         from feature_auto_media_gen import auto_enqueue_media_for_exercise
-        await auto_enqueue_media_for_exercise(ex_id, triggered_by=user.get("id"))
+        await auto_enqueue_media_for_exercise(
+            ex_id,
+            triggered_by=user.get("id"),
+            suppress_kinds=suppress_auto_media_kinds,
+        )
     except Exception:
         logger.exception("auto_media_gen: enqueue after new-draft insert failed (non-fatal)")
 

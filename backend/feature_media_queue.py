@@ -48,6 +48,7 @@ async def resolve_or_draft_exercise(
     reason: str = "media_queue_backfill",
     programme_id: Optional[str] = None,
     workout_id: Optional[str] = None,
+    suppress_auto_media_kinds: tuple[str, ...] = (),
 ) -> Optional[str]:
     """Return the exercises_v2 id for `name`, creating a draft if absent.
 
@@ -55,6 +56,11 @@ async def resolve_or_draft_exercise(
     body_area / equipment_type / tags will be copied to the new draft — used
     when we're queueing an "alternative" of an existing library exercise so
     the draft carries useful metadata from day one.
+
+    `suppress_auto_media_kinds` (recursion guard) is forwarded verbatim to
+    ``create_exercise_request_if_missing`` — see that function's docstring
+    for the semantics. Callers generating alternatives MUST pass
+    ``("alternatives",)`` to prevent unbounded cascade.
     """
     if not name or not str(name).strip():
         return None
@@ -82,6 +88,7 @@ async def resolve_or_draft_exercise(
             programme_id=programme_id,
             workout_id=workout_id,
             reason=reason,
+            suppress_auto_media_kinds=suppress_auto_media_kinds,
         )
     except Exception:
         logger.exception("media_queue: resolve_or_draft_exercise failed for %s", name)

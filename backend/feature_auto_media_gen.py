@@ -73,8 +73,8 @@ _KIND_DEFAULTS: dict[str, bool] = {
     "image_start":     False,
     "image_end":       False,
     "coaching_points": True,
-    "common_mistakes": False,
-    "alternatives":    False,
+    "common_mistakes": True,
+    "alternatives":    True,
     "instructions":    False,
 }
 
@@ -333,6 +333,7 @@ async def _safe_run_image_job(image_id: str, prompt: str, *,
 
 async def auto_enqueue_media_for_exercise(
     ex_id: str, *, triggered_by: Optional[str] = None,
+    suppress_kinds: tuple[str, ...] = (),
 ) -> dict:
     """Kick off auto-generation for one exercise. Returns a summary dict.
 
@@ -341,6 +342,14 @@ async def auto_enqueue_media_for_exercise(
 
     `triggered_by` is a user id (coach) for the audit log, when the
     creation is directly attributable. If None we use the system marker.
+
+    `suppress_kinds` is a tuple of kind names that are FORBIDDEN for this
+    invocation regardless of the default/DB/env toggles. Used by the
+    alternatives auto-generator to guarantee a depth-1 fan-out — when we
+    recurse into a newly-created alternative draft we pass
+    ``suppress_kinds=("alternatives",)`` so the second-level draft
+    generates primary image + coaching_points + common_mistakes but
+    NEVER another alternatives round. Mathematically prevents recursion.
     """
     if not AUTO_MEDIA_GEN_ENABLED:
         return {"skipped": True, "reason": "AUTO_MEDIA_GEN disabled"}
@@ -364,6 +373,18 @@ async def auto_enqueue_media_for_exercise(
     skipped_by_toggle: list[str] = []
 
     toggles = await _load_kind_toggles()
+
+    # Recursion guard: any kind listed in ``suppress_kinds`` is force-disabled
+    # for THIS invocation only. Never mutates DB toggles.
+    if suppress_kinds:
+        for _k in suppress_kinds:
+            if _k in toggles:
+                toggles[_k] = False
+                skipped_by_toggle.append(f"{_k}:suppressed")
+        logger.info(
+            "auto_media_gen: suppress_kinds=%s applied for ex=%s",
+            suppress_kinds, ex_id,
+        )
 
     # ---- Images (only for slots that are still empty AND enabled) ----
     per_slot_toggle = {
@@ -506,9 +527,9 @@ _KIND_TASK_PROMPTS: dict[str, str] = {
         "Each item is one short sentence."
     ),
     "alternatives": (
-        "Return 3–5 alternative exercises that train the same movement "
+        "Return AT MOST 3 alternative exercises that train the same movement "
         "pattern, ordered by similarity. Only the exercise names, no "
-        "explanation."
+        "explanation. Return no more than 3 items even if more are possible."
     ),
     "instructions": (
         "Return 3–5 sentences of client-facing plain-English instructions "
@@ -605,6 +626,11 @@ async def _auto_generate_content(ex_id: str, kind: str, creator: str) -> None:
                     if ln.strip()
                 ][:6]
             items = [str(i).strip() for i in items if str(i).strip()][:6]
+            # Alternatives are hard-capped at 3 to bound depth-1 fan-out
+            # cost (see recursion guard). Coach can still add more manually
+            # via the Library UI if needed.
+            if kind == "alternatives":
+                items = items[:3]
             if not items:
                 return
             updates[field] = items
@@ -639,6 +665,14 @@ async def _auto_generate_content(ex_id: str, kind: str, creator: str) -> None:
                                 user=user_stub,
                                 parent=ex,
                                 reason=f"atlas_alternative_of:{ex.get('exercise_name') or ex_id}",
+                                # RECURSION GUARD — the newly-created
+                                # alternative draft may auto-generate
+                                # primary image + coaching_points +
+                                # common_mistakes, but NEVER another round
+                                # of alternatives. Bounds cost at depth-1
+                                # fan-out. Removing this argument re-opens
+                                # unbounded cascade — do not do that.
+                                suppress_auto_media_kinds=("alternatives",),
                             )
                             if xid:
                                 alt_ids.append(xid)

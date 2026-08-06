@@ -288,6 +288,61 @@ export default function CoachWorkspaceScreen() {
     } finally { setBusy(false); }
   }, [clientId, loadMonth]);
 
+  // Iter 140d — per-card hard-delete. Accepts either workout_id (v1/JSON
+  // rows) or assignment_id (V2 plan) and confirms with the coach before
+  // firing. Force flag bypasses all guards (completed / coach_locked /
+  // manual_lock) so the coach can wipe any card they choose.
+  const hardDeleteCard = useCallback((opts: {
+    workoutId?: string; assignmentId?: string; title?: string;
+    force?: boolean;
+  }) => {
+    const label = opts.title || "this workout";
+    const doDelete = async (force: boolean) => {
+      setBusy(true);
+      try {
+        const body: any = { reason: "Coach bin-icon delete on calendar card", force };
+        if (opts.workoutId) body.workout_id = opts.workoutId;
+        if (opts.assignmentId) body.assignment_id = opts.assignmentId;
+        const res: any = await api(
+          `/coach/clients/${clientId}/workouts/hard-delete`,
+          { method: "POST", body },
+        );
+        await loadMonth();
+        if (res?.guards_bypassed?.length) {
+          Alert.alert(
+            "Deleted (with force)",
+            `Bypassed: ${res.guards_bypassed.join(", ")}.`
+          );
+        }
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        // 409 = guarded — offer to force
+        if (/force=true/i.test(msg) || /protected by/i.test(msg)) {
+          Alert.alert(
+            "Workout is protected",
+            `${msg}\n\nDelete anyway?`,
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Force delete", style: "destructive",
+                onPress: () => doDelete(true) },
+            ]
+          );
+        } else {
+          Alert.alert("Delete failed", msg);
+        }
+      } finally { setBusy(false); }
+    };
+    Alert.alert(
+      "Delete workout?",
+      `Permanently remove ${label}. This cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive",
+          onPress: () => doDelete(!!opts.force) },
+      ]
+    );
+  }, [clientId, loadMonth]);
+
   const stepMonth = useCallback((delta: number) => {
     if (!month) return;
     const [y, m] = month.split("-").map((s) => parseInt(s, 10));
@@ -940,6 +995,14 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
             </View>
             <View style={styles.planRight}>
               <StatusChip kind={a.status_kind} label={a.status_label} />
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); hardDeleteCard({ assignmentId: a.id, title: humanise(a.kind || a.kind_label) }); }}
+                hitSlop={8}
+                style={styles.cardBin}
+                testID={`bin-assignment-${a.id}`}
+              >
+                <Ionicons name="trash-outline" size={14} color="#c44" />
+              </Pressable>
             </View>
           </Pressable>
         ))}
@@ -953,6 +1016,14 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
               {w.completed && <StatusChip kind="approved" label="Done" />}
               {!w.completed && w.approved && <StatusChip kind="live" label="Live" />}
               {!w.completed && !w.approved && <StatusChip kind="review" label="Review" />}
+              <Pressable
+                onPress={() => hardDeleteCard({ workoutId: w.id, title: (w.title || w.focus || "workout") })}
+                hitSlop={8}
+                style={styles.cardBin}
+                testID={`bin-workout-${w.id}`}
+              >
+                <Ionicons name="trash-outline" size={14} color="#c44" />
+              </Pressable>
             </View>
           </View>
         ))}
@@ -1520,7 +1591,14 @@ const styles = StyleSheet.create({
     color: theme.color.brand, fontSize: 11, fontWeight: "700", marginLeft: 6,
     minWidth: 30, textAlign: "right",
   },
-  planRight: { marginLeft: 8 },
+  planRight: { marginLeft: 8, flexDirection: "row", alignItems: "center", gap: 6 },
+  cardBin: {
+    padding: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "rgba(196, 68, 68, 0.35)",
+    backgroundColor: "rgba(196, 68, 68, 0.08)",
+  },
 
   statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
   statusChipText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },

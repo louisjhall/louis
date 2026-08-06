@@ -211,9 +211,7 @@ export function ClientAdminDrawer({
         confirm: true,
       };
       if (bulkSource === "coach_manual") body.sources = ["coach_manual"];
-      if (bulkSource === "imported") body.import_ref_prefix = "";  // any non-null import_ref via the regex ^
-      // For "imported", we want workouts that have import_ref set — use a prefix
-      // regex that matches everything. Backend does `^${prefix}` so `""` matches all.
+      if (bulkSource === "imported") body.only_imported = true;
       const res: any = await api(`/coach/clients/${clientId}/workouts/bulk-delete`, {
         method: "POST", body,
       });

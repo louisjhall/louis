@@ -13,6 +13,7 @@ import { ClientProfileHeader } from "@/src/components/ClientProfileHeader";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
+import { WelcomeVideoBanner } from "@/src/components/WelcomeVideoBanner";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 import { TimezoneCard } from "@/src/components/TimezoneCard";
 import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
@@ -453,6 +454,11 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg, gap: 12 }}>
+          {/* Iter 156 — Welcome-from-coach one-shot banner. Renders nothing
+              until the client actually has an unwatched welcome video.
+              Placed as the very first surface so it never gets buried. */}
+          <WelcomeVideoBanner />
+
           {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
               pinned directly beneath Pietro's name/header per coach request.
               The chips route to the deeper Calendar / Check-In / Progress

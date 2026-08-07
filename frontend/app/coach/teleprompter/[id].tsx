@@ -43,6 +43,10 @@ export default function Teleprompter() {
   const [paused, setPaused] = useState(false);
   const [recordingBlob, setRecordingBlob] = useState<Blob | string | null>(null);
   const [permissionOk, setPermissionOk] = useState(false);
+  // Iter 156 — Welcome Video Phase 2. When ON, the outgoing POST omits
+  // `check_in_id` and sets `video_kind: "welcome"` so the video is stored
+  // as a one-shot welcome message instead of a weekly review.
+  const [isWelcome, setIsWelcome] = useState(false);
   const currentOffset = useRef(0);   // manual-scroll aware offset
 
   const videoRef = useRef<any>(null);              // preview
@@ -209,14 +213,32 @@ export default function Teleprompter() {
         reader.onerror = reject;
         reader.readAsDataURL(recordingBlob);
       });
-      const v = await api<any>("/coach/videos", {
-        method: "POST", body: {
-          check_in_id: id, user_id: ci.user_id, script,
-          file_b64: b64, file_mime: "video/webm", duration_seconds: elapsed,
-        },
-      });
+      // Iter 156 — Welcome Video Phase 2.
+      // When "Mark as Welcome Video" is ON we DROP the check_in_id and
+      // tag the doc as video_kind="welcome" so it lands on the client
+      // dashboard banner instead of the weekly review card. The user
+      // being sent-to is still the check-in owner, because welcome
+      // recordings today are always initiated from a client's row.
+      const body: Record<string, any> = {
+        user_id: ci.user_id,
+        script,
+        file_b64: b64,
+        file_mime: "video/webm",
+        duration_seconds: elapsed,
+      };
+      if (isWelcome) {
+        body.video_kind = "welcome";
+      } else {
+        body.check_in_id = id;
+      }
+      const v = await api<any>("/coach/videos", { method: "POST", body });
       await api<any>(`/coach/videos/${v.video.id}/send`, { method: "POST", body: {} });
-      Alert.alert("Sent!", `Weekly video delivered to ${ci.user_name}.`);
+      Alert.alert(
+        "Sent!",
+        isWelcome
+          ? `Welcome video delivered to ${ci.user_name}.`
+          : `Weekly video delivered to ${ci.user_name}.`,
+      );
       router.back();
     } catch (e: any) {
       Alert.alert("Send failed", e?.message || "");
@@ -228,8 +250,39 @@ export default function Teleprompter() {
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
       <View style={styles.top}>
         <Pressable onPress={() => router.back()} hitSlop={12} testID="teleprompter-close"><Ionicons name="close" size={24} color={theme.color.text} /></Pressable>
-        <Text style={styles.title}>TELEPROMPTER · {ci?.user_name || "…"}</Text>
+        <Text style={styles.title}>
+          {isWelcome ? "WELCOME VIDEO" : "TELEPROMPTER"} · {ci?.user_name || "…"}
+        </Text>
         <View style={{ width: 24 }} />
+      </View>
+
+      {/* Iter 156 — Mark-as-Welcome toggle. Disabled during recording /
+          preview / sending to prevent mid-flight kind changes. */}
+      <View style={styles.welcomeRow}>
+        <Pressable
+          onPress={() => phase === "idle" && setIsWelcome((v) => !v)}
+          disabled={phase !== "idle"}
+          style={[
+            styles.welcomeChip,
+            isWelcome && styles.welcomeChipOn,
+            phase !== "idle" && { opacity: 0.5 },
+          ]}
+          testID="welcome-toggle"
+        >
+          <Ionicons
+            name={isWelcome ? "checkbox" : "square-outline"}
+            size={16}
+            color={isWelcome ? theme.color.brand : theme.color.textMuted}
+          />
+          <Text style={[styles.welcomeChipT, isWelcome && { color: theme.color.brand }]}>
+            MARK AS WELCOME VIDEO
+          </Text>
+        </Pressable>
+        {isWelcome && (
+          <Text style={styles.welcomeHint}>
+            Sent as a one-shot welcome — not attached to this check-in.
+          </Text>
+        )}
       </View>
 
       {/* Camera preview */}
@@ -369,6 +422,27 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, backgroundColor: theme.color.surface },
   title: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  welcomeRow: {
+    paddingHorizontal: 12, paddingBottom: 10, backgroundColor: theme.color.surface, gap: 6,
+    borderBottomWidth: 1, borderBottomColor: theme.color.divider,
+  },
+  welcomeChip: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+    alignSelf: "flex-start",
+  },
+  welcomeChipOn: {
+    backgroundColor: theme.color.brandTint,
+    borderColor: theme.color.brand,
+  },
+  welcomeChipT: {
+    color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5,
+  },
+  welcomeHint: {
+    color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
+  },
   camWrap: { height: 240, backgroundColor: "#111", position: "relative" },
   camFallback: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
   camFallbackT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1 },

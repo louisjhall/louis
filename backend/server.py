@@ -12890,27 +12890,34 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
         raise HTTPException(400, "video has no uploaded file — cannot send")
     now = now_iso()
     await db.weekly_videos.update_one({"id": video_id}, {"$set": {"status": "sent", "sent_at": now}})
-    await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
-        "weekly_video_status": "sent", "weekly_video_sent_at": now,
-    }})
-    # Mark associated coach tasks as sent
-    await db.coach_tasks.update_many(
-        {"check_in_id": v["check_in_id"], "task_type": "record_weekly_video"},
-        {"$set": {"status": "sent", "completed_at": now, "video_id": video_id}},
-    )
+    # Iter 156 — welcome videos have no check_in_id → skip the check-in
+    # / coach-task stamping for them. Weekly videos still update both.
+    if v.get("check_in_id"):
+        await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
+            "weekly_video_status": "sent", "weekly_video_sent_at": now,
+        }})
+        await db.coach_tasks.update_many(
+            {"check_in_id": v["check_in_id"], "task_type": "record_weekly_video"},
+            {"$set": {"status": "sent", "completed_at": now, "video_id": video_id}},
+        )
     # Notify the client (push + in-app)
     try:
         await notify_weekly_video_ready(v["user_id"], video_id)
     except Exception:
         logger.exception("weekly video notify failed")
     # Create client-facing message record
+    is_welcome = v.get("video_kind") == "welcome"
     await db.messages.insert_one({
         "id": new_id(),
         "from_id": coach["id"],
         "to_id": v["user_id"],
-        "kind": "weekly_video",
+        "kind": "welcome_video" if is_welcome else "weekly_video",
         "video_id": video_id,
-        "body": "Your weekly coaching review is ready.",
+        "body": (
+            "Your coach recorded a welcome video for you."
+            if is_welcome else
+            "Your weekly coaching review is ready."
+        ),
         "created_at": now,
         "read_at": None,
     })
@@ -12929,9 +12936,12 @@ async def video_viewed(video_id: str, user: dict = Depends(current_user)):
         return {"ok": True, "first_view": False}
     now = now_iso()
     await db.weekly_videos.update_one({"id": video_id}, {"$set": {"watched_at": now, "status": "viewed"}})
-    await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
-        "weekly_video_status": "viewed", "weekly_video_viewed_at": now,
-    }})
+    # Iter 156 — welcome videos have no check_in_id; only stamp the check-in
+    # row when this is a weekly video linked to one.
+    if v.get("check_in_id"):
+        await db.check_ins.update_one({"id": v["check_in_id"]}, {"$set": {
+            "weekly_video_status": "viewed", "weekly_video_viewed_at": now,
+        }})
     return {"ok": True, "first_view": True, "watched_at": now}
 
 

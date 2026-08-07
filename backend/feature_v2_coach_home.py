@@ -697,7 +697,7 @@ async def endpoint_coach_clients_directory(
         match,
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
          "profile": 1, "status": 1, "password_hash": 1, "coach_id": 1,
-         "assigned_coach_id": 1, "created_at": 1},
+         "assigned_coach_id": 1, "created_at": 1, "last_login_at": 1},
     ).sort("name", 1).to_list(500)
 
     # Iter 130a — de-duplicate by email. If the production DB ever ends up
@@ -825,6 +825,10 @@ async def endpoint_coach_clients_directory(
             "next_action": next_action,
             "attention_count": sum(1 for t in tasks if t["priority"] in ("urgent", "attention")),
             "status": c.get("status") or "active",
+            # Iter 160 — coach client list "LAST SEEN" column.
+            # null when the user has never logged in since the stamp was
+            # added. Frontend renders that as "Never".
+            "last_login_at": c.get("last_login_at"),
         })
 
     # Global counts for the filter tabs (independent of current filter)

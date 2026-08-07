@@ -1205,6 +1205,15 @@ async def login(body: LoginBody):
             "This account is currently unavailable. Please contact your coach if you believe this is a mistake."
         )
     token = make_token(u["id"], u["role"])
+    # Iter 160 — stamp last_login_at so the coach client list can show a
+    # "LAST SEEN" column with a relative-time label. Best-effort: a failure
+    # here must never block a valid login.
+    try:
+        now = now_iso()
+        await db.users.update_one({"id": u["id"]}, {"$set": {"last_login_at": now}})
+        u["last_login_at"] = now
+    except Exception:
+        logger.exception("failed to stamp last_login_at for user %s", u.get("id"))
     clean_doc(u)
     u.pop("password_hash", None)
     return {"token": token, "user": u}

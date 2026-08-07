@@ -62,6 +62,9 @@ type Row = {
   next_action: NextAction;
   attention_count: number;
   status: string;
+  /** Iter 160 — set by /auth/login. null / undefined until the user
+   *  logs in for the first time since the stamp was added. */
+  last_login_at?: string | null;
 };
 type Directory = {
   clients: Row[];
@@ -84,6 +87,32 @@ const PRIORITY_ACCENT: Record<string, string> = {
   waiting:   theme.color.textDim,
   normal:    theme.color.textHi,
 };
+
+/**
+ * Iter 160 — compact relative-time formatter for the LAST SEEN column.
+ * Returns "Never" for missing/invalid values, "just now" for < 60s,
+ * then "5m", "3h", "2d", "6w", "4mo", "1y".
+ */
+function relTime(iso: string | null | undefined): string {
+  if (!iso) return "Never";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "Never";
+  const diff = Math.max(0, Date.now() - t);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  const w = Math.floor(d / 7);
+  if (w < 5) return `${w}w`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo`;
+  return `${Math.floor(d / 365)}y`;
+}
+
 
 export default function ClientsScreen() {
   const router = useRouter();
@@ -195,6 +224,7 @@ export default function ClientsScreen() {
           <Text style={[styles.colHeadText, styles.colGoal]}>GOAL</Text>
           <Text style={[styles.colHeadText, styles.colPlan]}>PLAN</Text>
           <Text style={[styles.colHeadText, styles.colRoster]}>ROSTER</Text>
+          <Text style={[styles.colHeadText, styles.colLastSeen]}>LAST SEEN</Text>
           <Text style={[styles.colHeadText, styles.colAction]}>NEXT ACTION</Text>
         </View>
 
@@ -318,6 +348,25 @@ function ClientRow({ row, onOpen }: { row: Row; onOpen: (link: string) => void }
         ) : null}
       </View>
 
+      {/* LAST SEEN — Iter 160.
+          Compact relative-time (e.g. "5m", "3h", "2d") with a "Never" fallback
+          when the user has never logged in since the /auth/login stamp was
+          added. Coach-only column; doesn't participate in row layout width
+          negotiation on small screens because it collapses to minWidth 80.
+      */}
+      <View style={[styles.cell, styles.colLastSeen]}>
+        <Text
+          style={[
+            styles.lastSeenT,
+            !row.last_login_at && { color: theme.color.textDim, fontStyle: "italic" },
+          ]}
+          numberOfLines={1}
+          testID={`client-last-seen-${row.id}`}
+        >
+          {relTime(row.last_login_at)}
+        </Text>
+      </View>
+
       {/* NEXT ACTION */}
       <View style={[styles.cell, styles.colAction, { alignItems: "flex-end" }]}>
         <Pressable
@@ -437,7 +486,14 @@ const styles = StyleSheet.create({
   colGoal:   { flex: 1.2, minWidth: 130 },
   colPlan:   { flex: 1.6, minWidth: 170 },
   colRoster: { flex: 1.4, minWidth: 150 },
+  colLastSeen: { flex: 0.7, minWidth: 80 },
   colAction: { flex: 1.4, minWidth: 170 },
+  lastSeenT: {
+    color: theme.color.textHi,
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
 
   /* Rows */
   row: {

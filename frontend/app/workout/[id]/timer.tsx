@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, AppState } from "react-native";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, AppState, Platform } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import * as Notifications from "expo-notifications";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
+import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 
 export default function GuidedTimer() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -19,6 +21,13 @@ export default function GuidedTimer() {
   const [remaining, setRemaining] = useState(0);
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Iter 152 — Wall-clock timer.
+  // `endEpochRef` stores the absolute millisecond timestamp at which the
+  // current phase should end. Every tick / focus event recomputes
+  // `remaining = max(0, ceil((endEpoch - now) / 1000))`. This is immune to
+  // JS setInterval drift, background throttling and app suspend/resume.
+  const endEpochRef = useRef<number | null>(null);
+  const notifIdRef = useRef<string | null>(null);
   const intv = useRef<any>(null);
 
   useEffect(() => {
@@ -35,14 +44,69 @@ export default function GuidedTimer() {
     })();
   }, [id]);
 
+  // Wall-clock recompute — cheap & precise.
+  const recompute = useCallback(() => {
+    const end = endEpochRef.current;
+    if (end === null) return;
+    const secs = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    setRemaining(secs);
+  }, []);
+
+  // Cancel any scheduled end-of-phase notification.
+  const cancelEndNotification = useCallback(async () => {
+    const nid = notifIdRef.current;
+    notifIdRef.current = null;
+    if (!nid) return;
+    try { await Notifications.cancelScheduledNotificationAsync(nid); } catch { /* ignore */ }
+  }, []);
+
+  // Schedule a local notification that fires `secs` seconds from now.
+  const scheduleEndNotification = useCallback(async (secs: number, label: string) => {
+    await cancelEndNotification();
+    if (secs <= 0) return;
+    // Web has no real notifications API here — skip silently.
+    if (Platform.OS === "web") return;
+    try {
+      const nid = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Time's up",
+          body: label ? `${label} — next up` : "Next phase is ready",
+          sound: true,
+        },
+        trigger: { seconds: Math.max(1, Math.round(secs)) } as any,
+      });
+      notifIdRef.current = nid;
+    } catch { /* notifications are best-effort */ }
+  }, [cancelEndNotification]);
+
+  // Tick — 250ms wall-clock read. Cheap and drift-proof.
   useEffect(() => {
     if (!running) return;
-    intv.current = setInterval(() => {
-      setRemaining((r) => (r > 0 ? r - 1 : 0));
-    }, 1000);
+    intv.current = setInterval(recompute, 250);
     return () => clearInterval(intv.current);
-  }, [running]);
+  }, [running, recompute]);
 
+  // (Re-)arm the endEpoch + notification whenever running toggles OR the
+  // phase advances (advance() sets fresh `remaining` and updates phase/idx/
+  // warmIdx/set — we depend on all four so this fires exactly once per
+  // phase transition).
+  useEffect(() => {
+    if (!running) {
+      endEpochRef.current = null;
+      cancelEndNotification();
+      return;
+    }
+    endEpochRef.current = Date.now() + remaining * 1000;
+    const label =
+      phase === "warmup" ? (w?.warmup?.[warmIdx]?.name || "Warm-up") :
+      phase === "work"   ? (w?.exercises?.[idx]?.name || "Exercise") :
+      phase === "rest"   ? "Rest" :
+      "Workout";
+    scheduleEndNotification(remaining, label);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, phase, warmIdx, idx, set]);
+
+  // End-of-phase advance.
   useEffect(() => {
     if (remaining === 0 && running) {
       advance();
@@ -50,10 +114,20 @@ export default function GuidedTimer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remaining, running]);
 
+  // Iter 152 — AppState listener now ONLY recomputes on foreground; it no
+  // longer pauses the timer. Wall-clock design means the countdown keeps
+  // ticking correctly across background/suspend without any pause hack.
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (s) => { if (s !== "active") setRunning(false); });
+    const sub = AppState.addEventListener("change", (s) => {
+      if (s === "active") recompute();
+    });
     return () => sub.remove();
-  }, []);
+  }, [recompute]);
+
+  // Cleanup any pending notification on unmount.
+  useEffect(() => {
+    return () => { cancelEndNotification(); };
+  }, [cancelEndNotification]);
 
   const advance = () => {
     if (!w) return;

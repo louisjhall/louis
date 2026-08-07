@@ -134,7 +134,10 @@ export default function RosterUpload() {
         }
         if (j.status === "complete") {
           clearInterval(pollRef.current);
-          setTimeout(() => router.replace("/(client)/calendar"), 800);
+          // Iter 152 — Do NOT auto-navigate. Show the success state and
+          // let the client tap "OPEN CALENDAR" or "UPLOAD ANOTHER"
+          // deliberately. Prevents the screen from disappearing before
+          // the user has processed that the upload actually worked.
         }
         if (j.status === "failed" || j.status === "partial" || j.status === "needs_review") {
           clearInterval(pollRef.current);

@@ -5,9 +5,14 @@ import { theme } from "@/src/lib/theme";
 
 // Lazy-load datetime picker only on native to avoid web bundle issues.
 let DateTimePicker: any = null;
+let DateTimePickerAndroid: any = null;
 if (Platform.OS !== "web") {
   try {
-    DateTimePicker = require("@react-native-community/datetimepicker").default;
+    const mod = require("@react-native-community/datetimepicker");
+    DateTimePicker = mod.default;
+    // Android imperative API — lets us pass `themeVariant: "light"` per open,
+    // which the modal-wrapped component form ignores on some devices.
+    DateTimePickerAndroid = mod.DateTimePickerAndroid;
   } catch { /* not installed */ }
 }
 
@@ -71,11 +76,33 @@ export function DateField({
 
   const dateObj = value && isoValid(value) ? new Date(value + "T00:00:00") : new Date();
 
+  // Android — use the imperative DateTimePickerAndroid.open() API instead of
+  // rendering <DateTimePicker> inside our modal. This bypasses the component
+  // form's inconsistent theming behaviour and lets us pass
+  // `themeVariant: "light"` per call so the numerals never render dark-on-dark
+  // even when the user's phone is in dark mode.
+  const openAndroid = () => {
+    if (!DateTimePickerAndroid) { setNativeOpen(true); return; }
+    DateTimePickerAndroid.open({
+      value: dateObj,
+      mode: "date",
+      display: "default",
+      themeVariant: "light",
+      minimumDate: min ? new Date(min + "T00:00:00") : undefined,
+      maximumDate: max ? new Date(max + "T00:00:00") : undefined,
+      onChange: (event: any, d?: Date) => {
+        if (event?.type === "set" && d) {
+          onChange(d.toISOString().slice(0, 10));
+        }
+      },
+    });
+  };
+
   return (
     <>
       <Pressable
         testID={testID}
-        onPress={() => setNativeOpen(true)}
+        onPress={() => (Platform.OS === "android" ? openAndroid() : setNativeOpen(true))}
         style={styles.button}
       >
         <Ionicons name="calendar-outline" size={16} color={theme.color.brand} />
@@ -83,7 +110,12 @@ export function DateField({
           {value || placeholder}
         </Text>
       </Pressable>
-      <Modal transparent visible={nativeOpen} animationType="fade" onRequestClose={() => setNativeOpen(false)}>
+      <Modal
+        transparent
+        visible={nativeOpen && Platform.OS !== "android"}
+        animationType="fade"
+        onRequestClose={() => setNativeOpen(false)}
+      >
         <Pressable style={styles.backdrop} onPress={() => setNativeOpen(false)}>
           <Pressable style={styles.pickerCard} onPress={() => { /* absorb */ }}>
             {/* iOS DateTimePicker in "inline" mode ignores `themeVariant` on

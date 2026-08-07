@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme, loadColor } from "@/src/lib/theme";
 import { RecoverySheet } from "./RecoverySheet";
@@ -337,6 +337,18 @@ export function ClientCalendarPanel({
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
+
+  // Iter 152 — Refresh on focus so the "Completed" status badge appears
+  // as soon as the user returns from a workout / rating flow. The initial
+  // mount already loads via the effect above (initRef guard skips the
+  // duplicate first-fetch). Range navigation (paging / today) is handled
+  // separately by its own `load()` calls.
+  useFocusEffect(
+    useCallback(() => {
+      if (!initRef.current) return;
+      load(fromDate, toDate);
+    }, [fromDate, toDate, load]),
+  );
 
   const goPrev7 = useCallback(async () => {
     if (paging !== "none") return;

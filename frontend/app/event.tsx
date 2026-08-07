@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { DateField } from "@/src/components/DateField";
 
 const DAYS: string[] = []; void DAYS;
 
@@ -222,7 +223,14 @@ export default function EventScreen() {
                     placeholderTextColor={theme.color.textDim}
                   />
                 </Field>
-                <Field label="DATE (YYYY-MM-DD)"><TextInput testID="ev-date" style={styles.input} value={dateIso} onChangeText={setDateIso} placeholder="2026-06-03" placeholderTextColor={theme.color.textDim} /></Field>
+                <Field label="DATE (YYYY-MM-DD)">
+                  <DateField
+                    testID="ev-date"
+                    value={dateIso}
+                    onChange={setDateIso}
+                    placeholder="2026-06-03"
+                  />
+                </Field>
               </Sect>
 
               {showPerf && (

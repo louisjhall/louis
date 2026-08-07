@@ -59,6 +59,74 @@ LOW_CONFIDENCE_THRESHOLD = 0.6
 
 
 # ---------------------------------------------------------------------------
+# Iter 157 — Retry the Gemini roster extraction before ever giving up.
+#
+# A single 500 / 429 / transient network blip from Gemini used to flip the
+# whole job to `failed`, forcing the client to re-upload from scratch.
+# We now retry the call up to 3 times with exponential backoff (1s → 3s → 9s)
+# before propagating the exception to the caller. Only when all three
+# attempts return an empty / unusable response do we fall through to the
+# "days=[]" failure branch.
+# ---------------------------------------------------------------------------
+
+_GEMINI_RETRY_ATTEMPTS = 3
+_GEMINI_RETRY_BACKOFF_S = (1.0, 3.0, 9.0)
+
+
+async def _call_gemini_file_with_retries(
+    system: str,
+    prompt: str,
+    path: str,
+    mime_type: str,
+    *,
+    context: str = "roster extraction",
+) -> str:
+    """Wrap `call_gemini_file` with three attempts + exponential backoff.
+
+    Returns the raw model response string on the first successful attempt.
+    Raises the LAST exception if every attempt fails — the caller keeps
+    responsibility for turning that into a user-facing job status.
+
+    Every attempt is logged; the caller sees `context` in each log line so
+    multi-page / batch paths can be distinguished from the single-file path.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(1, _GEMINI_RETRY_ATTEMPTS + 1):
+        try:
+            raw = await call_gemini_file(system, prompt, path, mime_type)
+            if raw:
+                if attempt > 1:
+                    logger.info(
+                        "%s: succeeded on attempt %d/%d",
+                        context, attempt, _GEMINI_RETRY_ATTEMPTS,
+                    )
+                return raw
+            # Empty response — treat as a soft failure and retry.
+            last_err = RuntimeError("Gemini returned an empty response")
+            logger.warning(
+                "%s: attempt %d/%d returned empty response — will retry",
+                context, attempt, _GEMINI_RETRY_ATTEMPTS,
+            )
+        except Exception as e:
+            last_err = e
+            logger.warning(
+                "%s: attempt %d/%d failed (%s) — will retry",
+                context, attempt, _GEMINI_RETRY_ATTEMPTS, e,
+            )
+        if attempt < _GEMINI_RETRY_ATTEMPTS:
+            backoff = _GEMINI_RETRY_BACKOFF_S[attempt - 1]
+            await _asyncio.sleep(backoff)
+    # All attempts exhausted — surface the failure to the caller.
+    logger.warning(
+        "%s: exhausted all %d attempts, last error: %s",
+        context, _GEMINI_RETRY_ATTEMPTS, last_err,
+    )
+    if last_err:
+        raise last_err
+    raise RuntimeError(f"{context}: exhausted retries with no error captured")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -350,10 +418,16 @@ async def roster_upload_parse(body: RosterUploadGenerateBody, user: dict = Depen
             # ---- Fallback: existing Gemini flow ----
             if not days:
                 await _set_job(job_id, stage="reading", progress=20, message="Reading your duty pattern...")
+                raw = ""
                 try:
-                    raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, body.mime_type)
+                    raw = await _call_gemini_file_with_retries(
+                        ROSTER_SYSTEM,
+                        "Extract the complete roster shown. Return only JSON.",
+                        path, body.mime_type,
+                        context="roster gemini (single)",
+                    )
                 except Exception as e:
-                    logger.warning("Gemini roster call failed: %s", e)
+                    logger.warning("Gemini roster call failed after retries: %s", e)
                 await _set_job(job_id, stage="extracting", progress=45, message="Extracting duties...")
                 parsed: Any = {}
                 try:
@@ -567,13 +641,14 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                     if not days_from_file:
                         raw = ""
                         try:
-                            raw = await call_gemini_file(
+                            raw = await _call_gemini_file_with_retries(
                                 ROSTER_SYSTEM,
                                 "Extract the complete roster shown. Return only JSON.",
                                 path, f.mime_type,
+                                context=f"roster gemini (multi p{idx + 1})",
                             )
                         except Exception as e:
-                            logger.warning("Gemini roster call failed on page %d: %s", idx + 1, e)
+                            logger.warning("Gemini roster call failed on page %d after retries: %s", idx + 1, e)
                         combined_raw += (raw or "") + "\n---\n"
                         parsed: Any = {}
                         try:
@@ -701,10 +776,16 @@ async def roster_upload_parse_multi(body: RosterUploadMultiBody, user: dict = De
                         logger.warning("Airline parser failed (batch): %s", e)
                 # LLM fallback
                 if not days:
+                    raw = ""
                     try:
-                        raw = await call_gemini_file(ROSTER_SYSTEM, "Extract the complete roster shown. Return only JSON.", path, f.mime_type)
+                        raw = await _call_gemini_file_with_retries(
+                            ROSTER_SYSTEM,
+                            "Extract the complete roster shown. Return only JSON.",
+                            path, f.mime_type,
+                            context="roster gemini (batch)",
+                        )
                     except Exception as e:
-                        logger.warning("Gemini roster call failed (batch): %s", e)
+                        logger.warning("Gemini roster call failed (batch) after retries: %s", e)
                     await _set_job(jid, stage="extracting", progress=55, message="Extracting duties...")
                     parsed: Any = {}
                     try:

@@ -11778,9 +11778,21 @@ async def _startup():
     # Roster jobs — the asyncio worker dies with the process on restart /
     # deploy / crash. Any job still "processing" is a zombie; the user is
     # staring at 94% forever. Mark it failed with an actionable message.
+    #
+    # Iter 157 — SAFETY GUARD: never stamp `failed` on a job that has
+    # already reached 100% progress OR has a `pending_roster_id`. Those
+    # jobs succeeded in doing the actual parsing work — the process just
+    # died before the terminal status transition (e.g. bg task cancelled
+    # between the roster insert and the final `_set_job(..., status=...)`
+    # call). Failing them would show the user a red "PROCESSING FAILED"
+    # even though their roster is sitting in the DB ready to confirm.
     try:
         stuck = await db.roster_jobs.update_many(
-            {"status": "processing"},
+            {
+                "status": "processing",
+                "progress": {"$lt": 100},
+                "pending_roster_id": {"$in": [None, ""]},
+            },
             {"$set": {
                 "status": "failed",
                 "stage": "interrupted",
@@ -11847,8 +11859,16 @@ async def _startup():
                 # the client never saw a failure state. Also tightened to 3
                 # minutes so the client is told sooner.
                 cutoff = (datetime.now(_tz.utc) - timedelta(minutes=3)).isoformat()
+                # Iter 157 — same guard as startup_sweep: don't fail jobs
+                # that already crossed 100% or already produced a pending
+                # roster ID. Those are already "done in spirit".
                 r = await db.roster_jobs.update_many(
-                    {"status": {"$in": ["processing", "queued"]}, "updated_at": {"$lt": cutoff}},
+                    {
+                        "status": {"$in": ["processing", "queued"]},
+                        "updated_at": {"$lt": cutoff},
+                        "progress": {"$lt": 100},
+                        "pending_roster_id": {"$in": [None, ""]},
+                    },
                     {"$set": {
                         "status": "failed",
                         "stage": "interrupted",

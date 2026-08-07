@@ -141,6 +141,39 @@ export default function RosterUpload() {
         }
         if (j.status === "failed" || j.status === "partial" || j.status === "needs_review") {
           clearInterval(pollRef.current);
+          // Iter 157 — False-failure guard.
+          // The backend watchdog CAN still stamp `failed` on jobs whose
+          // worker was interrupted between the roster insert and the
+          // final status transition (very rare after the guards added in
+          // this iter, but not impossible). Before showing the red error
+          // banner, check `/roster/current`. If the user actually has an
+          // active roster (recently confirmed), the job's "failed" flag
+          // is stale — flip the UI to success and stop polling.
+          if (j.status === "failed") {
+            try {
+              const cur = await api<any>("/roster/current");
+              const active = cur?.roster;
+              const activeCreatedAt = active?.created_at || active?.updated_at;
+              // Consider it a false-failure if there is any active roster
+              // and it was created/updated within the last hour (i.e. this
+              // upload session, not an older roster from last week).
+              const isRecent =
+                !!activeCreatedAt &&
+                (Date.now() - new Date(activeCreatedAt).getTime() < 60 * 60 * 1000);
+              if (active?.id && isRecent) {
+                setJob((prev: any) => ({
+                  ...(prev || {}),
+                  status: "complete",
+                  progress: 100,
+                  message: "Roster ready — you can open your calendar.",
+                  error: null,
+                  interrupted_by: null,
+                  _false_failure_recovered: true,
+                }));
+                return;
+              }
+            } catch { /* silent — if /roster/current fails we fall through to showing the error */ }
+          }
         }
       } catch (e: any) {
         setError(e?.message || "Failed to check status");

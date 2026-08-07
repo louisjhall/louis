@@ -4618,9 +4618,25 @@ def _ensure_workout_content(doc: dict, user: dict) -> dict:
     warm = doc.get("warmup") or []
     day_type = str(doc.get("day_type") or "").lower()
     title = str(doc.get("title") or "").lower()
+    workout_type = str(doc.get("workout_type") or "").lower()
+    focus_lc = str(doc.get("focus") or "").lower()
+    src = str(doc.get("source") or "").lower()
+    duration_min = doc.get("duration_min")
+    # Iter 161 · Full Rest protection.
+    # A day that is EXPLICITLY marked recovery / rest / off — either by
+    # day_type, workout_type, focus, or title — must NEVER be automatically
+    # converted into a bodyweight training session. Same protection for a
+    # 0-minute "Full Rest" from the monthly-JSON importer, and any workout
+    # authored by the coach (source=coach_manual) which is by definition
+    # intentional. The coach can still edit these manually.
     is_rest = (
         ("rest" in day_type) or ("off" in day_type)
         or title.startswith("rest") or title.startswith("off")
+        or "full rest" in title
+        or workout_type in ("rest", "recovery", "off", "day_off")
+        or focus_lc in ("rest", "recovery", "off")
+        or (isinstance(duration_min, (int, float)) and int(duration_min) == 0)
+        or src == "coach_manual"
     )
     # A pure mobility / recovery session (no equipment needed, warmup-only is OK)
     is_mobility_only = (
@@ -10974,6 +10990,102 @@ async def _youtube_search_first_video(query: str) -> Optional[dict]:
     }
 
 
+async def _resolve_library_video(
+    *, exercise_id: Optional[str] = None, exercise_name: Optional[str] = None,
+) -> Optional[dict]:
+    """Iter 161 · Prefer the Exercise Library video over the YouTube cache.
+
+    Looks up the canonical `exercises_v2` row by:
+      1. explicit exercise_id (with canonical_id follow-through), or
+      2. exact case-insensitive name, or
+      3. canonical singularised-token name fingerprint.
+
+    Returns a video dict shaped like the /exercises/video response's
+    `video` field when a valid primary_video_url is present, else None.
+    NEVER performs a YouTube fetch — that's the caller's fallback.
+    """
+    lib = None
+    try:
+        if exercise_id:
+            lib = await db.exercises_v2.find_one(
+                {"id": exercise_id},
+                {"_id": 0, "id": 1, "exercise_name": 1, "canonical_id": 1,
+                 "primary_video_url": 1, "backup_video_url": 1, "status": 1},
+            )
+            # Follow canonical alias if present (workout stored alias id)
+            if lib and lib.get("canonical_id"):
+                canon = await db.exercises_v2.find_one(
+                    {"id": lib["canonical_id"]},
+                    {"_id": 0, "id": 1, "exercise_name": 1,
+                     "primary_video_url": 1, "backup_video_url": 1, "status": 1},
+                )
+                if canon:
+                    lib = canon
+        if not lib and exercise_name:
+            # Exact case-insensitive name
+            rx = {"$regex": f"^{re.escape(exercise_name.strip())}$", "$options": "i"}
+            lib = await db.exercises_v2.find_one(
+                {"exercise_name": rx},
+                {"_id": 0, "id": 1, "exercise_name": 1, "canonical_id": 1,
+                 "primary_video_url": 1, "backup_video_url": 1, "status": 1},
+            )
+            if lib and lib.get("canonical_id"):
+                canon = await db.exercises_v2.find_one(
+                    {"id": lib["canonical_id"]},
+                    {"_id": 0, "id": 1, "exercise_name": 1,
+                     "primary_video_url": 1, "backup_video_url": 1, "status": 1},
+                )
+                if canon:
+                    lib = canon
+        if not lib and exercise_name:
+            # Canonical fingerprint lookup as a last shot (singular/plural)
+            try:
+                from feature_v2_resolver import _canonical_tokens
+                fp = " ".join(_canonical_tokens(exercise_name))
+                if fp:
+                    cursor = db.exercises_v2.find(
+                        {"status": {"$in": ["Approved", "Live"]},
+                         "primary_video_url": {"$nin": [None, ""]}},
+                        {"_id": 0, "id": 1, "exercise_name": 1,
+                         "primary_video_url": 1, "backup_video_url": 1},
+                    )
+                    async for cand in cursor:
+                        if " ".join(_canonical_tokens(cand.get("exercise_name"))) == fp:
+                            lib = cand
+                            break
+            except Exception:
+                pass
+    except Exception:
+        logger.exception("_resolve_library_video: lookup failed (non-fatal)")
+        return None
+    if not lib:
+        return None
+    url = lib.get("primary_video_url") or lib.get("backup_video_url")
+    if not url:
+        return None
+    # If it looks like a YouTube URL, wrap as a native YT embed so the
+    # existing player still renders. Otherwise treat as a custom upload.
+    yt_id = _parse_youtube_url(url) if callable(globals().get("_parse_youtube_url", None)) else None
+    if yt_id:
+        return {
+            "video_id": yt_id,
+            "video_url": url,
+            "title": lib.get("exercise_name"),
+            "channel": "CrewFit Library",
+            "source": "library_youtube",
+            "approval_status": "approved",
+            "thumbnail_url": f"https://img.youtube.com/vi/{yt_id}/mqdefault.jpg",
+        }
+    return {
+        "video_id": None,
+        "video_url": url,
+        "title": lib.get("exercise_name"),
+        "channel": "CrewFit Library",
+        "source": "custom_upload",
+        "approval_status": "approved",
+    }
+
+
 async def _lookup_or_fetch_video(exercise_name: str) -> Optional[dict]:
     """Return a cached exercise_video doc; if none, scrape YouTube and cache."""
     key = _normalize_ex_key(exercise_name)
@@ -11025,8 +11137,25 @@ async def _lookup_or_fetch_video(exercise_name: str) -> Optional[dict]:
 
 
 @api.get("/exercises/video")
-async def get_exercise_video(name: str, variant: str = "default", user: dict = Depends(current_user)):
-    """Return the current video record for an exercise. Fetches from YouTube on miss."""
+async def get_exercise_video(
+    name: str,
+    variant: str = "default",
+    exercise_id: Optional[str] = None,
+    user: dict = Depends(current_user),
+):
+    """Return the current video record for an exercise.
+
+    Iter 161 · Precedence:
+      1. Exercise Library primary_video_url (matched by exercise_id, then
+         exact name, then canonical fingerprint) — always wins when present.
+      2. Cached exercise_videos row (custom uploads / YT hand-picks).
+      3. Fresh YouTube scrape on miss.
+    """
+    lib_video = await _resolve_library_video(
+        exercise_id=exercise_id, exercise_name=name,
+    )
+    if lib_video:
+        return {"exercise": name, "video": lib_video, "source": "library"}
     doc = await _lookup_or_fetch_video(name)
     if not doc:
         return {"exercise": name, "video": None, "message": "Demo coming soon. Follow the written coaching cues."}
@@ -11056,6 +11185,11 @@ async def batch_exercise_videos(req: VideoBatchReq, user: dict = Depends(current
     variant = req.variant or "default"
     for n in unique_names:
         k = _normalize_ex_key(n)
+        # Iter 161 · Library video wins over the YT cache even for cache hits.
+        lib_v = await _resolve_library_video(exercise_name=n)
+        if lib_v:
+            out[n] = {"key": k, "video": lib_v, "id": None}
+            continue
         d = cached.get(k)
         if d:
             resolved = _resolve_display_video(d, variant=variant)
@@ -11066,6 +11200,10 @@ async def batch_exercise_videos(req: VideoBatchReq, user: dict = Depends(current
 
     async def one(nm: str):
         async with sem:
+            # Iter 161 · Library video wins over YT scrape.
+            lib_v = await _resolve_library_video(exercise_name=nm)
+            if lib_v:
+                return nm, {"key": _normalize_ex_key(nm), "video": lib_v, "id": None}
             d = await _lookup_or_fetch_video(nm)
             if not d:
                 return nm, None

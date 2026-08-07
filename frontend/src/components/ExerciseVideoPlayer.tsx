@@ -19,7 +19,7 @@ type VideoInfo = {
 
 type VideoResult = { key: string; video: VideoInfo | null } | null;
 
-// simple in-memory cache keyed by exerciseName
+// simple in-memory cache keyed by exerciseName (falls back to id if no name)
 const memoryCache: Record<string, VideoResult> = {};
 const inFlight: Record<string, Promise<VideoResult>> = {};
 
@@ -45,23 +45,29 @@ export function clearVideoCache(name?: string) {
   for (const k of Object.keys(inFlight)) delete inFlight[k];
 }
 
-async function fetchVideo(name: string): Promise<VideoResult> {
-  if (memoryCache[name] !== undefined) return memoryCache[name];
-  if (inFlight[name]) return inFlight[name];
+async function fetchVideo(name: string, exerciseId?: string): Promise<VideoResult> {
+  // Iter 161 · Cache key includes exercise_id when provided so alias names
+  // still hit the correct canonical Library video.
+  const cacheKey = exerciseId ? `id:${exerciseId}` : name;
+  if (memoryCache[cacheKey] !== undefined) return memoryCache[cacheKey];
+  if (inFlight[cacheKey]) return inFlight[cacheKey];
   const p = (async () => {
     try {
-      const res = await api<any>(`/exercises/video?name=${encodeURIComponent(name)}`);
-      const value = res?.video ? { key: res.key, video: res.video } : null;
-      memoryCache[name] = value;
+      const q = `/exercises/video?name=${encodeURIComponent(name)}${
+        exerciseId ? `&exercise_id=${encodeURIComponent(exerciseId)}` : ""
+      }`;
+      const res = await api<any>(q);
+      const value = res?.video ? { key: res.key || cacheKey, video: res.video } : null;
+      memoryCache[cacheKey] = value;
       return value;
     } catch {
-      memoryCache[name] = null;
+      memoryCache[cacheKey] = null;
       return null;
     } finally {
-      delete inFlight[name];
+      delete inFlight[cacheKey];
     }
   })();
-  inFlight[name] = p;
+  inFlight[cacheKey] = p;
   return p;
 }
 
@@ -155,10 +161,12 @@ function CustomVideoEmbed({ videoUrl, mimeType }: { videoUrl: string; mimeType?:
 
 export function ExerciseVideoPlayer({
   exerciseName,
+  exerciseId,
   compact = false,
   testIDPrefix = "video",
 }: {
   exerciseName: string;
+  exerciseId?: string;
   compact?: boolean;
   testIDPrefix?: string;
 }) {
@@ -167,15 +175,16 @@ export function ExerciseVideoPlayer({
   const { width } = useWindowDimensions();
   const isWebDesktop = Platform.OS === "web" && width >= 900;
 
+  const cacheKey = exerciseId ? `id:${exerciseId}` : exerciseName;
   const load = useCallback(async () => {
-    if (memoryCache[exerciseName] !== undefined) {
-      setState({ loading: false, data: memoryCache[exerciseName] });
+    if (memoryCache[cacheKey] !== undefined) {
+      setState({ loading: false, data: memoryCache[cacheKey] });
       return;
     }
     setState({ loading: true, data: null });
-    const v = await fetchVideo(exerciseName);
+    const v = await fetchVideo(exerciseName, exerciseId);
     setState({ loading: false, data: v });
-  }, [exerciseName]);
+  }, [exerciseName, exerciseId, cacheKey]);
 
   useEffect(() => { load(); }, [load]);
 

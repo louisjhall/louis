@@ -363,6 +363,15 @@ async def auto_enqueue_media_for_exercise(
     if not ex:
         return {"skipped": True, "reason": "exercise not found"}
 
+    # Iter 161 · Alias short-circuit — if this exercise is an alias of a
+    # canonical winner, NEVER trigger media generation. The workout will
+    # resolve to the winner's approved media instead. Prevents duplicate
+    # naming (e.g. "Calf Raises" vs "Calf Raise") from paying for a fresh
+    # image / coaching-points round.
+    if ex.get("canonical_id") and ex["canonical_id"] != ex.get("id"):
+        return {"skipped": True, "reason": "alias_of_canonical",
+                "canonical_id": ex.get("canonical_id")}
+
     # Do NOT run against fully-approved exercises — respect coach's finished work.
     if ex.get("approval_status") == "approved" and ex.get("approved_image_status") == "Approved":
         return {"skipped": True, "reason": "already approved"}

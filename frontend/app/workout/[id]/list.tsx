@@ -21,6 +21,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
+import { RestTimer } from "@/src/components/RestTimer";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 
@@ -34,6 +35,8 @@ type ExRow = {
   rest_sec?: number;
   duration_sec?: number;
   duration?: string;
+  load?: string | number;      // prescription: kg / bodyweight / "3RM" etc.
+  rpe?: number | string;       // prescribed RPE (may exist without weight)
   section?: "warmup" | "main" | "cooldown";
   logging_type?: string;
   cue?: string;
@@ -41,6 +44,65 @@ type ExRow = {
   alternative_exercise_id?: string;
   exercise_id?: string;
 };
+
+/**
+ * Iter 161 · Per-field column resolver — drives which columns the sets
+ * table shows for THIS exercise, based only on prescription data that
+ * actually exists. Prevents mobility drills from getting a "DIST km"
+ * column and rep-only drills from getting a "kg" column when no load is
+ * prescribed.
+ */
+type ColSpec = { key: "weight" | "reps" | "duration" | "distance" | "rpe";
+                 label: string; width?: number; flex?: number };
+
+function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
+  const hay = `${name || ""} ${reps || ""} ${duration || ""}`.toLowerCase();
+  return /\b(run|running|jog|zone\s?[235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
+}
+
+function resolveCols(ex: ExRow): ColSpec[] {
+  const cols: ColSpec[] = [];
+  const isCardio = ex.logging_type === "cardio" || _isCardioName(ex.name, ex.reps, ex.duration);
+  const isTimed = ex.logging_type === "timer" || (ex.duration_sec && ex.duration_sec > 0);
+  const hasReps = ex.reps != null && String(ex.reps).trim() !== "";
+  const hasLoad = ex.load != null && String(ex.load).trim() !== "" &&
+                  !["bw", "bodyweight", "n/a", "-"].includes(String(ex.load).toLowerCase());
+  const hasRpe = ex.rpe != null && String(ex.rpe).trim() !== "";
+
+  if (isCardio) {
+    // Cardio: time is primary; distance only if the name/reps suggests one
+    cols.push({ key: "duration", label: "TIME", flex: 1 });
+    const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""}`.toLowerCase();
+    if (/\b(km|k|mile|distance)\b/.test(hay)) {
+      cols.push({ key: "distance", label: "DIST km", flex: 1 });
+    }
+    if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
+    return cols;
+  }
+  if (isTimed && !hasReps) {
+    // Pure timed drill (mobility, plank, breath work). No weight, no distance.
+    cols.push({ key: "duration", label: "TIME", flex: 1 });
+    if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
+    return cols;
+  }
+  // Strength / rep-based path — load column ONLY if a load was prescribed
+  // OR the exercise name mentions a loaded implement (dumbbell/barbell/kb).
+  const nameLc = (ex.name || "").toLowerCase();
+  const impliesLoad = /(dumbbell|barbell|kettlebell|kb|db|cable|machine|weighted|load)/.test(nameLc);
+  if (hasLoad || impliesLoad) {
+    cols.push({ key: "weight", label: "kg", width: 68 });
+  }
+  if (hasReps || !isTimed) {
+    // reps column even for unspecified drills like "Push-up" so the client
+    // can log what they did.
+    cols.push({ key: "reps", label: "REPS", width: 58 });
+  }
+  if (isTimed) {
+    cols.push({ key: "duration", label: "TIME", width: 68 });
+  }
+  if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
+  return cols;
+}
 
 type SetInput = {
   reps: string;
@@ -439,9 +501,22 @@ function ExerciseCard({
   onLog: (setIdx: number) => void;
   onOpenDetail: () => void;
 }) {
-  const cardio = isCardio(ex) || isTimed(ex);
+  const cols = useMemo(() => resolveCols(ex), [ex]);
   const targetReps = ex.reps != null ? String(ex.reps) : (ex.duration_sec ? fmtMMSS(ex.duration_sec) : "—");
   const rest = ex.rest_sec || 0;
+  const [restRunning, setRestRunning] = useState(false);
+
+  // Meta line: only include the pieces that make sense for the prescription.
+  const metaBits: string[] = [];
+  metaBits.push(`${inputs.length} set${inputs.length === 1 ? "" : "s"}`);
+  if (ex.reps != null) metaBits.push(`${ex.reps} reps`);
+  else if (ex.duration_sec) metaBits.push(fmtMMSS(ex.duration_sec));
+  if (ex.load != null && String(ex.load).trim() && String(ex.load).toLowerCase() !== "bw")
+    metaBits.push(String(ex.load));
+  if (ex.rpe != null && String(ex.rpe).trim()) metaBits.push(`RPE ${ex.rpe}`);
+  if (rest > 0) metaBits.push(`rest ${rest >= 60 ? `${Math.round(rest / 60)}m` : `${rest}s`}`);
+  const metaLine = metaBits.join(" · ") +
+    (ex.cue ? ` · ${String(ex.cue).slice(0, 40)}${(ex.cue || "").length > 40 ? "…" : ""}` : "");
 
   return (
     <View style={styles.card}>
@@ -450,30 +525,25 @@ function ExerciseCard({
         <ExerciseImage name={ex.name} />
         <View style={{ flex: 1 }}>
           <Text style={styles.exName} numberOfLines={2}>{ex.name}</Text>
-          <Text style={styles.exMeta}>
-            {inputs.length} set{inputs.length === 1 ? "" : "s"} · {targetReps}
-            {ex.cue ? ` · ${String(ex.cue).slice(0, 40)}${(ex.cue || "").length > 40 ? "…" : ""}` : ""}
-          </Text>
+          <Text style={styles.exMeta} numberOfLines={2}>{metaLine}</Text>
         </View>
         <Ionicons name="chevron-forward" size={18} color={theme.color.textDim} />
       </Pressable>
 
-      {/* Sets header row */}
+      {/* Sets header row — driven by resolveCols() */}
       <View style={styles.setsHead}>
         <Text style={[styles.setsHeadCol, { width: 32 }]}>SET</Text>
-        {cardio ? (
-          <>
-            <Text style={[styles.setsHeadCol, { flex: 1 }]}>TIME</Text>
-            <Text style={[styles.setsHeadCol, { flex: 1 }]}>DIST km</Text>
-            <Text style={[styles.setsHeadCol, { width: 40 }]}>RPE</Text>
-          </>
-        ) : (
-          <>
-            <Text style={[styles.setsHeadCol, { width: 68, textAlign: "right" }]}>kg</Text>
-            <Text style={[styles.setsHeadCol, { width: 58, textAlign: "right" }]}>REPS</Text>
-            <Text style={[styles.setsHeadCol, { width: 44, textAlign: "right" }]}>RPE</Text>
-          </>
-        )}
+        {cols.map((c) => (
+          <Text
+            key={c.key}
+            style={[
+              styles.setsHeadCol,
+              c.width ? { width: c.width, textAlign: "right" } : { flex: c.flex ?? 1 },
+            ]}
+          >
+            {c.label}
+          </Text>
+        ))}
         <View style={{ width: 40 }} />
       </View>
 
@@ -481,70 +551,83 @@ function ExerciseCard({
       {inputs.map((s, i) => (
         <View key={i} style={[styles.setRow, s.logged && styles.setRowDone]}>
           <Text style={styles.setNum}>{i + 1}</Text>
-          {cardio ? (
-            <>
-              <TextInput
-                style={styles.setInput}
-                value={s.duration}
-                placeholder="mm:ss"
-                placeholderTextColor={theme.color.textDim}
-                onChangeText={(t) => onPatch(i, { duration: t, logged: false })}
-                editable={!s.logged}
-                testID={`list-set-${section}-${exIdx}-${i}-dur`}
-              />
-              <TextInput
-                style={styles.setInput}
-                value={s.distance}
-                placeholder="—"
-                placeholderTextColor={theme.color.textDim}
-                keyboardType="decimal-pad"
-                onChangeText={(t) => onPatch(i, { distance: t, logged: false })}
-                editable={!s.logged}
-                testID={`list-set-${section}-${exIdx}-${i}-dist`}
-              />
-              <TextInput
-                style={[styles.setInput, { width: 40 }]}
-                value={s.rpe}
-                placeholder="—"
-                placeholderTextColor={theme.color.textDim}
-                keyboardType="decimal-pad"
-                onChangeText={(t) => onPatch(i, { rpe: t, logged: false })}
-                editable={!s.logged}
-              />
-            </>
-          ) : (
-            <>
-              <TextInput
-                style={[styles.setInput, { width: 68, textAlign: "right" }]}
-                value={s.weight}
-                placeholder="—"
-                placeholderTextColor={theme.color.textDim}
-                keyboardType="decimal-pad"
-                onChangeText={(t) => onPatch(i, { weight: t, logged: false })}
-                editable={!s.logged}
-                testID={`list-set-${section}-${exIdx}-${i}-weight`}
-              />
-              <TextInput
-                style={[styles.setInput, { width: 58, textAlign: "right" }]}
-                value={s.reps}
-                placeholder={String(targetReps).replace(/[^0-9-]/g, "").split("-")[0] || "—"}
-                placeholderTextColor={theme.color.textDim}
-                keyboardType="number-pad"
-                onChangeText={(t) => onPatch(i, { reps: t, logged: false })}
-                editable={!s.logged}
-                testID={`list-set-${section}-${exIdx}-${i}-reps`}
-              />
-              <TextInput
-                style={[styles.setInput, { width: 44, textAlign: "right" }]}
-                value={s.rpe}
-                placeholder="—"
-                placeholderTextColor={theme.color.textDim}
-                keyboardType="decimal-pad"
-                onChangeText={(t) => onPatch(i, { rpe: t, logged: false })}
-                editable={!s.logged}
-              />
-            </>
-          )}
+          {cols.map((c) => {
+            const commonStyle = c.width
+              ? [styles.setInput, { width: c.width, textAlign: "right" as const }]
+              : [styles.setInput, { flex: c.flex ?? 1 }];
+            switch (c.key) {
+              case "weight":
+                return (
+                  <TextInput
+                    key="weight"
+                    style={commonStyle}
+                    value={s.weight}
+                    placeholder="—"
+                    placeholderTextColor={theme.color.textDim}
+                    keyboardType="decimal-pad"
+                    onChangeText={(t) => onPatch(i, { weight: t, logged: false })}
+                    editable={!s.logged}
+                    testID={`list-set-${section}-${exIdx}-${i}-weight`}
+                  />
+                );
+              case "reps":
+                return (
+                  <TextInput
+                    key="reps"
+                    style={commonStyle}
+                    value={s.reps}
+                    placeholder={String(targetReps).replace(/[^0-9-]/g, "").split("-")[0] || "—"}
+                    placeholderTextColor={theme.color.textDim}
+                    keyboardType="number-pad"
+                    onChangeText={(t) => onPatch(i, { reps: t, logged: false })}
+                    editable={!s.logged}
+                    testID={`list-set-${section}-${exIdx}-${i}-reps`}
+                  />
+                );
+              case "duration":
+                return (
+                  <TextInput
+                    key="duration"
+                    style={commonStyle}
+                    value={s.duration}
+                    placeholder="mm:ss"
+                    placeholderTextColor={theme.color.textDim}
+                    onChangeText={(t) => onPatch(i, { duration: t, logged: false })}
+                    editable={!s.logged}
+                    testID={`list-set-${section}-${exIdx}-${i}-dur`}
+                  />
+                );
+              case "distance":
+                return (
+                  <TextInput
+                    key="distance"
+                    style={commonStyle}
+                    value={s.distance}
+                    placeholder="—"
+                    placeholderTextColor={theme.color.textDim}
+                    keyboardType="decimal-pad"
+                    onChangeText={(t) => onPatch(i, { distance: t, logged: false })}
+                    editable={!s.logged}
+                    testID={`list-set-${section}-${exIdx}-${i}-dist`}
+                  />
+                );
+              case "rpe":
+                return (
+                  <TextInput
+                    key="rpe"
+                    style={commonStyle}
+                    value={s.rpe}
+                    placeholder="—"
+                    placeholderTextColor={theme.color.textDim}
+                    keyboardType="decimal-pad"
+                    onChangeText={(t) => onPatch(i, { rpe: t, logged: false })}
+                    editable={!s.logged}
+                  />
+                );
+              default:
+                return null;
+            }
+          })}
           <Pressable
             style={[styles.checkBtn, s.logged && styles.checkBtnDone]}
             onPress={() => onLog(i)}
@@ -560,11 +643,36 @@ function ExerciseCard({
         </View>
       ))}
 
-      {/* Rest chip */}
+      {/* Rest area — attached to the bottom of THIS exercise card.
+          Iter 161 · Reuses the shared <RestTimer/> (compact variant). Starts
+          from the exercise's prescribed rest_sec; skip/end returns to idle. */}
       {rest > 0 && (
-        <View style={styles.restRow}>
-          <Ionicons name="time-outline" size={12} color={theme.color.textMuted} />
-          <Text style={styles.restT}>Rest {rest >= 60 ? `${Math.round(rest / 60)}m` : `${rest}s`}</Text>
+        <View style={styles.restArea}>
+          {restRunning ? (
+            <View style={styles.restTimerWrap}>
+              <RestTimer
+                seconds={rest}
+                size={140}
+                compact
+                autoContinueOverride={false}
+                onComplete={() => setRestRunning(false)}
+                onSkip={() => setRestRunning(false)}
+                onEndEarly={() => setRestRunning(false)}
+              />
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => setRestRunning(true)}
+              style={styles.restStartBtn}
+              testID={`list-rest-start-${section}-${exIdx}`}
+              hitSlop={8}
+            >
+              <Ionicons name="time-outline" size={16} color={theme.color.brand} />
+              <Text style={styles.restStartLabel}>REST</Text>
+              <Text style={styles.restStartTime}>{fmtMMSS(rest)}</Text>
+              <Ionicons name="play" size={14} color="#fff" style={styles.restStartPlay} />
+            </Pressable>
+          )}
         </View>
       )}
     </View>
@@ -661,7 +769,7 @@ function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () =>
         </View>
         <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
           {imgUrl ? (
-            <Image source={{ uri: imgUrl }} style={styles.hero} />
+            <Image source={{ uri: imgUrl }} style={styles.hero} resizeMode="contain" />
           ) : (
             <View style={[styles.hero, styles.thumbPh]}>
               <Ionicons name="barbell-outline" size={44} color={theme.color.textDim} />
@@ -681,7 +789,13 @@ function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () =>
           {info?.has_video || hasVideo ? (
             <View style={styles.detailSection}>
               <Text style={styles.detailSectionT}>VIDEO</Text>
-              {ex?.name && <ExerciseVideoPlayer exerciseName={ex.name} testIDPrefix="list-detail-video" />}
+              {ex?.name && (
+                <ExerciseVideoPlayer
+                  exerciseName={ex.name}
+                  exerciseId={ex?.exercise_id || info?.id}
+                  testIDPrefix="list-detail-video"
+                />
+              )}
             </View>
           ) : null}
           {alts.length > 0 && (
@@ -776,6 +890,28 @@ const styles = StyleSheet.create({
   },
   restT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 1 },
 
+  // Iter 161 · Per-card rest area — reuses the shared RestTimer.
+  restArea: {
+    paddingHorizontal: 12, paddingVertical: 12,
+    backgroundColor: theme.color.bg, borderTopWidth: 1, borderTopColor: theme.color.divider,
+    alignItems: "center",
+  },
+  restStartBtn: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.brand,
+    minWidth: 220, justifyContent: "center",
+  },
+  restStartLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  restStartTime: { color: theme.color.text, fontSize: 16, fontWeight: "900",
+                   fontVariant: ["tabular-nums"], marginHorizontal: 4 },
+  restStartPlay: {
+    backgroundColor: theme.color.brand,
+    borderRadius: 10, padding: 4, overflow: "hidden",
+  },
+  restTimerWrap: { width: "100%", alignItems: "center", paddingVertical: 6 },
+
   finishBtn: {
     marginHorizontal: 12, marginTop: 24, paddingVertical: 16,
     borderRadius: 12, backgroundColor: theme.color.brand,
@@ -794,7 +930,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   detailTitle: { color: theme.color.text, fontSize: 15, fontWeight: "900", flex: 1, textAlign: "center", paddingHorizontal: 8 },
-  hero: { width: "100%", height: 240, backgroundColor: "#0A0A0B" },
+  hero: {
+    width: "100%",
+    aspectRatio: 4 / 3,
+    backgroundColor: "#0A0A0B",
+    // Iter 161 · Was 240px fixed height + default resizeMode="cover" which
+    // centre-cropped every Library image. Switched to contain + aspectRatio
+    // so the WHOLE approved image is visible on iPhone and Android.
+  },
   detailSection: { paddingHorizontal: 18, paddingTop: 20 },
   detailSectionT: {
     color: theme.color.textDim, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 10,

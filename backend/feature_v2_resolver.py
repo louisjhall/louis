@@ -121,6 +121,26 @@ def _canonical_tokens(s: Optional[str]) -> tuple[str, ...]:
     return tuple(_singularise_token(t) for t in _WORD_RE.findall(str(s or "").lower()))
 
 
+def _canonical_key(s: Optional[str]) -> str:
+    """String form of :func:`_canonical_tokens` — used as an O(1) index."""
+    return " ".join(_canonical_tokens(s))
+
+
+async def _follow_canonical_alias(exercise: Optional[dict]) -> Optional[dict]:
+    """If ``exercise`` has ``canonical_id`` set, load and return the canonical
+    winner. Otherwise return the exercise unchanged. Never raises."""
+    if not exercise:
+        return exercise
+    canon_id = exercise.get("canonical_id")
+    if not canon_id or canon_id == exercise.get("id"):
+        return exercise
+    try:
+        canon = await db.exercises_v2.find_one({"id": canon_id}, {"_id": 0})
+        return canon or exercise
+    except Exception:
+        return exercise
+
+
 # Side/laterality markers — we deliberately keep these DISTINCT rather than
 # collapse them, because the coaching video needs to show the correct side.
 # If any of these tokens appear in ONE candidate but not the other (or vice
@@ -473,14 +493,27 @@ async def create_exercise_request_if_missing(
     if not requested_name:
         return None
     norm = _normalise_name(requested_name)
-    # 1) De-dup against existing exercises (draft OR approved).
+    canon_key = _canonical_key(requested_name)
+    # 1) De-dup against existing exercises (draft OR approved). Iter 161 adds
+    # a THIRD deterministic key — the singularised canonical fingerprint —
+    # so "Glute Bridge" / "Glute Bridges" / "glute bridges" all collide with
+    # the first-inserted variant before any media/LLM work is triggered.
     existing = await db.exercises_v2.find_one(
         {"$or": [
             {"exercise_name": {"$regex": f"^{re.escape(requested_name)}$", "$options": "i"}},
             {"requested_name_norm": norm},
+            {"canonical_name_key": canon_key} if canon_key else {"requested_name_norm": norm},
         ]},
         {"_id": 0},
     )
+    # If the exact-match returned an alias row, follow its canonical_id so we
+    # increment the winner's counters (not the alias's).
+    if existing and existing.get("canonical_id"):
+        canon_doc = await db.exercises_v2.find_one(
+            {"id": existing["canonical_id"]}, {"_id": 0},
+        )
+        if canon_doc:
+            existing = canon_doc
     if existing:
         usage_ctx = {
             "user_id": user.get("id"),
@@ -584,6 +617,7 @@ async def create_exercise_request_if_missing(
         "exercise_name": requested_name,
         "requested_name": requested_name,
         "requested_name_norm": norm,
+        "canonical_name_key": canon_key,   # Iter 161 · O(1) singular/plural key
         "suggested_name": requested_name,
         "category": item.get("category"),
         "movement_pattern": item.get("movement_pattern"),

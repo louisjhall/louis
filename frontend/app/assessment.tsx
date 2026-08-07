@@ -36,7 +36,7 @@ type FinaliseStage = { text: string; duration: number };
 /* -------------------------------------------------------------------------- */
 export default function Assessment() {
   const router = useRouter();
-  const { refresh } = useAuth();
+  const { refresh, user, loading: authLoading } = useAuth();
   const [assessmentId, setAssessmentId] = useState<string | null>(null);
   const [question, setQuestion] = useState<Question | null>(null);
   const [progress, setProgress] = useState(0);
@@ -61,7 +61,19 @@ export default function Assessment() {
     } finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Iter 154 — Data-ready gate.
+  // Do NOT call /assessment/start until the auth context has finished
+  // resolving the current user. On Android, coming straight from signup /
+  // training-setup the AuthProvider is still refetching /me when this
+  // screen mounts. Firing /assessment/start before the JWT and user id
+  // are stable used to produce a blank Android screen while the API
+  // returned 401 / retried silently.
+  useEffect(() => {
+    if (authLoading) return;      // wait for auth
+    if (!user) return;             // waiting for /me
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user?.id, load]);
 
   const submitAnswer = async (answer: any) => {
     if (!question || !assessmentId) return;
@@ -97,12 +109,20 @@ export default function Assessment() {
   };
 
   /* --------- Render states --------- */
-  if (loading) {
+  // Iter 154 — Explicit background on every early-exit branch so Android
+  // never flashes the OS window background (black) during transitions
+  // from signup / training-setup into the assessment.
+  if (authLoading || !user || loading) {
+    const label =
+      authLoading || !user ? "PREPARING YOUR ACCOUNT" : "PREPARING YOUR ASSESSMENT";
     return (
-      <SafeAreaView style={styles.rootDark} edges={["top", "bottom"]}>
+      <SafeAreaView
+        style={[styles.rootDark, { backgroundColor: theme.color.bg }]}
+        edges={["top", "bottom"]}
+      >
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={theme.color.brand} />
-          <Text style={styles.loadingT}>PREPARING YOUR ASSESSMENT</Text>
+          <Text style={styles.loadingT}>{label}</Text>
         </View>
       </SafeAreaView>
     );
@@ -607,7 +627,7 @@ function DNARow({ label, value, multiline, highlight, dim }: { label: string; va
 /*  Styles                                                                     */
 /* -------------------------------------------------------------------------- */
 const styles = StyleSheet.create({
-  rootDark: { flex: 1, backgroundColor: theme.color.surface },
+  rootDark: { flex: 1, backgroundColor: theme.color.bg },
   loadingWrap: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14 },
   loadingT: { color: theme.color.brand, letterSpacing: 2, fontSize: 11, fontWeight: "900" },
 

@@ -20,6 +20,7 @@ import { TrainingSetupGate } from "@/src/components/TrainingSetupGate";
 import { RootErrorBoundary } from "@/src/components/RootErrorBoundary";
 import { CrewFitIntroAnimation } from "@/src/components/CrewFitIntroAnimation";
 import { initSentry } from "@/src/lib/sentry";
+import { theme } from "@/src/lib/theme";
 
 // One-shot at module load; safe no-op when EXPO_PUBLIC_SENTRY_DSN is unset.
 initSentry();
@@ -104,15 +105,15 @@ export default function RootLayout() {
 
   return (
     <RootErrorBoundary>
-      <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#000000" }}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.color.bg }}>
         <SafeAreaProvider>
           <AuthProvider>
             <AppConfigProvider>
               <PreviewWiring>
                 <CrewFitIntroAnimation>
-                  <StatusBar barStyle="light-content" backgroundColor="#000000" />
+                  <StatusBar barStyle="light-content" backgroundColor={theme.color.bg} />
                   <PreviewBanner />
-                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#000000" }, animation: "fade" }} />
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.color.bg }, animation: "fade" }} />
                   <BetaDisclaimerGate />
                   <TrainingSetupGate />
                   <ToastHost />

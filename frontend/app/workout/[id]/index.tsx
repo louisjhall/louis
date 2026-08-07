@@ -97,7 +97,8 @@ export default function WorkoutDetail() {
     if (remembered === "guided") {
       router.push(`/workout/${w.id}/guided${vSuffix}` as any);
     } else if (remembered === "manual") {
-      router.push(`/workout/${w.id}/play${vSuffix}` as any);
+      // Iter 150 — Manual routes to the new Trainerize-style list view.
+      router.push(`/workout/${w.id}/list${vSuffix}` as any);
     } else {
       setModeOpen(true);
     }
@@ -109,7 +110,8 @@ export default function WorkoutDetail() {
     if (mode === "guided") {
       router.push(`/workout/${w.id}/guided${vSuffix}` as any);
     } else {
-      router.push(`/workout/${w.id}/play${vSuffix}` as any);
+      // Iter 150 — Manual routes to the new Trainerize-style list view.
+      router.push(`/workout/${w.id}/list${vSuffix}` as any);
     }
   };
 

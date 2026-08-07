@@ -47,15 +47,15 @@ export function ModePickerModal({
           <View style={styles.body}>
             <ModeCard
               icon="barbell"
-              label="MANUAL MODE"
-              hint="Train at your own pace. Log sets, reps and weights manually."
+              label="START MANUAL SESSION"
+              hint="Vertical list — see every set, log at your own pace."
               active={selected === "manual"}
               onPress={() => setSelected("manual")}
               testID="mode-manual"
             />
             <ModeCard
               icon="play-circle"
-              label="GUIDED FLOW"
+              label="START GUIDED SESSION"
               hint="Follow step-by-step with timers, rest periods and coaching prompts."
               active={selected === "guided"}
               onPress={() => setSelected("guided")}

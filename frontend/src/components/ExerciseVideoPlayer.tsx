@@ -81,12 +81,12 @@ export function preloadExerciseVideos(names: string[]) {
     });
 }
 
-// --- YouTube iframe / WebView embed ---
+// --- YouTube iframe / native embed ---
 function YouTubeEmbed({ videoId }: { videoId: string }) {
-  const src = `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1`;
   if (Platform.OS === "web") {
     // In React Native Web, unknown intrinsic elements pass through to the DOM
     // via React.createElement. iframe is not typed by @types/react-native.
+    const src = `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1`;
     return React.createElement("iframe", {
       src,
       style: { width: "100%", height: "100%", border: 0, background: "#000" },
@@ -95,19 +95,25 @@ function YouTubeEmbed({ videoId }: { videoId: string }) {
       referrerPolicy: "strict-origin-when-cross-origin",
     });
   }
-  // Native: use react-native-webview
+  // Iter 153 — Native: use react-native-youtube-iframe. This wraps YT's IFrame
+  // Player API inside react-native-webview with the correct playsinline /
+  // autoplay handshake, avoiding the "Video unavailable / restricted" black
+  // screens we were getting from a raw <WebView src=".../embed/..." />.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { WebView } = require("react-native-webview");
+  const YoutubePlayer = require("react-native-youtube-iframe").default;
   return (
-    <WebView
-      testID="yt-webview"
-      style={{ flex: 1, backgroundColor: "#000" }}
-      source={{ uri: src }}
-      allowsFullscreenVideo
-      allowsInlineMediaPlayback
-      mediaPlaybackRequiresUserAction={false}
-      javaScriptEnabled
-      domStorageEnabled
+    <YoutubePlayer
+      testID="yt-native-player"
+      videoId={videoId}
+      height={220}
+      // Let the wrapper container control height via flex — the lib
+      // requires a numeric height prop even when we plan to stretch it.
+      webViewStyle={{ opacity: 0.99, backgroundColor: "#000" }}
+      initialPlayerParams={{
+        modestbranding: true,
+        rel: false,
+        controls: true,
+      }}
     />
   );
 }

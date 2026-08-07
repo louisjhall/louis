@@ -12752,39 +12752,92 @@ async def coach_reset_summary(checkin_id: str, coach: dict = Depends(require_rol
 
 
 # ---- Coach Videos (storage abstraction) -----------------------------------
-async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> str:
-    """Save video bytes to disk (MVP) and return a URL. Swap this for S3/R2 later without
-    touching endpoint code — same signature."""
+async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dict:
+    """Persist a coach video via the abstracted storage driver so it survives
+    server restarts and container churn.
+
+    Iter 155 — routed through `storage.py`. When `R2_*` env vars are set,
+    `storage` is the R2 driver and bytes land in the CrewFit R2 bucket.
+    Falls back to the on-disk driver in dev.
+
+    Returns::
+
+        {
+            "file_url":    str,   # served via /api/coach/videos/{id}/file
+            "storage_key": str,   # canonical key in the object store
+            "ext":         str,   # normalised file extension (mp4|webm|mov)
+            "mime":        str,   # normalised content type
+        }
+
+    The caller is responsible for writing `storage_key` into the
+    `db.weekly_videos` document alongside `file_url` so the download route
+    can look the bytes back up.
+    """
     ext = "mp4"
-    if "webm" in mime: ext = "webm"
-    elif "quicktime" in mime or "mov" in mime: ext = "mov"
-    path = COACH_VIDEO_DIR / f"{video_id}.{ext}"
-    with open(path, "wb") as f:
-        f.write(video_bytes)
-    return f"/api/coach/videos/{video_id}/file"
+    content_type = "video/mp4"
+    lower = (mime or "").lower()
+    if "webm" in lower:
+        ext, content_type = "webm", "video/webm"
+    elif "quicktime" in lower or "mov" in lower:
+        ext, content_type = "mov", "video/quicktime"
+    # Import locally so we don't perturb the top-of-file import block; the
+    # module is otherwise unused in server.py.
+    from storage import storage
+    storage_key = f"coach_videos/{video_id}.{ext}"
+    await storage.write_bytes(storage_key, video_bytes, content_type=content_type)
+    # ALSO mirror to the legacy on-disk directory when the active driver is
+    # the disk one (idempotent — write_bytes has already done this). For
+    # cloud drivers we skip this, since restart-persistence is guaranteed
+    # by the object store and we don't want to waste ephemeral pod disk.
+    return {
+        "file_url": f"/api/coach/videos/{video_id}/file",
+        "storage_key": storage_key,
+        "ext": ext,
+        "mime": content_type,
+    }
 
 
 class CoachVideoCreateBody(BaseModel):
-    check_in_id: str
+    check_in_id: Optional[str] = None
     user_id: str
     script: str
     duration_seconds: Optional[int] = None
     file_b64: Optional[str] = None
     file_mime: Optional[str] = None
     file_url: Optional[str] = None
+    # Iter 155 — video kind. Defaults to "weekly" for backward compatibility;
+    # "welcome" is used for the one-shot onboarding message a coach records
+    # for a client (surfaced by GET /videos/welcome-for-me).
+    video_kind: Optional[str] = None
 
 
 @api.post("/coach/videos")
 async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(require_role("coach"))):
-    ci = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0})
-    if not ci:
-        raise HTTPException(404, "check_in not found")
+    video_kind = (body.video_kind or "weekly").strip().lower()
+    if video_kind not in {"weekly", "welcome"}:
+        raise HTTPException(400, "video_kind must be one of 'weekly' or 'welcome'")
+    ci = None
+    if body.check_in_id:
+        ci = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0})
+        if not ci and video_kind == "weekly":
+            raise HTTPException(404, "check_in not found")
+    elif video_kind == "weekly":
+        raise HTTPException(400, "check_in_id is required for weekly videos")
     video_id = new_id()
     file_url = body.file_url
+    storage_key: Optional[str] = None
+    file_ext: Optional[str] = None
+    file_mime: Optional[str] = None
     if body.file_b64 and not file_url:
         try:
             raw = base64.b64decode(body.file_b64.split(",")[-1])
-            file_url = await _save_coach_video(raw, body.file_mime or "video/mp4", video_id)
+            saved = await _save_coach_video(raw, body.file_mime or "video/mp4", video_id)
+            file_url = saved["file_url"]
+            storage_key = saved["storage_key"]
+            file_ext = saved["ext"]
+            file_mime = saved["mime"]
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(400, f"invalid file_b64: {e}")
     doc = {
@@ -12792,8 +12845,12 @@ async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(r
         "user_id": body.user_id,
         "coach_id": coach["id"],
         "check_in_id": body.check_in_id,
+        "video_kind": video_kind,
         "script": body.script,
         "file_url": file_url,
+        "storage_key": storage_key,
+        "file_ext": file_ext,
+        "file_mime": file_mime,
         "thumbnail_url": None,
         "duration_seconds": body.duration_seconds,
         "status": "draft" if not file_url else "recorded",
@@ -12806,13 +12863,15 @@ async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(r
     # doesn't already have a SENT video. If the check_in already has a
     # different sent video, this becomes a new draft attached but the
     # sent record stays authoritative.
-    ci_row = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0, "weekly_video_status": 1})
-    current_status = str((ci_row or {}).get("weekly_video_status") or "")
-    if current_status != "sent":
-        set_updates = {"weekly_video_id": video_id, "weekly_video_status": doc["status"]}
-        if file_url:
-            set_updates["weekly_video_uploaded_at"] = doc["created_at"]
-        await db.check_ins.update_one({"id": body.check_in_id}, {"$set": set_updates})
+    # (Skipped for welcome videos — they are not check-in scoped.)
+    if body.check_in_id and video_kind == "weekly":
+        ci_row = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0, "weekly_video_status": 1})
+        current_status = str((ci_row or {}).get("weekly_video_status") or "")
+        if current_status != "sent":
+            set_updates = {"weekly_video_id": video_id, "weekly_video_status": doc["status"]}
+            if file_url:
+                set_updates["weekly_video_uploaded_at"] = doc["created_at"]
+            await db.check_ins.update_one({"id": body.check_in_id}, {"$set": set_updates})
     doc.pop("_id", None)
     return {"video": doc}
 
@@ -12878,12 +12937,45 @@ async def video_viewed(video_id: str, user: dict = Depends(current_user)):
 
 @api.get("/coach/videos/{video_id}/file")
 async def coach_video_file(video_id: str):
-    """Serve a coach-recorded video. No auth for MVP — signed URLs when we move to S3."""
+    """Serve a coach-recorded video.
+
+    Iter 155 — routed through `storage.py`. Behaviour:
+      1. Look up the video doc to get its `storage_key` (new schema).
+      2. Read the bytes via the active storage driver (R2 or disk).
+      3. Fall back to the legacy on-disk directory for videos recorded
+         BEFORE the storage migration (docs without a `storage_key`).
+    No auth for MVP — swap for signed URLs when we start putting these
+    behind a public CDN.
+    """
+    # Local imports avoid disturbing the top-of-file import block.
+    from storage import storage
+    from fastapi.responses import Response
+
+    doc = await db.weekly_videos.find_one(
+        {"id": video_id},
+        {"_id": 0, "storage_key": 1, "file_ext": 1, "file_mime": 1},
+    )
+    mimes = {"mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime"}
+
+    if doc and doc.get("storage_key"):
+        data = await storage.read_bytes(doc["storage_key"])
+        if data is not None:
+            media_type = doc.get("file_mime") or mimes.get(doc.get("file_ext") or "", "video/mp4")
+            return Response(
+                content=data,
+                media_type=media_type,
+                headers={
+                    "Cache-Control": "private, max-age=3600",
+                    "Content-Disposition": f'inline; filename="{video_id}.{doc.get("file_ext") or "mp4"}"',
+                },
+            )
+
+    # Legacy fallback: on-disk file laid down before the migration.
     for ext in ("mp4", "webm", "mov"):
         p = COACH_VIDEO_DIR / f"{video_id}.{ext}"
         if p.exists():
-            mimes = {"mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime"}
             return FileResponse(str(p), media_type=mimes[ext])
+
     raise HTTPException(404, "video file not found")
 
 
@@ -12894,6 +12986,27 @@ async def videos_for_me(user: dict = Depends(current_user)):
         {"user_id": user["id"], "status": "sent"}, {"_id": 0}
     ).sort("sent_at", -1).to_list(20)
     return {"videos": rows}
+
+
+@api.get("/videos/welcome-for-me")
+async def videos_welcome_for_me(user: dict = Depends(current_user)):
+    """Iter 155 — return the most recent SENT welcome video for the caller.
+
+    Used by the client dashboard to surface a one-shot welcome-from-coach
+    intro popup on first launch. Missing when the coach hasn't recorded
+    one yet; the client UI treats a 200 with `video: null` as "nothing
+    to show, silent no-op".
+    """
+    row = await db.weekly_videos.find_one(
+        {
+            "user_id": user["id"],
+            "video_kind": "welcome",
+            "status": "sent",
+        },
+        {"_id": 0},
+        sort=[("sent_at", -1)],
+    )
+    return {"video": row}
 
 
 @api.post("/videos/{video_id}/watched")

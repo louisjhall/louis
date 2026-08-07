@@ -23,11 +23,12 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { Image as ExpoImage } from "expo-image";
 import { theme } from "@/src/lib/theme";
-import { api } from "@/src/lib/api";
+import { api, API_BASE, getToken } from "@/src/lib/api";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
-import { FlightSupportDemoCarousel } from "@/src/components/FlightSupportDemoCarousel";
 import { hapticSuccess } from "@/src/lib/haptics";
+import { speak, stopNarration } from "@/src/lib/narration";
 
 type Block = {
   name: string;
@@ -355,18 +356,13 @@ function GuidedPhase({
       <View style={s.guidedBody}>
         <Text style={s.moveEyebrow}>{intervention.title.toUpperCase()}</Text>
         <Text style={s.moveTitleBig}>{block.name}</Text>
-        {block.cue ? (
-          <Text style={s.moveCueBig}>{block.cue}</Text>
-        ) : null}
 
-        <View style={{ marginBottom: 24 }}>
-          <FlightSupportDemoCarousel
-            exerciseId={block.name}
-            exerciseName={block.name}
-            sizePx={220}
-            persona="pilot"
-          />
-        </View>
+        {/* Iter 158 — single hero image + coaching points + narration.
+            Replaces the 3-frame carousel. The child component owns the
+            /exercise-content/frames fetch, image resolution and speak()
+            side-effects; it also handles stopping narration when `block`
+            changes so we never talk over the next exercise. */}
+        <FlightBlockDetail block={block} />
 
         <Text style={s.timerBig} testID="fs-timer">{fmtMMSS(remaining)}</Text>
       </View>
@@ -440,6 +436,155 @@ function CompletePhase({
           )}
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+/* ============================== block detail (Iter 158) =============== */
+/**
+ * Renders a single primary image, an inline "Play explanation" narration
+ * button, and a bulleted Coaching Points section for the current block.
+ *
+ * The frames endpoint is queried by exercise NAME (case-insensitive path
+ * lookup on the backend). We prefer the response's `primary_image` slot;
+ * fall back to the first "start" frame if the exercise doc doesn't have
+ * `primary_image_id` yet (auto-media-gen is asynchronous).
+ *
+ * Narration is auto-stopped whenever `block` changes so the timer moving
+ * to the next exercise never talks over the previous one.
+ */
+type FramesResp = {
+  primary_image?: { image_id: string; url: string } | null;
+  frames?: { slot: string; url: string; image_id?: string }[];
+  coaching_points?: string[];
+};
+
+function FlightBlockDetail({ block }: { block: Block }) {
+  const [data, setData] = useState<FramesResp | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [speaking, setSpeaking] = useState(false);
+
+  // Rebuild coaching-points list: server-supplied or fallback to the block's
+  // own `cue` (split on periods/semicolons/newlines for a light bullet list).
+  const bullets: string[] = useMemo(() => {
+    if (data?.coaching_points && data.coaching_points.length > 0) return data.coaching_points;
+    const raw = (block.cue || "").trim();
+    if (!raw) return [];
+    return raw
+      .split(/[\.;\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [data?.coaching_points, block.cue]);
+
+  useEffect(() => {
+    let cancel = false;
+    setLoading(true);
+    setData(null);
+    setImgUrl(null);
+    (async () => {
+      try {
+        const r = await api<FramesResp>(
+          `/exercise-content/frames/${encodeURIComponent(block.name)}?persona=pilot`,
+        );
+        if (cancel) return;
+        setData(r);
+        const rel =
+          r?.primary_image?.url ||
+          (r?.frames || []).find((f) => f.slot === "start")?.url ||
+          null;
+        if (rel) {
+          // frames.url is `/api/exercise-content/images/{id}/stream` — turn
+          // into an absolute URL for the streaming binary route. Token is
+          // appended so the fetch is authorised.
+          const token = await getToken();
+          const base = String(API_BASE || "").replace(/\/api\/?$/, "");
+          setImgUrl(
+            `${base}${rel.startsWith("/") ? "" : "/"}${rel}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
+          );
+        }
+      } catch { /* silent — placeholder tile stays */ } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [block.name]);
+
+  // Auto-stop narration on block change AND on unmount so we never talk
+  // over the next exercise or after the modal closes.
+  useEffect(() => {
+    return () => {
+      try { stopNarration(); } catch { /* noop */ }
+      setSpeaking(false);
+    };
+  }, [block.name]);
+
+  const onPlayExplanation = async () => {
+    const text = bullets.length ? bullets.join(". ") : (block.cue || block.name);
+    if (!text) return;
+    if (speaking) {
+      stopNarration();
+      setSpeaking(false);
+      return;
+    }
+    setSpeaking(true);
+    try {
+      await speak(text, { dedupeKey: `flight-support:${block.name}` });
+    } finally {
+      // speak() resolves once queued — we can't easily hook the end event
+      // across platforms, so we clear the flag after a short delay
+      // proportional to text length (~140 ms/word feels natural).
+      const wc = text.split(/\s+/).length;
+      setTimeout(() => setSpeaking(false), Math.min(20_000, 400 + wc * 140));
+    }
+  };
+
+  return (
+    <View style={s.blockDetailWrap}>
+      <View style={s.heroImageWrap}>
+        {loading ? (
+          <ActivityIndicator color={theme.color.brand} />
+        ) : imgUrl ? (
+          <ExpoImage
+            source={{ uri: imgUrl }}
+            style={s.heroImage}
+            contentFit="cover"
+            transition={200}
+            accessibilityLabel={`${block.name} demonstration`}
+          />
+        ) : (
+          <Ionicons name="fitness-outline" size={44} color={theme.color.textDim} />
+        )}
+      </View>
+
+      <Pressable
+        onPress={onPlayExplanation}
+        style={[s.playExplainBtn, speaking && s.playExplainBtnActive]}
+        testID="fs-play-explanation"
+        accessibilityRole="button"
+        accessibilityLabel={speaking ? "Stop explanation" : "Play explanation"}
+      >
+        <Ionicons
+          name={speaking ? "stop-circle" : "volume-high"}
+          size={16}
+          color={speaking ? "#fff" : theme.color.brand}
+        />
+        <Text style={[s.playExplainT, speaking && { color: "#fff" }]}>
+          {speaking ? "STOP" : "PLAY EXPLANATION"}
+        </Text>
+      </Pressable>
+
+      {bullets.length > 0 && (
+        <View style={s.coachingPointsWrap}>
+          <Text style={s.coachingPointsTitle}>COACHING POINTS</Text>
+          {bullets.map((b, i) => (
+            <View key={i} style={s.bulletRow}>
+              <View style={s.bulletDot} />
+              <Text style={s.bulletText}>{b}</Text>
+            </View>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -614,6 +759,64 @@ const s = StyleSheet.create({
     color: theme.color.brand, fontSize: 12, fontWeight: "700",
     letterSpacing: 1.2, marginTop: 20,
     textTransform: "uppercase",
+  },
+
+  // Iter 158 — single hero + coaching-points + narration button.
+  blockDetailWrap: {
+    alignItems: "center",
+    marginBottom: 24,
+    gap: 14,
+  },
+  heroImageWrap: {
+    width: 260, height: 260,
+    borderRadius: 16,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+    alignItems: "center", justifyContent: "center",
+    overflow: "hidden",
+  },
+  heroImage: { width: "100%", height: "100%" },
+  playExplainBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  playExplainBtnActive: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  playExplainT: {
+    color: theme.color.brand,
+    fontSize: 11, fontWeight: "900", letterSpacing: 1.5,
+  },
+  coachingPointsWrap: {
+    alignSelf: "stretch",
+    paddingHorizontal: 4,
+    marginTop: 6,
+  },
+  coachingPointsTitle: {
+    color: theme.color.brand,
+    fontSize: 10, fontWeight: "900", letterSpacing: 2,
+    marginBottom: 8,
+  },
+  bulletRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 8,
+    alignItems: "flex-start",
+  },
+  bulletDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: theme.color.brand,
+    marginTop: 8,
+  },
+  bulletText: {
+    color: theme.color.text,
+    fontSize: 14,
+    lineHeight: 20,
+    flex: 1,
   },
 });
 

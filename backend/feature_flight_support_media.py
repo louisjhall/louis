@@ -147,11 +147,49 @@ async def resolve_flight_support_frames(db, key: str, prefer: str = "pilot") -> 
         except Exception:
             logger.exception("flight_support: coach media queue backfill failed for %s", exercise_id)
 
+    # Iter 158 — also surface the primary image slot and coaching_points
+    # so the Flight Support modal can render a single hero image and a
+    # bulleted "Coaching Points" section without a second round-trip.
+    primary_image = None
+    primary_image_id = ex.get("primary_image_id")
+    if primary_image_id:
+        primary_image = {
+            "image_id": primary_image_id,
+            "url": f"/api/exercise-content/images/{primary_image_id}/stream",
+        }
+    else:
+        # Fallback — use the first ready image from the "start" slot in the
+        # preferred persona if the exercise doc doesn't carry a primary id
+        # yet (auto-media-gen is asynchronous; may lag by a few seconds
+        # for freshly-drafted rows).
+        for persona in fallback_chain:
+            img = by_key.get((persona, "start"))
+            if img:
+                primary_image = {
+                    "image_id": img.get("id"),
+                    "url": f"/api/exercise-content/images/{img.get('id')}/stream",
+                    "persona": persona,
+                    "fallback": True,
+                }
+                break
+
+    coaching_points = ex.get("coaching_points") or []
+    if isinstance(coaching_points, str):
+        coaching_points = [
+            line.strip("•-*·  ").strip()
+            for line in coaching_points.splitlines()
+            if line.strip()
+        ]
+    if not isinstance(coaching_points, list):
+        coaching_points = []
+
     return {
         "exercise_id": exercise_id,
         "name": ex.get("_name") or ex.get("name") or ex.get("exercise_name"),
         "persona_preferred": prefer,
         "frames": frames,
+        "primary_image": primary_image,
+        "coaching_points": coaching_points,
         "missing_slots": missing_slots,           # slots with ZERO media in any persona
         "preferred_persona_missing": prefer_missing,
         "coverage": {p: sorted(list(v)) for p, v in coverage.items()},

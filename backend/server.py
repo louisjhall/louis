@@ -11734,6 +11734,16 @@ async def _startup():
     except Exception:
         logger.exception("persona backfill failed")
 
+    # Iter 158 — draft every Flight Support protocol block into the
+    # exercises_v2 library so coaches see them alongside manual-workout
+    # exercises. Idempotent: the resolver's fuzzy-match short-circuits
+    # existing rows.
+    try:
+        from feature_aviation_support import ensure_flight_support_blocks_in_library
+        await ensure_flight_support_blocks_in_library()
+    except Exception:
+        logger.exception("flight_support library seed failed")
+
     # Zombie job cleanup — any jobs left running from a previous process are dead now.
     for coll in ("image_jobs", "content_jobs"):
         try:

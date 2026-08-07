@@ -29,6 +29,7 @@ Public surface:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional
 from datetime import time
@@ -1232,4 +1233,99 @@ __all__ = [
     "get_flight_support_by_date",
     "summarise_training_by_date_from_workouts",
     "resolve_aviation_role",
+    "ensure_flight_support_blocks_in_library",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Iter 158 — Library autowiring.
+#
+# Every named block in the deterministic Flight Support library (e.g.
+# "Comfortable walk", "Thoracic rotation", "Box breathing") is drafted
+# into `exercises_v2` via `create_exercise_request_if_missing` so:
+#
+#   * Coaches can promote them to the canonical library and edit cues.
+#   * Auto-media-gen fires ONCE per unique block (primary image +
+#     coaching points, per the current cost-controlled defaults).
+#   * Client Flight Support and coach-authored manual workouts share the
+#     same exercise vocabulary — no duplicate rows.
+#
+# Called once at server startup, idempotent by design (the resolver
+# short-circuits on exact/fuzzy match).
+# ---------------------------------------------------------------------------
+async def ensure_flight_support_blocks_in_library() -> dict:
+    """Draft every unique Flight Support block into `exercises_v2`.
+
+    Returns::
+        {"scanned": <int>, "drafted": <int>, "existing": <int>, "errors": <int>}
+
+    Never raises — errors are counted, logged, and swallowed so a bad
+    single-block draft can't stop server boot.
+    """
+    from feature_v2_resolver import create_exercise_request_if_missing
+    logger = logging.getLogger("crewfit.flight_support_library")
+
+    # Collect unique block names across every registered protocol.
+    seen: dict[str, dict] = {}
+    for p in PROTOCOLS.values():
+        for b in (p.blocks or []):
+            name = str(b.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen[name] = {
+                "name": name,
+                "cue": b.get("cue") or "",
+                "duration_sec": b.get("duration_sec"),
+                "family": p.family,
+            }
+
+    counters = {"scanned": len(seen), "drafted": 0, "existing": 0, "errors": 0}
+    if not seen:
+        return counters
+
+    # Synthetic "system" user for the resolver — the resolver just uses
+    # user.id for usage_context tagging.
+    system_user = {"id": "system:flight_support"}
+
+    for name, meta in seen.items():
+        try:
+            item = {
+                "name": meta["name"],
+                "exercise_name": meta["name"],
+                "cue": meta["cue"],
+                "source_family": meta["family"],
+            }
+            existing_first = False
+            # Peek if the row already exists so we can distinguish the
+            # counters (existing vs drafted) — cheap indexed lookup.
+            try:
+                from server import db  # local import to avoid cycles
+                import re as _re
+                pre = await db.exercises_v2.find_one(
+                    {"$or": [
+                        {"exercise_name": {"$regex": f"^{_re.escape(name)}$", "$options": "i"}},
+                    ]},
+                    {"_id": 0, "id": 1},
+                )
+                existing_first = bool(pre)
+            except Exception:
+                pass
+
+            await create_exercise_request_if_missing(
+                item,
+                user=system_user,
+                reason="flight_support_seed",
+            )
+            if existing_first:
+                counters["existing"] += 1
+            else:
+                counters["drafted"] += 1
+        except Exception:
+            counters["errors"] += 1
+            logger.exception("flight_support_library: drafting %r failed", name)
+
+    logger.info(
+        "flight_support_library: scanned=%d drafted=%d existing=%d errors=%d",
+        counters["scanned"], counters["drafted"], counters["existing"], counters["errors"],
+    )
+    return counters

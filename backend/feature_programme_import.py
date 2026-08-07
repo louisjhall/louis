@@ -249,6 +249,17 @@ def _month_span(year: int, month: int) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _month_iso_bounds(month: str) -> tuple[str, str]:
+    """Given ``YYYY-MM``, return the inclusive ISO date bounds
+    ``("YYYY-MM-01", "YYYY-MM-<last>")`` used by ``plan_live_v2.planning_window``.
+    Delegates month parsing to :func:`_parse_month` so we raise a consistent
+    400 on malformed input."""
+    y, mo = _parse_month(month)
+    start_dt, end_dt = _month_span(y, mo)
+    last_day = (end_dt - timedelta(days=1)).date()
+    return start_dt.date().isoformat(), last_day.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Exercise matching (reuse feature_v2_resolver)
 # ---------------------------------------------------------------------------
@@ -1730,7 +1741,129 @@ async def coach_programme_import_apply(
             )
 
     # ------------------------------------------------------------------
-    # 6. Mark preview applied so it can never be replayed.
+    # 6. Auto-flip status to "Live" (Iter 149).
+    # If this apply actually wrote any workouts AND the client has no
+    # active plan_live_v2 doc, insert a minimal "programme_import_shell"
+    # so the coach dashboard / calendar shows the client as Live
+    # immediately, with no need to click Publish in the workspace.
+    #
+    # Design contract for the shell:
+    #   * placements=[] and session_specs={} by design — manual workouts
+    #     remain the source of truth via db.workouts (source=coach_manual)
+    #     and are folded into calendar cells by
+    #     feature_v2_coach_home.endpoint_coach_calendar.
+    #   * source_kind marker lets future imports EXTEND the planning_window
+    #     without ever overwriting a real Engine V2 Live plan.
+    #   * If a real Engine V2 plan_live_v2 already exists (source_kind
+    #     absent or not "programme_import_shell") we leave it untouched.
+    # ------------------------------------------------------------------
+    live_shell_created = False
+    live_shell_id: Optional[str] = None
+    if inserted_ids:
+        try:
+            existing_live = await db.plan_live_v2.find_one(
+                {"client_id": client["id"], "active": True},
+                {"_id": 0, "id": 1, "source_kind": 1, "planning_window": 1},
+            )
+            month_str = preview.get("month")
+            window_start = window_end = None
+            if month_str:
+                try:
+                    window_start, window_end = _month_iso_bounds(month_str)
+                except HTTPException:
+                    # Malformed month on the stored preview — should be
+                    # impossible (validated at /preview time) but guard
+                    # against it to keep the apply idempotent.
+                    window_start = window_end = None
+
+            if not existing_live:
+                live_shell_id = new_id()
+                shell_doc: dict[str, Any] = {
+                    "id": live_shell_id,
+                    "client_id": client["id"],
+                    "coach_id": coach_id,
+                    "engine_version": "manual",
+                    "source_kind": "programme_import_shell",
+                    "source_preview_id": preview["id"],
+                    "source_month": month_str,
+                    "goal_key": None,
+                    "planning_window": (
+                        {"start": window_start, "end": window_end}
+                        if window_start else None
+                    ),
+                    "effective_context": None,
+                    "demand": None,
+                    "placements": [],
+                    "session_specs": {},
+                    "programme_validation": {"ok": True, "issues": []},
+                    "unfilled": [],
+                    "exception_resolutions": [],
+                    "ack_partial_config": False,
+                    "override_reason": None,
+                    "coach_note": (
+                        f"Auto-created by programme import (month={month_str})."
+                    ),
+                    "activated_at": now_str,
+                    "activated_by": coach_id,
+                    "active": True,
+                    "previous_live_id": None,
+                }
+                await db.plan_live_v2.insert_one(shell_doc)
+                live_shell_created = True
+            elif existing_live.get("source_kind") == "programme_import_shell":
+                # Extend the planning window to cover the newly-imported
+                # month if it stretches beyond the current bounds.
+                live_shell_id = existing_live["id"]
+                cur = existing_live.get("planning_window") or {}
+                cur_start = cur.get("start")
+                cur_end = cur.get("end")
+                new_start = cur_start
+                new_end = cur_end
+                if window_start:
+                    new_start = min(
+                        [d for d in [cur_start, window_start] if d],
+                        default=window_start,
+                    )
+                if window_end:
+                    new_end = max(
+                        [d for d in [cur_end, window_end] if d],
+                        default=window_end,
+                    )
+                if new_start != cur_start or new_end != cur_end:
+                    await db.plan_live_v2.update_one(
+                        {"id": live_shell_id},
+                        {"$set": {
+                            "planning_window": {
+                                "start": new_start, "end": new_end,
+                            },
+                            "updated_at": now_str,
+                            "last_import_preview_id": preview["id"],
+                            "last_import_month": month_str,
+                        }},
+                    )
+                else:
+                    # Still stamp the last-import metadata for traceability.
+                    await db.plan_live_v2.update_one(
+                        {"id": live_shell_id},
+                        {"$set": {
+                            "updated_at": now_str,
+                            "last_import_preview_id": preview["id"],
+                            "last_import_month": month_str,
+                        }},
+                    )
+            else:
+                # A real Engine V2 Live plan exists — leave it alone.
+                live_shell_id = existing_live["id"]
+        except Exception:
+            # Never let a shell-insert failure roll back the workout writes.
+            logger.exception(
+                "programme_import_apply: plan_live_v2 shell upsert failed for "
+                "preview %s (client=%s)",
+                preview.get("id"), client.get("id"),
+            )
+
+    # ------------------------------------------------------------------
+    # 7. Mark preview applied so it can never be replayed.
     # ------------------------------------------------------------------
     try:
         await db.programme_import_previews.update_one(
@@ -1757,6 +1890,8 @@ async def coach_programme_import_apply(
         "workout_ids": inserted_ids,
         "results": results,
         "resume": is_resume,
+        "live_shell_created": live_shell_created,
+        "live_shell_id": live_shell_id,
     }
 
 

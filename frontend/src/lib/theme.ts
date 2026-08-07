@@ -1,7 +1,9 @@
 export const theme = {
   color: {
-    // Surfaces (deep black to match logo backdrop)
-    surface: "#000000",
+    // Surfaces — dark charcoal gray for the refreshed dashboard (Iter 151).
+    // Previously #000000 (pure black) — softened to #121212 for better
+    // readability and less harsh contrast.
+    surface: "#121212",
     surface2: "#0E0E12",
     surface3: "#1A1A20",
     border: "#22222A",
@@ -10,8 +12,8 @@ export const theme = {
     text: "#F3F4F6",
     /** Alias — high-contrast text (used by V2 components). Same as `text`. */
     textHi: "#F3F4F6",
-    /** Alias — page background (used by V2 components). Same as `surface`. */
-    bg: "#000000",
+    /** Alias — page background (used by V2 components). Charcoal gray. */
+    bg: "#121212",
     textMuted: "#9CA3AF",
     textDim: "#6B7280",
     /** Alias — elevated card background (used by V2 + manual builder). */
@@ -32,6 +34,22 @@ export const theme = {
   },
   space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
   radius: { sm: 4, md: 8, lg: 12, pill: 999 },
+  /**
+   * Font-size scale (Iter 151 — dashboard refresh).
+   * `base` is the app-wide default enforced on `<Text>` via defaultProps
+   * in `app/_layout.tsx`. Prefer these tokens over inline magic numbers
+   * for any NEW screen work.
+   */
+  size: {
+    xxs: 11,
+    xs: 12,
+    sm: 14,
+    base: 16,
+    lg: 18,
+    xl: 22,
+    xxl: 28,
+    display: 32,
+  },
   font: {
     /** Display / headline — Creo (licensed). Falls back to system if font not yet loaded. */
     display: "Creo-ExtraBold",

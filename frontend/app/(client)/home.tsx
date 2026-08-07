@@ -452,7 +452,7 @@ export default function Home() {
           </SafeAreaView>
         </AIHeroImage>
 
-        <View style={{ padding: theme.space.lg }}>
+        <View style={{ padding: theme.space.lg, gap: 12 }}>
           {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
               pinned directly beneath Pietro's name/header per coach request.
               The chips route to the deeper Calendar / Check-In / Progress

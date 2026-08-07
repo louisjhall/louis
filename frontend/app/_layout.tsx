@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { LogBox, Platform, StatusBar } from "react-native";
+import { LogBox, Platform, StatusBar, Text as RNText, TextInput as RNTextInput } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as Notifications from "expo-notifications";
@@ -26,6 +26,27 @@ initSentry();
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
+
+/* --------------------------------------------------------------------------
+ * Iter 151 — Global base font size.
+ *
+ * RN's default is 14. We raise the baseline for `<Text>` and `<TextInput>`
+ * nodes that don't specify their own fontSize (or that pass an object style
+ * without a fontSize key merged in via array). This is a best-effort
+ * baseline — screens with explicit fontSize in StyleSheet.create() are
+ * untouched by design.
+ * ------------------------------------------------------------------------ */
+const _BASE_TEXT_STYLE = { fontSize: 16 } as const;
+(RNText as any).defaultProps = {
+  ...((RNText as any).defaultProps || {}),
+  allowFontScaling: true,
+  style: [_BASE_TEXT_STYLE, ((RNText as any).defaultProps || {}).style].filter(Boolean),
+};
+(RNTextInput as any).defaultProps = {
+  ...((RNTextInput as any).defaultProps || {}),
+  allowFontScaling: true,
+  style: [_BASE_TEXT_STYLE, ((RNTextInput as any).defaultProps || {}).style].filter(Boolean),
+};
 
 // Push: foreground handler (module scope, native only)
 if (Platform.OS !== "web") {

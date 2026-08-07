@@ -4795,11 +4795,53 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
         return rows
     healed_rows: list[dict] = []
     to_persist: list[dict] = []
+    to_unheal: list[dict] = []
     for w in rows:
         before_ex = w.get("exercises") or []
         # Never rewrite completed / user-touched sessions — respect the user's log.
         if w.get("completed") or w.get("override_applied") or w.get("override_generated"):
             healed_rows.append(w)
+            continue
+        # Iter 161 · Self-healing REVERT for the "Full Rest turned into a
+        # bodyweight workout" bug. When a row was previously healed but the
+        # underlying signal says it was originally a rest day, undo the heal
+        # on first read after this code deploys — production DBs that
+        # persisted the broken state get automatically corrected.
+        wt = str(w.get("workout_type") or "").lower()
+        title_lc = str(w.get("title") or "").lower()
+        src_lc = str(w.get("source") or "").lower()
+        was_healed = bool(
+            w.get("fallback_used")
+            or w.get("validation_status") == "adjusted_fallback"
+            or w.get("auto_healed_at")
+        )
+        looks_rest_originally = (
+            wt in ("recovery", "rest", "off", "day_off")
+            or title_lc.startswith("rest") or title_lc.startswith("off")
+            or "full rest" in title_lc
+            or (src_lc == "coach_manual" and wt in ("recovery", "rest"))
+        )
+        if was_healed and looks_rest_originally and before_ex:
+            # Reset to Full Rest shape.
+            fixed = dict(w)
+            fixed["exercises"] = []
+            fixed["warmup"] = []
+            fixed["cooldown"] = []
+            fixed["duration_min"] = 0
+            fixed["fallback_used"] = False
+            fixed["validation_status"] = None
+            fixed["fallback_type"] = None
+            fixed["insufficient_content_reason"] = None
+            fixed["needs_coach_review"] = False
+            # Clean the client-facing "SESSION ADJUSTED / couldn't safely match"
+            # boilerplate from change_reason, keep anything else the coach set.
+            cr = fixed.get("change_reason") or ""
+            if "couldn't safely match" in cr or "safe fallback" in cr.lower():
+                parts = [p.strip() for p in cr.split("·")
+                         if "couldn't safely match" not in p and "safe fallback" not in p.lower()]
+                fixed["change_reason"] = " · ".join(p for p in parts if p) or None
+            to_unheal.append(fixed)
+            healed_rows.append(fixed)
             continue
         healed = _ensure_workout_content(dict(w), user)
         after_ex = healed.get("exercises") or []
@@ -4814,6 +4856,32 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
             healed_rows.append(healed)
         else:
             healed_rows.append(w)
+    # Iter 161 · Persist reverts once per read.
+    if to_unheal:
+        for h in to_unheal:
+            try:
+                await db.workouts.update_one({"id": h["id"]}, {
+                    "$set": {
+                        "exercises": [],
+                        "warmup": [],
+                        "cooldown": [],
+                        "duration_min": 0,
+                        "fallback_used": False,
+                        "validation_status": None,
+                        "fallback_type": None,
+                        "insufficient_content_reason": None,
+                        "needs_coach_review": False,
+                        "change_reason": h.get("change_reason"),
+                        "restored_from_fallback_at": now_iso(),
+                    },
+                    "$unset": {"auto_healed_at": ""},
+                })
+                logger.info(
+                    "workout %s: reverted Full-Rest heal (user=%s date=%s title=%r)",
+                    h.get("id"), h.get("user_id"), h.get("date"), h.get("title"),
+                )
+            except Exception:
+                logger.exception("workout revert failed (non-fatal)")
     if to_persist:
         for h in to_persist:
             try:

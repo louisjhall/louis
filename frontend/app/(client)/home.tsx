@@ -14,6 +14,7 @@ import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { RealityModal } from "@/src/components/RealityModal";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { WelcomeVideoBanner } from "@/src/components/WelcomeVideoBanner";
+import { RosterNeededHeroCard } from "@/src/components/RosterNeededHeroCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
 import { TimezoneCard } from "@/src/components/TimezoneCard";
 import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
@@ -454,6 +455,22 @@ export default function Home() {
         </AIHeroImage>
 
         <View style={{ padding: theme.space.lg, gap: 12 }}>
+          {/* Iter 159 — Roster Needed hero. Shows ONLY when the client has
+              zero confirmed roster days AND no upload/parse job is in
+              flight. Placed as the very first surface so a brand-new
+              client sees exactly one thing they need to do next: import
+              their roster. Disappears the moment /roster/current returns
+              a doc with days. */}
+          <RosterNeededHeroCard
+            needsRoster={!roster || !(roster.days && roster.days.length > 0)}
+            jobInFlight={
+              !!rosterJob &&
+              (rosterJob.status === "queued" ||
+                rosterJob.status === "processing" ||
+                rosterJob.status === "awaiting_confirmation")
+            }
+          />
+
           {/* Iter 156 — Welcome-from-coach one-shot banner. Renders nothing
               until the client actually has an unwatched welcome video.
               Placed as the very first surface so it never gets buried. */}

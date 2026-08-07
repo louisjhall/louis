@@ -875,9 +875,11 @@ def _build_role_line(profile: dict) -> str:
 # Cross-client operational calendar. Uses ONLY current authoritative V2 state:
 #   - schedule_days  → roster classification per day
 #   - plan_live_v2   → active Live placements + session_specs
+#   - db.workouts    → manual coach-authored workouts (source=coach_manual,
+#                       manual_lock=True). Manual workouts OVERRIDE any V2
+#                       generated placements on the same day.
 #   - flight support helpers
 #
-# Does NOT touch V1 collections (db.rosters, db.workouts, db.workout_assignments).
 # Draft state is exposed as a per-client badge, never mixed into Live cells.
 
 
@@ -1005,6 +1007,41 @@ async def endpoint_coach_calendar(
                     "intensity": p.get("intensity_target") or spec.get("intensity_target"),
                 })
 
+        # --- Manual workouts (db.workouts, source=coach_manual)
+        # Fold coach-authored manual workouts into the calendar cells.
+        # `manual_lock=True` is authoritative — we do NOT check `approved`.
+        # If a date has BOTH a generated V2 plan and a manual workout, the
+        # manual workout wins (see cell build below).
+        manual_rows = await db.workouts.find(
+            {
+                "user_id": cid,
+                "date": {"$gte": date_from, "$lte": date_to},
+                "source": "coach_manual",
+                "manual_lock": True,
+            },
+            {
+                "_id": 0, "id": 1, "date": 1, "title": 1,
+                "workout_type": 1, "focus": 1, "duration_min": 1,
+            },
+        ).to_list(500)
+        manual_by_date: dict[str, list[dict]] = {}
+        for mw in manual_rows:
+            md = mw.get("date")
+            if not md or md < date_from or md > date_to:
+                continue
+            m_kind = mw.get("workout_type") or mw.get("focus") or "session"
+            m_title = (mw.get("title") or "").strip()
+            m_label = m_title or _humanise_kind(m_kind)
+            manual_by_date.setdefault(md, []).append({
+                "id": f"manual:{mw.get('id')}",
+                "kind": m_kind,
+                "label": m_label,
+                "duration_min": mw.get("duration_min"),
+                "key": False,
+                "intensity": None,
+                "source": "manual",
+            })
+
         # --- Flight support
         fs_by_date: dict[str, list[dict]] = {}
         try:
@@ -1036,7 +1073,12 @@ async def endpoint_coach_calendar(
         has_any_content = False
         for d in dates:
             roster = sched_by_date.get(d)
-            trainings = placements_by_date.get(d, [])
+            manuals   = manual_by_date.get(d, [])
+            generated = placements_by_date.get(d, [])
+            # Manual override rule: if the day has BOTH a manual workout and a
+            # generated plan, the manual workout wins. Do not merge; a manual
+            # workout represents an authoritative coach decision for that day.
+            trainings = manuals if manuals else generated
             flights   = fs_by_date.get(d, [])
             if roster or trainings or flights:
                 has_any_content = True

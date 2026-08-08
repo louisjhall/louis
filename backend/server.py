@@ -13030,6 +13030,162 @@ async def coach_reset_summary(checkin_id: str, coach: dict = Depends(require_rol
     return {"check_in": ci}
 
 
+# Iter 162 · Welcome Video script generator ------------------------------
+#
+# Called from the coach's Record-Welcome-Video button. Pulls the client's
+# first name, primary goal ("why it matters"), and 1-2 salient DNA
+# findings, then asks Claude Sonnet to write a 30-45 second first-person
+# welcome script the coach reads on camera. Ends with the mandatory
+# "Welcome to CrewFit." sign-off.
+
+class WelcomeScriptGenBody(BaseModel):
+    client_id: str
+
+
+def _extract_first_name(user: dict) -> str:
+    """Best-effort first name from a user doc."""
+    for key in ("display_name", "name"):
+        v = user.get(key)
+        if v:
+            first = str(v).strip().split()[0]
+            if first:
+                return first
+    # Fall back to email local-part.
+    email = user.get("email") or ""
+    if "@" in email:
+        return email.split("@", 1)[0].split(".")[0].title()
+    return "there"
+
+
+def _pick_dna_highlights(dna: dict) -> list[str]:
+    """Return up to two short human-readable highlights from the DNA payload
+    so the LLM has concrete material to reference. Never returns an empty
+    list — even a fresh assessment yields *something* to greet on."""
+    picks: list[str] = []
+    if dna.get("biggest_strength"):
+        picks.append(f"biggest strength — {dna['biggest_strength']}")
+    if dna.get("biggest_opportunity") and len(picks) < 2:
+        picks.append(f"biggest opportunity — {dna['biggest_opportunity']}")
+    if dna.get("recovery_risk") and len(picks) < 2:
+        picks.append(f"recovery risk profile — {dna['recovery_risk']}")
+    if dna.get("motivation_style") and len(picks) < 2:
+        picks.append(f"motivation style — {dna['motivation_style']}")
+    if not picks and dna.get("flying_style"):
+        picks.append(f"aviation profile — {dna['flying_style']}")
+    return picks or ["their commitment to getting started with CrewFit"]
+
+
+@api.post("/coach/welcome-script/generate")
+async def coach_generate_welcome_script(
+    body: WelcomeScriptGenBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Generate a personalised welcome-video script for a client.
+
+    Response shape::
+
+        {
+          "script": "<30-45s first-person script>",
+          "client_first_name": "<name>",
+          "used_fallback": <bool>  # true when DNA / goal are missing
+        }
+    """
+    client = await db.users.find_one(
+        {"id": body.client_id},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
+         "profile": 1, "role": 1},
+    )
+    if not client:
+        raise HTTPException(404, "client not found")
+    if client.get("role") not in (None, "client"):
+        raise HTTPException(400, "target user is not a client")
+
+    first_name = _extract_first_name(client)
+    dna = await _get_dna_context(body.client_id)
+
+    goal = dna.get("primary_goal") or None
+    why = dna.get("why_it_matters") or None
+    highlights = _pick_dna_highlights(dna)
+    airline = ((client.get("profile") or {}).get("airline")) or None
+    role = ((client.get("profile") or {}).get("job_title")) or None
+
+    used_fallback = not bool(goal or dna)
+    if used_fallback:
+        # No DNA yet — still write something warm and personal from name +
+        # role/airline. Keeps the coach unblocked before assessment lands.
+        script = (
+            f"Hey {first_name}, welcome aboard. I'm really glad you're here. "
+            f"We're going to build a plan that fits around your flying, your recovery, "
+            f"and the goals that matter to you — one honest week at a time. "
+            f"Once you've completed your assessment I'll dial the whole thing in around your DNA, "
+            f"but until then, know that I've got your back. "
+            f"Welcome to CrewFit."
+        )
+        return {
+            "script": script,
+            "client_first_name": first_name,
+            "used_fallback": True,
+        }
+
+    system_msg = (
+        "You are Louis, the head coach at CrewFit — a training platform built "
+        "for airline crew (pilots and cabin crew). Your voice is warm, direct, "
+        "grounded, and human. You never sound like an ad. You never over-promise. "
+        "Every script you write is meant to be read on-camera by the coach and "
+        "delivered to the client as a personalised welcome message. Aim for 30-45 "
+        "seconds when read aloud (roughly 90-130 words). Use the client's first "
+        "name once at the start and never again. Do NOT use emojis, headers, or "
+        "bullet points — the script must read as flowing spoken language. "
+        "The final line MUST be exactly: 'Welcome to CrewFit.'"
+    )
+
+    user_prompt = (
+        f"Write a 30-45 second welcome-video script for a new CrewFit client.\n\n"
+        f"CLIENT PROFILE\n"
+        f"  First name: {first_name}\n"
+        f"  Role: {role or 'aviation professional'}\n"
+        f"  Airline: {airline or '(not specified)'}\n\n"
+        f"WHAT MATTERS TO THEM\n"
+        f"  Primary goal: {goal or '(not yet stated)'}\n"
+        f"  Why it matters: {why or '(not yet stated)'}\n\n"
+        f"DNA ASSESSMENT HIGHLIGHTS (reference ONE of these — the most personal / "
+        f"training-relevant — do NOT list all of them):\n"
+        + "\n".join(f"  - {h}" for h in highlights)
+        + "\n\n"
+        f"STRUCTURE (must follow, in order, in flowing speech — not headings):\n"
+        f"  1. Greet {first_name} by first name.\n"
+        f"  2. Restate their primary goal in your own words and acknowledge why "
+        f"it matters to them.\n"
+        f"  3. Reference ONE concrete finding from the DNA highlights that "
+        f"tells them you've read their assessment.\n"
+        f"  4. One sentence about how CrewFit will approach the work with them.\n"
+        f"  5. Sign off with the exact line: 'Welcome to CrewFit.'\n\n"
+        f"Return ONLY the script text — no preamble, no quotation marks, no "
+        f"labels, no bullet numbers."
+    )
+
+    try:
+        text = await call_claude_tracked(
+            coach, feature="welcome_video_script",
+            system=system_msg, prompt=user_prompt,
+            max_out=800, enforce=True,
+        )
+    except Exception as e:
+        logger.exception("welcome-script LLM call failed")
+        raise HTTPException(502, f"failed to generate script: {e}")
+
+    script = (text or "").strip().strip('"')
+    # Belt-and-braces: enforce the mandatory sign-off even if the LLM drifts.
+    if not script.rstrip(".").rstrip().endswith("Welcome to CrewFit"):
+        script = script.rstrip(".").rstrip() + ". Welcome to CrewFit."
+
+    return {
+        "script": script,
+        "client_first_name": first_name,
+        "used_fallback": False,
+    }
+
+
 # ---- Coach Videos (storage abstraction) -----------------------------------
 async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dict:
     """Persist a coach video via the abstracted storage driver so it survives

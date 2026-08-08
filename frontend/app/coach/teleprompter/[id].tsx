@@ -81,15 +81,32 @@ export default function Teleprompter() {
     (async () => {
       // Iter 162 · Welcome-only mode — no check-in exists. Synthesize a
       // minimal `ci` from the query-string so downstream code (post body,
-      // header greeting) keeps working. Coach types the script inline.
+      // header greeting) keeps working, then request an AI-generated
+      // personalised welcome script from the backend so the teleprompter
+      // isn't blank on first paint.
       if (isWelcomeMode && welcomeClientId) {
         setCi({
           id: null,
           user_id: welcomeClientId,
           user_name: qClientName || "Client",
         });
-        setScript("");
-        setScriptDraft("");
+        // Best-effort script generation — DNA / goal are optional; a fallback
+        // script is returned if the client hasn't completed their assessment.
+        try {
+          const r = await api<{ script: string; used_fallback?: boolean }>(
+            "/coach/welcome-script/generate",
+            { method: "POST", body: { client_id: welcomeClientId } },
+          );
+          const s = String(r?.script || "").trim();
+          if (s) {
+            setScript(s);
+            setScriptDraft(s);
+          }
+        } catch (e: any) {
+          // Silent — a blank script is still usable, the coach can type.
+          // eslint-disable-next-line no-console
+          console.warn("welcome-script generation failed:", e?.message || e);
+        }
         // Restore last-used speed
         try {
           const stored = await AsyncStorage.getItem(SPEED_STORAGE_KEY);

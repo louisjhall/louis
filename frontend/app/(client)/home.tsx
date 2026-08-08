@@ -39,6 +39,7 @@ import { HotelSetupCard } from "@/src/components/HotelSetupCard";
 import { ProgressCard } from "@/src/components/ProgressCard";
 import { RosterDayPickerSheet, type RosterDayPickerTarget } from "@/src/components/RosterDayPickerSheet";
 import { EventPrioritySheet } from "@/src/components/EventPrioritySheet";
+import { EventProgressBanner } from "@/src/components/EventProgressBanner";
 import { toast as uxToast } from "@/src/lib/ux";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
@@ -816,25 +817,13 @@ export default function Home() {
 
           {/* ── Block 4: Events + Personal activities + Standby ────── */}
           {event ? (
-            <Pressable testID="event-card" onPress={() => router.push("/event")} onLongPress={() => setPriorityEvent(eventsAll.find(e => e.id === event.id) || event)}>
-              <AIHeroImage
-                ctx={{ context: "event", goal: (event.event_type || "").toLowerCase(), phase: event.phase_info?.phase || "peak" }}
-                style={styles.eventCardWrap}
-                gradient
-              >
-                <View style={styles.eventCardInner}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.eTop}>{(event.category_label || String(event.event_type || "")).toUpperCase()}{event.category === "race" && event.phase_info?.phase ? ` · ${String(event.phase_info.phase).toUpperCase().replace("_", " ")}` : ""}</Text>
-                    <Text style={styles.eName}>{event.event_name}</Text>
-                    <Text style={styles.eDate}>{event.event_date}{event.target_time ? ` · target ${event.target_time}` : ""}</Text>
-                  </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={styles.eBig}>{(event.days_value ?? event.phase_info?.days_to_race) ?? "—"}</Text>
-                    <Text style={styles.eBigLbl}>{(event.days_label || "days to event").toUpperCase()}</Text>
-                  </View>
-                </View>
-              </AIHeroImage>
-            </Pressable>
+            <EventProgressBanner
+              event={event}
+              longRunKm={programmeFocus?.this_weeks_long_run_km ?? null}
+              onPress={() => router.push("/event")}
+              onLongPress={() => setPriorityEvent(eventsAll.find(e => e.id === event.id) || event)}
+              testID="event-card"
+            />
           ) : (
             <Pressable testID="add-event-card" onPress={() => router.push("/event")} style={styles.addEventBtn}>
               <Ionicons name="trophy" size={16} color={theme.color.brand} />

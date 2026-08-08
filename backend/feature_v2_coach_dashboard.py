@@ -237,7 +237,10 @@ async def dashboard_attention(
         raise HTTPException(409, "Coach Dashboard V2 not enabled")
 
     clients = await db.users.find(
-        {"role": "client", "status": {"$ne": "archived"}},
+        # Iter 162 · exclude deleted / soft-deleted alongside archived
+        {"role": "client",
+         "status": {"$nin": ["archived", "deleted"]},
+         "is_deleted": {"$ne": True}},
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
          "profile.v2_flags": 1, "profile.avatar_url": 1}
     ).to_list(500)
@@ -267,7 +270,12 @@ async def dashboard_summary(coach: dict = Depends(require_role("coach"))) -> dic
     if not await _coach_has_v2_flag(coach["id"]):
         raise HTTPException(409, "Coach Dashboard V2 not enabled")
 
-    active_clients = await db.users.count_documents({"role": "client", "status": {"$ne": "archived"}})
+    active_clients = await db.users.count_documents(
+        # Iter 162 · exclude deleted / soft-deleted rows from the KPI.
+        {"role": "client",
+         "status": {"$nin": ["archived", "deleted"]},
+         "is_deleted": {"$ne": True}}
+    )
     attention = await dashboard_attention(limit=1000, coach=coach)
     at_rows = attention.get("attention") or []
 
@@ -299,7 +307,12 @@ async def dashboard_clients(
     if not await _coach_has_v2_flag(coach["id"]):
         raise HTTPException(409, "Coach Dashboard V2 not enabled")
 
-    query: dict = {"role": "client", "status": {"$ne": "archived"}}
+    # Iter 162 · exclude deleted / soft-deleted rows from the client list.
+    query: dict = {
+        "role": "client",
+        "status": {"$nin": ["archived", "deleted"]},
+        "is_deleted": {"$ne": True},
+    }
     if q:
         query["$or"] = [
             {"name": {"$regex": q, "$options": "i"}},

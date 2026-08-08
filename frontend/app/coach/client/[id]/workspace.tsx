@@ -490,6 +490,19 @@ export default function CoachWorkspaceScreen() {
         </Pressable>
         <Text style={styles.clientName} numberOfLines={1}>{data?.client?.name || "…"}</Text>
         <View style={{ flex: 1 }} />
+        {/* Iter 162 · Record Welcome Video — jumps straight into the
+            teleprompter in welcome-only mode. Works even before the client
+            has submitted their first check-in. */}
+        <Pressable
+          onPress={() => router.push(`/coach/teleprompter/welcome-${clientId}?welcome=1&clientName=${encodeURIComponent(data?.client?.name || "")}` as any)}
+          style={styles.welcomeBtn}
+          testID="workspace-record-welcome-btn"
+          accessibilityLabel="Record welcome video"
+          hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+        >
+          <Ionicons name="videocam" size={14} color={theme.color.text} />
+          <Text style={styles.welcomeBtnText}>WELCOME VIDEO</Text>
+        </Pressable>
         <Pressable
           onPress={() => setAdminDrawerOpen(true)}
           style={styles.adminBtn}
@@ -1475,6 +1488,27 @@ const styles = StyleSheet.create({
   },
   adminBtnText: {
     color: theme.color.textHi,
+    fontSize: 10,
+    letterSpacing: 1.2,
+    fontWeight: "800",
+  },
+  // Iter 162 · "WELCOME VIDEO" pill — brand-red border to signal a primary
+  // action, kept small so it doesn't crowd the compact header.
+  welcomeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minHeight: 44,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+    backgroundColor: theme.color.brandTint,
+    marginRight: 6,
+  },
+  welcomeBtnText: {
+    color: theme.color.text,
     fontSize: 10,
     letterSpacing: 1.2,
     fontWeight: "800",

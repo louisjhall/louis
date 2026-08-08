@@ -449,7 +449,7 @@ async def endpoint_coach_home_action_queue(
 ) -> dict:
     """Aggregate the coach's action queue from current V2 state."""
     clients_raw = await db.users.find(
-        {"role": "client", "status": {"$ne": "archived"}},
+        _live_client_match(),
         {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
          "profile": 1},
     ).to_list(500)
@@ -677,12 +677,13 @@ async def endpoint_coach_clients_directory(
 
     Filters: `active` (default) · `needs_attention` · `archived`.
     """
-    # Base query: role=client, honour archived filter.
-    match: dict = {"role": "client"}
+    # Base query: role=client, honour archived filter, exclude deleted rows.
     if filter == "archived":
+        match: dict = _live_client_match(include_archived=True)
+        # Override the status filter to require archived
         match["status"] = "archived"
     else:
-        match["status"] = {"$ne": "archived"}
+        match = _live_client_match()
 
     if q:
         match["$or"] = [
@@ -833,15 +834,15 @@ async def endpoint_coach_clients_directory(
 
     # Global counts for the filter tabs (independent of current filter)
     counts_all = {
-        "active":          await db.users.count_documents({"role": "client", "status": {"$ne": "archived"}}),
-        "archived":        await db.users.count_documents({"role": "client", "status": "archived"}),
+        "active":          await db.users.count_documents(_live_client_match()),
+        "archived":        await db.users.count_documents({"role": "client", "status": "archived", "is_deleted": {"$ne": True}}),
     }
     # Compute needs_attention against the *active* set only.
     counts_all["needs_attention"] = 0
     if filter != "needs_attention":
         # We already iterated; re-derive from a fresh pass on active only when needed
         active_clients = clients if filter == "active" and not q else await db.users.find(
-            {"role": "client", "status": {"$ne": "archived"}},
+            _live_client_match(),
             {"_id": 0, "id": 1, "profile": 1, "name": 1, "display_name": 1, "email": 1},
         ).to_list(500)
         for ac in active_clients:
@@ -907,6 +908,32 @@ def _is_operational_client(u: dict) -> bool:
     return True
 
 
+# Iter 162 · Shared "live client" filter — excludes archived, deleted and
+# soft-deleted user rows so the coach's dashboard doesn't render "[deleted
+# client]" ghosts. Callers can spread this into their Mongo query and add
+# extra clauses.
+_STATUS_EXCLUDE_FROM_DIRECTORY = ("archived", "deleted")
+
+
+def _live_client_match(include_archived: bool = False) -> dict:
+    """Base Mongo filter for coach directory / calendar queries.
+
+    Excludes:
+      * `status: "archived"`  (unless include_archived=True)
+      * `status: "deleted"`   (hard-delete tombstone)
+      * `is_deleted: true`    (soft-delete flag)
+    """
+    excludes: list[str] = []
+    if not include_archived:
+        excludes.append("archived")
+    excludes.append("deleted")
+    return {
+        "role": "client",
+        "status": {"$nin": excludes},
+        "is_deleted": {"$ne": True},
+    }
+
+
 @api.get("/v2/coach/calendar")
 async def endpoint_coach_calendar(
     days: int = 7,
@@ -931,7 +958,7 @@ async def endpoint_coach_calendar(
     date_from, date_to = dates[0], dates[-1]
 
     # Load clients
-    match: dict = {"role": "client", "status": {"$ne": "archived"}}
+    match: dict = _live_client_match()
     if q:
         match["$or"] = [
             {"name":         {"$regex": q, "$options": "i"}},

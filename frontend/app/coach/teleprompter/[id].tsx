@@ -29,8 +29,25 @@ const SPEED_STEP = 5;
 const SPEED_STORAGE_KEY = "crewfit.teleprompter.speed";
 
 export default function Teleprompter() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // Iter 162 · The teleprompter now handles two entry paths:
+  //
+  //   /coach/teleprompter/{check_in_id}
+  //     — classic weekly video against a check-in row.
+  //
+  //   /coach/teleprompter/welcome-{client_id}?welcome=1&clientName=…
+  //     — one-shot welcome video BEFORE the client has submitted their
+  //     first check-in. Skips the check-in fetch and pre-seeds isWelcome.
+  const { id, welcome, clientId: qClientId, clientName: qClientName } =
+    useLocalSearchParams<{ id: string; welcome?: string; clientId?: string; clientName?: string }>();
   const router = useRouter();
+  const isWelcomeMode =
+    String(welcome || "").toLowerCase() === "1" ||
+    String(id || "").startsWith("welcome-");
+  // For welcome-only mode we synthesize the client_id — either from the
+  // explicit `clientId` query param or by parsing it off the path prefix
+  // "welcome-{client_id}".
+  const welcomeClientId =
+    qClientId || (String(id || "").startsWith("welcome-") ? String(id).slice("welcome-".length) : "");
   const [ci, setCi] = useState<any>(null);
   const [script, setScript] = useState("");
   const [scriptDraft, setScriptDraft] = useState("");
@@ -46,7 +63,9 @@ export default function Teleprompter() {
   // Iter 156 — Welcome Video Phase 2. When ON, the outgoing POST omits
   // `check_in_id` and sets `video_kind: "welcome"` so the video is stored
   // as a one-shot welcome message instead of a weekly review.
-  const [isWelcome, setIsWelcome] = useState(false);
+  // Iter 162 · defaults to true when the route was opened via the welcome
+  // path so the toggle is already on when the coach arrives.
+  const [isWelcome, setIsWelcome] = useState<boolean>(isWelcomeMode);
   const currentOffset = useRef(0);   // manual-scroll aware offset
 
   const videoRef = useRef<any>(null);              // preview
@@ -60,6 +79,27 @@ export default function Teleprompter() {
   // Load check-in + script
   useEffect(() => {
     (async () => {
+      // Iter 162 · Welcome-only mode — no check-in exists. Synthesize a
+      // minimal `ci` from the query-string so downstream code (post body,
+      // header greeting) keeps working. Coach types the script inline.
+      if (isWelcomeMode && welcomeClientId) {
+        setCi({
+          id: null,
+          user_id: welcomeClientId,
+          user_name: qClientName || "Client",
+        });
+        setScript("");
+        setScriptDraft("");
+        // Restore last-used speed
+        try {
+          const stored = await AsyncStorage.getItem(SPEED_STORAGE_KEY);
+          if (stored) {
+            const n = parseInt(stored, 10);
+            if (n >= SPEED_MIN && n <= SPEED_MAX) setScrollSpeed(n);
+          }
+        } catch { /* ignore */ }
+        return;
+      }
       try {
         const r = await api<any>(`/coach/checkins/${id}`);
         setCi(r.check_in);
@@ -76,7 +116,7 @@ export default function Teleprompter() {
         }
       } catch { /* ignore */ }
     })();
-  }, [id]);
+  }, [id, isWelcomeMode, welcomeClientId, qClientName]);
 
   // Persist speed whenever the coach changes it (deferred, tolerant of failures)
   useEffect(() => {
@@ -86,6 +126,12 @@ export default function Teleprompter() {
   // Save script edits back to the check-in row (Iter 145)
   const saveScriptEdit = useCallback(async () => {
     if (scriptDraft === script) { setEditingScript(false); return; }
+    // Iter 162 · Welcome-only mode has no check-in row — persist locally only.
+    if (isWelcomeMode) {
+      setScript(scriptDraft);
+      setEditingScript(false);
+      return;
+    }
     setSavingScript(true);
     try {
       await api<any>(`/coach/checkins/${id}/script`, {
@@ -96,9 +142,15 @@ export default function Teleprompter() {
       setEditingScript(false);
     } catch (e: any) { Alert.alert("Save failed", e?.message || ""); }
     finally { setSavingScript(false); }
-  }, [id, script, scriptDraft]);
+  }, [id, script, scriptDraft, isWelcomeMode]);
 
   const resetScriptToOriginal = useCallback(async () => {
+    if (isWelcomeMode) {
+      // No original script to reset to for the welcome path.
+      setScriptDraft("");
+      setEditingScript(false);
+      return;
+    }
     setSavingScript(true);
     try {
       const r = await api<any>(`/coach/checkins/${id}/script/reset`, { method: "POST", body: {} });
@@ -106,7 +158,7 @@ export default function Teleprompter() {
       setScript(s); setScriptDraft(s); setEditingScript(false);
     } catch (e: any) { Alert.alert("Reset failed", e?.message || "No original script preserved."); }
     finally { setSavingScript(false); }
-  }, [id]);
+  }, [id, isWelcomeMode]);
 
   // Set up camera stream (web + expo web)
   useEffect(() => {
@@ -228,7 +280,10 @@ export default function Teleprompter() {
       };
       if (isWelcome) {
         body.video_kind = "welcome";
-      } else {
+      } else if (!isWelcomeMode) {
+        // Iter 162 · Only attach the check_in_id when we actually loaded
+        // one — welcome-only entry has `id="welcome-{clientId}"` which is
+        // NOT a real check-in id.
         body.check_in_id = id;
       }
       const v = await api<any>("/coach/videos", { method: "POST", body });

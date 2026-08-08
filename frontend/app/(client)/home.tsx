@@ -399,12 +399,21 @@ export default function Home() {
         >
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
-              {/* Iter 162 · Premium V2 — top bar compressed. Removed the CrewFit
-                  logo watermark (visual noise) and the notification bell now
-                  sits alone, right-aligned. Header height drops ~30%. */}
+              {/* Iter 162b · Centred CrewFit logo. Bell floats on the right,
+                  logo sits centred and enlarged (~118×36 vs the old 96×30).
+                  12px padding to the ClientProfileHeader below it preserves
+                  the hero rhythm. */}
               <View style={styles.topBar}>
                 <View style={{ flex: 1 }} />
-                <NotificationBell testID="client-notif-bell" />
+                <Image
+                  source={require("@/assets/images/crewfit-logo-full.png")}
+                  style={styles.topLogoCentered}
+                  contentFit="contain"
+                  accessibilityLabel="CrewFit"
+                />
+                <View style={styles.topBarRight}>
+                  <NotificationBell testID="client-notif-bell" />
+                </View>
               </View>
 
               <ClientProfileHeader
@@ -413,6 +422,7 @@ export default function Home() {
                 dayType={todaysDay?.day_type || todaysDay?.type || null}
                 dayTitle={todaysWorkout ? todaysWorkout.title : "REST & RECOVER"}
                 isStandby={!!standbyToday?.is_standby}
+                centered
               />
 
               <Pressable
@@ -1156,8 +1166,14 @@ const styles = StyleSheet.create({
   // Iter 162 · hero compressed ~30% — inner padding reduced and gap tightened.
   heroWrap: { minHeight: 260, backgroundColor: theme.color.surface2 },
   heroContent: { padding: theme.space.md, marginTop: theme.space.sm, gap: theme.space.sm },
-  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", marginBottom: 0 },
-  topLogo: { width: 96, height: 30, opacity: 0.82 },  // kept for back-compat; no longer rendered
+  // Iter 162b · Centred logo layout — flex row keeps the bell right-aligned
+  // while an absolutely-centred logo pins to the middle of the row. The
+  // `marginBottom: 12` on the topBar preserves the requested 12px padding
+  // between the logo and the greeting/name below it.
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 12, minHeight: 40 },
+  topBarRight: { position: "absolute", right: 0, top: 0, bottom: 0, justifyContent: "center" },
+  topLogo: { width: 96, height: 30, opacity: 0.82 },  // legacy — no longer rendered
+  topLogoCentered: { width: 118, height: 36, opacity: 0.95 },  // Iter 162b · +23% vs the 96×30 legacy size
   hello: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "800" },
   date: { color: theme.color.textMuted, marginTop: 4, letterSpacing: 2, fontSize: 11 },
   loadBadge: { flexDirection: "row", alignItems: "center", marginTop: theme.space.md, paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, borderWidth: 1, alignSelf: "flex-start", backgroundColor: "rgba(0,0,0,0.35)" },

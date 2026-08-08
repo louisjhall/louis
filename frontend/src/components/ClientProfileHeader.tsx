@@ -41,6 +41,9 @@ type Props = {
   dayTitle?: string | null;       // roster.day title if available
   isStandby?: boolean;
   onPressAvatar?: () => void;
+  /** Iter 162b · when true the header renders vertically stacked and
+   *  centre-aligned (used when a centred logo sits above it). */
+  centered?: boolean;
 };
 
 function firstName(name?: string | null): string {
@@ -57,6 +60,7 @@ function fmtDayline(): string {
 
 export function ClientProfileHeader({
   user, todayLoad: _todayLoad, dayType, dayTitle, isStandby, onPressAvatar,
+  centered = false,
 }: Props) {
   const router = useRouter();
   const p = user?.profile || {};
@@ -68,9 +72,9 @@ export function ClientProfileHeader({
   const dt = dayType ? String(dayType).replace(/_/g, " ").toUpperCase() : null;
 
   return (
-    <View style={styles.wrap}>
-      {/* Row 1: avatar + identity */}
-      <View style={styles.row}>
+    <View style={[styles.wrap, centered && styles.wrapCentered]}>
+      {/* Row 1: avatar + identity — centered mode stacks vertically. */}
+      <View style={[styles.row, centered && styles.rowCentered]}>
         <Pressable
           onPress={onPressAvatar || (() => router.push("/(client)/profile"))}
           hitSlop={8}
@@ -80,25 +84,28 @@ export function ClientProfileHeader({
             userId={user?.id}
             name={user?.name}
             photoUrl={user?.profile_photo_url || null}
-            size={62}
+            size={centered ? 56 : 62}
           />
         </Pressable>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <View style={styles.helloRow}>
+        <View style={[
+          { flex: 1, marginLeft: 12 },
+          centered && { flex: 0, marginLeft: 0, marginTop: 10, alignItems: "center" },
+        ]}>
+          <View style={[styles.helloRow, centered && styles.helloRowCentered]}>
             <Text style={styles.helloEyebrow}>HELLO</Text>
-            <CrewFitWings size={22} />
+            {!centered ? <CrewFitWings size={22} /> : null}
           </View>
           <Text style={styles.name} numberOfLines={1}>{firstName(user?.name)}</Text>
 
           {/* Role · Airline */}
           {(role || airline) ? (
-            <Text style={styles.role} numberOfLines={1}>
+            <Text style={[styles.role, centered && styles.roleCentered]} numberOfLines={1}>
               {role || "CREW"}{airline ? <Text style={styles.roleDim}>  ·  {airline}</Text> : null}
             </Text>
           ) : null}
 
           {/* Base + Location */}
-          <View style={styles.baseRow}>
+          <View style={[styles.baseRow, centered && styles.baseRowCentered]}>
             {base ? (
               <View style={styles.baseChip}>
                 <Ionicons name="airplane" size={11} color={theme.color.textMuted} />
@@ -120,7 +127,7 @@ export function ClientProfileHeader({
           / RED DAY / BLUE DAY / GREY DAY) — the coloured surface tokens
           in the dashboard already communicate load; the literal DAY label
           added visual noise without new information. */}
-      <View style={styles.metaRow}>
+      <View style={[styles.metaRow, centered && styles.metaRowCentered]}>
         {isStandby ? (
           <View style={styles.standbyPill}>
             <Ionicons name="radio" size={11} color={theme.color.amber} />
@@ -136,7 +143,7 @@ export function ClientProfileHeader({
 
       {/* Row 3: day title (workout / rest) */}
       {dayTitle ? (
-        <Text style={styles.dayTitle} numberOfLines={1}>{dayTitle}</Text>
+        <Text style={[styles.dayTitle, centered && styles.dayTitleCentered]} numberOfLines={1}>{dayTitle}</Text>
       ) : null}
     </View>
   );
@@ -144,7 +151,11 @@ export function ClientProfileHeader({
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: 4, paddingBottom: 12, gap: 12 },
+  // Iter 162b · centered variant — used when a large CrewFit logo sits
+  // above the header. Whole card stacks vertically and aligns to centre.
+  wrapCentered: { alignItems: "center", paddingHorizontal: 0, gap: 8 },
   row: { flexDirection: "row", alignItems: "center" },
+  rowCentered: { flexDirection: "column", alignItems: "center" },
 
   helloRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
   helloEyebrow: {
@@ -189,4 +200,10 @@ const styles = StyleSheet.create({
     color: theme.color.text, fontSize: 18, letterSpacing: 0.8,
     fontWeight: "900", fontFamily: theme.font.display, marginTop: -2,
   },
+  // Iter 162b · centred variants — used only when `centered` prop is on.
+  helloRowCentered: { justifyContent: "center", marginBottom: 4 },
+  roleCentered: { textAlign: "center" },
+  baseRowCentered: { justifyContent: "center" },
+  metaRowCentered: { justifyContent: "center", marginTop: 4 },
+  dayTitleCentered: { textAlign: "center", marginTop: 4 },
 });

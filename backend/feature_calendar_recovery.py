@@ -129,9 +129,20 @@ def _is_off_workout(w: Optional[dict]) -> bool:
         return True
     focus = str(w.get("focus") or "").lower()
     title = str(w.get("title") or "").lower()
-    if focus in OFF_LIKE:
+    workout_type = str(w.get("workout_type") or "").lower()
+    duration_min = w.get("duration_min")
+    # Iter 161 · Any workout with focus=recovery OR duration_min=0 (a Full
+    # Rest day from the JSON importer) OR workout_type=recovery/rest MUST
+    # be treated as a rest/off day for the missed-session pipeline.
+    # Otherwise a scheduled Full Rest that the client didn't tap gets
+    # incorrectly badged MISSED and offered a "recover" action.
+    if focus in OFF_LIKE or focus == "recovery":
         return True
-    if title.startswith("rest") or title.startswith("off"):
+    if workout_type in ("recovery", "rest", "off", "day_off"):
+        return True
+    if isinstance(duration_min, (int, float)) and int(duration_min) == 0:
+        return True
+    if title.startswith("rest") or title.startswith("off") or "full rest" in title:
         return True
     return False
 

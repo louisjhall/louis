@@ -4833,6 +4833,23 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
             fixed["fallback_type"] = None
             fixed["insufficient_content_reason"] = None
             fixed["needs_coach_review"] = False
+            # Iter 161 · Also clear the Traffic-Light variants — otherwise the
+            # client can still tap into green/amber/red and see the same
+            # bodyweight-fallback content that was healed into place.
+            variants = fixed.get("variants") or {}
+            if isinstance(variants, dict):
+                cleaned_variants: dict = {}
+                for k, v in variants.items():
+                    if not isinstance(v, dict):
+                        cleaned_variants[k] = v
+                        continue
+                    vv = dict(v)
+                    vv["exercises"] = []
+                    vv["warmup"] = []
+                    vv["cooldown"] = []
+                    vv["duration_min"] = 0
+                    cleaned_variants[k] = vv
+                fixed["variants"] = cleaned_variants
             # Clean the client-facing "SESSION ADJUSTED / couldn't safely match"
             # boilerplate from change_reason, keep anything else the coach set.
             cr = fixed.get("change_reason") or ""
@@ -4872,6 +4889,7 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
                         "insufficient_content_reason": None,
                         "needs_coach_review": False,
                         "change_reason": h.get("change_reason"),
+                        "variants": h.get("variants") or {},
                         "restored_from_fallback_at": now_iso(),
                     },
                     "$unset": {"auto_healed_at": ""},

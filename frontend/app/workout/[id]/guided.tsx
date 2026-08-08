@@ -185,6 +185,11 @@ export default function GuidedFlow() {
   const [workTimer, setWorkTimer] = useState(0);
   const [previousLabel, setPreviousLabel] = useState<string>("");
   const [howToOpen, setHowToOpen] = useState(false);
+  // Iter 161 · When the "HOW TO" button is tapped from the WARM-UP phase we
+  // need the sheet to show the *warmup drill*, not the (upcoming) main
+  // exercise. Track the exercise the sheet was opened against + its content.
+  const [howToTargetEx, setHowToTargetEx] = useState<any>(null);
+  const [howToTargetContent, setHowToTargetContent] = useState<any>(null);
   // Iter 94t (Phase 2) — When the client opens the demo/how-to sheet during
   // a work set, we auto-pause the workout so they can actually study the
   // video. On close we restore whatever paused state they were in before.
@@ -192,8 +197,20 @@ export default function GuidedFlow() {
   const openHowTo = useCallback(() => {
     pausedBeforeHowTo.current = paused;
     setPaused(true);
+    // Snapshot the exercise the user tapped from — could be main OR warmup.
+    // The sheet reads from this snapshot so it never flips mid-view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const target = phase === "warmup" ? (workout?.warmup?.[warmupIdx] || null) : (currentEx || null);
+    setHowToTargetEx(target);
+    setHowToTargetContent(null);
+    if (target?.name) {
+      api<any>(`/exercises/content?name=${encodeURIComponent(target.name)}`)
+        .then((r) => setHowToTargetContent(r?.exercise || null))
+        .catch(() => setHowToTargetContent(null));
+    }
     setHowToOpen(true);
-  }, [paused]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused, phase, warmupIdx, currentEx?.name, workout?.warmup]);
   const closeHowTo = useCallback(() => {
     setHowToOpen(false);
     setPaused(pausedBeforeHowTo.current);
@@ -669,6 +686,7 @@ export default function GuidedFlow() {
             paused={paused}
             onSkipItem={skipWarmup}
             onSkipAll={skipAllWarmup}
+            onHowTo={openHowTo}
             nextUp={nextUpLabel}
           />
         ) : (
@@ -710,8 +728,8 @@ export default function GuidedFlow() {
       {/* How-to bottom sheet */}
       <HowToSheet
         visible={howToOpen}
-        exercise={currentEx}
-        content={content}
+        exercise={howToTargetEx || currentEx}
+        content={howToTargetContent || content}
         onClose={closeHowTo}
         onSwap={() => { closeHowTo(); setSwapOpen(true); }}
       />
@@ -755,10 +773,10 @@ export default function GuidedFlow() {
 /*  Warmup Panel                                                               */
 /* -------------------------------------------------------------------------- */
 function WarmupPanel({
-  item, index, total, timeLeft, paused, onSkipItem, onSkipAll, nextUp,
+  item, index, total, timeLeft, paused, onSkipItem, onSkipAll, onHowTo, nextUp,
 }: {
   item: any; index: number; total: number; timeLeft: number; paused: boolean;
-  onSkipItem: () => void; onSkipAll: () => void; nextUp: string;
+  onSkipItem: () => void; onSkipAll: () => void; onHowTo?: () => void; nextUp: string;
 }) {
   const [content, setContent] = useState<any>(null);
   useEffect(() => {
@@ -803,6 +821,12 @@ function WarmupPanel({
       )}
 
       <View style={styles.rowActions}>
+        {onHowTo ? (
+          <Pressable onPress={onHowTo} style={styles.secondaryBtn} testID="gf-warmup-howto">
+            <Ionicons name="play-circle" size={14} color={theme.color.brand} />
+            <Text style={styles.secondaryBtnT}>HOW TO</Text>
+          </Pressable>
+        ) : null}
         <Pressable onPress={onSkipItem} style={styles.secondaryBtn} testID="gf-warmup-skip">
           <Ionicons name="play-forward" size={14} color={theme.color.brand} />
           <Text style={styles.secondaryBtnT}>SKIP MOVE</Text>

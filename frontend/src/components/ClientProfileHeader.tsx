@@ -14,7 +14,7 @@ import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { theme, loadColor } from "@/src/lib/theme";
+import { theme } from "@/src/lib/theme";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 import { LocationBadge } from "@/src/components/LocationBadge";
 import { CrewFitWings } from "@/src/components/Logo";
@@ -56,14 +56,15 @@ function fmtDayline(): string {
 }
 
 export function ClientProfileHeader({
-  user, todayLoad, dayType, dayTitle, isStandby, onPressAvatar,
+  user, todayLoad: _todayLoad, dayType, dayTitle, isStandby, onPressAvatar,
 }: Props) {
   const router = useRouter();
   const p = user?.profile || {};
   const role = p.job_title;
   const airline = p.airline;
   const base = p.home_base;
-  const loadC = loadColor(todayLoad || "grey");
+  // Iter 161 · todayLoad still accepted for prop back-compat but no longer
+  // rendered — surface colouring elsewhere already conveys load.
   const dt = dayType ? String(dayType).replace(/_/g, " ").toUpperCase() : null;
 
   return (
@@ -114,12 +115,12 @@ export function ClientProfileHeader({
         </View>
       </View>
 
-      {/* Row 2: day-load + standby badges */}
+      {/* Row 2: standby + optional day-type strip.
+          Iter 161 · Removed the "{COLOR} DAY" load-pill (GREEN DAY / AMBER DAY
+          / RED DAY / BLUE DAY / GREY DAY) — the coloured surface tokens
+          in the dashboard already communicate load; the literal DAY label
+          added visual noise without new information. */}
       <View style={styles.metaRow}>
-        <View style={[styles.loadPill, { borderColor: loadC }]} testID="header-load-pill">
-          <View style={[styles.loadDot, { backgroundColor: loadC }]} />
-          <Text style={styles.loadT}>{String(todayLoad || "grey").toUpperCase()} DAY</Text>
-        </View>
         {isStandby ? (
           <View style={styles.standbyPill}>
             <Ionicons name="radio" size={11} color={theme.color.amber} />

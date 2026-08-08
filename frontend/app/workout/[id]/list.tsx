@@ -24,6 +24,7 @@ import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
 import { RestTimer } from "@/src/components/RestTimer";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
+import { formatPrescription, inferPrescription } from "@/src/lib/formatPrescription";
 
 /* -------------------------------------------------------------------------- */
 /*  Types & helpers                                                            */
@@ -660,10 +661,22 @@ function ExerciseCard({
   const [restRunning, setRestRunning] = useState(false);
 
   // Meta line: only include the pieces that make sense for the prescription.
+  // Iter 163 · use the deterministic formatPrescription helper for the
+  // volume + unit portion so it never breaks under Amber/Red scaling.
   const metaBits: string[] = [];
-  metaBits.push(`${inputs.length} set${inputs.length === 1 ? "" : "s"}`);
-  if (ex.reps != null) metaBits.push(`${ex.reps} reps`);
-  else if (ex.duration_sec) metaBits.push(fmtMMSS(ex.duration_sec));
+  const prescriptionLine = formatPrescription({
+    ...inferPrescription(ex),
+    // If the exercise came from the JSON importer with explicit structured
+    // fields (sets/volume/unit), those take precedence via inferPrescription.
+    sets: ex.sets ?? inferPrescription(ex).sets ?? inputs.length,
+  });
+  if (prescriptionLine) {
+    metaBits.push(prescriptionLine);
+  } else {
+    // No prescription at all — just show the set count so the client still
+    // sees something meaningful in the card meta line.
+    metaBits.push(`${inputs.length} set${inputs.length === 1 ? "" : "s"}`);
+  }
   if (ex.load != null && String(ex.load).trim() && String(ex.load).toLowerCase() !== "bw")
     metaBits.push(String(ex.load));
   if (ex.rpe != null && String(ex.rpe).trim()) metaBits.push(`RPE ${ex.rpe}`);

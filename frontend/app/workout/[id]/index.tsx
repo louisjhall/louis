@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -89,6 +89,28 @@ export default function WorkoutDetail() {
   }, [w?.id, isCoach]);
 
   const startWorkout = useCallback(async () => {
+    // Iter 163 · Rest-day guard. Full Rest / duration=0 / recovery-typed
+    // workouts must never enter the workout player — the player would try
+    // to hydrate an empty exercise list and (pre-fix) fall through to a
+    // bodyweight fallback. Router.back() takes the client to the dashboard.
+    if (w) {
+      const wt = String((w as any).workout_type || "").toLowerCase();
+      const title = String((w as any).title || "").toLowerCase();
+      const dur = (w as any).duration_min;
+      const isRest =
+        wt === "rest" || wt === "recovery" || wt === "off" || wt === "day_off" ||
+        title.startsWith("rest") || title.startsWith("off") || title.includes("full rest") ||
+        (typeof dur === "number" && dur === 0) ||
+        (((w as any).exercises || []).length === 0 && ((w as any).warmup || []).length === 0);
+      if (isRest) {
+        Alert.alert(
+          "Rest Day",
+          "This is a scheduled rest day. Enjoy the recovery — no workout to start today.",
+          [{ text: "OK", onPress: () => router.back() }],
+        );
+        return;
+      }
+    }
     // Traffic Light — if the client selected amber/red, propagate it into
     // the destination route so Guided / Manual play shows the adjusted
     // session (not the base green one).

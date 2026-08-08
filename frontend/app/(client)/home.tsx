@@ -725,10 +725,47 @@ export default function Home() {
                 </View>
                 <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
               </Pressable>
-              <Pressable testID="start-today-workout" onPress={() => router.push(`/workout/${todaysWorkout.id}`)} style={styles.startCta}>
-                <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
-                <Ionicons name="arrow-forward" size={20} color="#fff" />
-              </Pressable>
+              {(() => {
+                // Iter 163 · Rest-day guard. If the workout is explicitly a
+                // Full Rest / recovery day (workout_type in rest/recovery,
+                // OR title contains "full rest" / starts with "rest", OR
+                // duration_min == 0), do NOT open the workout player. Show
+                // a simple summary card so the client understands why there
+                // is nothing to start.
+                const w = todaysWorkout || {};
+                const wt = String(w.workout_type || "").toLowerCase();
+                const title = String(w.title || "").toLowerCase();
+                const isRestDay =
+                  wt === "rest" || wt === "recovery" || wt === "off" || wt === "day_off" ||
+                  title.startsWith("rest") || title.startsWith("off") || title.includes("full rest") ||
+                  (typeof w.duration_min === "number" && w.duration_min === 0) ||
+                  ((w.exercises || []).length === 0 && (w.warmup || []).length === 0);
+                if (isRestDay) {
+                  return (
+                    <View style={styles.restDayCard} testID="today-rest-day-summary">
+                      <View style={styles.restDayIconWrap}>
+                        <Ionicons name="moon" size={22} color={theme.color.textMuted} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.restDayTitle}>REST DAY</Text>
+                        <Text style={styles.restDaySub} numberOfLines={2}>
+                          No workout today. Recover, hydrate, and sleep well.
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                }
+                return (
+                  <Pressable
+                    testID="start-today-workout"
+                    onPress={() => router.push(`/workout/${todaysWorkout.id}`)}
+                    style={styles.startCta}
+                  >
+                    <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
+                    <Ionicons name="arrow-forward" size={20} color="#fff" />
+                  </Pressable>
+                );
+              })()}
             </>
           ) : setupDay?.is_setup_day ? (
             <View style={styles.setupCard} testID="setup-day-card">
@@ -1137,6 +1174,29 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   reportBtnT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
+  // Iter 163 · Rest-day summary card — replaces the Start Workout CTA on
+  // Full Rest / recovery days so the client can't tap into an empty
+  // workout player and see the AI-fallback bodyweight session.
+  restDayCard: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 14, borderRadius: theme.radius.card,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+    marginTop: 4,
+  },
+  restDayIconWrap: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: theme.color.surface,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  restDayTitle: {
+    color: theme.color.text, fontSize: 12, fontWeight: "900",
+    letterSpacing: 2,
+  },
+  restDaySub: {
+    color: theme.color.textSoft, fontSize: 13, marginTop: 3,
+  },
   duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
 
   // Iter 106 — Standalone Upload Roster button

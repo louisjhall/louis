@@ -373,6 +373,14 @@ export default function Home() {
 
   return (
     <View style={styles.root}>
+      {/* Iter 162 · Premium V2 — subtle vertical gradient from #000 to #121212.
+          Positioned absolute so it sits behind the ScrollView content, giving
+          the whole dashboard a soft top-to-bottom depth cue. */}
+      <LinearGradient
+        colors={[theme.color.bgGradientTop, theme.color.bgGradientBottom]}
+        style={StyleSheet.absoluteFillObject}
+        pointerEvents="none"
+      />
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ paddingBottom: 40 }}
@@ -390,16 +398,11 @@ export default function Home() {
         >
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
+              {/* Iter 162 · Premium V2 — top bar compressed. Removed the CrewFit
+                  logo watermark (visual noise) and the notification bell now
+                  sits alone, right-aligned. Header height drops ~30%. */}
               <View style={styles.topBar}>
-                {/* Iter 106 — full CrewFit wordmark logo, small and slightly
-                    transparent so it reads as a subtle brand watermark rather
-                    than a hard header. */}
-                <Image
-                  source={require("@/assets/images/crewfit-logo-full.png")}
-                  style={styles.topLogo}
-                  contentFit="contain"
-                  accessibilityLabel="CrewFit"
-                />
+                <View style={{ flex: 1 }} />
                 <NotificationBell testID="client-notif-bell" />
               </View>
 
@@ -416,11 +419,14 @@ export default function Home() {
                 style={styles.reportBtn}
                 testID="client-report-issue"
               >
-                <Ionicons name="flag-outline" size={13} color={theme.color.brand} />
+                <Ionicons name="flag-outline" size={13} color={theme.color.textMuted} />
                 <Text style={styles.reportBtnT}>REPORT AN ISSUE</Text>
               </Pressable>
 
-              {todaysDay?.layover_city || todaysDay?.flights?.[0] || todaysDay?.day_type ? (
+              {/* Iter 162 · Duplicate day label removed. RosterDayChip alone
+                  handles the visual signal for HOME / LAYOVER / DUTY — the
+                  ClientProfileHeader already prints the day-type text once. */}
+              {todaysDay?.layover_city || todaysDay?.flights?.[0] ? (
                 <View style={styles.dutyRow}>
                   <RosterDayChip
                     day={{
@@ -454,7 +460,9 @@ export default function Home() {
           </SafeAreaView>
         </AIHeroImage>
 
-        <View style={{ padding: theme.space.lg, gap: 12 }}>
+        {/* Iter 162 · Premium V2 · section spacing bumped from 12 → 20 so
+            major dashboard blocks breathe more clearly. */}
+        <View style={{ padding: theme.space.lg, gap: theme.space.section }}>
           {/* Iter 159 — Roster Needed hero. Shows ONLY when the client has
               zero confirmed roster days AND no upload/parse job is in
               flight. Placed as the very first surface so a brand-new
@@ -707,14 +715,14 @@ export default function Home() {
               >
                 <View style={styles.realityBtnLeft}>
                   <View style={styles.realityIconWrap}>
-                    <Ionicons name="compass" size={20} color={theme.color.brand} />
+                    <Ionicons name="compass" size={16} color={theme.color.textMuted} />
                   </View>
                   <View>
                     <Text style={styles.realityTitle}>TODAY&apos;S REALITY</Text>
                     <Text style={styles.realitySub}>Tell CrewFit what has changed</Text>
                   </View>
                 </View>
-                <Ionicons name="arrow-forward" size={16} color={theme.color.brand} />
+                <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
               </Pressable>
               <Pressable testID="start-today-workout" onPress={() => router.push(`/workout/${todaysWorkout.id}`)} style={styles.startCta}>
                 <Text style={styles.startText}>{`START TODAY'S WORKOUT`}</Text>
@@ -1113,26 +1121,33 @@ function QuickBtn({ icon, label, onPress, testID }: any) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.color.surface },
-  heroWrap: { minHeight: 360, backgroundColor: theme.color.surface2 },
-  heroContent: { padding: theme.space.lg, marginTop: theme.space.md, gap: theme.space.md },
-  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
-  topLogo: { width: 96, height: 30, opacity: 0.82 },
+  root: {
+    flex: 1,
+    // Iter 162 · Premium V2 — pure black base; gradient overlay above the
+    // ScrollView blends into charcoal at the bottom.
+    backgroundColor: theme.color.bgGradientTop,
+  },
+  // Iter 162 · hero compressed ~30% — inner padding reduced and gap tightened.
+  heroWrap: { minHeight: 260, backgroundColor: theme.color.surface2 },
+  heroContent: { padding: theme.space.md, marginTop: theme.space.sm, gap: theme.space.sm },
+  topBar: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", marginBottom: 0 },
+  topLogo: { width: 96, height: 30, opacity: 0.82 },  // kept for back-compat; no longer rendered
   hello: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "800" },
   date: { color: theme.color.textMuted, marginTop: 4, letterSpacing: 2, fontSize: 11 },
   loadBadge: { flexDirection: "row", alignItems: "center", marginTop: theme.space.md, paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill, borderWidth: 1, alignSelf: "flex-start", backgroundColor: "rgba(0,0,0,0.35)" },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   loadText: { color: theme.color.text, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
   hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
-  dutyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" },
+  dutyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" },
   reportBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
-    alignSelf: "flex-start", marginTop: 10,
+    alignSelf: "flex-start", marginTop: 4,
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6,
-    borderWidth: 1, borderColor: theme.color.brand,
-    backgroundColor: `${theme.color.brand}15`,
+    // Iter 162 · Neutral gray outline — Reserve red for primary CTAs only.
+    borderWidth: 1, borderColor: theme.color.border,
+    backgroundColor: "transparent",
   },
-  reportBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
+  reportBtnT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
   duty: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
 
   // Iter 106 — Standalone Upload Roster button
@@ -1252,30 +1267,39 @@ const styles = StyleSheet.create({
   rBigLabel: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   rBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.color.surface3, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 8, borderWidth: 1, borderColor: theme.color.border },
   rBtnText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
-  eventCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md },
-  eventCardWrap: { borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md, overflow: "hidden", minHeight: 128 },
+  eventCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.card, borderWidth: 1, borderColor: theme.color.border, marginBottom: 0 },
+  eventCardWrap: { borderRadius: theme.radius.card, borderWidth: 1, borderColor: theme.color.border, marginBottom: 0, overflow: "hidden", minHeight: 128 },
   eventCardInner: { flexDirection: "row", alignItems: "center", padding: theme.space.md },
   eTop: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
   eName: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4 },
   eDate: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   eBig: { color: theme.color.text, fontSize: 28, fontWeight: "900" },
   eBigLbl: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.5, fontWeight: "800" },
-  addEventBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: theme.radius.md, borderStyle: "dashed", borderWidth: 1, borderColor: theme.color.brand, marginBottom: theme.space.md },
-  addEventText: { color: theme.color.brand, fontWeight: "800", letterSpacing: 1.5, fontSize: 11 },
+  addEventBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: theme.radius.card, borderStyle: "dashed", borderWidth: 1, borderColor: theme.color.border, marginBottom: 0 },
+  addEventText: { color: theme.color.textMuted, fontWeight: "800", letterSpacing: 1.5, fontSize: 11 },
   startCta: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: theme.color.brand, paddingVertical: 18, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md },
+  // Iter 162 · Premium V2 — Today's Reality is now a slim notification-style
+  // banner (44px tall vs the previous ~64px card). Neutral border, no
+  // background fill, condensed padding. Reserve red exclusively for
+  // primary CTAs (start-workout / log-meal) and critical alerts.
   realityBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingVertical: 14, paddingHorizontal: theme.space.lg,
-    borderRadius: theme.radius.md, marginBottom: theme.space.md,
-    backgroundColor: theme.color.surface2,
-    borderWidth: 1, borderColor: theme.color.brand,
+    paddingVertical: 8, paddingHorizontal: 12,
+    borderRadius: theme.radius.md, marginBottom: 0,
+    backgroundColor: "transparent",
+    borderWidth: 1, borderColor: theme.color.border,
   },
-  realityBtnLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-  realityEmoji: { fontSize: 22 },
-  realityIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  realityBtnLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
+  realityEmoji: { fontSize: 18 },
+  realityIconWrap: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    alignItems: "center", justifyContent: "center",
+  },
   promptIconWrap: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
-  realityTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
-  realitySub: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  realityTitle: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.3 },
+  realitySub: { color: theme.color.textSoft, fontSize: 10, marginTop: 1 },
   promptWrap: { marginBottom: theme.space.md, gap: 8 },
   promptCard: {
     padding: 12, borderRadius: 10,

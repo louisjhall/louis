@@ -265,10 +265,11 @@ const styles = StyleSheet.create({
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 3 },
   countPill: {
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
-    backgroundColor: theme.color.brandTint,
-    borderWidth: 1, borderColor: theme.color.brand,
+    // Iter 162 · Neutral surface — reserve red for primary CTAs / critical alerts.
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
   },
-  countPillT: { color: theme.color.brand, fontSize: 12, fontWeight: "900" },
+  countPillT: { color: theme.color.textMuted, fontSize: 12, fontWeight: "900" },
 
   row: {
     gap: 14, paddingVertical: 4, paddingHorizontal: 2,

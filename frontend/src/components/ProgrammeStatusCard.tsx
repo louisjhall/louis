@@ -335,11 +335,12 @@ export function ProgrammeStatusCard({
 const styles = StyleSheet.create({
   card: {
     padding: 16,
-    borderRadius: 14,
-    marginBottom: theme.space.md,
-    backgroundColor: theme.color.brandTint,
+    // Iter 162 · Premium V2 · larger radius, neutral surface + border.
+    borderRadius: theme.radius.card,
+    marginBottom: 0,
+    backgroundColor: theme.color.surface2,
     borderWidth: 1,
-    borderColor: theme.color.brand,
+    borderColor: theme.color.border,
   },
   headline: {
     flexDirection: "row",
@@ -349,7 +350,7 @@ const styles = StyleSheet.create({
   headIconWrap: {
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: theme.color.surface,
-    borderWidth: 1, borderColor: theme.color.brand,
+    borderWidth: 1, borderColor: theme.color.border,
     alignItems: "center", justifyContent: "center",
   },
   eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },

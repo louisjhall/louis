@@ -319,6 +319,10 @@ export function ClientCalendarPanel({
   const [paging, setPaging] = useState<"none" | "back" | "fwd" | "today">("none");
   const [activeRecovery, setActiveRecovery] = useState<DayCard | null>(null);
   const [moveSource, setMoveSource] = useState<DayCard | null>(null);
+  // Iter 162 · Per-date open/closed override map. Today defaults to open,
+  // every other day defaults to closed. Tapping the chevron flips the
+  // override for that date only.
+  const [expandedByDate, setExpandedByDate] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async (from: string, to: string) => {
     try {
@@ -471,6 +475,21 @@ export function ClientCalendarPanel({
             >
               <DayRow
                 card={c}
+                expanded={
+                  // Iter 162 · Today is expanded by default; future/past days
+                  // start collapsed. Any explicit toggle from the user takes
+                  // precedence over the default.
+                  expandedByDate[c.date] !== undefined
+                    ? !!expandedByDate[c.date]
+                    : !!c.is_today
+                }
+                onToggle={() =>
+                  setExpandedByDate((s) => ({
+                    ...s,
+                    [c.date]:
+                      s[c.date] !== undefined ? !s[c.date] : !c.is_today,
+                  }))
+                }
                 onOpenWorkout={() => goDetail(c)}
                 onLongPress={() => onLongPressDay?.(c.date)}
                 onRecover={() => setActiveRecovery(c)}
@@ -526,12 +545,16 @@ export function ClientCalendarPanel({
 
 function DayRow({
   card,
+  expanded,
+  onToggle,
   onOpenWorkout,
   onLongPress,
   onRecover,
   onMove,
 }: {
   card: DayCard;
+  expanded: boolean;
+  onToggle: () => void;
   onOpenWorkout: () => void;
   onLongPress?: () => void;
   onRecover: () => void;
@@ -598,6 +621,49 @@ function DayRow({
     ? loadColor(card.workout.day_load || rd?.load)
     : (rd ? loadColor(rd.load) : theme.color.textDim);
 
+  // Iter 162 · Compact tile when collapsed. Future days start collapsed to
+  // reduce dashboard clutter; the chevron toggles the panel-level state.
+  // Today defaults to expanded so the client always sees full context.
+  if (!expanded) {
+    return (
+      <Pressable
+        onPress={onToggle}
+        onLongPress={onLongPress}
+        delayLongPress={350}
+        style={[styles.row, styles.rowCollapsed, card.is_today && styles.rowToday]}
+        testID={`cal-day-${card.date}`}
+      >
+        <View style={[styles.loadBar, { backgroundColor: barColor }]} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={styles.rowHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.dateCompact, card.is_today && { color: theme.color.brand }]}>
+                {card.is_today ? "TODAY · " : ""}{dl.toUpperCase()}
+              </Text>
+              <Text style={styles.titleCompact} numberOfLines={1}>
+                {card.workout?.title
+                  || (card.roster_day && !_isRestish(card.roster_day) ? "REST FROM TRAINING" : "REST")}
+              </Text>
+            </View>
+            <View style={styles.rowHeadRight}>
+              {card.badge === "completed" ? (
+                <View style={styles.completedBadge} testID={`cal-day-${card.date}-completed`}>
+                  <Ionicons name="checkmark-circle" size={12} color="#fff" />
+                  <Text style={styles.completedBadgeT}>COMPLETED</Text>
+                </View>
+              ) : (
+                <View style={[styles.badge, { backgroundColor: bs.bg }]}>
+                  <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
+                </View>
+              )}
+              <Ionicons name="chevron-down" size={16} color={theme.color.textMuted} />
+            </View>
+          </View>
+        </View>
+      </Pressable>
+    );
+  }
+
   return (
     <Pressable
       onPress={card.workout ? onOpenWorkout : undefined}
@@ -624,9 +690,22 @@ function DayRow({
               old bottom chip row. */}
           <View style={styles.rowHeadRight}>
             <DutyIconDot chip={dutyChip} />
-            <View style={[styles.badge, { backgroundColor: bs.bg }]}>
-              <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
-            </View>
+            {card.badge === "completed" ? (
+              <View style={styles.completedBadge} testID={`cal-day-${card.date}-completed-full`}>
+                <Ionicons name="checkmark-circle" size={12} color="#fff" />
+                <Text style={styles.completedBadgeT}>COMPLETED</Text>
+              </View>
+            ) : (
+              <View style={[styles.badge, { backgroundColor: bs.bg }]}>
+                <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
+              </View>
+            )}
+            {/* Iter 162 · Chevron toggles collapse. Today defaults expanded
+                (chevron-up), future/past days default collapsed but can be
+                opened via the compact tile. */}
+            <Pressable onPress={onToggle} hitSlop={8} testID={`cal-day-${card.date}-toggle`}>
+              <Ionicons name="chevron-up" size={16} color={theme.color.textMuted} />
+            </Pressable>
           </View>
         </View>
 
@@ -688,11 +767,9 @@ function DayRow({
                   {"  ·  "}{rd?.layover_city}
                 </Text>
               ) : null}
-              {rd?.load ? (
-                <View style={[styles.dutyLoadPill, { backgroundColor: loadColor(rd.load) }]}>
-                  <Text style={styles.dutyLoadPillT}>{String(rd.load).toUpperCase()}</Text>
-                </View>
-              ) : null}
+              {/* Iter 162 · Removed the BLUE / GREEN / AMBER / RED load-text
+                  pill — the coloured left edge (loadBar) already conveys
+                  intensity without needing the literal label. */}
             </View>
             {_flights.map((f) => (
               <View key={f.key} style={styles.dutyFlightRow}>
@@ -862,14 +939,29 @@ const styles = StyleSheet.create({
   },
   rowToday: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   rowMissed: { borderColor: theme.color.red, backgroundColor: "rgba(239,68,68,0.06)" },
+  // Iter 162 · Compact tile — future/past days collapse into a single-row
+  // strip; chevron toggles expansion. Reduces dashboard clutter and lets
+  // the client scan a week of workouts at a glance.
+  rowCollapsed: { marginBottom: 6 },
   loadBar: { width: 4, backgroundColor: theme.color.border },
   rowHead: { flexDirection: "row", alignItems: "flex-start", padding: 12, paddingBottom: 4 },
 
   date: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
   dateSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  dateCompact: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  titleCompact: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
 
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
   badgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  // Iter 162 · Bold green Completed badge — replaces the generic status
+  // pill whenever the workout is done. High-contrast fill so the client
+  // gets an unmistakable "you finished this" visual.
+  completedBadge: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 10, backgroundColor: theme.color.green,
+  },
+  completedBadgeT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
 
   title: { color: theme.color.text, fontSize: 14, fontWeight: "800", paddingHorizontal: 12, marginTop: 2 },
   titleRest: { color: theme.color.textMuted, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, marginTop: 2, letterSpacing: 1 },

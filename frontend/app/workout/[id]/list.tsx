@@ -10,7 +10,7 @@
  * Logging uses POST /workouts/{id}/sets — identical to the Guided flow —
  * so nothing changes on the server side.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   ActivityIndicator, Modal, Image, Alert,
@@ -63,43 +63,51 @@ function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
 function resolveCols(ex: ExRow): ColSpec[] {
   const cols: ColSpec[] = [];
   const isCardio = ex.logging_type === "cardio" || _isCardioName(ex.name, ex.reps, ex.duration);
-  const isTimed = ex.logging_type === "timer" || (ex.duration_sec && ex.duration_sec > 0);
   const hasReps = ex.reps != null && String(ex.reps).trim() !== "";
-  const hasLoad = ex.load != null && String(ex.load).trim() !== "" &&
-                  !["bw", "bodyweight", "n/a", "-"].includes(String(ex.load).toLowerCase());
+  const hasDuration =
+    (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
+    ex.logging_type === "timer" ||
+    isCardio;
+  const hasLoad =
+    ex.load != null &&
+    String(ex.load).trim() !== "" &&
+    !["bw", "bodyweight", "n/a", "-"].includes(String(ex.load).toLowerCase());
+  const nameLc = (ex.name || "").toLowerCase();
+  const impliesLoad = /(dumbbell|barbell|kettlebell|kb|db|cable|machine|weighted|load)/.test(nameLc);
+  // kg column: only when explicitly prescribed or implied by name — never on
+  // pure cardio (running/rowing/etc).
+  const showLoad = (hasLoad || impliesLoad) && !isCardio;
   const hasRpe = ex.rpe != null && String(ex.rpe).trim() !== "";
 
-  if (isCardio) {
-    // Cardio: time is primary; distance only if the name/reps suggests one
+  // Iter 162 · Cleaner rule set (user spec):
+  //   • duration + no reps → TIME + optional LOAD only (no REPS box)
+  //   • reps + no duration → LOAD + REPS only (no TIME box)
+  //   • both → LOAD + REPS + TIME
+  //   • neither → LOAD + REPS as safe default
+  if (hasDuration && !hasReps) {
+    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
     cols.push({ key: "duration", label: "TIME", flex: 1 });
+  } else if (hasReps && !hasDuration) {
+    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
+    cols.push({ key: "reps", label: "REPS", width: 58 });
+  } else if (hasReps && hasDuration) {
+    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
+    cols.push({ key: "reps", label: "REPS", width: 58 });
+    cols.push({ key: "duration", label: "TIME", width: 78 });
+  } else {
+    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
+    cols.push({ key: "reps", label: "REPS", width: 58 });
+  }
+
+  // Cardio distance — appears only if the exercise name / reps text
+  // explicitly mentions a distance unit.
+  if (isCardio) {
     const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""}`.toLowerCase();
     if (/\b(km|k|mile|distance)\b/.test(hay)) {
       cols.push({ key: "distance", label: "DIST km", flex: 1 });
     }
-    if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
-    return cols;
   }
-  if (isTimed && !hasReps) {
-    // Pure timed drill (mobility, plank, breath work). No weight, no distance.
-    cols.push({ key: "duration", label: "TIME", flex: 1 });
-    if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
-    return cols;
-  }
-  // Strength / rep-based path — load column ONLY if a load was prescribed
-  // OR the exercise name mentions a loaded implement (dumbbell/barbell/kb).
-  const nameLc = (ex.name || "").toLowerCase();
-  const impliesLoad = /(dumbbell|barbell|kettlebell|kb|db|cable|machine|weighted|load)/.test(nameLc);
-  if (hasLoad || impliesLoad) {
-    cols.push({ key: "weight", label: "kg", width: 68 });
-  }
-  if (hasReps || !isTimed) {
-    // reps column even for unspecified drills like "Push-up" so the client
-    // can log what they did.
-    cols.push({ key: "reps", label: "REPS", width: 58 });
-  }
-  if (isTimed) {
-    cols.push({ key: "duration", label: "TIME", width: 68 });
-  }
+
   if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
   return cols;
 }
@@ -146,6 +154,151 @@ function fmtMMSS(sec: number): string {
   const s = Math.max(0, sec % 60);
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+/**
+ * PlayableTimePill — Iter 162
+ *
+ * A tap-to-count-down duration field for the manual workout log.
+ *
+ *   idle    : shows the client's typed value (or "mm:ss" placeholder). Tap
+ *             to prime a countdown from the prescribed duration_sec.
+ *   armed   : shows the prescribed time + a small play glyph. Tap to run.
+ *   running : counts down every 250 ms; MM:SS displayed. Tap to pause.
+ *   paused  : same as running but frozen. Tap to resume, long-press to reset.
+ *   done    : stamps "mm:ss" into the log field via onChange, returns to idle.
+ *
+ * Uses a monotonic end-timestamp (Date.now()) so back-grounding briefly on
+ * iOS/Android doesn't drift the countdown. No native modules, pure JS timer.
+ */
+function PlayableTimePill({
+  value, prescribedSec, disabled, style, testID, onChange,
+}: {
+  value: string;
+  prescribedSec?: number | null;
+  disabled?: boolean;
+  style?: any;
+  testID?: string;
+  onChange: (v: string) => void;
+}) {
+  type Mode = "idle" | "running" | "paused" | "done";
+  const [mode, setMode] = useState<Mode>("idle");
+  const [remaining, setRemaining] = useState<number>(() =>
+    typeof prescribedSec === "number" && prescribedSec > 0 ? prescribedSec : 0,
+  );
+  const endRef = useRef<number>(0);
+  const tickRef = useRef<any>(null);
+
+  const stopTick = () => {
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+  };
+
+  const startTick = useCallback((from: number) => {
+    endRef.current = Date.now() + from * 1000;
+    stopTick();
+    tickRef.current = setInterval(() => {
+      const rem = Math.max(0, Math.round((endRef.current - Date.now()) / 1000));
+      setRemaining(rem);
+      if (rem <= 0) {
+        stopTick();
+        // Stamp the completed prescribed time into the log field.
+        const stamp = fmtMMSS(prescribedSec || 0);
+        onChange(stamp);
+        setMode("done");
+      }
+    }, 250) as any;
+  }, [onChange, prescribedSec]);
+
+  useEffect(() => () => stopTick(), []);
+
+  const handleTap = () => {
+    if (disabled) return;
+    if (!prescribedSec || prescribedSec <= 0) return; // no countdown available
+    if (mode === "idle" || mode === "done") {
+      setRemaining(prescribedSec);
+      setMode("running");
+      startTick(prescribedSec);
+    } else if (mode === "running") {
+      stopTick();
+      setMode("paused");
+    } else if (mode === "paused") {
+      setMode("running");
+      startTick(remaining);
+    }
+  };
+
+  const handleLongPress = () => {
+    if (disabled) return;
+    // Long-press = reset back to prescribed value.
+    stopTick();
+    setRemaining(prescribedSec || 0);
+    setMode("idle");
+  };
+
+  // If there's NO prescribed duration, degrade gracefully to a plain
+  // TextInput so the client can still type an MM:SS value.
+  if (!prescribedSec || prescribedSec <= 0) {
+    return (
+      <TextInput
+        style={style}
+        value={value}
+        placeholder="mm:ss"
+        placeholderTextColor={theme.color.textDim}
+        onChangeText={onChange}
+        editable={!disabled}
+        testID={testID}
+      />
+    );
+  }
+
+  const display = mode === "running" || mode === "paused"
+    ? fmtMMSS(remaining)
+    : (value || fmtMMSS(prescribedSec));
+  const glyph = mode === "running" ? "pause" : mode === "paused" ? "play" : "play-circle";
+  const tint =
+    mode === "running" ? theme.color.brand :
+    mode === "done"    ? theme.color.green :
+    theme.color.text;
+
+  return (
+    <Pressable
+      onPress={handleTap}
+      onLongPress={handleLongPress}
+      disabled={disabled}
+      style={[
+        style,
+        pillStyles.wrap,
+        mode === "running" && pillStyles.wrapRunning,
+        mode === "done" && pillStyles.wrapDone,
+      ]}
+      testID={testID}
+      hitSlop={4}
+    >
+      <Ionicons name={glyph as any} size={13} color={tint} />
+      <Text style={[pillStyles.txt, { color: tint }]}>{display}</Text>
+    </Pressable>
+  );
+}
+
+const pillStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4,
+    paddingVertical: 6, paddingHorizontal: 8,
+    borderRadius: 8, backgroundColor: "transparent",
+  },
+  wrapRunning: {
+    backgroundColor: "rgba(163,24,46,0.12)",
+  },
+  wrapDone: {
+    backgroundColor: "rgba(16,185,129,0.14)",
+  },
+  txt: {
+    fontSize: 13, fontWeight: "800",
+    fontVariant: ["tabular-nums"],
+  },
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Screen                                                                     */
@@ -585,16 +738,21 @@ function ExerciseCard({
                   />
                 );
               case "duration":
+                // Iter 162 · Playable Time Pill — tap to start a countdown
+                // pre-filled from the exercise's `duration_sec`. The pill
+                // renders the current MM:SS remaining while running, stamps
+                // the final value into the log field on completion, and can
+                // be paused / reset. Falls back to a plain text input when
+                // the exercise has no prescribed duration (client can type).
                 return (
-                  <TextInput
+                  <PlayableTimePill
                     key="duration"
-                    style={commonStyle}
+                    style={commonStyle as any}
                     value={s.duration}
-                    placeholder="mm:ss"
-                    placeholderTextColor={theme.color.textDim}
-                    onChangeText={(t) => onPatch(i, { duration: t, logged: false })}
-                    editable={!s.logged}
+                    prescribedSec={ex.duration_sec}
+                    disabled={!!s.logged}
                     testID={`list-set-${section}-${exIdx}-${i}-dur`}
+                    onChange={(t) => onPatch(i, { duration: t, logged: false })}
                   />
                 );
               case "distance":

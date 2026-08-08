@@ -6883,7 +6883,23 @@ async def _apply_reality_action(user_id: str, action: dict) -> dict:
                 {"client_id": user_id, "active": True}, {"_id": 1},
             )
             if has_active_v2_plan:
-                return await apply_reality_action_v2(db, user_id, action)
+                v2_change = await apply_reality_action_v2(db, user_id, action)
+                # Iter 162 · Legacy fallback. V2 users can carry mixed histories
+                # (an active plan_live_v2 doc AND older `db.workouts` rows for
+                # dates that pre-date the plan's start, or coach-manual
+                # overrides that never made it into V2 placements). Previously
+                # a "no placement found" returned `changed: False` and Today's
+                # Reality did nothing on those older days — clients saw
+                # "Nothing found" and the fatigue action silently no-op'd. We
+                # now fall through to the legacy `db.workouts` mutator below
+                # so the reality adjustment still lands on the actual workout
+                # doc the client is looking at.
+                if v2_change.get("changed"):
+                    return v2_change
+                logger.info(
+                    "reality V2 miss for user=%s date=%s kind=%s — falling back to db.workouts",
+                    user_id, action.get("date"), action.get("kind"),
+                )
     except Exception:
         logger.exception("V2 reality action routing failed — falling back to V1")
 

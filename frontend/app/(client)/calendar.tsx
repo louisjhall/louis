@@ -68,7 +68,13 @@ export default function CalendarScreen() {
     return () => clearInterval(interval);
   }, [activeJob?.id, load]);
 
-  const months: any[] = data?.months || [];
+  // Iter 162 · Reverse-chronological — the latest/current month sits at
+  // the top of the list so returning clients land on the current month
+  // without scrolling. Older months are pushed downward.
+  const months: any[] = useMemo(() => {
+    const src = (data?.months || []) as any[];
+    return [...src].sort((a, b) => (b?.iso || "").localeCompare(a?.iso || ""));
+  }, [data?.months]);
   const today = data?.today;
 
   const scrollToMonth = (iso: string) => {
@@ -85,13 +91,16 @@ export default function CalendarScreen() {
     if (found) scrollToMonth(found.iso);
   };
   const prevMonth = () => {
+    // Iter 162 · list is reverse-chronological — older months live at
+    // HIGHER indices. "Prev" (go back in time) therefore = idx + 1.
     const idx = months.findIndex((m) => m.iso === selectedIsoMonth);
-    if (idx > 0) scrollToMonth(months[idx - 1].iso);
+    if (idx >= 0 && idx < months.length - 1) scrollToMonth(months[idx + 1].iso);
     else setMonthsBack(monthsBack + 3);
   };
   const nextMonth = () => {
+    // "Next" (go forward in time) = idx - 1 under the reverse sort.
     const idx = months.findIndex((m) => m.iso === selectedIsoMonth);
-    if (idx >= 0 && idx < months.length - 1) scrollToMonth(months[idx + 1].iso);
+    if (idx > 0) scrollToMonth(months[idx - 1].iso);
     else setMonthsAhead(monthsAhead + 3);
   };
   const jumpToDate = () => {

@@ -17,17 +17,17 @@ import { toast } from "@/src/lib/ux";
 const LOUIS_IMG = require("../../assets/louis/louis_avatar.png");
 
 type Review = {
-  week_start: string;
-  week_end: string;
-  message_lines: string[];
-  training: { planned: number; completed: number; missed: number; adherence_pct: number | null; key_planned: number; key_completed: number };
-  nutrition: { days_logged: number; avg_calories: number; avg_protein_g: number };
-  habits: { pct: number | null };
-  checkin_status: "complete" | "incomplete";
-  progress_status: "complete" | "incomplete";
-  review_ready_for_louis: boolean;
-  video_review_status: string;
-  has_progress: boolean;
+  week_start?: string;
+  week_end?: string;
+  message_lines?: string[];
+  training?: { planned: number; completed: number; missed: number; adherence_pct: number | null; key_planned: number; key_completed: number };
+  nutrition?: { days_logged: number; avg_calories: number; avg_protein_g: number };
+  habits?: { pct: number | null };
+  checkin_status?: "complete" | "incomplete";
+  progress_status?: "complete" | "incomplete";
+  review_ready_for_louis?: boolean;
+  video_review_status?: string;
+  has_progress?: boolean;
 };
 
 export function WeeklyReviewCard({ refreshKey = 0 }: { refreshKey?: number }) {
@@ -44,25 +44,44 @@ export function WeeklyReviewCard({ refreshKey = 0 }: { refreshKey?: number }) {
   }, []);
   useEffect(() => { load(); }, [load, refreshKey]);
 
+  // Iter 162d · Defensive normaliser. Backend can return partial data during
+  // migrations or when a client's first Sunday hasn't yet been aggregated —
+  // ensure every read below is against a fully-shaped struct so the card
+  // never crashes on a null profile / missing message_lines / undefined
+  // status fields.
+  const safe = r ? {
+    message_lines: Array.isArray(r.message_lines) ? r.message_lines : [],
+    checkin_status: r.checkin_status || "incomplete",
+    progress_status: r.progress_status || "incomplete",
+    training: r.training || { planned: 0, completed: 0, missed: 0, adherence_pct: null, key_planned: 0, key_completed: 0 },
+    nutrition: r.nutrition || { days_logged: 0, avg_calories: 0, avg_protein_g: 0 },
+    habits: r.habits || { pct: null },
+    video_review_status: r.video_review_status || "pending",
+    has_progress: !!r.has_progress,
+    review_ready_for_louis: !!r.review_ready_for_louis,
+    week_start: r.week_start || "",
+    week_end: r.week_end || "",
+  } : null;
+
   // Louis's weekly review + progress-update prompt is a SUNDAY-only ritual.
   // We hide the card on every other day so crew aren't nagged mid-week.
   // If the client has already completed BOTH actions on Sunday, we keep the
   // "review ready" state visible until Monday end-of-day so they see the
   // outcome, then it disappears until next Sunday.
   const showCard = (() => {
-    if (!r) return false;
+    if (!safe) return false;
     const dow = new Date().getDay(); // 0=Sun … 6=Sat
     if (dow === 0) return true; // Sunday
-    const both = r.checkin_status === "complete" && r.progress_status === "complete";
+    const both = safe.checkin_status === "complete" && safe.progress_status === "complete";
     if (dow === 1 && both) return true; // Monday tail — only if already completed
     return false;
   })();
-  if (!showCard || !r) return null;
+  if (!showCard || !safe) return null;
 
-  const both = r.checkin_status === "complete" && r.progress_status === "complete";
+  const both = safe.checkin_status === "complete" && safe.progress_status === "complete";
   const markCheckin = async () => {
     setSaving(true);
-    try { const d = await api<any>("/weekly-review/checkin-complete", { method: "POST", body: {} }); setR(d.review); toast("Check-in complete.", "success"); }
+    try { const d = await api<any>("/weekly-review/checkin-complete", { method: "POST", body: {} }); setR(d?.review || d); toast("Check-in complete.", "success"); }
     catch (e: any) { toast(e?.message || "Couldn't save.", "error"); }
     finally { setSaving(false); }
   };
@@ -107,28 +126,31 @@ export function WeeklyReviewCard({ refreshKey = 0 }: { refreshKey?: number }) {
               <Pressable onPress={() => setOpen(false)} hitSlop={12}><Ionicons name="close" size={22} color={theme.color.textMuted} /></Pressable>
             </View>
             <ScrollView style={{ maxHeight: 500 }}>
-              {r.message_lines.map((l, i) => (
+              {/* Iter 162d · array guard — backend can return null/undefined
+                  message_lines during the first-Sunday build. Fall back to
+                  a placeholder line so the sheet still explains itself. */}
+              {((r?.message_lines || []).length > 0 ? (r?.message_lines || []) : ["Louis is still preparing your review."]).map((l, i) => (
                 <Text key={i} style={l === "" ? styles.spacer : /^(Training|Nutrition|Habits|Roster|Progress):$/.test(l) ? styles.h : styles.p}>{l}</Text>
               ))}
               <View style={styles.statuses}>
-                <StatusPill label="CHECK-IN" done={r.checkin_status === "complete"} />
-                <StatusPill label="PROGRESS" done={r.progress_status === "complete"} />
+                <StatusPill label="CHECK-IN" done={safe.checkin_status === "complete"} />
+                <StatusPill label="PROGRESS" done={safe.progress_status === "complete"} />
               </View>
             </ScrollView>
             <View style={styles.footerBtns}>
               <Pressable
                 onPress={markCheckin}
-                disabled={saving || r.checkin_status === "complete"}
-                style={[styles.btn, r.checkin_status === "complete" ? styles.btnDone : styles.btnPrimary]}
+                disabled={saving || safe.checkin_status === "complete"}
+                style={[styles.btn, safe.checkin_status === "complete" ? styles.btnDone : styles.btnPrimary]}
                 testID="wr-checkin"
               >
                 {saving ? <ActivityIndicator color="#fff" /> : (
-                  <Text style={styles.btnPrimaryT}>{r.checkin_status === "complete" ? "CHECK-IN DONE ✓" : "COMPLETE CHECK-IN"}</Text>
+                  <Text style={styles.btnPrimaryT}>{safe.checkin_status === "complete" ? "CHECK-IN DONE ✓" : "COMPLETE CHECK-IN"}</Text>
                 )}
               </Pressable>
-              <Pressable onPress={markProgress} style={[styles.btn, r.progress_status === "complete" ? styles.btnDone : styles.btnGhost]} testID="wr-progress">
-                <Text style={r.progress_status === "complete" ? styles.btnPrimaryT : styles.btnGhostT}>
-                  {r.progress_status === "complete" ? "PROGRESS DONE ✓" : "UPDATE PROGRESS"}
+              <Pressable onPress={markProgress} style={[styles.btn, safe.progress_status === "complete" ? styles.btnDone : styles.btnGhost]} testID="wr-progress">
+                <Text style={safe.progress_status === "complete" ? styles.btnPrimaryT : styles.btnGhostT}>
+                  {safe.progress_status === "complete" ? "PROGRESS DONE ✓" : "UPDATE PROGRESS"}
                 </Text>
               </Pressable>
             </View>

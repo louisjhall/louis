@@ -12210,19 +12210,32 @@ async def _startup():
     # this DB (dev pod), and b) no-ops any field that's already at the
     # target value. Every outcome is logged for verification from deploy
     # logs.
+    #
+    # Iter 162c · Match by EMAIL too. When a client is deleted+restored
+    # the row may come back with a fresh UUID — matching by id alone would
+    # miss it. We now look up either the hard-coded prod id OR the
+    # canonical email, use whichever wins, and apply the same $set patch.
     # ------------------------------------------------------------------
     try:
         _PIETRO_PROD_ID = "bd7f3e31-2bba-49b6-980b-e60a539c927b"
+        _PIETRO_EMAIL = "pietrosangermano1992@hotmail.com"
         _u_before = await db.users.find_one(
-            {"id": _PIETRO_PROD_ID},
+            {"$or": [
+                {"id": _PIETRO_PROD_ID},
+                {"email": {"$regex": f"^{re.escape(_PIETRO_EMAIL)}$", "$options": "i"}},
+            ]},
             {"_id": 0, "id": 1, "email": 1, "profile": 1},
         )
         if not _u_before:
             logger.info(
-                f"startup_migration[pietro_v2_setup]: user id={_PIETRO_PROD_ID} "
-                f"not present in this database — skipping (harmless on dev pod)."
+                f"startup_migration[pietro_v2_setup]: neither id={_PIETRO_PROD_ID} "
+                f"nor email={_PIETRO_EMAIL} present in this database — skipping "
+                f"(harmless on dev pod)."
             )
         else:
+            # From here on match by the id we actually found so subsequent
+            # writes hit the same row (fresh UUID after restore is OK).
+            _resolved_id = _u_before.get("id") or _PIETRO_PROD_ID
             _profile_before = _u_before.get("profile") or {}
             _flags_before = _profile_before.get("v2_flags") or {}
             _needs_engine_v2 = _flags_before.get("engine_v2") is not True
@@ -12234,7 +12247,8 @@ async def _startup():
             if not (_needs_engine_v2 or _needs_override or _needs_main_goal):
                 logger.info(
                     f"startup_migration[pietro_v2_setup]: all fields already at "
-                    f"target values for {_u_before.get('email')} — no-op (idempotent)."
+                    f"target values for {_u_before.get('email')} (id={_resolved_id}) "
+                    f"— no-op (idempotent)."
                 )
             else:
                 _now_str = now_iso()
@@ -12258,13 +12272,13 @@ async def _startup():
                     "updated_at": _now_str,
                 }
                 _res = await db.users.update_one(
-                    {"id": _PIETRO_PROD_ID},
+                    {"id": _resolved_id},
                     {"$set": _updates},
                 )
                 # Read the document back and log the STORED values + Python
                 # types so the receipt is verifiable from deploy logs.
                 _u_after = await db.users.find_one(
-                    {"id": _PIETRO_PROD_ID},
+                    {"id": _resolved_id},
                     {"_id": 0, "email": 1, "profile": 1},
                 )
                 _p_after = (_u_after or {}).get("profile") or {}
@@ -12275,6 +12289,7 @@ async def _startup():
                 logger.info(
                     f"startup_migration[pietro_v2_setup]: "
                     f"matched={_res.matched_count} modified={_res.modified_count} "
+                    f"resolved_id={_resolved_id} "
                     f"engine_v2={_stored_eng!r}({type(_stored_eng).__name__}) "
                     f"manual_draft_override={_stored_over!r}({type(_stored_over).__name__}) "
                     f"main_goal={_stored_goal!r} "

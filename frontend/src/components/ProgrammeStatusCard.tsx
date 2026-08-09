@@ -244,8 +244,12 @@ export function ProgrammeStatusCard({
       {/* TIMELINE — always rendered while not fully live */}
       {isWaiting ? (
         <View style={styles.timelineWrap}>
-          {state.timeline.map((step, i) => {
-            const isLast = i === state.timeline.length - 1;
+          {/* Iter 162c · Defensive array guards. Backend may briefly return
+              partial state during migrations or when the coach hasn't
+              published yet — never crash the dashboard on a missing key. */}
+          {((state.timeline || []) as any[]).map((step, i) => {
+            const tl = state.timeline || [];
+            const isLast = i === tl.length - 1;
             const dotBg =
               step.state === "completed" ? theme.color.brand
               : step.state === "in_progress" ? theme.color.amber

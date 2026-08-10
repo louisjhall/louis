@@ -399,12 +399,12 @@ export default function Home() {
         >
           <SafeAreaView edges={["top"]}>
             <View style={styles.heroContent}>
-              {/* Iter 162b · Centred CrewFit logo. Bell floats on the right,
-                  logo sits centred and enlarged (~118×36 vs the old 96×30).
-                  12px padding to the ClientProfileHeader below it preserves
-                  the hero rhythm. */}
+              {/* Iter 164a · Centred CrewFit logo. Bell floats on the right
+                  via `position: absolute` so it never pushes the logo
+                  off-centre. Row uses `justifyContent: center` with no
+                  flex-1 spacer, so the 120×38 logo sits at the exact
+                  midpoint of the header regardless of bell size. */}
               <View style={styles.topBar}>
-                <View style={{ flex: 1 }} />
                 <Image
                   source={require("@/assets/images/crewfit-logo-full.png")}
                   style={styles.topLogoCentered}

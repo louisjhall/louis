@@ -42,6 +42,13 @@ type Conversation = {
   subtype?: string | null;
   latest?: { text: string; at: string; from_me: boolean } | null;
   unread_count: number;
+  // Iter 165b · Backend now returns a per-client pending check-in flag so
+  // the coach can see at-a-glance which threads have a submitted check-in
+  // waiting for review. Sources: coach_tasks (task_type=check_in_review),
+  // check_ins (coach_review_status=pending), reality_events (ask_coach).
+  pending_checkin?: boolean;
+  pending_checkin_count?: number;
+  pending_checkin_source?: "coach_task" | "check_in" | "reality_event" | null;
 };
 
 type ThreadMessage = {
@@ -339,6 +346,7 @@ export default function CoachMessagesScreen() {
               filteredConvs.map((c) => {
                 const active = c.id === activeId;
                 const unread = c.unread_count > 0;
+                const pendingCheckin = !!c.pending_checkin;
                 return (
                   <Pressable
                     key={c.id}
@@ -346,10 +354,27 @@ export default function CoachMessagesScreen() {
                     style={[styles.convRow, active && styles.convRowActive, unread && !active && styles.convRowUnread]}
                     testID={`msg-conv-${c.id}`}
                   >
-                    <Avatar name={c.name} initials={c.initials} url={c.avatar_url || null} size={40} />
+                    <View>
+                      <Avatar name={c.name} initials={c.initials} url={c.avatar_url || null} size={40} />
+                      {/* Iter 165b · Small red dot on the avatar when the client
+                          has a pending check-in in the coach's review queue.
+                          Visible even for read threads so the coach can still
+                          spot outstanding reviews. */}
+                      {pendingCheckin ? (
+                        <View style={styles.checkinDot} testID={`msg-conv-checkin-dot-${c.id}`} />
+                      ) : null}
+                    </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                        <Text style={[styles.convName, unread && styles.convNameUnread]} numberOfLines={1}>{c.name}</Text>
+                        <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 6 }}>
+                          <Text style={[styles.convName, unread && styles.convNameUnread]} numberOfLines={1}>{c.name}</Text>
+                          {pendingCheckin ? (
+                            <View style={styles.checkinPill} testID={`msg-conv-checkin-pill-${c.id}`}>
+                              <Ionicons name="clipboard" size={9} color={theme.color.brand} />
+                              <Text style={styles.checkinPillT}>CHECK-IN</Text>
+                            </View>
+                          ) : null}
+                        </View>
                         <Text style={styles.convTime}>{relTime(c.latest?.at)}</Text>
                       </View>
                       <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
@@ -623,6 +648,26 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   badgeT: { color: "#fff", fontSize: 10, fontWeight: "900" },
+  // Iter 165b · Pending check-in indicators — small red dot on the avatar
+  // + a compact "CHECK-IN" pill next to the client name so the coach can
+  // spot outstanding review tasks even on already-read conversations.
+  checkinDot: {
+    position: "absolute", top: -2, right: -2,
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: theme.color.brand,
+    borderWidth: 1.5, borderColor: theme.color.bg,
+  },
+  checkinPill: {
+    flexDirection: "row", alignItems: "center", gap: 3,
+    paddingHorizontal: 6, paddingVertical: 1,
+    borderRadius: 10,
+    backgroundColor: "rgba(163,24,46,0.14)",
+    borderWidth: 1, borderColor: "rgba(163,24,46,0.45)",
+  },
+  checkinPillT: {
+    color: theme.color.brand, fontSize: 8, letterSpacing: 1.2,
+    fontWeight: "900",
+  },
   emptyList: { padding: 30, alignItems: "center" },
   emptyListT: { color: theme.color.textMuted, marginTop: 10, fontSize: 12 },
 

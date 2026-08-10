@@ -132,11 +132,51 @@ async def coach_inbox(
     ]):
         unread_counts[r["_id"]] = int(r.get("n") or 0)
 
+    # Iter 165b · Pending check-in indicator per client.
+    # Sources (any-of):
+    #   1. coach_tasks with task_type=check_in_review + status=todo
+    #   2. check_ins with coach_review_status=pending
+    #   3. reality_events with status=ask_coach (legacy signal, kept
+    #      for backward compat with existing rows)
+    pending_checkin: dict[str, dict] = {}
+    async for r in db.coach_tasks.aggregate([
+        {"$match": {
+            "user_id": {"$in": client_ids},
+            "task_type": "check_in_review",
+            "status": "todo",
+        }},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}, "latest": {"$max": "$created_at"}}},
+    ]):
+        pending_checkin[r["_id"]] = {"count": int(r["n"]), "at": r.get("latest"), "source": "coach_task"}
+    async for r in db.check_ins.aggregate([
+        {"$match": {
+            "user_id": {"$in": client_ids},
+            "coach_review_status": "pending",
+        }},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}, "latest": {"$max": "$submitted_at"}}},
+    ]):
+        if r["_id"] not in pending_checkin:
+            pending_checkin[r["_id"]] = {"count": int(r["n"]), "at": r.get("latest"), "source": "check_in"}
+        else:
+            pending_checkin[r["_id"]]["count"] += int(r["n"])
+    async for r in db.reality_events.aggregate([
+        {"$match": {
+            "user_id": {"$in": client_ids},
+            "status": "ask_coach",
+        }},
+        {"$group": {"_id": "$user_id", "n": {"$sum": 1}, "latest": {"$max": "$created_at"}}},
+    ]):
+        if r["_id"] not in pending_checkin:
+            pending_checkin[r["_id"]] = {"count": int(r["n"]), "at": r.get("latest"), "source": "reality_event"}
+        else:
+            pending_checkin[r["_id"]]["count"] += int(r["n"])
+
     out = []
     for c in clients:
         cid = c["id"]
         latest = latest_by_client.get(cid) or {}
         name = c.get("display_name") or c.get("name") or c.get("email") or "(unnamed)"
+        checkin_info = pending_checkin.get(cid)
         out.append({
             "id": cid,
             "name": name,
@@ -149,12 +189,20 @@ async def coach_inbox(
                 "from_me": bool(latest.get("latest_from") == coach_id),
             } if latest else None,
             "unread_count": int(unread_counts.get(cid, 0)),
+            # Iter 165b · Pending check-in indicator — surfaced as a small
+            # red dot / label in the coach Messages sidebar.
+            "pending_checkin": bool(checkin_info),
+            "pending_checkin_count": int((checkin_info or {}).get("count") or 0),
+            "pending_checkin_source": (checkin_info or {}).get("source"),
         })
 
     # Sort: unread first (desc), then latest activity descending, then name.
     def _key(row: dict):
         latest_at = (row.get("latest") or {}).get("at") or ""
-        return (-row["unread_count"], -1 if latest_at else 0, latest_at, row["name"])
+        # Iter 165b · Rows with a pending check-in float alongside unread
+        # so the coach sees them near the top of the sidebar.
+        checkin_boost = 1 if row.get("pending_checkin") else 0
+        return (-(row["unread_count"] + checkin_boost), -1 if latest_at else 0, latest_at, row["name"])
     out.sort(key=_key, reverse=True)
     return {"conversations": out}
 

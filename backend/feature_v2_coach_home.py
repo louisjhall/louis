@@ -285,28 +285,74 @@ async def _client_tasks(client: dict) -> list[dict]:
                 })
 
     # -----------------------------------------------------------
-    # 4. Check-in review — reality_events with status=ask_coach are the
-    #    canonical "client submitted, coach must respond" signal.
+    # 4. Check-in review — surface any of THREE canonical signals so a
+    #    submitted check-in never falls off the coach action queue.
+    #    Iter 165b · Extended from the original single-source
+    #    (reality_events / status=ask_coach) to also cover:
+    #      a. coach_tasks with task_type=check_in_review + status=todo
+    #         (this is the primary queue populated by the auto check-in
+    #         summariser + manual "flag for coach" flow).
+    #      b. check_ins where coach_review_status=pending (raw check-in
+    #         hasn't been reviewed yet).
+    #    We emit at most ONE card per client — reality_events wins, then
+    #    coach_tasks, then check_ins — with the most-recent timestamp for
+    #    the "Submitted {ago}" meta line.
     # -----------------------------------------------------------
+    checkin_source: Optional[dict] = None
     ci = await db.reality_events.find_one(
         {"user_id": cid, "status": "ask_coach"},
         {"_id": 0, "id": 1, "date": 1, "reality_label": 1, "created_at": 1},
         sort=[("created_at", -1)],
     )
     if ci:
-        ago = _humanise_iso(ci.get("created_at")) or ""
+        checkin_source = {
+            "kind": "reality_event",
+            "id": ci["id"],
+            "created_at": ci.get("created_at"),
+            "label": ci.get("reality_label") or "Awaiting your response.",
+        }
+    else:
+        ct = await db.coach_tasks.find_one(
+            {"user_id": cid, "task_type": "check_in_review", "status": "todo"},
+            {"_id": 0, "id": 1, "title": 1, "description": 1, "created_at": 1, "check_in_id": 1},
+            sort=[("created_at", -1)],
+        )
+        if ct:
+            checkin_source = {
+                "kind": "coach_task",
+                "id": ct["id"],
+                "created_at": ct.get("created_at"),
+                "label": ct.get("description") or ct.get("title") or "Check-in ready to review.",
+            }
+        else:
+            raw = await db.check_ins.find_one(
+                {"user_id": cid, "coach_review_status": "pending"},
+                {"_id": 0, "id": 1, "week_start": 1, "submitted_at": 1, "created_at": 1},
+                sort=[("submitted_at", -1)],
+            )
+            if raw:
+                checkin_source = {
+                    "kind": "check_in",
+                    "id": raw["id"],
+                    "created_at": raw.get("submitted_at") or raw.get("created_at"),
+                    "label": (f"Week of {raw.get('week_start')}" if raw.get("week_start")
+                              else "Weekly check-in submitted."),
+                }
+    if checkin_source:
+        ago = _humanise_iso(checkin_source["created_at"]) or ""
         tasks.append({
-            "id": f"checkin_review:{cid}:{ci['id']}",
+            "id": f"checkin_review:{cid}:{checkin_source['id']}",
             "type": "checkin_review",
             "priority": "attention",
             "client_id": cid,
             "client_name": name,
             "client_subtitle": _client_subtitle(client, has_live),
             "title": "Check-in needs review",
-            "context": ci.get("reality_label") or "Awaiting your response.",
+            "context": checkin_source["label"],
             "meta": f"Submitted {ago}" if ago else None,
             "action_label": "Review check-in",
             "deep_link": f"/coach/client/{cid}/workspace",
+            "checkin_source_kind": checkin_source["kind"],
         })
 
     # -----------------------------------------------------------

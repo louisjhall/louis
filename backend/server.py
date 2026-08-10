@@ -12686,8 +12686,20 @@ async def _create_coach_task(user: dict, task_type: str, title: str, description
                              risk_level: Optional[str] = None,
                              category: Optional[str] = None,
                              payload: Optional[dict] = None) -> str:
-    coach = await db.users.find_one({"role": "coach"}, {"id": 1})
-    coach_id = (coach or {}).get("id")
+    # Iter 165b · Prefer the client's explicit assigned_coach_id. Falls back
+    # to Louis (the primary head coach) if the client hasn't been assigned,
+    # and only as a last resort to the first coach in the DB. This prevents
+    # tasks from being silently routed to a random coach when multi-coach
+    # support is enabled.
+    coach_id: Optional[str] = user.get("assigned_coach_id") or user.get("coach_id")
+    if not coach_id:
+        louis = await db.users.find_one(
+            {"role": "coach", "email": "louis@crewfit.net"}, {"_id": 0, "id": 1}
+        )
+        coach_id = (louis or {}).get("id")
+    if not coach_id:
+        any_coach = await db.users.find_one({"role": "coach"}, {"_id": 0, "id": 1})
+        coach_id = (any_coach or {}).get("id")
     tz_name = user.get("current_time_zone") or user.get("home_time_zone") or "Europe/London"
     doc = {
         "id": new_id(),

@@ -56,10 +56,36 @@ function useUnreadMessages() {
 }
 void useUnreadMessages;  // preserved for future re-use
 
+// Iter 165 · Crew Base unread hook — drives a small red dot on the BASE tab.
+// Polls `/crew-base/unread-count` every 30s and on app foreground. The
+// endpoint already exists and tracks unread posts against the user's
+// `crew_base_seen` record; here we only need a boolean "should we glow?"
+// so we coerce the count into a dot state.
+function useCrewBaseUnread(): boolean {
+  const [hasNew, setHasNew] = React.useState(false);
+  const load = React.useCallback(async () => {
+    try {
+      const r = await api<{ count: number }>("/crew-base/unread-count");
+      setHasNew(Number(r?.count || 0) > 0);
+    } catch {
+      /* silent — endpoint may be absent on older backends */
+    }
+  }, []);
+  React.useEffect(() => {
+    load();
+    const iv = setInterval(load, 30_000);
+    const sub = AppState.addEventListener("change", (s) => { if (s === "active") load(); });
+    return () => { clearInterval(iv); sub.remove(); };
+  }, [load]);
+  return hasNew;
+}
+
 export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const compact = width < 380; // small iPhones: tighten labels
+  // Iter 165 · Poll Crew Base unread once here and pass a flag to the BASE tab.
+  const baseHasNew = useCrewBaseUnread();
 
   return (
     <View style={[styles.wrap, { paddingBottom: Math.max(insets.bottom, 10) }]}>
@@ -95,6 +121,7 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
               onLongPress={onLongPress}
               accessibilityLabel={options.tabBarAccessibilityLabel ?? meta.label}
               badgeCount={0}
+              showDot={route.name === "base" && baseHasNew}
               testID={`tab-${route.name}`}
             />
           );
@@ -106,7 +133,7 @@ export function PremiumTabBar({ state, descriptors, navigation }: BottomTabBarPr
 
 function TabButton({
   label, icon, custom, focused, compact, onPress, onLongPress, accessibilityLabel,
-  badgeCount = 0, testID,
+  badgeCount = 0, showDot = false, testID,
 }: {
   label: string;
   icon: IconName;
@@ -117,6 +144,7 @@ function TabButton({
   onLongPress: () => void;
   accessibilityLabel: string;
   badgeCount?: number;
+  showDot?: boolean;
   testID?: string;
 }) {
   const scale = useSharedValue(1);
@@ -171,6 +199,10 @@ function TabButton({
                 {badgeCount_ > 99 ? "99+" : badgeCount_}
               </Text>
             </View>
+          ) : showDot ? (
+            // Iter 165 · Small red dot indicator (Crew Base new posts).
+            // Positioned top-right of the icon, sits above the label.
+            <View style={styles.dot} testID={`tab-dot-${label.toLowerCase()}`} />
           ) : null}
         </View>
         <Text
@@ -285,5 +317,19 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 12,
     includeFontPadding: false,
+  },
+  // Iter 165 · Small red dot indicator — used by the BASE tab when the
+  // Crew Base has new posts the client hasn't seen yet. Deliberately
+  // dot-only (no count) so it stays understated on the nav bar.
+  dot: {
+    position: "absolute",
+    top: -3,
+    right: -5,
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: theme.color.brand,
+    borderWidth: 1.5,
+    borderColor: "#08080B",
   },
 });

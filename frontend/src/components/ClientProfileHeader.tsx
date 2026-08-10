@@ -104,7 +104,12 @@ export function ClientProfileHeader({
             </Text>
           ) : null}
 
-          {/* Base + Location */}
+          {/* Base + Location.
+              Iter 165 · Give the row a hard `flexWrap: wrap` and cap the
+              LocationBadge width so a long city name (e.g. "SYDNEY DOWNTOWN")
+              can gracefully wrap to a new line under the base chip instead
+              of overlapping the base pill or spilling past the header
+              right-edge. */}
           <View style={[styles.baseRow, centered && styles.baseRowCentered]}>
             {base ? (
               <View style={styles.baseChip}>
@@ -112,21 +117,23 @@ export function ClientProfileHeader({
                 <Text style={styles.baseT}>{String(base).toUpperCase()}</Text>
               </View>
             ) : null}
-            <LocationBadge
-              city={user?.current_location_city}
-              country={user?.current_location_country}
-              tz={user?.current_time_zone}
-              compact
-            />
+            <View style={styles.locWrap}>
+              <LocationBadge
+                city={user?.current_location_city}
+                country={user?.current_location_country}
+                tz={user?.current_time_zone}
+                compact
+              />
+            </View>
           </View>
         </View>
       </View>
 
       {/* Row 2: standby + optional day-type strip.
-          Iter 161 · Removed the "{COLOR} DAY" load-pill (GREEN DAY / AMBER DAY
-          / RED DAY / BLUE DAY / GREY DAY) — the coloured surface tokens
-          in the dashboard already communicate load; the literal DAY label
-          added visual noise without new information. */}
+          Iter 165 · Layout guards for long day-type labels like
+          "LAYOVER ARRIVAL" — dayType now grows with `flexShrink: 1` and
+          `minWidth: 0` so it truncates cleanly and never overlaps the
+          standby pill on the left. */}
       <View style={[styles.metaRow, centered && styles.metaRowCentered]}>
         {isStandby ? (
           <View style={styles.standbyPill}>
@@ -135,9 +142,9 @@ export function ClientProfileHeader({
           </View>
         ) : null}
         {dt ? (
-          <Text style={styles.dayType} numberOfLines={1}>{dt}</Text>
+          <Text style={styles.dayType} numberOfLines={1} ellipsizeMode="tail">{dt}</Text>
         ) : (
-          <Text style={styles.dayline}>{fmtDayline()}</Text>
+          <Text style={styles.dayline} numberOfLines={1} ellipsizeMode="tail">{fmtDayline()}</Text>
         )}
       </View>
 
@@ -172,7 +179,16 @@ const styles = StyleSheet.create({
   },
   roleDim: { color: theme.color.textMuted, fontWeight: "600", letterSpacing: 0.8 },
 
-  baseRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" },
+  baseRow: {
+    flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6,
+    // Iter 165 · Explicit wrap so a long LocationBadge drops under the
+    // base chip rather than colliding with it on narrow screens.
+    flexWrap: "wrap", rowGap: 6,
+  },
+  // Iter 165 · Cap the LocationBadge width so it wraps its own text if the
+  // city name is long (e.g. "SAN FRANCISCO"). `flexShrink: 1` prevents
+  // the badge from overflowing when it sits next to the base chip.
+  locWrap: { flexShrink: 1, minWidth: 0, maxWidth: "100%" },
   baseChip: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
@@ -180,7 +196,7 @@ const styles = StyleSheet.create({
   },
   baseT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1, fontFamily: theme.font.textSemi },
 
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "nowrap" },
   loadPill: {
     flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 20, borderWidth: 1, backgroundColor: "rgba(0,0,0,0.35)",
@@ -193,8 +209,8 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(245,158,11,0.14)",
   },
   standbyT: { color: theme.color.amber, fontSize: 10, fontWeight: "900", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
-  dayType: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.3, fontWeight: "800", fontFamily: theme.font.textSemi, marginLeft: 2, flex: 1 },
-  dayline: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2 },
+  dayType: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.3, fontWeight: "800", fontFamily: theme.font.textSemi, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
+  dayline: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
 
   dayTitle: {
     color: theme.color.text, fontSize: 18, letterSpacing: 0.8,

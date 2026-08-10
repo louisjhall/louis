@@ -13441,31 +13441,69 @@ async def coach_video_file(video_id: str):
 
 @api.get("/videos/for-me")
 async def videos_for_me(user: dict = Depends(current_user)):
-    """Client fetches their weekly videos (sent only)."""
+    """Client fetches their weekly videos.
+
+    Iter 165 — Now includes:
+      * All `status: "sent"` (unwatched) videos.
+      * Recently-viewed videos still inside a 24-hour grace period so the
+        client can re-open the card if they closed it before finishing.
+    """
+    grace_cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
     rows = await db.weekly_videos.find(
-        {"user_id": user["id"], "status": "sent"}, {"_id": 0}
+        {
+            "user_id": user["id"],
+            "$or": [
+                {"status": "sent"},
+                {"status": "viewed", "watched_at": {"$gte": grace_cutoff}},
+            ],
+        },
+        {"_id": 0},
     ).sort("sent_at", -1).to_list(20)
     return {"videos": rows}
 
 
 @api.get("/videos/welcome-for-me")
 async def videos_welcome_for_me(user: dict = Depends(current_user)):
-    """Iter 155 — return the most recent SENT welcome video for the caller.
+    """Iter 155 — return the current welcome video for the caller.
 
-    Used by the client dashboard to surface a one-shot welcome-from-coach
-    intro popup on first launch. Missing when the coach hasn't recorded
-    one yet; the client UI treats a 200 with `video: null` as "nothing
-    to show, silent no-op".
+    Iter 165 — Persistence rules:
+      * Return the video while it is unwatched (`status: "sent"`).
+      * ALSO return the video for 24 hours after first view so a client
+        who accidentally closed it can find it again.
+      * After the grace period expires the endpoint returns `video: null`
+        and the banner disappears permanently.
     """
+    grace_cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
     row = await db.weekly_videos.find_one(
         {
             "user_id": user["id"],
             "video_kind": "welcome",
-            "status": "sent",
+            "$or": [
+                {"status": "sent"},
+                {"status": "viewed", "watched_at": {"$gte": grace_cutoff}},
+            ],
         },
         {"_id": 0},
         sort=[("sent_at", -1)],
     )
+    return {"video": row}
+
+
+@api.get("/videos/{video_id}")
+async def videos_get_one(video_id: str, user: dict = Depends(current_user)):
+    """Iter 165 — Direct lookup by ID, bypasses status filters.
+
+    The player screen needs to keep working even if the row transitions
+    from `sent → viewed` while it is being loaded (e.g. banner tap fires
+    the mark-viewed request in the background while the player still
+    needs to fetch the video). The list endpoints filter by status; this
+    endpoint does not, so the player is always resilient.
+    """
+    row = await db.weekly_videos.find_one(
+        {"id": video_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not row:
+        raise HTTPException(404, "video not found")
     return {"video": row}
 
 

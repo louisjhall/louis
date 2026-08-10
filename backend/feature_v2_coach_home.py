@@ -745,11 +745,17 @@ async def endpoint_coach_clients_directory(
 
         # Roster range: prefer the live roster_range, else derive from
         # schedule_days min/max, else null. Cheap two-count read.
+        #
+        # Iter 165 · The JSON monthly-programme importer writes into
+        # `db.workouts` (keyed by `user_id`) but never touches
+        # `db.schedule_days`. Treat EITHER collection as evidence of a
+        # roster so imported clients don't render as "No roster".
         roster_range = None
         has_roster = False
         n_sched = await db.schedule_days.count_documents({"client_id": cid})
-        has_roster = n_sched > 0
-        if has_roster:
+        n_wk = await db.workouts.count_documents({"user_id": cid})
+        has_roster = (n_sched > 0) or (n_wk > 0)
+        if n_sched > 0:
             first = await db.schedule_days.find(
                 {"client_id": cid}, {"_id": 0, "date": 1}
             ).sort("date", 1).limit(1).to_list(1)
@@ -758,6 +764,12 @@ async def endpoint_coach_clients_directory(
             ).sort("date", -1).limit(1).to_list(1)
             if first and last:
                 roster_range = {"start": first[0]["date"], "end": last[0]["date"], "days": n_sched}
+        elif n_wk > 0:
+            wfirst = await db.workouts.find({"user_id": cid}, {"_id": 0, "date": 1}).sort("date", 1).limit(1).to_list(1)
+            wlast  = await db.workouts.find({"user_id": cid}, {"_id": 0, "date": 1}).sort("date", -1).limit(1).to_list(1)
+            if wfirst and wlast:
+                roster_range = {"start": wfirst[0].get("date"), "end": wlast[0].get("date"),
+                                "days": n_wk, "source": "workouts"}
 
         tasks = await _client_tasks(c)
         # Filter for "needs_attention" bucket
@@ -1153,7 +1165,10 @@ async def endpoint_coach_calendar(
             "goal_label": goal_label or "General fitness",
             "phase_label": phase_label,
             "plan_state":  "live" if live else ("draft_only" if active_draft else "no_plan"),
-            "has_roster":  bool(sched),
+            # Iter 165 · JSON-imported programmes only touch `db.workouts`,
+            # not `db.schedule_days`; check both so the roster indicator is
+            # correct for both manual builder AND JSON import flows.
+            "has_roster":  bool(sched) or (await db.workouts.count_documents({"user_id": cid, "date": {"$gte": date_from, "$lte": date_to}}) > 0),
             "has_new_draft": bool(active_draft and live),  # newer Draft alongside Live
             "days": cells,
             "content_present": has_any_content,

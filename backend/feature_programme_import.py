@@ -1880,6 +1880,32 @@ async def coach_programme_import_apply(
             "programme_import_apply: preview stamp failed for %s", preview["id"],
         )
 
+    # ------------------------------------------------------------------
+    # 8. Iter 165 · Notify the client that their new programme is live.
+    #    Non-blocking, non-critical: swallow any failure so a push outage
+    #    can never break a successful monthly import. Only sent on the
+    #    initial apply (not on resume) and only when at least one workout
+    #    was actually inserted this call — a full resume of an already-
+    #    applied import would otherwise re-notify.
+    # ------------------------------------------------------------------
+    if not is_resume and inserted_ids:
+        try:
+            from feature_notifications import enqueue_notification
+            await enqueue_notification(
+                client["id"],
+                "programme_live",
+                "Your new CrewFit programme is now live!",
+                "Check your calendar to get started.",
+                action_url="/(client)/calendar",
+                related_id=preview["id"],
+                dedupe_key=f"programme_live::{preview['id']}",
+            )
+        except Exception:
+            logger.exception(
+                "programme_import_apply: push-notify failed for preview %s (client=%s)",
+                preview.get("id"), client.get("id"),
+            )
+
     return {
         "ok": True,
         "preview_id": preview["id"],

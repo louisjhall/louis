@@ -52,7 +52,10 @@ logger = logging.getLogger("crewfit.calendar_recovery")
 # ---------------------------------------------------------------------------
 
 # Missed-workout freshness window. Older than this and we suggest skip/ask.
-MISSED_WINDOW_DAYS = 14
+# Iter 165 · Tightened from 14 → 3 days per product request. Missed sessions
+# older than 3 days feel stale to the client and clutter the recovery UI;
+# anything beyond the window is silently marked "skip" (ask coach if needed).
+MISSED_WINDOW_DAYS = 3
 # How far ahead to search for recovery slots.
 RECOVERY_FORWARD_DAYS = 21
 # Hard-session focus tags. Anything with a red/amber load also counts.

@@ -23,19 +23,34 @@ export default function ClientVideo() {
 
   const load = useCallback(async () => {
     try {
-      // Try the standard list first; if the video is the welcome kind and
-      // not yet listed via /videos/for-me (some deployments filter kind),
-      // fall back to /videos/welcome-for-me — same shape, single row.
-      const r = await api<any>("/videos/for-me");
-      let v = (r?.videos || []).find((x: any) => x.id === id);
+      // Iter 165 · Robust three-tier fetch — the video row can transition
+      // from `sent → viewed` while this screen is loading (banner tap
+      // fires the mark-viewed flip in the background). Each list-based
+      // endpoint filters by status; the new `/videos/{id}` direct lookup
+      // does not, so it always returns the video the user is trying to
+      // watch regardless of transient status changes.
+      let v: any = null;
+      try {
+        const r = await api<any>("/videos/for-me");
+        v = (r?.videos || []).find((x: any) => x.id === id);
+      } catch { /* fall through to welcome */ }
       if (!v) {
         try {
           const w = await api<any>("/videos/welcome-for-me");
           if (w?.video?.id === id) v = w.video;
-        } catch { /* silent — welcome endpoint may be absent on older backends */ }
+        } catch { /* fall through to direct */ }
+      }
+      if (!v) {
+        try {
+          const d = await api<any>(`/videos/${id}`);
+          v = d?.video || null;
+        } catch { /* endpoint absent on older backends — fall through */ }
       }
       setVideo(v || null);
       if (v && !v.watched_at) {
+        // Only stamp `watched_at` once the player is loaded. The server's
+        // 24h grace period keeps the banner alive after this so the client
+        // can still find the video if they close it accidentally.
         api<any>(`/videos/${id}/watched`, { method: "POST", body: {} }).catch(() => {});
       }
     } catch { /* ignore */ } finally { setLoading(false); }

@@ -34,7 +34,18 @@ import re
 import datetime as _dt
 from typing import Any, Optional
 
-# --- Body-region → movement pattern to avoid --------------------------------
+# --- Body-region → movement pattern to avoid --------------------------------# Iter 165 · Shared helper — is an ISO date-string within the last N days?
+def _within_last_days(date_str: Optional[str], days: int) -> bool:
+    if not date_str:
+        return False
+    try:
+        d = _dt.date.fromisoformat(str(date_str)[:10])
+    except Exception:
+        return False
+    today = _dt.date.today()
+    return (today - d).days < days
+
+
 PAIN_REGION_AVOID = {
     "shoulder":     ["overhead_press", "military_press", "handstand", "kipping_pullup"],
     "left_shoulder":["overhead_press", "military_press"],
@@ -319,7 +330,12 @@ async def compute_live_state(db, user_id: str, days: int = 14) -> dict[str, Any]
         "motivation_flag": latest_motivation,
         "adherence_pct": adherence_pct,
         "avg_rpe_last_7d": avg_rpe_7d,
+        # Iter 165 · Retain the 14-day count (used by programme deload logic)
+        # AND expose a 3-day count that matches the tightened window used by
+        # the client-facing "Missed Sessions" UI (feature_calendar_recovery).
         "missed_sessions_14d": len(missed),
+        "missed_sessions_3d": len([m for m in missed if _within_last_days(m.get("date"), 3)]),
+        "missed_sessions": len([m for m in missed if _within_last_days(m.get("date"), 3)]),
         "planned_sessions_14d": len(planned_past),
         "completed_sessions_14d": len(completed_past),
         "pain_flags": list(pain_flags_map.values()),

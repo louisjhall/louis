@@ -732,8 +732,8 @@ async def _dispatch_new_post_notifications(post: dict) -> None:
         try:
             await enqueue_notification(
                 uid, "crew_base_new_post",
-                "Crew Base",
-                f"New community post from {who}. {body_line}",
+                "New update in the CrewFit Base!",
+                f"{who}: {body_line}" if body_text else f"{who} just posted. Tap to view.",
                 action_url="/(client)/base",
                 related_id=post.get("id"),
                 dedupe_key=f"cb_post::{post.get('id')}",

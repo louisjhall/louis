@@ -109,6 +109,12 @@ export default function EngineV2DraftScreen() {
   const [resolveOpenFor, setResolveOpenFor] = useState<ExceptionItem | null>(null);
   const [resolveReason, setResolveReason] = useState("");
 
+  // Iter 165 · Persist the state summary in React state so the "no draft"
+  // empty view can render on native (iOS/Android) where `window.__v2State`
+  // doesn't exist. The server is the single source of truth via
+  // GET /v2/coach/clients/{cid}/engine-v2/state.
+  const [engineState, setEngineState] = useState<any>(null);
+
   const loadAll = useCallback(async () => {
     if (!cid) return;
     setLoading(true);
@@ -118,13 +124,13 @@ export default function EngineV2DraftScreen() {
       // empty state rather than trying to load exceptions/compare (both
       // would return 404).
       const state = await api(`/v2/coach/clients/${cid}/engine-v2/state`);
+      setEngineState(state);
       if (!state.has_active_draft) {
         setDraft(null);
         setExceptions([]);
         setConfigStatus(null);
         setCompare({ has_live: state.has_active_live });
         setErrorMsg(null);
-        (window as any).__v2State = state;
         return;
       }
       const [d, e, c] = await Promise.all([
@@ -230,7 +236,10 @@ export default function EngineV2DraftScreen() {
   }
 
   if (!draft) {
-    const state = (typeof window !== "undefined" && (window as any).__v2State) || {};
+    // Iter 165 · Read the engine state from React state (populated by
+    // loadAll). `window.__v2State` was web-only and broke on iOS/Android
+    // where the coach draft view rendered "No roster" for every client.
+    const state = engineState || {};
     return (
       <SafeAreaView style={styles.container} edges={["top"]}>
         <Stack.Screen options={{ title: "Engine V2 Draft" }} />

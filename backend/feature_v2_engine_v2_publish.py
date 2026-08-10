@@ -753,9 +753,16 @@ async def endpoint_engine_v2_client_state(
         - roster_range         → (min_date, max_date) of schedule_days
     """
     n_schedule = await db.schedule_days.count_documents({"client_id": client_id})
-    has_roster = n_schedule > 0
+    # Iter 165 · The JSON monthly-programme importer writes into `db.workouts`
+    # (keyed by `user_id`) but never touches `db.schedule_days`. That was
+    # making has_roster falsely return False for freshly-imported clients
+    # and the coach draft view rendered "No roster uploaded" for successfully-
+    # imported programmes. We now consider EITHER collection sufficient
+    # evidence that a roster exists.
+    n_workouts = await db.workouts.count_documents({"user_id": client_id})
+    has_roster = (n_schedule > 0) or (n_workouts > 0)
     roster_range = None
-    if has_roster:
+    if n_schedule > 0:
         row_min = await db.schedule_days.find(
             {"client_id": client_id}, {"_id": 0, "date": 1}
         ).sort("date", 1).limit(1).to_list(1)
@@ -765,6 +772,20 @@ async def endpoint_engine_v2_client_state(
         if row_min and row_max:
             roster_range = {"start": row_min[0]["date"], "end": row_max[0]["date"],
                              "days": n_schedule}
+    elif n_workouts > 0:
+        # No schedule_days but the workouts collection has rows — derive the
+        # range from the workout dates so the UI still has a range to show.
+        w_min = await db.workouts.find(
+            {"user_id": client_id}, {"_id": 0, "date": 1}
+        ).sort("date", 1).limit(1).to_list(1)
+        w_max = await db.workouts.find(
+            {"user_id": client_id}, {"_id": 0, "date": 1}
+        ).sort("date", -1).limit(1).to_list(1)
+        if w_min and w_max:
+            roster_range = {"start": w_min[0].get("date"),
+                            "end":   w_max[0].get("date"),
+                            "days":  n_workouts,
+                            "source": "workouts"}
 
     active_draft = await db.plan_drafts_v2.find_one(
         {"client_id": client_id, **_ACTIVE_DRAFT_FILTER},

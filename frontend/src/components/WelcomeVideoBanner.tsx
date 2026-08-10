@@ -1,17 +1,18 @@
 /**
- * WelcomeVideoBanner — surfaces a one-shot "watch your welcome video" card
- * on the client home screen when the coach has recorded and sent a welcome
- * video that the client hasn't opened yet.
+ * WelcomeVideoBanner — surfaces a "watch your welcome video" card on the
+ * client home screen when the coach has recorded and sent a welcome video.
  *
- * Iter 156 (Welcome Video Phase 2). The banner:
+ * Iter 156 (Welcome Video Phase 2). Iter 165 · Persistence overhaul:
  *   1. Fetches `/videos/welcome-for-me` on mount and on focus.
- *   2. Renders nothing when the endpoint returns `{video: null}` or the
- *      video has already been watched.
- *   3. On tap: fires `POST /coach/videos/{id}/viewed` (fire-and-forget) so
- *      the server flips `status → viewed` (the /welcome-for-me endpoint
- *      then stops returning it), and immediately navigates to `/video/{id}`.
- *   4. Also hides locally (setState) so the card disappears the moment
- *      the user taps, without waiting for the server round-trip.
+ *   2. Renders nothing when the endpoint returns `{video: null}`
+ *      (backend now returns the row while unwatched AND for a 24-hour
+ *      grace period after first view — the client no longer decides
+ *      when to hide it).
+ *   3. On tap: navigates to `/video/{id}` WITHOUT firing a status flip.
+ *      The mark-viewed flip only happens when the player itself reports
+ *      the video has been fully watched (inside video/[id].tsx). This
+ *      keeps the banner visible if the client dismisses the player
+ *      accidentally.
  */
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
@@ -26,12 +27,12 @@ type WelcomeVideo = {
   duration_seconds?: number | null;
   watched_at?: string | null;
   sent_at?: string | null;
+  status?: string | null;
 };
 
 export function WelcomeVideoBanner() {
   const router = useRouter();
   const [video, setVideo] = useState<WelcomeVideo | null>(null);
-  const [dismissedLocally, setDismissedLocally] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -41,26 +42,23 @@ export function WelcomeVideoBanner() {
   }, []);
 
   useFocusEffect(useCallback(() => {
-    setDismissedLocally(false);
     load();
   }, [load]));
 
-  if (!video || dismissedLocally) return null;
-  if (video.watched_at) return null;
+  if (!video) return null;
 
   const onWatch = () => {
-    setDismissedLocally(true);
-    // Server-side flip — status → "viewed", drops the row from future
-    // /welcome-for-me responses. Fire-and-forget: the client already
-    // navigated so we don't want to block on this.
-    api(`/coach/videos/${video.id}/viewed`, { method: "POST", body: {} })
-      .catch(() => { /* silent — banner is already hidden client-side */ });
+    // Iter 165 · Do NOT mark viewed on tap — that flip now happens only
+    // when the player reports full watch (see video/[id].tsx). Just open
+    // the player. If the user dismisses the player without finishing, the
+    // banner stays visible so they can come back to it.
     router.push(`/video/${video.id}` as any);
   };
 
   const durHint = typeof video.duration_seconds === "number" && video.duration_seconds > 0
     ? `${Math.max(1, Math.round(video.duration_seconds / 60))} min`
     : null;
+  const isReturn = !!video.watched_at; // seen at least once, still in 24h grace
 
   return (
     <Pressable style={styles.card} onPress={onWatch} testID="welcome-video-banner">
@@ -68,8 +66,10 @@ export function WelcomeVideoBanner() {
         <Ionicons name="videocam" size={22} color="#fff" />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.eyebrow}>NEW · WELCOME</Text>
-        <Text style={styles.title}>Your coach recorded you a welcome video</Text>
+        <Text style={styles.eyebrow}>{isReturn ? "PICK UP WHERE YOU LEFT OFF" : "NEW · WELCOME"}</Text>
+        <Text style={styles.title}>
+          {isReturn ? "Rewatch your welcome video" : "Your coach recorded you a welcome video"}
+        </Text>
         <Text style={styles.sub}>
           {durHint ? `Tap to watch · ${durHint}` : "Tap to watch"}
         </Text>

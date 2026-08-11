@@ -526,7 +526,7 @@ const styles = StyleSheet.create({
   promptWrap: { flex: 1, backgroundColor: theme.color.surface },
   promptEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, padding: 12 },
   promptScroll: { flex: 1, paddingHorizontal: 20 },
-  promptText: { color: theme.color.text, fontSize: 22, lineHeight: 34, fontWeight: "700" },
+  promptText: { color: theme.color.text, fontSize: 28, lineHeight: 40, fontWeight: "700", letterSpacing: 0.3 },
   editT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, paddingHorizontal: 8, paddingVertical: 4 },
   scriptEdit: { flex: 1, marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 8, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 18, lineHeight: 26, textAlignVertical: "top" },
   controls: { flexDirection: "row", gap: 8, padding: 12, justifyContent: "center", backgroundColor: theme.color.surface2 },

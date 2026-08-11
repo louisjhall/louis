@@ -24,6 +24,13 @@ export default function CoachCheckinReview() {
   const [saving, setSaving] = useState(false);
   const [savingSummary, setSavingSummary] = useState(false);
   const [sending, setSending] = useState(false);
+  // Iter 165e · Restored "Generate Script" button. Calls the pre-existing
+  // /coach/scripts/generate endpoint with the client's id + the coach's
+  // active style; the returned script is loaded into the editable
+  // textarea (still saved via the existing PUT /coach/checkins/{id}/script
+  // route). Uses the same motivational / aviation-oriented persona as
+  // before via the server-side SCRIPT_SYSTEM prompt.
+  const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -42,6 +49,37 @@ export default function CoachCheckinReview() {
     try {
       await api<any>(`/coach/checkins/${id}/script`, { method: "PUT", body: { weekly_video_script: script } });
     } catch (e: any) { Alert.alert("Save failed", e?.message || ""); } finally { setSaving(false); }
+  };
+
+  // Iter 165e · Regenerate the weekly video script via the existing
+  // /coach/scripts/generate endpoint (motivational / aviation-oriented
+  // persona lives in SCRIPT_SYSTEM on the backend). The returned script
+  // populates the editable textarea; the coach then reviews/edits and
+  // taps SAVE DRAFT before RECORD VIDEO.
+  const generateScript = async () => {
+    if (!ci?.user_id) { Alert.alert("Cannot generate", "Check-in not loaded yet."); return; }
+    setGenerating(true);
+    try {
+      const r = await api<any>("/coach/scripts/generate", {
+        method: "POST", body: { client_id: ci.user_id },
+      });
+      const fresh = (r?.script || "").trim();
+      if (!fresh) {
+        Alert.alert("No script returned", "The AI didn't return any text — try again in a moment.");
+        return;
+      }
+      setScript(fresh);
+      // Auto-persist so a refresh doesn't lose the freshly-generated draft.
+      try {
+        await api<any>(`/coach/checkins/${id}/script`, {
+          method: "PUT", body: { weekly_video_script: fresh },
+        });
+      } catch { /* non-fatal — local state has the copy */ }
+    } catch (e: any) {
+      Alert.alert("Generation failed", e?.message || "Could not reach the script generator.");
+    } finally {
+      setGenerating(false);
+    }
   };
 
   // Iter 145 — editable client-facing summary
@@ -173,18 +211,39 @@ export default function CoachCheckinReview() {
 
         {/* Editable Script */}
         <View style={styles.block}>
-          <Text style={styles.blockH}>WEEKLY VIDEO SCRIPT</Text>
+          <View style={styles.scriptHeaderRow}>
+            <Text style={styles.blockH}>WEEKLY VIDEO SCRIPT</Text>
+            {/* Iter 165e · GENERATE SCRIPT button — restored from Iter 145.
+                Hits /coach/scripts/generate (aviation-motivational persona)
+                and drops the returned copy into the textarea. */}
+            <Pressable
+              onPress={generateScript}
+              disabled={generating}
+              style={[styles.generateBtn, generating && { opacity: 0.55 }]}
+              testID="generate-script"
+            >
+              {generating ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Ionicons name="sparkles" size={13} color="#fff" />
+              )}
+              <Text style={styles.generateBtnT}>
+                {generating ? "GENERATING…" : (script.trim() ? "REGENERATE SCRIPT" : "GENERATE SCRIPT")}
+              </Text>
+            </Pressable>
+          </View>
           <Text style={styles.hint}>Edit before recording. This is what you&apos;ll read on camera.</Text>
           <TextInput
             value={script}
             onChangeText={setScript}
             multiline
             style={styles.scriptInput}
-            placeholder="Atlas will generate a script here after the client submits."
+            placeholder="Tap GENERATE SCRIPT to have Atlas draft this week's video from the check-in data, or write your own."
             placeholderTextColor={theme.color.textDim}
+            testID="weekly-script-input"
           />
           <View style={styles.scriptActions}>
-            <Pressable onPress={saveScript} disabled={saving} style={styles.saveBtn}>
+            <Pressable onPress={saveScript} disabled={saving} style={styles.saveBtn} testID="save-script">
               {saving ? <ActivityIndicator color={theme.color.brand} size="small" /> : <Ionicons name="save" size={14} color={theme.color.brand} />}
               <Text style={styles.saveBtnT}>SAVE DRAFT</Text>
             </Pressable>
@@ -230,6 +289,19 @@ const styles = StyleSheet.create({
   urgentT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1 },
   block: { padding: 14, marginBottom: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   blockH: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
+  // Iter 165e · Header row for the script block — puts the section title
+  // on the left and the GENERATE SCRIPT button on the right so the
+  // coach's primary action is impossible to miss.
+  scriptHeaderRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    marginBottom: 6, gap: 8, flexWrap: "wrap",
+  },
+  generateBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 20, backgroundColor: theme.color.brand,
+  },
+  generateBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
   hint: { color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", marginBottom: 8 },
   summaryLine: { marginBottom: 8 },
   summaryKey: { color: theme.color.textDim, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },

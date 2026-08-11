@@ -180,50 +180,6 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.body}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
       >
-        {/* NEW: CrewFit Coaching System banner */}
-        <View style={styles.systemBanner}>
-          <View style={styles.systemHead}>
-            <View style={styles.systemIcon}>
-              <Ionicons name="shield-checkmark" size={22} color={theme.color.brand} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.systemEyebrow}>THE CREWFIT COACHING SYSTEM</Text>
-              <Text style={styles.systemTitle}>Louis Hall · Atlas</Text>
-            </View>
-          </View>
-          <Text style={styles.systemBody}>
-            Your coaching is built on a combination of real human coaching and intelligent analysis.
-            {"\n\n"}Louis Hall designed the coaching philosophy. Atlas applies that philosophy consistently across your programme.
-            {"\n\n"}As Atlas learns more about you, your coaching becomes increasingly personalised while remaining within the same proven coaching framework.
-          </Text>
-          <View style={styles.systemActions}>
-            <Pressable
-              testID="hq-meet-atlas"
-              onPress={() => router.push("/atlas-intro" as any)}
-              style={styles.systemBtnPrimary}
-            >
-              <Ionicons name="pulse" size={12} color="#fff" />
-              <Text style={styles.systemBtnPrimaryT}>MEET ATLAS</Text>
-            </Pressable>
-            <Pressable
-              testID="hq-guard-rails"
-              onPress={() => router.push("/guard-rails" as any)}
-              style={styles.systemBtnSecondary}
-            >
-              <Ionicons name="shield-half" size={12} color={theme.color.brand} />
-              <Text style={styles.systemBtnSecondaryT}>GUARD RAILS</Text>
-            </Pressable>
-            <Pressable
-              testID="hq-welcome"
-              onPress={() => router.push("/welcome" as any)}
-              style={styles.systemBtnSecondary}
-            >
-              <Ionicons name="play-circle" size={12} color={theme.color.brand} />
-              <Text style={styles.systemBtnSecondaryT}>MEET LOUIS</Text>
-            </Pressable>
-          </View>
-        </View>
-
         {/* Iter168 · Profile Accordions — 18 sections + CTAs reorganised
             into 4 top-level groups. All groups collapsed by default. */}
 

@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
+import { isCardioExercise } from "@/src/lib/workoutMode";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { clearVideoCache } from "@/src/components/ExerciseVideoPlayer";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
@@ -643,7 +644,19 @@ export default function WorkoutDetail() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.exName} numberOfLines={2}>{ex.name}</Text>
                   <Text style={styles.exMeta}>
-                    {ex.sets} × {ex.reps} · rest {ex.rest_sec}s{ex.rpe ? ` · RPE ${ex.rpe}` : ""}
+                    {/* Iter167 · Cardio exercises never have sets × reps.
+                        Render duration + distance instead so the preview
+                        no longer prints "  ×    · rest  s". */}
+                    {isCardioExercise(ex)
+                      ? [
+                          ex.duration_sec ? `${Math.round(ex.duration_sec / 60)} min` : null,
+                          ex.duration && !ex.duration_sec ? String(ex.duration) : null,
+                          ex.distance_m ? `${(ex.distance_m / 1000).toFixed(1)} km` : null,
+                          ex.rpe ? `RPE ${ex.rpe}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : `${ex.sets ?? "—"} × ${ex.reps ?? "—"} · rest ${ex.rest_sec ?? 60}s${ex.rpe ? ` · RPE ${ex.rpe}` : ""}`}
                   </Text>
                   {ex.notes ? <Text style={styles.exNotes} numberOfLines={2}>{ex.notes}</Text> : null}
                   {ex.equipment_check === "fail" && ex.equipment_reason ? (

@@ -15,7 +15,7 @@ import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 import { RestTimer } from "@/src/components/RestTimer";
-import { getAutoRest } from "@/src/lib/workoutMode";
+import { getAutoRest, isCardioExercise } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete } from "@/src/lib/sounds";
 import { toast } from "@/src/lib/ux";
@@ -30,19 +30,8 @@ type Tile = typeof TILES[number];
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
-function isCardioExercise(ex: any): boolean {
-  if (!ex) return false;
-  // Iter 166 · logging_type is the SINGLE source of truth. If the coach
-  // has explicitly typed the exercise (e.g. "strength", "reps"), we honour
-  // it and never fall through to name-based heuristics. Name-based match
-  // is only a *fallback* when logging_type is missing / blank.
-  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
-  if (lt === "cardio" || lt === "timer") return true;
-  if (lt) return false; // any explicit non-cardio type wins over the name regex
-  const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
-  // Note: "tempo" removed — "Tempo Back Squat" is a strength lift, not cardio.
-  return /\b(run|running|jog|zone\s?[235]|intervals?|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
-}
+// Iter167 · isCardioExercise now lives in src/lib/workoutMode.ts so play.tsx,
+// guided.tsx, list.tsx and index.tsx all use the identical classifier.
 
 function fmtMMSS(sec: number): string {
   const m = Math.floor(sec / 60);

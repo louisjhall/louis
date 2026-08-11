@@ -25,6 +25,7 @@ import { RestTimer } from "@/src/components/RestTimer";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 import { formatPrescription, inferPrescription } from "@/src/lib/formatPrescription";
+import { isCardioExercise as _sharedIsCardio } from "@/src/lib/workoutMode";
 
 /* -------------------------------------------------------------------------- */
 /*  Types & helpers                                                            */
@@ -56,29 +57,18 @@ type ExRow = {
 type ColSpec = { key: "weight" | "reps" | "duration" | "distance" | "rpe";
                  label: string; width?: number; flex?: number };
 
+// Iter167 · Delegate to the master helper in src/lib/workoutMode.ts so that
+// list.tsx, guided.tsx, play.tsx and index.tsx all agree. Kept as a thin
+// wrapper (with only name/reps/duration) so the existing call-sites in this
+// file don't need reshaping.
 function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
-  const hay = `${name || ""} ${reps || ""} ${duration || ""}`.toLowerCase();
-  // Iter 165c · Walking variants (Easy Walk, Zone 1 Walk, Power Walk, Ruck,
-  // Hike, Incline Walk, Stair Climb, StairMaster) were previously routed
-  // through the STRENGTH log (kg + reps). They must render as CARDIO
-  // (distance/time). "Walk" is matched with a word boundary so we don't
-  // accidentally match "walking lunge" — checked separately below.
-  // Iter 166 · "tempo" removed — Tempo Back Squat is a strength lift.
-  return /\b(run|running|jog|zone\s?[1235]|intervals?|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|zone\s?1|z1|zone\s?2|z2)\b/.test(hay)
-    // Exclude "walking lunge" / "walking plank" — those are strength
-    // patterns even though they include the word "walk".
-    && !/\b(walking\s+(lunge|plank|push|dead\s?bug))\b/.test(hay);
+  return _sharedIsCardio({ name, reps, duration });
 }
 
 function resolveCols(ex: ExRow): ColSpec[] {
   const cols: ColSpec[] = [];
-  // Iter 166 · logging_type is the primary source of truth. If the coach
-  // set an explicit non-cardio type (e.g. "strength", "reps"), we honour
-  // it and skip the name-based fallback so "Tempo Back Squat" stays kg/reps.
-  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
-  const isCardio = lt === "cardio" || lt === "timer"
-    ? true
-    : (lt ? false : _isCardioName(ex.name, ex.reps, ex.duration));
+  // Iter167 · Single source of truth for cardio-vs-strength classification.
+  const isCardio = _sharedIsCardio(ex);
   const hasReps = ex.reps != null && String(ex.reps).trim() !== "";
   const hasDuration =
     (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
@@ -151,12 +141,8 @@ const ARR_INT = (n: any, fb = 3) => {
 
 function isCardio(ex: ExRow | null | undefined): boolean {
   if (!ex) return false;
-  if (ex.logging_type === "cardio" || ex.logging_type === "timer") return true;
-  // Iter 165c · Delegate to the shared _isCardioName helper so cardio
-  // detection stays consistent between the header/column resolver and
-  // the save-time payload builder. Both used to have a copy-paste regex
-  // that missed walking, hiking, and stair-climbing variants.
-  return _isCardioName(ex.name, ex.reps, ex.duration);
+  // Iter167 · Single source of truth — same classifier as resolveCols.
+  return _sharedIsCardio(ex);
 }
 
 function isTimed(ex: ExRow | null | undefined): boolean {

@@ -9203,6 +9203,20 @@ RULES:
 - Coaching cues: 3-5 short imperatives (e.g. "Ribs down", "Drive floor away") — max 4 words each.
 - Common mistakes: 3-5 short warnings.
 
+logging_type — MANDATORY CLASSIFICATION RULE (iter167):
+- If the exercise NAME contains the word "run", "walk", "row", or "cycle" (as a
+  standalone word — case-insensitive), you MUST return `logging_type: "cardio"`.
+  Examples: "Easy Run", "Zone 2 Run", "Long Run — Steady Pace", "Easy Walk",
+  "Incline Walk", "Recovery Row", "Zone 2 Row", "Erg Row", "Assault Bike Cycle",
+  "Recovery Cycle". This overrides every other consideration.
+- EXCEPTIONS — the words above appearing inside a strength lift name do NOT
+  make it cardio. Return `logging_type: "weighted"` (or "bodyweight" if
+  unloaded) for these: "Bent-over Row", "Barbell Row", "Dumbbell Row",
+  "Pendlay Row", "Seal Row", "Chest-supported Row", "Meadows Row", "Kroc Row",
+  "T-bar Row", "Inverted Row", "Renegade Row", "Upright Row", "Cable Row",
+  "Face Pull", "Walking Lunge", "Walking Plank", "Walking Push-up".
+- For anything else, choose from: weighted | bodyweight | cardio | timer | mobility.
+
 Return STRICT JSON only:
 {
   "instructions": ["...", "...", "...", "..."],

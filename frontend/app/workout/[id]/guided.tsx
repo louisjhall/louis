@@ -22,6 +22,7 @@ import { RestTimer } from "@/src/components/RestTimer";
 import {
   getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue,
   getAutoRest, getVoiceOn, setVoiceOn as saveVoiceOn,
+  isCardioExercise,
 } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete, playCountdownTick, warmupSoundEngine } from "@/src/lib/sounds";
@@ -55,28 +56,9 @@ function autopilotWorkSeconds(ex: any, targetReps: number, isCardio: boolean): n
   return Math.max(20, Math.min(90, est));
 }
 
-function isCardioExercise(ex: any): boolean {
-  if (!ex) return false;
-  // Iter 166 · logging_type is the SINGLE source of truth. Explicit
-  // strength / reps types must NOT fall through to name-based heuristics
-  // so "Tempo Back Squat" stays a strength lift.
-  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
-  if (lt === "cardio" || lt === "timer") return true;
-  if (lt) return false;
-  const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
-  // Iter 165c · Extended to catch walking / hiking / stair variants so
-  // "Easy Walk" no longer routes through the strength autopilot timer.
-  // Excludes "walking lunge" / "walking plank" which are strength moves.
-  // Iter 166 · "tempo" removed — strength lifts (Tempo Back Squat) must
-  // not be misclassified as cardio.
-  const cardioHit = /\b(run|running|jog|zone\s?[1235]|intervals?|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|z1|z2)\b/.test(hay);
-  const strengthWalkExclude = /\b(walking\s+(lunge|plank|push|dead\s?bug))\b/.test(hay);
-  return cardioHit && !strengthWalkExclude;
-}
-
+function isMobilityLike(ex: any): boolean {
 // Iter 94t (Phase 2) — Mobility / stretch exercises deserve slower image
 // auto-scroll (5–7s) so clients can actually study each position.
-function isMobilityLike(ex: any): boolean {
   if (!ex) return false;
   const hay = `${ex.name || ""} ${ex.category || ""} ${ex.section || ""}`.toLowerCase();
   return /\b(mobility|stretch|flow|breath|activation|cool.?down|warm.?up|rock|rotation|open.?book|hip.?flex|thoracic|foam|glute.?bridge|cat.?cow)\b/.test(hay);

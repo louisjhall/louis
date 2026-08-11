@@ -7,6 +7,47 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type WorkoutMode = "manual" | "guided";
 
+/* -------------------------------------------------------------------------- */
+/*  Iter167 · Master Brain — cardio-vs-strength classification.               */
+/*  Used by workout/[id]/index.tsx, list.tsx, play.tsx and guided.tsx so      */
+/*  every screen agrees on which rendering path an exercise takes.            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Priority order:
+ *   1. `logging_type` — always wins if set by coach / JSON importer / library.
+ *        · "cardio" | "timer"  → cardio
+ *        · any other explicit value → strength (name-regex is skipped so
+ *          e.g. "Tempo Back Squat" typed as "strength" never flips)
+ *   2. Fallback keyword regex over name + reps + duration + category. Only
+ *      runs when `logging_type` is missing / blank.
+ *
+ * NOTE: `tempo` is intentionally excluded — "Tempo Back Squat" is a lift.
+ * `zone[\s-]?[1235]` matches "zone 2", "zone-2", "z2" and captures the
+ * hyphenated intervals seen in the JSON importer output.
+ */
+export function isCardioExercise(ex: any): boolean {
+  if (!ex) return false;
+  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
+  if (lt === "cardio" || lt === "timer") return true;
+  if (lt) return false;
+
+  const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
+
+  // Full keyword list — merged from guided.tsx (walk, hike, ruck, stair
+  // variants) and augmented with row + cycle per iter167 request.
+  const cardioHit = /\b(run|running|jog|zone[\s-]?[1235]|z[1235]|intervals?|treadmill|row|rowing|erg|bike|biking|cycling|cycle|assault|swim|swimming|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk)\b/.test(hay);
+
+  // Strength patterns that CONTAIN a cardio keyword must be excluded.
+  // Rows in the gym (barbell / dumbbell / cable / seal / pendlay …) are
+  // strength, not cardio. "Walking lunge" and "walking plank" are strength.
+  const strengthNameExclude = /\b(walking\s+(lunge|plank|push|dead\s?bug)|bent[- ]?over\s?row|barbell\s?row|dumbbell\s?row|db\s?row|kb\s?row|pendlay\s?row|seal\s?row|meadows\s?row|chest[- ]?supported\s?row|inverted\s?row|single[- ]?arm\s?row|renegade\s?row|t[- ]?bar\s?row|kroc\s?row|upright\s?row|face\s?pull|cable\s?row|iso\s?row|smith\s?row|helms\s?row|hip\s?thrust)\b/.test(hay);
+
+  return cardioHit && !strengthNameExclude;
+}
+
+/* -------------------------------------------------------------------------- */
+
 const MODE_KEY = "crewfit.workout.mode";
 const REMEMBER_KEY = "crewfit.workout.mode.remember";
 const AUTO_CONTINUE_KEY = "crewfit.workout.autoContinue";

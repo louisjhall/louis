@@ -59,20 +59,56 @@ def _scale_reps(reps: Any, factor: float) -> Any:
 
 def _derive_amber(green: dict) -> dict:
     """Amber = ~65% volume of Green. Keeps the same movement pattern so the
-    client still gets the training stimulus, just lighter."""
+    client still gets the training stimulus, just lighter.
+
+    Iter167 · logging_type MUST survive the scaling untouched — an
+    'Amber Easy Walk' has to stay classified as cardio so the client app
+    renders the distance/time logger, not the kg/reps grid. We also scale
+    cardio exercises by duration/distance rather than sets, since 4 × 6
+    is meaningless for a run.
+    """
     factor = 0.65
     exs_in = green.get("exercises") or []
     # Drop the last exercise for sessions with 5+ movements (accessory culls first).
     keep = exs_in if len(exs_in) <= 4 else exs_in[:-1]
     exs_out = []
     for e in keep:
-        e2 = dict(e)
-        try:
-            sets = int(e.get("sets") or 3)
-            e2["sets"] = max(2, int(round(sets * factor)))
-        except Exception:
-            pass
-        e2["reps"] = _scale_reps(e.get("reps"), 0.85)  # reps taper less than sets
+        e2 = dict(e)  # dict() clones ALL keys — logging_type is preserved.
+
+        # Iter167 · Explicitly hold logging_type stable so any downstream
+        # code that touches e2 can never accidentally strip it. This is a
+        # belt-and-braces guarantee for the "Amber Easy Walk stays cardio"
+        # contract.
+        lt = (e.get("logging_type") or "").strip().lower()
+        if lt:
+            e2["logging_type"] = lt
+
+        is_cardio = lt in ("cardio", "timer")
+
+        if is_cardio:
+            # Cardio: scale duration + distance, leave sets/reps alone.
+            for dur_key in ("duration_sec", "duration_min"):
+                if e.get(dur_key):
+                    try:
+                        e2[dur_key] = max(60 if dur_key == "duration_sec" else 5,
+                                          int(round(int(e[dur_key]) * factor)))
+                    except Exception:
+                        pass
+            for dist_key in ("distance_m", "distance_km"):
+                if e.get(dist_key):
+                    try:
+                        e2[dist_key] = round(float(e[dist_key]) * factor, 2)
+                    except Exception:
+                        pass
+        else:
+            # Strength / bodyweight / mobility: scale sets and taper reps.
+            try:
+                sets = int(e.get("sets") or 3)
+                e2["sets"] = max(2, int(round(sets * factor)))
+            except Exception:
+                pass
+            e2["reps"] = _scale_reps(e.get("reps"), 0.85)  # reps taper less than sets
+
         try:
             rest = int(e.get("rest_sec") or 60)
             e2["rest_sec"] = max(30, rest)

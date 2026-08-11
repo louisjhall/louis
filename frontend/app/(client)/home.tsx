@@ -12,31 +12,31 @@ import { CrewFitWings } from "@/src/components/Logo";
 import { ClientProfileHeader } from "@/src/components/ClientProfileHeader";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { RealityModal } from "@/src/components/RealityModal";
-import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
+// Iter168 · WeeklyCheckinCard, WeeklyReviewCard, DualSessionCard and
+// HabitTodayCard now render inside <DailyRitualsCard/>. Kept the imports
+// removed so the Today tab doesn't accidentally render them twice.
 import { WelcomeVideoBanner } from "@/src/components/WelcomeVideoBanner";
 import { RosterNeededHeroCard } from "@/src/components/RosterNeededHeroCard";
 import { TimeZoneConfirmModal } from "@/src/components/TimeZoneConfirmModal";
-import { TimezoneCard } from "@/src/components/TimezoneCard";
+// Iter168 · TimezoneCard moved off the Today tab (see Profile / Settings).
 import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
 import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
-import { WeeklyReviewCard } from "@/src/components/WeeklyReviewCard";
-import { DualSessionCard } from "@/src/components/DualSessionCard";
+import { DailyRitualsCard } from "@/src/components/DailyRitualsCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
 import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
 import { ReportIssueSheet } from "@/src/components/ReportIssueSheet";
 import { RosterDayChip } from "@/src/components/RosterDayChip";
 import { useFlag } from "@/src/lib/appConfig";
-import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { TodayFlightSupport } from "@/src/components/TodayFlightSupport";import { NotificationBell } from "@/src/components/NotificationBell";
 import { PushPermissionPrompt } from "@/src/components/PushPermissionPrompt";
 import { StandbyStatusCard } from "@/src/components/StandbyStatusCard";
 import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
 import { TodayPersonalActivities } from "@/src/components/PersonalActivityCard";
 import { AddActivityModal } from "@/src/components/AddActivityModal";
-import { HotelSetupCard } from "@/src/components/HotelSetupCard";
-import { ProgressCard } from "@/src/components/ProgressCard";
+// Iter168 · HotelSetupCard + ProgressCard moved off the Today tab —
+// they resurface under the Profile / Roster contexts.
 import { RosterDayPickerSheet, type RosterDayPickerTarget } from "@/src/components/RosterDayPickerSheet";
 import { EventPrioritySheet } from "@/src/components/EventPrioritySheet";
 import { EventProgressBanner } from "@/src/components/EventProgressBanner";
@@ -142,7 +142,9 @@ export default function Home() {
   const tzFlag = useFlag("timezone_card_enabled");
   const missedFlag = useFlag("missed_workout_recovery_enabled");
   const nutritionFlag = useFlag("nutrition_dashboard_enabled");
-  const dualSessionFlag = useFlag("dual_session_enabled");
+  // Iter168 · dualSessionFlag is now consumed inside <DailyRitualsCard/>
+  // — the card returns null when the feature is disabled, so we no longer
+  // need to guard here.
   const calendarFlag = useFlag("calendar_scroll_enabled");
   const [workouts, setWorkouts] = useState<any[]>([]);
   const [roster, setRoster] = useState<any>(null);
@@ -855,12 +857,12 @@ export default function Home() {
           {/* Missed sessions live in the action zone — they need action */}
           {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
 
-          {/* ── Block 3: Daily rituals ─────────────────────────────── */}
-          <HabitTodayCard />
-          {dualSessionFlag ? <DualSessionCard refreshKey={activityRefreshKey} /> : null}
-          <WeeklyCheckinCard />
-          {/* Sunday-only weekly review card (see WeeklyReviewCard) */}
-          <WeeklyReviewCard refreshKey={activityRefreshKey} />
+          {/* ── Block 3: Daily Rituals — iter168 · consolidates HabitToday,
+              DualSession, WeeklyCheckin and WeeklyReview into ONE
+              collapsible surface (collapsed by default, remembers state
+              via AsyncStorage). Reduces the Today tab from 6+ cards
+              down to ~3 so the workout stays the primary focus. */}
+          <DailyRitualsCard refreshKey={activityRefreshKey} />
 
           {/* ── Block 4: Events + Personal activities + Standby ────── */}
           {event ? (
@@ -985,11 +987,9 @@ export default function Home() {
             })()
           ) : null}
 
-          {/* Phase 1: Hotel Setup — appears when upcoming layovers need a hotel/gym profile */}
-          <HotelSetupCard />
-
-          {/* Phase 3: Your Progress — appears when a weekly snapshot exists */}
-          <ProgressCard />
+          {/* Iter168 · HotelSetupCard + ProgressCard removed from the Today
+              tab so the surface stays focused on the workout. They will
+              resurface inside Profile / Roster contexts in Stage B. */}
 
           <Text style={styles.sectionTitle}>YOUR SCHEDULE</Text>
           {programmeFocus?.banner_text ? (
@@ -1075,9 +1075,10 @@ export default function Home() {
           )}
 
           {tzFlag ? (
-            <View style={styles.tzChipWrap} testID="home-tz-chip">
-              <TimezoneCard />
-            </View>
+            /* Iter168 · TimezoneCard removed from the Today tab per UX
+                brief (moved to Profile in Stage B). The tzFlag guard is
+                kept so the surrounding conditional block still parses. */
+            null
           ) : null}
 
           <PushPermissionPrompt />

@@ -29,6 +29,7 @@ import Constants from "expo-constants";
 import { api, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { MessageAttachmentBubble } from "@/src/components/MessageAttachmentBubble";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                      */
@@ -456,17 +457,26 @@ export default function CoachMessagesScreen() {
                         ) : null}
                         <View style={[styles.bubbleRow, isMine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                           <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
-                            {(m.attachments || []).map((att) => {
-                              if (att.kind === "image" && (att.url || att.preview_url)) {
-                                return <Image key={att.id} source={{ uri: att.url || att.preview_url }} style={styles.attImage} resizeMode="cover" />;
-                              }
-                              return (
-                                <View key={att.id} style={styles.attGeneric}>
-                                  <Ionicons name={att.kind === "video" ? "videocam" : att.kind === "voice" ? "mic" : "document"} size={14} color={theme.color.textMuted} />
-                                  <Text style={{ color: theme.color.textMuted, marginLeft: 6, fontSize: 12 }}>{att.kind}</Text>
-                                </View>
-                              );
-                            })}
+                            {/* Iter 165f · Delegate attachment rendering to the
+                                shared <MessageAttachmentBubble /> exactly as
+                                the client thread does. The previous inline
+                                block gated on `att.kind === "image"` and
+                                read `att.url || att.preview_url` directly,
+                                which (a) uses the wrong field name for the
+                                backend response (`file_url` / `storage_url`
+                                shapes are handled inside the shared component)
+                                and (b) hits the raw R2 path without the
+                                auth-aware `getSignedUrl` fetcher the shared
+                                component uses. Result: images looked broken
+                                in the coach inbox even though they rendered
+                                fine on the client side. */}
+                            {(m.attachments || []).map((att) => (
+                              <MessageAttachmentBubble
+                                key={att.id}
+                                att={att as any}
+                                mine={isMine}
+                              />
+                            ))}
                             {m.text ? (
                               <Text style={[styles.bubbleText, isMine ? { color: "#fff" } : { color: theme.color.text }]}>{m.text}</Text>
                             ) : null}

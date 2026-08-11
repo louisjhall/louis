@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl,
   Modal, TextInput, Alert, KeyboardAvoidingView, Platform,
@@ -223,429 +224,451 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* 1. PROFILE */}
-        <Section id="profile" title="PROFILE" icon="person" expanded={expanded} onToggle={toggle}
-          onEdit={() => openEdit({
-            title: "Profile", scope: "user_profile", fields: [
-              { key: "name", label: "Name", type: "text", value: user?.name },
-              { key: "job_title", label: "Job Title (Captain, First Officer, Cabin Crew, Purser, …)", type: "text", value: user?.profile?.job_title },
-              { key: "airline", label: "Airline", type: "text", value: user?.profile?.airline },
-              { key: "home_base", label: "Home Base (e.g. Dubai (DXB))", type: "text", value: user?.profile?.home_base },
-              { key: "aircraft_type", label: "Aircraft Type", type: "text", value: user?.profile?.aircraft_type },
-              { key: "route_focus", label: "Route Focus (long-haul | short-haul | mixed)", type: "text", value: user?.profile?.route_focus },
-              { key: "height_cm", label: "Height", type: "number", value: user?.profile?.height_cm, unit: "cm" },
-              { key: "weight_kg", label: "Weight", type: "number", value: user?.profile?.weight_kg, unit: "kg" },
-              { key: "dob", label: "Date of Birth", type: "text", value: user?.profile?.dob },
-            ],
-          })}
-        >
-          <ProfilePhotoRow user={user} onChanged={async () => { await refresh(); }} />
-          <KV label="EMAIL" value={user?.email} />
-          <KV label="JOB TITLE" value={user?.profile?.job_title || "—"} />
-          <KV label="AIRLINE" value={user?.profile?.airline || "—"} />
-          <KV label="HOME BASE" value={user?.profile?.home_base || "—"} />
-          <KV label="AIRCRAFT" value={user?.profile?.aircraft_type || "—"} />
-          <KV label="ROUTE FOCUS" value={user?.profile?.route_focus ? user.profile.route_focus.toUpperCase() : "—"} />
-          <KV label="ROLE" value={String(user?.role || "").toUpperCase()} />
-          <KV label="HEIGHT" value={user?.profile?.height_cm ? `${user.profile.height_cm} cm` : "—"} />
-          <KV label="WEIGHT" value={user?.profile?.weight_kg ? `${user.profile.weight_kg} kg` : "—"} />
-          <KV label="DOB" value={user?.profile?.dob || "—"} />
-          <PersonalImageryCard />
-        </Section>
+        {/* Iter168 · Profile Accordions — 18 sections + CTAs reorganised
+            into 4 top-level groups. All groups collapsed by default. */}
 
-        {/* 2. COACHING DNA */}
-        <Section id="coaching_dna" title="COACHING DNA" icon="pulse" expanded={expanded} onToggle={toggle}
-          rightSlot={dna?.ai_confidence_score !== undefined ? (
-            <View style={styles.dnaPill}>
-              <Text style={styles.dnaPillLabel}>CONF</Text>
-              <Text style={styles.dnaPillNum}>{dna.ai_confidence_score}</Text>
-            </View>
-          ) : null}
-          onOpen={() => router.push("/coaching-dna" as any)}
-        >
-          {dna ? (
-            <>
-              <KV label="VERSION" value={`v${dna.version || 1}`} />
-              <KV label="SUMMARY" value={dna.summary} multiline />
-              <Pressable onPress={() => router.push("/coaching-dna" as any)} style={styles.linkTile}>
-                <Text style={styles.linkTileT}>VIEW FULL DNA</Text>
-                <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
-              </Pressable>
-            </>
-          ) : (
-            <EmptyRow
-              text="No Coaching DNA yet. Complete the CrewFit Intelligence Assessment to generate yours."
-              actionLabel="START ASSESSMENT"
-              onAction={() => router.push("/assessment" as any)}
-            />
-          )}
-        </Section>
+        {/* ═══════════ GROUP 1 · ME & GOALS ═══════════════════════════════ */}
+        <SectionGroup id="me_goals" title="ME & GOALS" icon="person"
+          subtitle="Who you are, where you're headed">
 
-        {/* 3. GOALS */}
-        <Section id="goals" title="GOALS" icon="flag" expanded={expanded} onToggle={toggle}
-          disabled={!dna}
-          onEdit={dna ? () => openEdit({
-            title: "Goals", scope: "coaching_dna", fields: [
-              { key: "primary_goal", label: "Primary Goal", type: "text", value: dna.primary_goal },
-              { key: "secondary_goals", label: "Secondary Goals (comma-separated)", type: "multi_text", value: (dna.secondary_goals || []).join(", ") },
-              { key: "why_it_matters", label: "Why This Matters", type: "multi_text", value: dna.why_it_matters },
-            ],
-          }) : undefined}
-        >
-          <KV label="PRIMARY" value={dna?.primary_goal} highlight />
-          {(dna?.secondary_goals || []).length > 0 && (
-            <View style={styles.chipRow}>
-              {dna.secondary_goals.map((g: string, i: number) => (
-                <View key={i} style={styles.chip}><Text style={styles.chipT}>{g}</Text></View>
-              ))}
-            </View>
-          )}
-          <KV label="WHY IT MATTERS" value={dna?.why_it_matters} multiline />
-        </Section>
+          {/* 1. PROFILE */}
+          <Section id="profile" title="PROFILE" icon="person" expanded={expanded} onToggle={toggle}
+            onEdit={() => openEdit({
+              title: "Profile", scope: "user_profile", fields: [
+                { key: "name", label: "Name", type: "text", value: user?.name },
+                { key: "job_title", label: "Job Title (Captain, First Officer, Cabin Crew, Purser, …)", type: "text", value: user?.profile?.job_title },
+                { key: "airline", label: "Airline", type: "text", value: user?.profile?.airline },
+                { key: "home_base", label: "Home Base (e.g. Dubai (DXB))", type: "text", value: user?.profile?.home_base },
+                { key: "aircraft_type", label: "Aircraft Type", type: "text", value: user?.profile?.aircraft_type },
+                { key: "route_focus", label: "Route Focus (long-haul | short-haul | mixed)", type: "text", value: user?.profile?.route_focus },
+                { key: "height_cm", label: "Height", type: "number", value: user?.profile?.height_cm, unit: "cm" },
+                { key: "weight_kg", label: "Weight", type: "number", value: user?.profile?.weight_kg, unit: "kg" },
+                { key: "dob", label: "Date of Birth", type: "text", value: user?.profile?.dob },
+              ],
+            })}
+          >
+            <ProfilePhotoRow user={user} onChanged={async () => { await refresh(); }} />
+            <KV label="EMAIL" value={user?.email} />
+            <KV label="JOB TITLE" value={user?.profile?.job_title || "—"} />
+            <KV label="AIRLINE" value={user?.profile?.airline || "—"} />
+            <KV label="HOME BASE" value={user?.profile?.home_base || "—"} />
+            <KV label="AIRCRAFT" value={user?.profile?.aircraft_type || "—"} />
+            <KV label="ROUTE FOCUS" value={user?.profile?.route_focus ? user.profile.route_focus.toUpperCase() : "—"} />
+            <KV label="ROLE" value={String(user?.role || "").toUpperCase()} />
+            <KV label="HEIGHT" value={user?.profile?.height_cm ? `${user.profile.height_cm} cm` : "—"} />
+            <KV label="WEIGHT" value={user?.profile?.weight_kg ? `${user.profile.weight_kg} kg` : "—"} />
+            <KV label="DOB" value={user?.profile?.dob || "—"} />
+            <PersonalImageryCard />
+          </Section>
 
-        {/* 4. EVENT TIMELINE (all events, all times) */}
-        <Section id="event_timeline" title="EVENT TIMELINE" icon="calendar" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={events.length} />}
-        >
-          {events.length === 0 ? (
-            <EmptyRow text="No events on the timeline yet." />
-          ) : (
-            events.slice(0, 12).map((e) => (
-              <View key={e.id} style={styles.evRow}>
-                <Ionicons name="flag" size={16} color={theme.color.brand} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.evName}>{e.event_name || e.event_type}</Text>
-                  <Text style={styles.evMeta}>{e.event_date} · {String(e.priority || "B").toUpperCase()}</Text>
-                </View>
-                {e.is_active && <View style={styles.activeDot} />}
+          {/* AVIATION PROFILE */}
+          <Section id="aviation" title="AVIATION PROFILE" icon="airplane" expanded={expanded} onToggle={toggle}
+            disabled={!dna}
+            onEdit={dna ? () => openEdit({
+              title: "Aviation Profile", scope: "coaching_dna", fields: [
+                { key: "aviation_profile", label: "Aviation Profile JSON", type: "multi_text", value: JSON.stringify(dna.aviation_profile || {}, null, 2) },
+                { key: "flying_style", label: "Flying Style", type: "multi_text", value: dna.flying_style },
+              ],
+            }) : undefined}
+          >
+            <KV label="ROLE" value={av.role} />
+            <KV label="HAUL MIX" value={av.haul_mix} />
+            <KV label="AVG SECTORS / MONTH" value={av.avg_sectors_month} />
+            <KV label="TYPICAL LAYOVER" value={av.typical_layover_hours ? `${av.typical_layover_hours} h` : undefined} />
+            <KV label="HOTEL GYMS" value={av.hotel_gym_frequency} />
+            <KV label="FLYING STYLE" value={dna?.flying_style} multiline />
+          </Section>
+
+          {/* LIFESTYLE */}
+          <Section id="lifestyle" title="LIFESTYLE" icon="home" expanded={expanded} onToggle={toggle}
+            disabled={!dna}
+            onEdit={dna ? () => openEdit({
+              title: "Lifestyle", scope: "coaching_dna", fields: [
+                { key: "lifestyle_summary", label: "Lifestyle Summary", type: "multi_text", value: dna.lifestyle_summary },
+              ],
+            }) : undefined}
+          >
+            <KV label="SUMMARY" value={dna?.lifestyle_summary} multiline />
+          </Section>
+
+          {/* GOALS */}
+          <Section id="goals" title="GOALS" icon="flag" expanded={expanded} onToggle={toggle}
+            disabled={!dna}
+            onEdit={dna ? () => openEdit({
+              title: "Goals", scope: "coaching_dna", fields: [
+                { key: "primary_goal", label: "Primary Goal", type: "text", value: dna.primary_goal },
+                { key: "secondary_goals", label: "Secondary Goals (comma-separated)", type: "multi_text", value: (dna.secondary_goals || []).join(", ") },
+                { key: "why_it_matters", label: "Why This Matters", type: "multi_text", value: dna.why_it_matters },
+              ],
+            }) : undefined}
+          >
+            <KV label="PRIMARY" value={dna?.primary_goal} highlight />
+            {(dna?.secondary_goals || []).length > 0 && (
+              <View style={styles.chipRow}>
+                {dna.secondary_goals.map((g: string, i: number) => (
+                  <View key={i} style={styles.chip}><Text style={styles.chipT}>{g}</Text></View>
+                ))}
               </View>
-            ))
-          )}
-        </Section>
+            )}
+            <KV label="WHY IT MATTERS" value={dna?.why_it_matters} multiline />
+          </Section>
 
-        {/* 5. AVIATION PROFILE */}
-        <Section id="aviation" title="AVIATION PROFILE" icon="airplane" expanded={expanded} onToggle={toggle}
-          disabled={!dna}
-          onEdit={dna ? () => openEdit({
-            title: "Aviation Profile", scope: "coaching_dna", fields: [
-              { key: "aviation_profile", label: "Aviation Profile JSON", type: "multi_text", value: JSON.stringify(dna.aviation_profile || {}, null, 2) },
-              { key: "flying_style", label: "Flying Style", type: "multi_text", value: dna.flying_style },
-            ],
-          }) : undefined}
-        >
-          <KV label="ROLE" value={av.role} />
-          <KV label="HAUL MIX" value={av.haul_mix} />
-          <KV label="AVG SECTORS / MONTH" value={av.avg_sectors_month} />
-          <KV label="TYPICAL LAYOVER" value={av.typical_layover_hours ? `${av.typical_layover_hours} h` : undefined} />
-          <KV label="HOTEL GYMS" value={av.hotel_gym_frequency} />
-          <KV label="FLYING STYLE" value={dna?.flying_style} multiline />
-        </Section>
-
-        {/* 6. LIFESTYLE */}
-        <Section id="lifestyle" title="LIFESTYLE" icon="home" expanded={expanded} onToggle={toggle}
-          disabled={!dna}
-          onEdit={dna ? () => openEdit({
-            title: "Lifestyle", scope: "coaching_dna", fields: [
-              { key: "lifestyle_summary", label: "Lifestyle Summary", type: "multi_text", value: dna.lifestyle_summary },
-            ],
-          }) : undefined}
-        >
-          <KV label="SUMMARY" value={dna?.lifestyle_summary} multiline />
-        </Section>
-
-        {/* 7. EQUIPMENT */}
-        <Section id="equipment" title="EQUIPMENT" icon="barbell" expanded={expanded} onToggle={toggle}
-          onEdit={() => openEdit({
-            title: "Equipment", scope: "user_profile", fields: [
-              { key: "home_equipment", label: "Home equipment (comma-separated)", type: "multi_text", value: (user?.profile?.home_equipment || user?.profile?.equipment || []).join(", ") },
-              { key: "max_home_minutes", label: "Max minutes at home", type: "number", value: user?.profile?.max_home_minutes },
-            ],
-          })}
-        >
-          {eqLocs.length > 0 ? (
-            eqLocs.map((loc: any, i: number) => (
-              <View key={i} style={{ marginBottom: 8 }}>
-                <Text style={styles.subLbl}>{String(loc.location || "home").toUpperCase()}</Text>
-                <View style={styles.chipRow}>
-                  {(loc.equipment || []).map((eq: string, j: number) => (
-                    <View key={j} style={styles.chip}><Text style={styles.chipT}>{eq}</Text></View>
-                  ))}
-                </View>
-              </View>
-            ))
-          ) : (
-            <View style={styles.chipRow}>
-              {(user?.profile?.home_equipment || user?.profile?.equipment || []).map((eq: string, i: number) => (
-                <View key={i} style={styles.chip}><Text style={styles.chipT}>{eq}</Text></View>
-              ))}
-              {(user?.profile?.home_equipment || user?.profile?.equipment || []).length === 0 && (
-                <EmptyRow text="No equipment saved yet." />
-              )}
-            </View>
-          )}
-        </Section>
-
-        {/* 8. RECOVERY */}
-        <Section id="recovery" title="RECOVERY" icon="leaf" expanded={expanded} onToggle={toggle}>
-          <KV label="RECOVERY RISK" value={String(dna?.recovery_risk || "unknown").toUpperCase()} highlight={dna?.recovery_risk === "high"} />
-          <KV label="STRATEGY" value={dna?.recommended_recovery_strategy} multiline />
-          {checkins.length > 0 ? (
-            <>
-              <Text style={styles.subLbl}>RECENT CHECK-INS</Text>
-              {checkins.slice(0, 5).map((c: any) => (
-                <View key={c.id} style={styles.ciRow}>
-                  <Text style={styles.ciDate}>{c.date}</Text>
-                  <View style={styles.ciStats}>
-                    <View style={styles.ciChip}><Ionicons name="moon" size={11} color={theme.color.textMuted} /><Text style={styles.ciStat}>{c.sleep ?? "—"}</Text></View>
-                    <View style={styles.ciChip}><Ionicons name="flash" size={11} color={theme.color.amber} /><Text style={styles.ciStat}>{c.energy ?? "—"}</Text></View>
-                    <View style={styles.ciChip}><Ionicons name="pulse" size={11} color={theme.color.brand} /><Text style={styles.ciStat}>{c.stress ?? "—"}</Text></View>
+          {/* EVENT TIMELINE */}
+          <Section id="event_timeline" title="EVENT TIMELINE" icon="calendar" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={events.length} />}
+          >
+            {events.length === 0 ? (
+              <EmptyRow text="No events on the timeline yet." />
+            ) : (
+              events.slice(0, 12).map((e) => (
+                <View key={e.id} style={styles.evRow}>
+                  <Ionicons name="flag" size={16} color={theme.color.brand} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.evName}>{e.event_name || e.event_type}</Text>
+                    <Text style={styles.evMeta}>{e.event_date} · {String(e.priority || "B").toUpperCase()}</Text>
                   </View>
+                  {e.is_active && <View style={styles.activeDot} />}
+                </View>
+              ))
+            )}
+          </Section>
+
+          {/* UPCOMING EVENTS */}
+          <Section id="upcoming" title="UPCOMING EVENTS" icon="star" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={upcomingEvents.length} />}
+          >
+            {upcomingEvents.length === 0 ? (
+              <EmptyRow text="No upcoming events." />
+            ) : (
+              upcomingEvents.map((e) => (
+                <View key={e.id} style={styles.evRow}>
+                  <Ionicons name="flag" size={16} color={theme.color.brand} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.evName}>{e.event_name || e.event_type}</Text>
+                    <Text style={styles.evMeta}>{e.event_date} · Priority {String(e.priority || "B").toUpperCase()}</Text>
+                  </View>
+                  {e.phase_info?.phase ? (
+                    <View style={styles.phasePill}><Text style={styles.phasePillT}>{String(e.phase_info.phase).toUpperCase()}</Text></View>
+                  ) : null}
+                </View>
+              ))
+            )}
+          </Section>
+
+          {/* MOTIVATION */}
+          <Section id="motivation" title="MOTIVATION" icon="flame" expanded={expanded} onToggle={toggle}
+            disabled={!dna}
+            onEdit={dna ? () => openEdit({
+              title: "Motivation", scope: "coaching_dna", fields: [
+                { key: "motivation_style", label: "Motivation Style", type: "text", value: dna.motivation_style },
+                { key: "coaching_style", label: "Preferred Coaching Style", type: "text", value: dna.coaching_style },
+                { key: "biggest_strength", label: "Biggest Strength", type: "text", value: dna.biggest_strength },
+                { key: "biggest_weakness", label: "Biggest Weakness", type: "text", value: dna.biggest_weakness },
+                { key: "biggest_opportunity", label: "Biggest Opportunity", type: "text", value: dna.biggest_opportunity },
+              ],
+            }) : undefined}
+          >
+            <KV label="STYLE" value={dna?.motivation_style} />
+            <KV label="COACH STYLE" value={dna?.coaching_style} />
+            <KV label="STRENGTH" value={dna?.biggest_strength} multiline />
+            <KV label="WEAKNESS" value={dna?.biggest_weakness} multiline />
+            <KV label="OPPORTUNITY" value={dna?.biggest_opportunity} multiline />
+          </Section>
+        </SectionGroup>
+
+        {/* ═══════════ GROUP 2 · COACHING INTELLIGENCE ════════════════════ */}
+        <SectionGroup id="coaching_intel" title="COACHING INTELLIGENCE" icon="pulse"
+          subtitle="Your DNA, records, notes and evolution">
+
+          {/* COACHING DNA */}
+          <Section id="coaching_dna" title="COACHING DNA" icon="pulse" expanded={expanded} onToggle={toggle}
+            rightSlot={dna?.ai_confidence_score !== undefined ? (
+              <View style={styles.dnaPill}>
+                <Text style={styles.dnaPillLabel}>CONF</Text>
+                <Text style={styles.dnaPillNum}>{dna.ai_confidence_score}</Text>
+              </View>
+            ) : null}
+            onOpen={() => router.push("/coaching-dna" as any)}
+          >
+            {dna ? (
+              <>
+                <KV label="VERSION" value={`v${dna.version || 1}`} />
+                <KV label="SUMMARY" value={dna.summary} multiline />
+                <Pressable onPress={() => router.push("/coaching-dna" as any)} style={styles.linkTile}>
+                  <Text style={styles.linkTileT}>VIEW FULL DNA</Text>
+                  <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
+                </Pressable>
+              </>
+            ) : (
+              <EmptyRow
+                text="No Coaching DNA yet. Complete the CrewFit Intelligence Assessment to generate yours."
+                actionLabel="START ASSESSMENT"
+                onAction={() => router.push("/assessment" as any)}
+              />
+            )}
+          </Section>
+
+          {/* ACHIEVEMENTS */}
+          <Section id="achievements" title="ACHIEVEMENTS" icon="trophy" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={(achievements.badges || []).filter((b: any) => b.unlocked).length} />}
+          >
+            <View style={styles.statsGrid}>
+              <StatTile label="COMPLETED" value={stats.workouts_completed || 0} />
+              <StatTile label="STREAK" value={`${stats.current_streak || 0}d`} />
+              <StatTile label="EVENTS" value={stats.events_planned || 0} />
+              <StatTile label="ADAPTATIONS" value={stats.reality_adaptations || 0} />
+            </View>
+            <View style={styles.badgeGrid}>
+              {(achievements.badges || []).map((b: any) => (
+                <View key={b.id} style={[styles.badge, !b.unlocked && styles.badgeLocked]}>
+                  <Text style={styles.badgeEmoji}>{b.emoji}</Text>
+                  <Text style={[styles.badgeTitle, !b.unlocked && styles.badgeTitleLocked]} numberOfLines={2}>{b.title}</Text>
+                  <Text style={styles.badgeSub} numberOfLines={2}>{b.sub}</Text>
                 </View>
               ))}
-            </>
-          ) : null}
-        </Section>
+            </View>
+          </Section>
 
-        {/* 9. NUTRITION */}
-        <Section id="nutrition" title="NUTRITION" icon="restaurant" expanded={expanded} onToggle={toggle}
-          disabled={!dna}
-          onEdit={dna ? () => openEdit({
-            title: "Nutrition", scope: "coaching_dna", fields: [
-              { key: "nutrition_summary", label: "Nutrition Summary", type: "multi_text", value: dna.nutrition_summary },
-            ],
-          }) : undefined}
-        >
-          <KV label="EATING PATTERN" value={dna?.nutrition_summary} multiline />
-          <KV label="STRATEGY" value={dna?.recommended_nutrition_strategy} multiline />
-        </Section>
+          {/* PERSONAL RECORDS */}
+          <Section id="prs" title="PERSONAL RECORDS" icon="trending-up" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={prs.length} />}
+            onEdit={() => setPrModalOpen(true)}
+            editLabel="+ ADD"
+          >
+            {prs.length === 0 ? (
+              <EmptyRow text="No personal records yet. Log your first PR."
+                actionLabel="ADD PR" onAction={() => setPrModalOpen(true)} />
+            ) : (
+              prs.slice(0, 12).map((p) => (
+                <View key={p.id} style={styles.prRow}>
+                  <View style={styles.prCat}><Text style={styles.prCatT}>{String(p.category || "?").slice(0, 3).toUpperCase()}</Text></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.prName}>{p.name}</Text>
+                    <Text style={styles.prMeta}>{p.date}</Text>
+                  </View>
+                  <Text style={styles.prValue}>{p.value}<Text style={styles.prUnit}> {p.unit}</Text></Text>
+                </View>
+              ))
+            )}
+          </Section>
 
-        {/* 10. ACHIEVEMENTS */}
-        <Section id="achievements" title="ACHIEVEMENTS" icon="trophy" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={(achievements.badges || []).filter((b: any) => b.unlocked).length} />}
-        >
-          <View style={styles.statsGrid}>
-            <StatTile label="COMPLETED" value={stats.workouts_completed || 0} />
-            <StatTile label="STREAK" value={`${stats.current_streak || 0}d`} />
-            <StatTile label="EVENTS" value={stats.events_planned || 0} />
-            <StatTile label="ADAPTATIONS" value={stats.reality_adaptations || 0} />
-          </View>
-          <View style={styles.badgeGrid}>
-            {(achievements.badges || []).map((b: any) => (
-              <View key={b.id} style={[styles.badge, !b.unlocked && styles.badgeLocked]}>
-                <Text style={styles.badgeEmoji}>{b.emoji}</Text>
-                <Text style={[styles.badgeTitle, !b.unlocked && styles.badgeTitleLocked]} numberOfLines={2}>{b.title}</Text>
-                <Text style={styles.badgeSub} numberOfLines={2}>{b.sub}</Text>
+          {/* LOUIS' NOTES */}
+          <Section id="coach_notes" title="LOUIS' NOTES" icon="chatbubbles" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={(coachNotes.workout_notes || []).length + (coachNotes.reality_reviews || []).length} />}
+          >
+            {(coachNotes.workout_notes || []).slice(0, 5).map((w: any) => (
+              <View key={w.id} style={styles.noteRow}>
+                <Text style={styles.noteDate}>{w.date} · {w.title || "Workout"}</Text>
+                <Text style={styles.noteText}>{w.coach_notes}</Text>
               </View>
             ))}
-          </View>
-        </Section>
+            {(coachNotes.reality_reviews || []).slice(0, 5).map((r: any) => (
+              <View key={r.id} style={styles.noteRow}>
+                <Text style={styles.noteDate}>{r.date} · {r.reality_label} · {r.status?.replace("_", " ").toUpperCase()}</Text>
+                <Text style={styles.noteText}>{r.coach_note}</Text>
+              </View>
+            ))}
+            {(coachNotes.workout_notes || []).length === 0 && (coachNotes.reality_reviews || []).length === 0 && (
+              <EmptyRow text="No notes from Louis yet." />
+            )}
+          </Section>
 
-        {/* 11. PERSONAL RECORDS */}
-        <Section id="prs" title="PERSONAL RECORDS" icon="trending-up" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={prs.length} />}
-          onEdit={() => setPrModalOpen(true)}
-          editLabel="+ ADD"
-        >
-          {prs.length === 0 ? (
-            <EmptyRow text="No personal records yet. Log your first PR."
-              actionLabel="ADD PR" onAction={() => setPrModalOpen(true)} />
-          ) : (
-            prs.slice(0, 12).map((p) => (
-              <View key={p.id} style={styles.prRow}>
-                <View style={styles.prCat}><Text style={styles.prCatT}>{String(p.category || "?").slice(0, 3).toUpperCase()}</Text></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.prName}>{p.name}</Text>
-                  <Text style={styles.prMeta}>{p.date}</Text>
+          {/* CREWFIT NOTES */}
+          <Section id="ai_notes" title="CREWFIT NOTES" icon="pulse" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={(aiNotes.reality_context || []).length + (aiNotes.move_rationales || []).length} />}
+          >
+            {(aiNotes.reality_context || []).slice(0, 5).map((r: any) => (
+              <View key={r.id} style={styles.noteRow}>
+                <Text style={styles.noteDate}>{r.date} · {r.reality_label} {r.recovery_score ? `· recovery ${r.recovery_score}` : ""}</Text>
+                <Text style={styles.noteText}>{r.context_summary}</Text>
+              </View>
+            ))}
+            {(aiNotes.move_rationales || []).slice(0, 5).map((m: any) => (
+              <View key={m.id} style={styles.noteRow}>
+                <Text style={styles.noteDate}>{m.date} · {m.reality_label} · {m.option_title}</Text>
+                <Text style={styles.noteText}>{m.option_why}</Text>
+              </View>
+            ))}
+            {(aiNotes.reality_context || []).length === 0 && (aiNotes.move_rationales || []).length === 0 && (
+              <EmptyRow text="No notes yet. Use Today's Reality to add context." />
+            )}
+          </Section>
+
+          {/* ASSESSMENT HISTORY */}
+          <Section id="assess_hist" title="ASSESSMENT HISTORY" icon="time" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={assessments.length} />}
+          >
+            {assessments.length === 0 ? (
+              <EmptyRow text="No assessments yet." actionLabel="TAKE ASSESSMENT" onAction={() => router.push("/assessment" as any)} />
+            ) : (
+              assessments.slice(0, 8).map((a) => (
+                <View key={a.id} style={styles.evRow}>
+                  <Ionicons name="sparkles" size={16} color={theme.color.brand} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.evName}>DNA v{a.dna_version || "—"}</Text>
+                    <Text style={styles.evMeta}>{(a.completed_at || a.created_at || "").slice(0, 10)} · {(a.answers || []).length} answers · {a.status?.toUpperCase()}</Text>
+                  </View>
                 </View>
-                <Text style={styles.prValue}>{p.value}<Text style={styles.prUnit}> {p.unit}</Text></Text>
-              </View>
-            ))
-          )}
-        </Section>
+              ))
+            )}
+          </Section>
 
-        {/* 12. ASSESSMENT HISTORY */}
-        <Section id="assess_hist" title="ASSESSMENT HISTORY" icon="time" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={assessments.length} />}
-        >
-          {assessments.length === 0 ? (
-            <EmptyRow text="No assessments yet." actionLabel="TAKE ASSESSMENT" onAction={() => router.push("/assessment" as any)} />
-          ) : (
-            assessments.slice(0, 8).map((a) => (
-              <View key={a.id} style={styles.evRow}>
-                <Ionicons name="sparkles" size={16} color={theme.color.brand} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.evName}>DNA v{a.dna_version || "—"}</Text>
-                  <Text style={styles.evMeta}>{(a.completed_at || a.created_at || "").slice(0, 10)} · {(a.answers || []).length} answers · {a.status?.toUpperCase()}</Text>
+          {/* LIFE CHANGES */}
+          <Section id="life_changes" title="LIFE CHANGES" icon="git-branch" expanded={expanded} onToggle={toggle}
+            rightSlot={<CountPill n={(aiNotes.dna_history || []).length} />}
+          >
+            {(aiNotes.dna_history || []).length === 0 ? (
+              <EmptyRow text="No life changes tracked yet." />
+            ) : (
+              (aiNotes.dna_history || []).slice(0, 10).map((h: any) => (
+                <View key={h.id} style={styles.noteRow}>
+                  <Text style={styles.noteDate}>{(h.created_at || "").slice(0, 10)} · {h.kind?.toUpperCase()}</Text>
+                  <Text style={styles.noteText}>{h.reason || "(no reason)"} · {(h.changes || []).join(", ")}</Text>
                 </View>
-              </View>
-            ))
-          )}
-        </Section>
+              ))
+            )}
+          </Section>
+        </SectionGroup>
 
-        {/* 13. LOUIS' NOTES */}
-        <Section id="coach_notes" title="LOUIS' NOTES" icon="chatbubbles" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={(coachNotes.workout_notes || []).length + (coachNotes.reality_reviews || []).length} />}
-        >
-          {(coachNotes.workout_notes || []).slice(0, 5).map((w: any) => (
-            <View key={w.id} style={styles.noteRow}>
-              <Text style={styles.noteDate}>{w.date} · {w.title || "Workout"}</Text>
-              <Text style={styles.noteText}>{w.coach_notes}</Text>
-            </View>
-          ))}
-          {(coachNotes.reality_reviews || []).slice(0, 5).map((r: any) => (
-            <View key={r.id} style={styles.noteRow}>
-              <Text style={styles.noteDate}>{r.date} · {r.reality_label} · {r.status?.replace("_", " ").toUpperCase()}</Text>
-              <Text style={styles.noteText}>{r.coach_note}</Text>
-            </View>
-          ))}
-          {(coachNotes.workout_notes || []).length === 0 && (coachNotes.reality_reviews || []).length === 0 && (
-            <EmptyRow text="No notes from Louis yet." />
-          )}
-        </Section>
+        {/* ═══════════ GROUP 3 · PREFERENCES & ACCOUNT ════════════════════ */}
+        <SectionGroup id="prefs_account" title="PREFERENCES & ACCOUNT" icon="options"
+          subtitle="How you train, eat, recover, notify">
 
-        {/* 14. CREWFIT NOTES */}
-        <Section id="ai_notes" title="CREWFIT NOTES" icon="pulse" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={(aiNotes.reality_context || []).length + (aiNotes.move_rationales || []).length} />}
-        >
-          {(aiNotes.reality_context || []).slice(0, 5).map((r: any) => (
-            <View key={r.id} style={styles.noteRow}>
-              <Text style={styles.noteDate}>{r.date} · {r.reality_label} {r.recovery_score ? `· recovery ${r.recovery_score}` : ""}</Text>
-              <Text style={styles.noteText}>{r.context_summary}</Text>
-            </View>
-          ))}
-          {(aiNotes.move_rationales || []).slice(0, 5).map((m: any) => (
-            <View key={m.id} style={styles.noteRow}>
-              <Text style={styles.noteDate}>{m.date} · {m.reality_label} · {m.option_title}</Text>
-              <Text style={styles.noteText}>{m.option_why}</Text>
-            </View>
-          ))}
-          {(aiNotes.reality_context || []).length === 0 && (aiNotes.move_rationales || []).length === 0 && (
-            <EmptyRow text="No notes yet. Use Today's Reality to add context." />
-          )}
-        </Section>
-
-        {/* 15. UPCOMING EVENTS */}
-        <Section id="upcoming" title="UPCOMING EVENTS" icon="star" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={upcomingEvents.length} />}
-        >
-          {upcomingEvents.length === 0 ? (
-            <EmptyRow text="No upcoming events." />
-          ) : (
-            upcomingEvents.map((e) => (
-              <View key={e.id} style={styles.evRow}>
-                <Ionicons name="flag" size={16} color={theme.color.brand} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.evName}>{e.event_name || e.event_type}</Text>
-                  <Text style={styles.evMeta}>{e.event_date} · Priority {String(e.priority || "B").toUpperCase()}</Text>
+          {/* EQUIPMENT */}
+          <Section id="equipment" title="EQUIPMENT" icon="barbell" expanded={expanded} onToggle={toggle}
+            onEdit={() => openEdit({
+              title: "Equipment", scope: "user_profile", fields: [
+                { key: "home_equipment", label: "Home equipment (comma-separated)", type: "multi_text", value: (user?.profile?.home_equipment || user?.profile?.equipment || []).join(", ") },
+                { key: "max_home_minutes", label: "Max minutes at home", type: "number", value: user?.profile?.max_home_minutes },
+              ],
+            })}
+          >
+            {eqLocs.length > 0 ? (
+              eqLocs.map((loc: any, i: number) => (
+                <View key={i} style={{ marginBottom: 8 }}>
+                  <Text style={styles.subLbl}>{String(loc.location || "home").toUpperCase()}</Text>
+                  <View style={styles.chipRow}>
+                    {(loc.equipment || []).map((eq: string, j: number) => (
+                      <View key={j} style={styles.chip}><Text style={styles.chipT}>{eq}</Text></View>
+                    ))}
+                  </View>
                 </View>
-                {e.phase_info?.phase ? (
-                  <View style={styles.phasePill}><Text style={styles.phasePillT}>{String(e.phase_info.phase).toUpperCase()}</Text></View>
-                ) : null}
+              ))
+            ) : (
+              <View style={styles.chipRow}>
+                {(user?.profile?.home_equipment || user?.profile?.equipment || []).map((eq: string, i: number) => (
+                  <View key={i} style={styles.chip}><Text style={styles.chipT}>{eq}</Text></View>
+                ))}
+                {(user?.profile?.home_equipment || user?.profile?.equipment || []).length === 0 && (
+                  <EmptyRow text="No equipment saved yet." />
+                )}
               </View>
-            ))
-          )}
-        </Section>
+            )}
+          </Section>
 
-        {/* 16. TRAINING PREFERENCES */}
-        <Section id="training_prefs" title="TRAINING PREFERENCES" icon="options" expanded={expanded} onToggle={toggle}
-          disabled={!dna}
-          onEdit={dna ? () => openEdit({
-            title: "Training Preferences", scope: "coaching_dna", fields: [
-              { key: "training_availability", label: "Training Availability JSON", type: "multi_text", value: JSON.stringify(dna.training_availability || {}, null, 2) },
-              { key: "training_experience", label: "Experience Level", type: "text", value: dna.training_experience },
-            ],
-          }) : undefined}
-        >
-          <KV label="EXPERIENCE" value={dna?.training_experience} />
-          <KV label="HOME" value={ta.home ? `${ta.home} min` : undefined} />
-          <KV label="LAYOVERS" value={ta.layovers ? `${ta.layovers} min` : undefined} />
-          <KV label="DAYS OFF" value={ta.days_off ? `${ta.days_off} min` : undefined} />
-          <KV label="STANDBY" value={ta.standby ? `${ta.standby} min` : undefined} />
-          <KV label="PREFERRED TIME" value={ta.preferred_time} />
-          <KV label="WEEKLY TEMPLATE" value={dna?.recommended_weekly_training} multiline />
-        </Section>
+          {/* RECOVERY */}
+          <Section id="recovery" title="RECOVERY" icon="leaf" expanded={expanded} onToggle={toggle}>
+            <KV label="RECOVERY RISK" value={String(dna?.recovery_risk || "unknown").toUpperCase()} highlight={dna?.recovery_risk === "high"} />
+            <KV label="STRATEGY" value={dna?.recommended_recovery_strategy} multiline />
+            {checkins.length > 0 ? (
+              <>
+                <Text style={styles.subLbl}>RECENT CHECK-INS</Text>
+                {checkins.slice(0, 5).map((c: any) => (
+                  <View key={c.id} style={styles.ciRow}>
+                    <Text style={styles.ciDate}>{c.date}</Text>
+                    <View style={styles.ciStats}>
+                      <View style={styles.ciChip}><Ionicons name="moon" size={11} color={theme.color.textMuted} /><Text style={styles.ciStat}>{c.sleep ?? "—"}</Text></View>
+                      <View style={styles.ciChip}><Ionicons name="flash" size={11} color={theme.color.amber} /><Text style={styles.ciStat}>{c.energy ?? "—"}</Text></View>
+                      <View style={styles.ciChip}><Ionicons name="pulse" size={11} color={theme.color.brand} /><Text style={styles.ciStat}>{c.stress ?? "—"}</Text></View>
+                    </View>
+                  </View>
+                ))}
+              </>
+            ) : null}
+          </Section>
 
-        {/* 17. MOTIVATION */}
-        <Section id="motivation" title="MOTIVATION" icon="flame" expanded={expanded} onToggle={toggle}
-          disabled={!dna}
-          onEdit={dna ? () => openEdit({
-            title: "Motivation", scope: "coaching_dna", fields: [
-              { key: "motivation_style", label: "Motivation Style", type: "text", value: dna.motivation_style },
-              { key: "coaching_style", label: "Preferred Coaching Style", type: "text", value: dna.coaching_style },
-              { key: "biggest_strength", label: "Biggest Strength", type: "text", value: dna.biggest_strength },
-              { key: "biggest_weakness", label: "Biggest Weakness", type: "text", value: dna.biggest_weakness },
-              { key: "biggest_opportunity", label: "Biggest Opportunity", type: "text", value: dna.biggest_opportunity },
-            ],
-          }) : undefined}
-        >
-          <KV label="STYLE" value={dna?.motivation_style} />
-          <KV label="COACH STYLE" value={dna?.coaching_style} />
-          <KV label="STRENGTH" value={dna?.biggest_strength} multiline />
-          <KV label="WEAKNESS" value={dna?.biggest_weakness} multiline />
-          <KV label="OPPORTUNITY" value={dna?.biggest_opportunity} multiline />
-        </Section>
+          {/* NUTRITION */}
+          <Section id="nutrition" title="NUTRITION" icon="restaurant" expanded={expanded} onToggle={toggle}
+            disabled={!dna}
+            onEdit={dna ? () => openEdit({
+              title: "Nutrition", scope: "coaching_dna", fields: [
+                { key: "nutrition_summary", label: "Nutrition Summary", type: "multi_text", value: dna.nutrition_summary },
+              ],
+            }) : undefined}
+          >
+            <KV label="EATING PATTERN" value={dna?.nutrition_summary} multiline />
+            <KV label="STRATEGY" value={dna?.recommended_nutrition_strategy} multiline />
+          </Section>
 
-        {/* 18. LIFE CHANGES */}
-        <Section id="life_changes" title="LIFE CHANGES" icon="git-branch" expanded={expanded} onToggle={toggle}
-          rightSlot={<CountPill n={(aiNotes.dna_history || []).length} />}
-        >
-          {(aiNotes.dna_history || []).length === 0 ? (
-            <EmptyRow text="No life changes tracked yet." />
-          ) : (
-            (aiNotes.dna_history || []).slice(0, 10).map((h: any) => (
-              <View key={h.id} style={styles.noteRow}>
-                <Text style={styles.noteDate}>{(h.created_at || "").slice(0, 10)} · {h.kind?.toUpperCase()}</Text>
-                <Text style={styles.noteText}>{h.reason || "(no reason)"} · {(h.changes || []).join(", ")}</Text>
-              </View>
-            ))
-          )}
-        </Section>
+          {/* TRAINING PREFERENCES */}
+          <Section id="training_prefs" title="TRAINING PREFERENCES" icon="options" expanded={expanded} onToggle={toggle}
+            disabled={!dna}
+            onEdit={dna ? () => openEdit({
+              title: "Training Preferences", scope: "coaching_dna", fields: [
+                { key: "training_availability", label: "Training Availability JSON", type: "multi_text", value: JSON.stringify(dna.training_availability || {}, null, 2) },
+                { key: "training_experience", label: "Experience Level", type: "text", value: dna.training_experience },
+              ],
+            }) : undefined}
+          >
+            <KV label="EXPERIENCE" value={dna?.training_experience} />
+            <KV label="HOME" value={ta.home ? `${ta.home} min` : undefined} />
+            <KV label="LAYOVERS" value={ta.layovers ? `${ta.layovers} min` : undefined} />
+            <KV label="DAYS OFF" value={ta.days_off ? `${ta.days_off} min` : undefined} />
+            <KV label="STANDBY" value={ta.standby ? `${ta.standby} min` : undefined} />
+            <KV label="PREFERRED TIME" value={ta.preferred_time} />
+            <KV label="WEEKLY TEMPLATE" value={dna?.recommended_weekly_training} multiline />
+          </Section>
 
-        <View style={{ height: 24 }} />
-        <Pressable testID="hq-take-assessment" onPress={() => router.push("/assessment" as any)} style={styles.retakeCta}>
-          <Ionicons name="sparkles" size={16} color={theme.color.brand} />
-          <Text style={styles.retakeText}>RE-TAKE ASSESSMENT · EVOLVE YOUR DNA</Text>
-        </Pressable>
-        <Pressable testID="hq-legacy-onboarding" onPress={() => router.push("/(auth)/onboarding")} style={styles.legacyCta}>
-          <Text style={styles.legacyText}>EDIT LEGACY PROFILE</Text>
-        </Pressable>
+          {/* Legacy panels — habits, notifications, workout settings */}
+          <HabitsProfileSection />
+          <NotificationPreferencesCard />
+          <WorkoutSettingsPanel />
 
-        <HabitsProfileSection />
+          <View style={{ height: 8 }} />
+          <Pressable testID="hq-take-assessment" onPress={() => router.push("/assessment" as any)} style={styles.retakeCta}>
+            <Ionicons name="sparkles" size={16} color={theme.color.brand} />
+            <Text style={styles.retakeText}>RE-TAKE ASSESSMENT · EVOLVE YOUR DNA</Text>
+          </Pressable>
+          <Pressable testID="hq-legacy-onboarding" onPress={() => router.push("/(auth)/onboarding")} style={styles.legacyCta}>
+            <Text style={styles.legacyText}>EDIT LEGACY PROFILE</Text>
+          </Pressable>
+          <Pressable
+            testID="hq-change-password"
+            onPress={() => setChangePasswordOpen(true)}
+            style={[styles.legacyCta, { marginTop: 8 }]}
+          >
+            <Text style={styles.legacyText}>CHANGE PASSWORD</Text>
+          </Pressable>
+        </SectionGroup>
 
-        <NotificationPreferencesCard />
-
-        <WorkoutSettingsPanel />
+        {/* ═══════════ GROUP 4 · SUPPORT & LEGAL ═════════════════════════ */}
+        <SectionGroup id="support_legal" title="SUPPORT & LEGAL" icon="shield-checkmark"
+          subtitle="Help, terms, account controls">
+          <Pressable testID="hq-legal" onPress={() => router.push("/legal" as any)} style={styles.legacyCta}>
+            <Text style={styles.legacyText}>LEGAL &amp; PRIVACY</Text>
+          </Pressable>
+          <Pressable
+            testID="hq-support"
+            onPress={() => router.push("/legal/contact" as any)}
+            style={[styles.legacyCta, { marginTop: 8 }]}
+          >
+            <Text style={styles.legacyText}>SUPPORT</Text>
+          </Pressable>
+          <Pressable testID="hq-delete-account" onPress={() => router.push("/legal/delete-account" as any)} style={[styles.legacyCta, { borderColor: theme.color.brand, marginTop: 8 }]}>
+            <Text style={[styles.legacyText, { color: theme.color.brand }]}>DELETE MY ACCOUNT</Text>
+          </Pressable>
+          <Pressable
+            testID="hq-logout-primary"
+            onPress={confirmLogout}
+            style={[styles.legacyCta, { borderColor: theme.color.red || "#c85450", marginTop: 8 }]}
+          >
+            <Text style={[styles.legacyText, { color: theme.color.red || "#c85450" }]}>
+              {preview.active ? "EXIT PREVIEW" : "LOG OUT"}
+            </Text>
+          </Pressable>
+        </SectionGroup>
 
         <View style={{ height: 32 }} />
-        <Pressable testID="hq-legal" onPress={() => router.push("/legal" as any)} style={styles.legacyCta}>
-          <Text style={styles.legacyText}>LEGAL &amp; PRIVACY</Text>
-        </Pressable>
-        <Pressable
-          testID="hq-change-password"
-          onPress={() => setChangePasswordOpen(true)}
-          style={[styles.legacyCta, { marginTop: 8 }]}
-        >
-          <Text style={styles.legacyText}>CHANGE PASSWORD</Text>
-        </Pressable>
-        <Pressable
-          testID="hq-support"
-          onPress={() => router.push("/legal/contact" as any)}
-          style={[styles.legacyCta, { marginTop: 8 }]}
-        >
-          <Text style={styles.legacyText}>SUPPORT</Text>
-        </Pressable>
-        <Pressable testID="hq-delete-account" onPress={() => router.push("/legal/delete-account" as any)} style={[styles.legacyCta, { borderColor: theme.color.brand, marginTop: 8 }]}>
-          <Text style={[styles.legacyText, { color: theme.color.brand }]}>DELETE MY ACCOUNT</Text>
-        </Pressable>
-        <Pressable
-          testID="hq-logout-primary"
-          onPress={confirmLogout}
-          style={[styles.legacyCta, { borderColor: theme.color.red || "#c85450", marginTop: 8 }]}
-        >
-          <Text style={[styles.legacyText, { color: theme.color.red || "#c85450" }]}>
-            {preview.active ? "EXIT PREVIEW" : "LOG OUT"}
-          </Text>
-        </Pressable>
       </ScrollView>
 
       {/* Edit sheet */}
@@ -676,6 +699,58 @@ export default function ProfileScreen() {
 /* -------------------------------------------------------------------------- */
 /*  Section Component                                                         */
 /* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/*  SectionGroup — Iter168 Profile Accordions                                 */
+/* -------------------------------------------------------------------------- */
+/**
+ * Groups a set of <Section /> elements behind one top-level accordion.
+ * Collapsed by default; state persisted to AsyncStorage per group id
+ * so the user's last choice survives app relaunches.
+ */
+function SectionGroup({
+  id, title, icon, subtitle, children,
+}: {
+  id: string; title: string; icon: any; subtitle?: string;
+  children: React.ReactNode;
+}) {
+  const storageKey = `crewfit.profile.group.${id}`;
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    AsyncStorage.getItem(storageKey)
+      .then((v) => setOpen(v === "1"))
+      .catch(() => {});
+  }, [storageKey]);
+
+  const toggle = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(storageKey, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  };
+
+  return (
+    <View style={styles.groupCard}>
+      <Pressable style={styles.groupHead} onPress={toggle} testID={`profile-group-${id}`}>
+        <View style={styles.groupHeadIcon}>
+          <Ionicons name={icon} size={18} color={theme.color.brand} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.groupHeadT}>{title}</Text>
+          {subtitle ? <Text style={styles.groupHeadSub} numberOfLines={1}>{subtitle}</Text> : null}
+        </View>
+        <Ionicons
+          name={open ? "chevron-up" : "chevron-down"}
+          size={18}
+          color={theme.color.textMuted}
+        />
+      </Pressable>
+      {open ? <View style={styles.groupBody}>{children}</View> : null}
+    </View>
+  );
+}
+
 function Section({
   id, title, icon, children, expanded, onToggle, onEdit, editLabel, onOpen, rightSlot, disabled,
 }: {
@@ -937,6 +1012,46 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
     overflow: "hidden",
+  },
+  /* Iter168 · Profile group (top-level accordion). Wraps 4-7 Sections
+     inside a single collapsible surface, styled distinct from the inner
+     section cards. */
+  groupCard: {
+    marginTop: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface,
+    overflow: "hidden",
+  },
+  groupHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 16,
+  },
+  groupHeadIcon: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  groupHeadT: {
+    color: theme.color.text, fontSize: 14, fontWeight: "800",
+    letterSpacing: 1.6, fontFamily: theme.font.textSemi,
+  },
+  groupHeadSub: {
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
+    marginTop: 2, letterSpacing: 0.4,
+  },
+  groupBody: {
+    paddingHorizontal: 10,
+    paddingTop: 4,
+    paddingBottom: 12,
+    gap: 6,
+    borderTopWidth: 1,
+    borderTopColor: theme.color.divider,
   },
   secHeader: {
     flexDirection: "row", alignItems: "center", gap: 8,

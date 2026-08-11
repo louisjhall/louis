@@ -63,7 +63,8 @@ function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
   // through the STRENGTH log (kg + reps). They must render as CARDIO
   // (distance/time). "Walk" is matched with a word boundary so we don't
   // accidentally match "walking lunge" — checked separately below.
-  return /\b(run|running|jog|zone\s?[1235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|zone\s?1|z1|zone\s?2|z2)\b/.test(hay)
+  // Iter 166 · "tempo" removed — Tempo Back Squat is a strength lift.
+  return /\b(run|running|jog|zone\s?[1235]|intervals?|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|zone\s?1|z1|zone\s?2|z2)\b/.test(hay)
     // Exclude "walking lunge" / "walking plank" — those are strength
     // patterns even though they include the word "walk".
     && !/\b(walking\s+(lunge|plank|push|dead\s?bug))\b/.test(hay);
@@ -71,7 +72,13 @@ function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
 
 function resolveCols(ex: ExRow): ColSpec[] {
   const cols: ColSpec[] = [];
-  const isCardio = ex.logging_type === "cardio" || _isCardioName(ex.name, ex.reps, ex.duration);
+  // Iter 166 · logging_type is the primary source of truth. If the coach
+  // set an explicit non-cardio type (e.g. "strength", "reps"), we honour
+  // it and skip the name-based fallback so "Tempo Back Squat" stays kg/reps.
+  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
+  const isCardio = lt === "cardio" || lt === "timer"
+    ? true
+    : (lt ? false : _isCardioName(ex.name, ex.reps, ex.duration));
   const hasReps = ex.reps != null && String(ex.reps).trim() !== "";
   const hasDuration =
     (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
@@ -1014,8 +1021,8 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 10,
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  wName: { color: theme.color.text, fontSize: 15, fontWeight: "800" },
-  wMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 2, letterSpacing: 1 },
+  wName: { color: theme.color.text, fontSize: 17, fontWeight: "800" },
+  wMeta: { color: theme.color.textDim, fontSize: 13, marginTop: 2, letterSpacing: 1 },
   progressTrack: { height: 3, backgroundColor: theme.color.surface2, width: "100%" },
   progressFill: { height: 3, backgroundColor: theme.color.brand },
 
@@ -1030,11 +1037,11 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    marginHorizontal: 12, marginBottom: 12, backgroundColor: theme.color.surface,
+    marginHorizontal: 12, marginBottom: 20, backgroundColor: theme.color.surface,
     borderRadius: 14, borderWidth: 1, borderColor: theme.color.border, overflow: "hidden",
   },
   cardHead: {
-    flexDirection: "row", alignItems: "center", gap: 12, padding: 12,
+    flexDirection: "row", alignItems: "center", gap: 12, padding: 14,
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   thumbWrap: { width: 60, height: 60, borderRadius: 10, overflow: "hidden", backgroundColor: "#0A0A0B" },
@@ -1042,28 +1049,28 @@ const styles = StyleSheet.create({
   thumbPh: {
     backgroundColor: "#0A0A0B", alignItems: "center", justifyContent: "center",
   },
-  exName: { color: theme.color.text, fontSize: 15, fontWeight: "800" },
-  exMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 3 },
+  exName: { color: theme.color.text, fontSize: 17, fontWeight: "800" },
+  exMeta: { color: theme.color.textDim, fontSize: 13, marginTop: 3 },
 
   setsHead: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4,
   },
   setsHeadCol: {
-    color: theme.color.textDim, fontSize: 9, fontWeight: "900", letterSpacing: 1.4,
+    color: theme.color.textDim, fontSize: 11, fontWeight: "900", letterSpacing: 1.4,
   },
   setRow: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 12, paddingVertical: 8, minHeight: 44,
+    paddingHorizontal: 12, paddingVertical: 10, minHeight: 48,
   },
   setRowDone: { backgroundColor: theme.color.surface2 },
   setNum: {
-    width: 32, color: theme.color.text, fontSize: 14, fontWeight: "800",
+    width: 32, color: theme.color.text, fontSize: 16, fontWeight: "800",
   },
   setInput: {
-    flex: 1, minWidth: 40, paddingVertical: 8, paddingHorizontal: 10,
+    flex: 1, minWidth: 40, paddingVertical: 10, paddingHorizontal: 10,
     borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
-    color: theme.color.text, fontSize: 14, backgroundColor: theme.color.bg,
+    color: theme.color.text, fontSize: 16, backgroundColor: theme.color.bg,
     textAlign: "center",
   },
   checkBtn: {

@@ -1180,10 +1180,18 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   loadText: { color: theme.color.text, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
   hTitle: { color: theme.color.text, marginTop: theme.space.md, fontSize: 32, fontWeight: "900", letterSpacing: -0.5 },
-  dutyRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" },
+  dutyRow: {
+    // Iter 166 · Aviation stats stacked vertically so long roster routes /
+    // layover strings never push the hero title off-screen or crowd the
+    // "REPORT AN ISSUE" button below.
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 10,
+  },
   reportBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
-    alignSelf: "flex-start", marginTop: 4,
+    alignSelf: "flex-start", marginTop: 12,
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6,
     // Iter 162 · Neutral gray outline — Reserve red for primary CTAs only.
     borderWidth: 1, borderColor: theme.color.border,

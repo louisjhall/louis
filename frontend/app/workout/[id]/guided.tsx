@@ -57,12 +57,19 @@ function autopilotWorkSeconds(ex: any, targetReps: number, isCardio: boolean): n
 
 function isCardioExercise(ex: any): boolean {
   if (!ex) return false;
-  if (ex.logging_type === "cardio" || ex.logging_type === "timer") return true;
+  // Iter 166 · logging_type is the SINGLE source of truth. Explicit
+  // strength / reps types must NOT fall through to name-based heuristics
+  // so "Tempo Back Squat" stays a strength lift.
+  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
+  if (lt === "cardio" || lt === "timer") return true;
+  if (lt) return false;
   const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
   // Iter 165c · Extended to catch walking / hiking / stair variants so
   // "Easy Walk" no longer routes through the strength autopilot timer.
   // Excludes "walking lunge" / "walking plank" which are strength moves.
-  const cardioHit = /\b(run|running|jog|zone\s?[1235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|z1|z2)\b/.test(hay);
+  // Iter 166 · "tempo" removed — strength lifts (Tempo Back Squat) must
+  // not be misclassified as cardio.
+  const cardioHit = /\b(run|running|jog|zone\s?[1235]|intervals?|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|z1|z2)\b/.test(hay);
   const strengthWalkExclude = /\b(walking\s+(lunge|plank|push|dead\s?bug))\b/.test(hay);
   return cardioHit && !strengthWalkExclude;
 }

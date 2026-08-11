@@ -59,8 +59,12 @@ function isCardioExercise(ex: any): boolean {
   if (!ex) return false;
   if (ex.logging_type === "cardio" || ex.logging_type === "timer") return true;
   const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
-  // Strict cardio patterns — exclude "row" alone since "bent-over row" is weighted.
-  return /\b(run|running|jog|zone\s?[235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
+  // Iter 165c · Extended to catch walking / hiking / stair variants so
+  // "Easy Walk" no longer routes through the strength autopilot timer.
+  // Excludes "walking lunge" / "walking plank" which are strength moves.
+  const cardioHit = /\b(run|running|jog|zone\s?[1235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|z1|z2)\b/.test(hay);
+  const strengthWalkExclude = /\b(walking\s+(lunge|plank|push|dead\s?bug))\b/.test(hay);
+  return cardioHit && !strengthWalkExclude;
 }
 
 // Iter 94t (Phase 2) — Mobility / stretch exercises deserve slower image

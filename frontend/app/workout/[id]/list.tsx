@@ -58,7 +58,15 @@ type ColSpec = { key: "weight" | "reps" | "duration" | "distance" | "rpe";
 
 function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
   const hay = `${name || ""} ${reps || ""} ${duration || ""}`.toLowerCase();
-  return /\b(run|running|jog|zone\s?[235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
+  // Iter 165c · Walking variants (Easy Walk, Zone 1 Walk, Power Walk, Ruck,
+  // Hike, Incline Walk, Stair Climb, StairMaster) were previously routed
+  // through the STRENGTH log (kg + reps). They must render as CARDIO
+  // (distance/time). "Walk" is matched with a word boundary so we don't
+  // accidentally match "walking lunge" — checked separately below.
+  return /\b(run|running|jog|zone\s?[1235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek|walk|walking|hike|hiking|ruck|rucking|stair|stairs|stairmaster|stepper|incline\s?walk|power\s?walk|brisk\s?walk|recovery\s?walk|zone\s?1|z1|zone\s?2|z2)\b/.test(hay)
+    // Exclude "walking lunge" / "walking plank" — those are strength
+    // patterns even though they include the word "walk".
+    && !/\b(walking\s+(lunge|plank|push|dead\s?bug))\b/.test(hay);
 }
 
 function resolveCols(ex: ExRow): ColSpec[] {
@@ -85,7 +93,14 @@ function resolveCols(ex: ExRow): ColSpec[] {
   //   • reps + no duration → LOAD + REPS only (no TIME box)
   //   • both → LOAD + REPS + TIME
   //   • neither → LOAD + REPS as safe default
-  if (hasDuration && !hasReps) {
+  //
+  // Iter 165c · Cardio-specific override — for any cardio row (walking,
+  // running, cycling, rowing…) the REPS box is meaningless: prescriptions
+  // like "30 min" belong in the TIME column, not REPS. We hide REPS and
+  // KG for cardio and always render TIME (+ DIST km, added below).
+  if (isCardio) {
+    cols.push({ key: "duration", label: "TIME", flex: 1 });
+  } else if (hasDuration && !hasReps) {
     if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
     cols.push({ key: "duration", label: "TIME", flex: 1 });
   } else if (hasReps && !hasDuration) {
@@ -100,13 +115,12 @@ function resolveCols(ex: ExRow): ColSpec[] {
     cols.push({ key: "reps", label: "REPS", width: 58 });
   }
 
-  // Cardio distance — appears only if the exercise name / reps text
-  // explicitly mentions a distance unit.
+  // Iter 165c · For any cardio row (running, cycling, walking, rowing…)
+  // always show the DIST km column so the client can log actual distance.
+  // Previously we gated this on the name containing "km"/"mile"/"distance",
+  // which meant "Easy Walk / 30 min" rendered without any distance field.
   if (isCardio) {
-    const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""}`.toLowerCase();
-    if (/\b(km|k|mile|distance)\b/.test(hay)) {
-      cols.push({ key: "distance", label: "DIST km", flex: 1 });
-    }
+    cols.push({ key: "distance", label: "DIST km", flex: 1 });
   }
 
   if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
@@ -131,8 +145,11 @@ const ARR_INT = (n: any, fb = 3) => {
 function isCardio(ex: ExRow | null | undefined): boolean {
   if (!ex) return false;
   if (ex.logging_type === "cardio" || ex.logging_type === "timer") return true;
-  const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""}`.toLowerCase();
-  return /\b(run|running|jog|zone\s?[235]|intervals?|tempo|treadmill|rowing|bike|cycling|assault|erg|swim|sprint|ez pace|long run|fartlek)\b/.test(hay);
+  // Iter 165c · Delegate to the shared _isCardioName helper so cardio
+  // detection stays consistent between the header/column resolver and
+  // the save-time payload builder. Both used to have a copy-paste regex
+  // that missed walking, hiking, and stair-climbing variants.
+  return _isCardioName(ex.name, ex.reps, ex.duration);
 }
 
 function isTimed(ex: ExRow | null | undefined): boolean {

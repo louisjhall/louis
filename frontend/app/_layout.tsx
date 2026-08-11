@@ -70,15 +70,26 @@ if (Platform.OS === "android") {
 
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
-  const [brandLoaded] = useBrandFonts();
+  // Iter 165c · Brand fonts now surface an `error` too so we can gate the
+  // splash-screen dismissal on either "done" state instead of racing the
+  // async load.
+  const [brandLoaded, brandError] = useBrandFonts();
   const router = useRouter();
 
   // Iter 95a — silent OTA check (no-ops in web / Expo Go / dev).
   useOtaUpdates();
 
+  // Iter 165c · Splash gate: only hide the native splash once BOTH font
+  // loaders have finished. Waiting on icons alone caused a flash of the
+  // fallback system font before Creo/Source Sans 3 swapped in — most
+  // visible on the CrewFit intro headline and the tab bar labels.
+  const fontsReady    = loaded && brandLoaded;
+  const fontsErrored  = !!(error || brandError);
+  const canRender     = fontsReady || fontsErrored;
+
   useEffect(() => {
-    if (loaded || error) SplashScreen.hideAsync();
-  }, [loaded, error]);
+    if (canRender) SplashScreen.hideAsync();
+  }, [canRender]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -101,7 +112,14 @@ export default function RootLayout() {
     return () => { tapSub.remove(); };
   }, [router]);
 
-  if (!loaded && !error) return null;
+  // Iter 165c · Block first render until BOTH font families are known-good
+  // (or both known-errored). This mirrors the splash-gate above so the app
+  // never mounts before Creo / Source Sans 3 are ready.
+  if (!canRender) return null;
+
+  // brandLoaded is intentionally referenced above; keep the marker so
+  // future maintainers see it is required, not decorative.
+  void brandLoaded;
 
   return (
     <RootErrorBoundary>

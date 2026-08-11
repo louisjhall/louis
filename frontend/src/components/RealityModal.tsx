@@ -19,18 +19,18 @@ type Kind = {
 };
 
 export const REALITY_KINDS: Kind[] = [
-  { key: "exhausted", label: "I'm exhausted", icon: "moon", hint: "Little sleep, low energy" },
+  { key: "exhausted", label: "Exhausted", icon: "moon", hint: "Little sleep, low energy" },
   { key: "flight_delayed", label: "Flight delayed", icon: "airplane", hint: "Delay disrupts today" },
   { key: "roster_changed", label: "Roster changed", icon: "calendar", hint: "Duties shifted" },
   { key: "hotel_changed", label: "Hotel changed", icon: "business", hint: "Different equipment" },
   { key: "no_gym", label: "No gym available", icon: "barbell", hint: "Bodyweight only" },
   { key: "feeling_amazing", label: "Feeling amazing", icon: "flame", hint: "Add bonus quality" },
-  { key: "less_time", label: "Less time today", icon: "hourglass", hint: "Squeeze it in" },
+  { key: "less_time", label: "Short on time", icon: "hourglass", hint: "Squeeze it in" },
   { key: "more_time", label: "More time today", icon: "time", hint: "Extra window" },
   { key: "family_commitments", label: "Family commitments", icon: "people", hint: "Family first" },
   { key: "annual_leave", label: "Annual leave", icon: "sunny", hint: "Rest or travel" },
-  { key: "feeling_ill", label: "Feeling ill", icon: "medkit", hint: "Illness" },
-  { key: "injured", label: "Injured", icon: "bandage", hint: "Injury flag" },
+  { key: "feeling_ill", label: "Ill or injured", icon: "medkit", hint: "Illness or injury flag" },
+  { key: "injured", label: "Injured (specific)", icon: "bandage", hint: "Log specific injury" },
   { key: "travelling", label: "Travelling", icon: "car", hint: "On the move" },
   { key: "bad_weather", label: "Bad weather", icon: "rainy", hint: "Storms / heat" },
   { key: "missed_yesterday", label: "Missed yesterday", icon: "close-circle", hint: "Recover safely" },
@@ -39,15 +39,36 @@ export const REALITY_KINDS: Kind[] = [
 ];
 
 /* -------------------------------------------------------------------------- */
-/*  Iter168 · Category groups — reduce cognitive load. The 17 tiles are now   */
-/*  organised into 5 short lists with headers, in a 2-column grid.            */
+/*  Iter169 · Big 8 Essential Reality Tiles + Secondary reveal.               */
+/*                                                                            */
+/*  The primary grid now shows ONLY the 8 tiles that cover ~95% of real-      */
+/*  world use. Everything else lives behind a "Something Else / Other"        */
+/*  button which expands a secondary list inline. This kills cognitive-       */
+/*  load without removing capability.                                         */
+/* -------------------------------------------------------------------------- */
+const BIG_8_KEYS: string[] = [
+  "exhausted",
+  "flight_delayed",
+  "hotel_changed",
+  "no_gym",
+  "feeling_amazing",
+  "less_time",
+  "feeling_ill",   // labelled "Ill or injured" — covers illness AND injury
+  "travelling",
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Iter168 · Category groups (kept for the secondary "Something Else" list)  */
+/*  so long-tail options remain scannable when the user expands them.         */
 /* -------------------------------------------------------------------------- */
 type Category = { title: string; keys: string[] };
 
+// Secondary — everything NOT in the Big 8. Displayed only after tapping
+// "Something Else". Grouped into short lists so it remains scannable.
 const REALITY_CATEGORIES: Category[] = [
-  { title: "Body & Energy",    keys: ["exhausted", "feeling_amazing", "feeling_ill", "injured"] },
-  { title: "Environment",      keys: ["no_gym", "hotel_changed", "bad_weather", "travelling"] },
-  { title: "Schedule",         keys: ["less_time", "more_time", "flight_delayed", "roster_changed", "want_to_move"] },
+  { title: "Body & Energy",    keys: ["injured"] },
+  { title: "Environment",      keys: ["bad_weather"] },
+  { title: "Schedule",         keys: ["more_time", "roster_changed", "want_to_move"] },
   { title: "Life",             keys: ["family_commitments", "annual_leave", "missed_yesterday"] },
   { title: "Other",            keys: ["other"] },
 ];
@@ -72,6 +93,8 @@ export function RealityModal({
   const [timeMin, setTimeMin] = useState<string>("");
   const [result, setResult] = useState<any>(null);
   const [chosen, setChosen] = useState<string | null>(null);
+  // Iter169 · Toggle the secondary "Something Else" reveal.
+  const [showMore, setShowMore] = useState(false);
 
   useEffect(() => {
     if (!visible) {
@@ -169,36 +192,80 @@ export function RealityModal({
                 </Pressable>
               ) : null}
               <View style={styles.grid}>
-                {/* Iter168 · Render category-by-category with a short header,
-                    2-column tiles, 13pt labels and lighter hints for
-                    readability. Keeps the same submit(k) semantics. */}
-                {REALITY_CATEGORIES.map((cat) => {
-                  const items = cat.keys
-                    .map((key) => REALITY_KINDS.find((r) => r.key === key))
-                    .filter(Boolean) as Kind[];
-                  if (!items.length) return null;
-                  return (
-                    <View key={cat.title} style={styles.catBlock}>
-                      <Text style={styles.catHead}>{cat.title.toUpperCase()}</Text>
-                      <View style={styles.catGrid}>
-                        {items.map((k) => (
-                          <Pressable
-                            key={k.key}
-                            testID={`reality-kind-${k.key}`}
-                            onPress={() => submit(k)}
-                            style={({ pressed }) => [styles.kindCard, styles.kindCardTwo, pressed && styles.kindPressed]}
-                          >
-                            <View style={styles.kindIconWrap}>
-                              <Ionicons name={k.icon as any} size={22} color={theme.color.brand} />
-                            </View>
-                            <Text style={styles.kindLabel} numberOfLines={2}>{k.label}</Text>
-                            {k.hint ? <Text style={styles.kindHint} numberOfLines={1}>{k.hint}</Text> : null}
-                          </Pressable>
-                        ))}
-                      </View>
-                    </View>
-                  );
-                })}
+                {/* Iter169 · Big 8 primary grid — 2-column layout, 13pt
+                    labels. Covers ~95% of real-world adaptations. */}
+                <View style={styles.catBlock}>
+                  <View style={styles.catGrid}>
+                    {BIG_8_KEYS
+                      .map((key) => REALITY_KINDS.find((r) => r.key === key))
+                      .filter(Boolean)
+                      .map((k) => (
+                        <Pressable
+                          key={(k as Kind).key}
+                          testID={`reality-kind-${(k as Kind).key}`}
+                          onPress={() => submit(k as Kind)}
+                          style={({ pressed }) => [styles.kindCard, styles.kindCardTwo, pressed && styles.kindPressed]}
+                        >
+                          <View style={styles.kindIconWrap}>
+                            <Ionicons name={(k as Kind).icon as any} size={22} color={theme.color.brand} />
+                          </View>
+                          <Text style={styles.kindLabel} numberOfLines={2}>{(k as Kind).label}</Text>
+                          {(k as Kind).hint ? (
+                            <Text style={styles.kindHint} numberOfLines={1}>{(k as Kind).hint}</Text>
+                          ) : null}
+                        </Pressable>
+                      ))}
+                  </View>
+                </View>
+
+                {/* Iter169 · Secondary reveal button. Everything else lives
+                    behind this so the primary grid stays uncluttered. */}
+                <Pressable
+                  onPress={() => setShowMore((v) => !v)}
+                  style={styles.moreToggleR}
+                  testID="reality-more-toggle"
+                >
+                  <Ionicons
+                    name={showMore ? "chevron-up" : "chevron-down"}
+                    size={14}
+                    color={theme.color.brand}
+                  />
+                  <Text style={styles.moreToggleRT}>
+                    {showMore ? "HIDE OTHER OPTIONS" : "SOMETHING ELSE / OTHER"}
+                  </Text>
+                </Pressable>
+
+                {/* Iter169 · Secondary long-tail options — categorised, only
+                    rendered when the user asks. Same submit(k) semantics. */}
+                {showMore
+                  ? REALITY_CATEGORIES.map((cat) => {
+                      const items = cat.keys
+                        .map((key) => REALITY_KINDS.find((r) => r.key === key))
+                        .filter(Boolean) as Kind[];
+                      if (!items.length) return null;
+                      return (
+                        <View key={cat.title} style={styles.catBlock}>
+                          <Text style={styles.catHead}>{cat.title.toUpperCase()}</Text>
+                          <View style={styles.catGrid}>
+                            {items.map((k) => (
+                              <Pressable
+                                key={k.key}
+                                testID={`reality-kind-${k.key}`}
+                                onPress={() => submit(k)}
+                                style={({ pressed }) => [styles.kindCard, styles.kindCardTwo, pressed && styles.kindPressed]}
+                              >
+                                <View style={styles.kindIconWrap}>
+                                  <Ionicons name={k.icon as any} size={22} color={theme.color.brand} />
+                                </View>
+                                <Text style={styles.kindLabel} numberOfLines={2}>{k.label}</Text>
+                                {k.hint ? <Text style={styles.kindHint} numberOfLines={1}>{k.hint}</Text> : null}
+                              </Pressable>
+                            ))}
+                          </View>
+                        </View>
+                      );
+                    })
+                  : null}
               </View>
 
               <Text style={styles.optionalLabel}>OPTIONAL — TIME AVAILABLE (MIN)</Text>
@@ -411,6 +478,26 @@ const styles = StyleSheet.create({
     fontFamily: theme.font.textSemi,
   },
   catGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+
+  // Iter169 · Secondary reveal toggle (RealityModal-scoped copy of the
+  // Nutrition tab's "More options" affordance).
+  moreToggleR: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    alignSelf: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 4,
+  },
+  moreToggleRT: {
+    color: theme.color.brand,
+    fontSize: 11,
+    letterSpacing: 1.5,
+    fontWeight: "800",
+    fontFamily: theme.font.textSemi,
+  },
 
   kindCard: {
     width: "31%",

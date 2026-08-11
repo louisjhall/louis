@@ -25,13 +25,30 @@ export function RosterReviewBanner({ onReadyChanged }: { onReadyChanged?: () => 
   const load = useCallback(async () => {
     try {
       const r = await api<RosterStatus>("/roster/status");
-      setState(r);
+      // Iter170 · Defence-in-depth: even if `/roster/status` mistakenly
+      // returns "reviewing" (stale `programme_release_at`, e.g. Abi's
+      // roster), if the active roster is already CONFIRMED we treat the
+      // banner as ready. Fetch `/roster/current` in parallel and check
+      // its `.status` field.
+      let effective: RosterStatus = r;
+      if (r.status === "reviewing") {
+        try {
+          const cur = await api<any>("/roster/current");
+          const rosterStatus = String(cur?.status || "").toLowerCase();
+          if (rosterStatus === "confirmed") {
+            effective = { ...r, status: "ready" };
+          }
+        } catch {
+          /* ignore — fall back to whatever /roster/status said */
+        }
+      }
+      setState(effective);
       // If we were showing the banner and the roster just unlocked, ping
       // the host so it can re-fetch the calendar/messages one time.
-      if (wasReviewing.current && r.status !== "reviewing") {
+      if (wasReviewing.current && effective.status !== "reviewing") {
         onReadyChanged?.();
       }
-      wasReviewing.current = r.status === "reviewing";
+      wasReviewing.current = effective.status === "reviewing";
     } catch {
       // Silently swallow — a missing endpoint / offline network must never
       // block the home screen from rendering.

@@ -206,6 +206,13 @@ async def get_roster_status(db, user: dict) -> dict:
     if not roster:
         return {"status": "none"}
 
+    # Iter170 · Ghost-banner fix (Abi Witts case). If the active roster has
+    # already been CONFIRMED, the review window is over — no matter what
+    # `programme_release_at` says on the doc. Return "ready" so the client
+    # banner disappears immediately.
+    if str(roster.get("status") or "").lower() == "confirmed":
+        return {"status": "ready", "unlocks_at": roster.get("programme_release_at")}
+
     unlocks_at = roster.get("programme_release_at")
     if not unlocks_at:
         return {"status": "ready"}

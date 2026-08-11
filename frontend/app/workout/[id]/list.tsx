@@ -65,7 +65,7 @@ function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
   return _sharedIsCardio({ name, reps, duration });
 }
 
-function resolveCols(ex: ExRow): ColSpec[] {
+function resolveCols(ex: ExRow, primaryOverride?: "reps" | "duration"): ColSpec[] {
   const cols: ColSpec[] = [];
   // Iter167 · Single source of truth for cardio-vs-strength classification.
   const isCardio = _sharedIsCardio(ex);
@@ -83,44 +83,43 @@ function resolveCols(ex: ExRow): ColSpec[] {
   // kg column: only when explicitly prescribed or implied by name — never on
   // pure cardio (running/rowing/etc).
   const showLoad = (hasLoad || impliesLoad) && !isCardio;
-  const hasRpe = ex.rpe != null && String(ex.rpe).trim() !== "";
 
-  // Iter 162 · Cleaner rule set (user spec):
-  //   • duration + no reps → TIME + optional LOAD only (no REPS box)
-  //   • reps + no duration → LOAD + REPS only (no TIME box)
-  //   • both → LOAD + REPS + TIME
-  //   • neither → LOAD + REPS as safe default
+  // Iter170 · Frictionless Logging spec:
+  //   • RPE column is HIDDEN everywhere (no more grey box the client ignores)
+  //   • Single-box: exactly ONE main input — REPS or TIME — never both
+  //   • The primary is inferred from the prescription; a per-exercise
+  //     override (via the Switch icon in the header) can flip it.
+  //   • Main input is full-width (flex: 1) so it's easy to tap.
   //
-  // Iter 165c · Cardio-specific override — for any cardio row (walking,
-  // running, cycling, rowing…) the REPS box is meaningless: prescriptions
-  // like "30 min" belong in the TIME column, not REPS. We hide REPS and
-  // KG for cardio and always render TIME (+ DIST km, added below).
-  if (isCardio) {
-    cols.push({ key: "duration", label: "TIME", flex: 1 });
+  // Deciding the primary:
+  //   1. If the caller passed an override, honour it.
+  //   2. Else cardio → duration.
+  //   3. Else prescribed duration but no reps → duration.
+  //   4. Else → reps (default; covers strength / mixed / neither).
+  let primary: "reps" | "duration";
+  if (primaryOverride === "reps" || primaryOverride === "duration") {
+    primary = primaryOverride;
+  } else if (isCardio) {
+    primary = "duration";
   } else if (hasDuration && !hasReps) {
-    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
-    cols.push({ key: "duration", label: "TIME", flex: 1 });
-  } else if (hasReps && !hasDuration) {
-    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
-    cols.push({ key: "reps", label: "REPS", width: 58 });
-  } else if (hasReps && hasDuration) {
-    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
-    cols.push({ key: "reps", label: "REPS", width: 58 });
-    cols.push({ key: "duration", label: "TIME", width: 78 });
+    primary = "duration";
   } else {
-    if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
-    cols.push({ key: "reps", label: "REPS", width: 58 });
+    primary = "reps";
   }
 
-  // Iter 165c · For any cardio row (running, cycling, walking, rowing…)
-  // always show the DIST km column so the client can log actual distance.
-  // Previously we gated this on the name containing "km"/"mile"/"distance",
-  // which meant "Easy Walk / 30 min" rendered without any distance field.
   if (isCardio) {
+    // Cardio: TIME (flex) + DIST km (flex). No REPS/RPE.
+    cols.push({ key: "duration", label: "TIME", flex: 1 });
     cols.push({ key: "distance", label: "DIST km", flex: 1 });
+    return cols;
   }
 
-  if (hasRpe) cols.push({ key: "rpe", label: "RPE", width: 44 });
+  if (showLoad) cols.push({ key: "weight", label: "kg", width: 68 });
+  if (primary === "duration") {
+    cols.push({ key: "duration", label: "TIME", flex: 1 });
+  } else {
+    cols.push({ key: "reps", label: "REPS", flex: 1 });
+  }
   return cols;
 }
 
@@ -665,7 +664,28 @@ function ExerciseCard({
   onLog: (setIdx: number) => void;
   onOpenDetail: () => void;
 }) {
-  const cols = useMemo(() => resolveCols(ex), [ex]);
+  // Iter170 · Frictionless Logging — per-exercise Switch state that lets
+  // the client flip between logging REPS or TIME without leaving the row.
+  // Defaults are computed once from the prescription; the Switch button
+  // in the header toggles between the two.
+  const isCardioEx = _sharedIsCardio(ex);
+  const _hasReps = ex.reps != null && String(ex.reps).trim() !== "";
+  const _hasDur =
+    (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
+    ex.logging_type === "timer";
+  const defaultPrimary: "reps" | "duration" =
+    isCardioEx ? "duration"
+    : _hasDur && !_hasReps ? "duration"
+    : "reps";
+  const [primary, setPrimary] = useState<"reps" | "duration">(defaultPrimary);
+  const cols = useMemo(
+    () => resolveCols(ex, primary),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ex, primary],
+  );
+  // Only offer the Switch on non-cardio rows where flipping actually makes
+  // sense. Cardio locks to TIME + DIST.
+  const canSwitch = !isCardioEx;
   const targetReps = ex.reps != null ? String(ex.reps) : (ex.duration_sec ? fmtMMSS(ex.duration_sec) : "—");
   const rest = ex.rest_sec || 0;
   const [restRunning, setRestRunning] = useState(false);
@@ -689,7 +709,8 @@ function ExerciseCard({
   }
   if (ex.load != null && String(ex.load).trim() && String(ex.load).toLowerCase() !== "bw")
     metaBits.push(String(ex.load));
-  if (ex.rpe != null && String(ex.rpe).trim()) metaBits.push(`RPE ${ex.rpe}`);
+  // Iter170 · RPE meta chip removed — clients ignored it and the log column
+  // is now hidden globally per the Frictionless Logging spec.
   if (rest > 0) metaBits.push(`rest ${rest >= 60 ? `${Math.round(rest / 60)}m` : `${rest}s`}`);
   const metaLine = metaBits.join(" · ") +
     (ex.cue ? ` · ${String(ex.cue).slice(0, 40)}${(ex.cue || "").length > 40 ? "…" : ""}` : "");
@@ -703,6 +724,25 @@ function ExerciseCard({
           <Text style={styles.exName} numberOfLines={2}>{ex.name}</Text>
           <Text style={styles.exMeta} numberOfLines={2}>{metaLine}</Text>
         </View>
+        {canSwitch ? (
+          <Pressable
+            onPress={(e) => {
+              // Prevent the parent onOpenDetail from firing when the client
+              // taps the small switch — the two live in the same Pressable.
+              e.stopPropagation?.();
+              setPrimary((p) => (p === "reps" ? "duration" : "reps"));
+            }}
+            hitSlop={8}
+            style={styles.switchBtn}
+            testID={`list-ex-${section}-${exIdx}-switch`}
+            accessibilityLabel={`Switch to ${primary === "reps" ? "time" : "reps"} logging`}
+          >
+            <Ionicons name="swap-horizontal" size={14} color={theme.color.brand} />
+            <Text style={styles.switchBtnT}>
+              {primary === "reps" ? "TIME" : "REPS"}
+            </Text>
+          </Pressable>
+        ) : null}
         <Ionicons name="chevron-forward" size={18} color={theme.color.textDim} />
       </Pressable>
 
@@ -1063,6 +1103,19 @@ const styles = StyleSheet.create({
     width: 40, height: 40, alignItems: "center", justifyContent: "center",
   },
   checkBtnDone: {},
+
+  // Iter170 · Frictionless Logging — Switch pill in the exercise header.
+  switchBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 6,
+    borderRadius: 6, backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+    marginRight: 6,
+  },
+  switchBtnT: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "800",
+    letterSpacing: 1, fontFamily: theme.font.textSemi,
+  },
 
   restRow: {
     flexDirection: "row", alignItems: "center", gap: 6,

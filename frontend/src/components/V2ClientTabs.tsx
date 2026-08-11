@@ -66,20 +66,26 @@ function CheckinsPanel({ clientId }: { clientId: string }) {
 
   return (
     <ScrollView contentContainerStyle={styles.body} testID="v2-checkins-panel">
-      <Text style={styles.sectionTitle}>WELLNESS CHECK-INS · {rows.length}</Text>
+      <Text style={styles.sectionTitle}>WEEKLY CHECK-INS · {rows.length}</Text>
       {rows.map((c, i) => (
         <View key={c.id || i} style={styles.card}>
           <View style={styles.cardHead}>
-            <Text style={styles.cardHeadText}>{fmtDateTime(c.created_at || c.submitted_at)}</Text>
+            {/* Iter169 · Prefer submitted_at (weekly schema) but fall back to
+                created_at so any legacy daily rows still render. */}
+            <Text style={styles.cardHeadText}>{fmtDateTime(c.submitted_at || c.created_at)}</Text>
             {c.coach_review_required && !c.reviewed_at && (
               <View style={styles.badge}><Text style={styles.badgeText}>REVIEW</Text></View>
             )}
           </View>
           <View style={styles.metricRow}>
-            <Metric label="Energy"   n={c.energy}   max={5} />
+            {/* Iter169 · Read the weekly-schema field names first
+                (energy_score / sleep_score / stress_score / recovery_score)
+                and gracefully fall back to legacy daily field names so old
+                data still renders. Weekly scale is 1-5. */}
+            <Metric label="Energy"   n={c.energy_score   ?? c.energy}   max={5} />
+            <Metric label="Sleep"    n={c.sleep_score    ?? c.sleep_hours ?? c.sleep} max={5} />
+            <Metric label="Stress"   n={c.stress_score   ?? c.stress}   max={5} />
             <Metric label="Recovery" n={c.recovery_score ?? c.recovery} max={5} />
-            <Metric label="Mood"     n={c.mood} max={5} />
-            <Metric label="Sleep h"  n={c.sleep_hours} max={12} decimals={1} />
           </View>
           {c.notes && <Text style={styles.notes} numberOfLines={3}>{c.notes}</Text>}
           {c.injury_flag && c.injury_flag !== "none" && (

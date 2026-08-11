@@ -10066,7 +10066,10 @@ async def _generate_script_for(client_id: str, coach_id: str, style_override: Op
     ev = await db.events.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
     if ev:
         ev["phase_info"] = _event_phase(ev.get("event_date", ""))
-    checkin = await db.checkins.find_one({"user_id": client_id}, {"_id": 0}, sort=[("created_at", -1)])
+    # Iter169 · Weekly check-ins live in db.check_ins (with submitted_at),
+    # NOT db.checkins (daily). The video script generator wants the LATEST
+    # weekly submission so it can reference concrete weekly numbers.
+    checkin = await db.check_ins.find_one({"user_id": client_id}, {"_id": 0}, sort=[("submitted_at", -1)])
     recent_workouts = await db.workouts.find({"user_id": client_id}, {"_id": 0}).sort("date", -1).to_list(20)
     completed = [w for w in recent_workouts if w.get("completed")]
     missed = [w for w in recent_workouts if not w.get("completed") and w.get("date", "") < today_str()]
@@ -10829,7 +10832,11 @@ async def coach_client_detail(client_id: str, _: dict = Depends(require_role("co
     if r:
         r["expiry"] = _roster_expiry(r)
     workouts = await db.workouts.find({"user_id": client_id}, {"_id": 0}).sort("date", 1).to_list(500)
-    checkins = await db.checkins.find({"user_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(10)
+    # Iter169 · Coach client-detail must surface WEEKLY check-ins so the
+    # CheckinsPanel matches what the client submitted via /weekly-checkin.
+    # These live in db.check_ins (not db.checkins) and are ordered by
+    # submitted_at, not created_at.
+    checkins = await db.check_ins.find({"user_id": client_id}, {"_id": 0}).sort("submitted_at", -1).to_list(10)
     history = await db.rosters.find({"user_id": client_id}, {"_id": 0, "raw_response": 0}).sort("created_at", -1).to_list(20)
     ev = await db.events.find_one({"user_id": client_id, "is_active": True}, {"_id": 0}, sort=[("created_at", -1)])
     if ev:

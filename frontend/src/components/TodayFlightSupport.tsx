@@ -278,7 +278,7 @@ const s = StyleSheet.create({
     letterSpacing: 1.4,
   },
   headerHint: {
-    color: theme.color.textMuted, fontSize: 9, fontWeight: "600",
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
     fontStyle: "italic", marginLeft: "auto",
   },
   body: {
@@ -316,7 +316,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 12, borderWidth: 1,
   },
-  statusText: { fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  statusText: { fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   actionsRow: {
     flexDirection: "row", gap: 8, marginTop: 2,

@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border,
     alignItems: "center", justifyContent: "center",
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },
   title: { color: theme.color.text, fontSize: 16, fontWeight: "800", letterSpacing: -0.2, marginBottom: 6 },
   body: { color: theme.color.text, fontSize: 12, lineHeight: 17 },
 
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
     alignItems: "center", justifyContent: "center",
   },
-  todayEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 3 },
+  todayEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginBottom: 3 },
   todayTitle: { color: theme.color.text, fontSize: 14, fontWeight: "800", marginBottom: 4 },
   todayBody: { color: theme.color.textMuted, fontSize: 12, lineHeight: 16 },
 
@@ -397,7 +397,7 @@ const styles = StyleSheet.create({
   tlPulse: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.color.brand },
   tlLine: { width: 2, flex: 1, marginTop: 2, minHeight: 12 },
   tlLabel: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
-  tlHint: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1, marginTop: 2 },
+  tlHint: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1, marginTop: 2 },
 
   ctaRow: { flexDirection: "row", gap: 8, marginTop: 14, flexWrap: "wrap" },
   ctaPrimary: {

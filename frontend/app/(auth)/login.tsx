@@ -315,7 +315,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: theme.color.brand,
   },
-  seedTitle: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "700" },
+  seedTitle: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "700" },
   seedText: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
   devBtn: {
     marginTop: theme.space.md,

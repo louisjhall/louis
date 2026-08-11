@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
 
   helloRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
   helloEyebrow: {
-    color: theme.color.brand, fontSize: 10, letterSpacing: 3, fontWeight: "900",
+    color: theme.color.brand, fontSize: 11, letterSpacing: 3, fontWeight: "900",
     fontFamily: theme.font.textSemi,
   },
   name: {
@@ -194,7 +194,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 20,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
-  baseT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1, fontFamily: theme.font.textSemi },
+  baseT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1, fontFamily: theme.font.textSemi },
 
   metaRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "nowrap" },
   loadPill: {
@@ -202,15 +202,15 @@ const styles = StyleSheet.create({
     borderRadius: 20, borderWidth: 1, backgroundColor: "rgba(0,0,0,0.35)",
   },
   loadDot: { width: 6, height: 6, borderRadius: 3 },
-  loadT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1.3, fontFamily: theme.font.textSemi },
+  loadT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.3, fontFamily: theme.font.textSemi },
   standbyPill: {
     flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 4,
     borderRadius: 20, borderWidth: 1, borderColor: theme.color.amber,
     backgroundColor: "rgba(245,158,11,0.14)",
   },
-  standbyT: { color: theme.color.amber, fontSize: 10, fontWeight: "900", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
+  standbyT: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
   dayType: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.3, fontWeight: "800", fontFamily: theme.font.textSemi, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
-  dayline: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
+  dayline: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
 
   dayTitle: {
     color: theme.color.text, fontSize: 18, letterSpacing: 0.8,

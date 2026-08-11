@@ -94,9 +94,9 @@ const styles = StyleSheet.create({
   headerT: { color: theme.color.text, fontSize: 14, letterSpacing: 3, fontWeight: "900", fontFamily: theme.font.display },
   card: { flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   cardName: { color: theme.color.text, fontSize: 14, fontWeight: "800", fontFamily: theme.font.textSemi },
-  cardMeta: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1, marginTop: 2 },
+  cardMeta: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, marginTop: 2 },
   cardMacros: { color: theme.color.textDim, fontSize: 11, marginTop: 3 },
   logBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6, backgroundColor: theme.color.brand },
-  logBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  logBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   trash: { padding: 6 },
 });

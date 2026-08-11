@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
   readyT: { color: theme.color.green, fontSize: 14, fontWeight: "900", letterSpacing: 3, marginTop: 8 },
 
   nextRow: { alignItems: "center", gap: 4, paddingHorizontal: 16 },
-  nextEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  nextEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   nextT: { color: theme.color.text, fontSize: 14, fontWeight: "800", textAlign: "center" },
 
   coachLine: {

@@ -589,7 +589,7 @@ const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: theme.color.background },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: theme.space.lg, paddingTop: theme.space.md, paddingBottom: theme.space.sm },
-  eyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
+  eyebrow: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800" },
   title: { color: theme.color.text, fontSize: 22, fontWeight: "900", marginTop: 6 },
   help: { color: theme.color.textMuted, fontSize: 12, lineHeight: 18, marginBottom: theme.space.md },
   qLabel: { color: theme.color.text, fontSize: 13, fontWeight: "700", marginTop: theme.space.md, marginBottom: 8 },

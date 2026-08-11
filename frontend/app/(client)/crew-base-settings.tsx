@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   h1: { color: theme.color.text, fontSize: 16, fontWeight: "900" },
-  sect: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: theme.space.sm },
+  sect: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: theme.space.sm },
   body: { color: theme.color.textMuted, fontSize: 13, lineHeight: 18, marginBottom: theme.space.md },
   identRow: {
     flexDirection: "row", alignItems: "flex-start", gap: 12,

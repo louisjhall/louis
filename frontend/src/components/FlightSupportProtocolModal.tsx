@@ -605,7 +605,7 @@ const s = StyleSheet.create({
     borderRadius: 12,
   },
   brandTag: {
-    color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.8,
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.8,
   },
   progress: {
     color: theme.color.textMuted, fontSize: 12, fontWeight: "700", letterSpacing: 1,
@@ -639,7 +639,7 @@ const s = StyleSheet.create({
     borderRadius: 6, marginTop: 12,
   },
   notCountedText: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "600",
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
   },
   movementListHeader: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
@@ -798,7 +798,7 @@ const s = StyleSheet.create({
   },
   coachingPointsTitle: {
     color: theme.color.brand,
-    fontSize: 10, fontWeight: "900", letterSpacing: 2,
+    fontSize: 11, fontWeight: "900", letterSpacing: 2,
     marginBottom: 8,
   },
   bulletRow: {

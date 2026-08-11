@@ -563,7 +563,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 10, backgroundColor: theme.color.surface,
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  topTitle: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  topTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
   // Camera stage — 9:16 vertical framing
@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
   },
   telepromScroll: { flex: 1 },
-  telepromEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, paddingHorizontal: 16, paddingTop: 10 },
+  telepromEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, paddingHorizontal: 16, paddingTop: 10 },
   telepromT: { color: "#fff", fontWeight: "800", textShadowColor: "rgba(0,0,0,0.9)", textShadowRadius: 4 },
 
   overlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.55)" },
@@ -600,13 +600,13 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   chipsRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  chipsLabel: { color: theme.color.textDim, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, width: 46 },
+  chipsLabel: { color: theme.color.textDim, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, width: 46 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20,
     borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2,
   },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  chipT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   chipTOn: { color: "#fff" },
 
   recordBtn: {

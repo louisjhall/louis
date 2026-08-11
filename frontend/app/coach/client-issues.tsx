@@ -334,7 +334,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface,
   },
   counterN: { color: theme.color.brand, fontSize: 22, fontWeight: "900" },
-  counterL: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1.3 },
+  counterL: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1.3 },
   filterRow: { flexDirection: "row", gap: 6, marginBottom: 12 },
   filterChip: {
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 5,
@@ -352,25 +352,25 @@ const styles = StyleSheet.create({
   cardTitle: { color: theme.color.textHi, fontSize: 13, fontWeight: "800" },
   cardMeta: { color: theme.color.textDim, fontSize: 12, marginTop: 3 },
   cardFoot: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" },
-  foot: { color: theme.color.textDim, fontSize: 10, fontWeight: "600" },
+  foot: { color: theme.color.textDim, fontSize: 11, fontWeight: "600" },
   blockingChip: {
     flexDirection: "row", alignItems: "center", gap: 3,
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
     borderWidth: 1, borderColor: "#ff6b6b", backgroundColor: "#3a1414",
   },
-  blockingT: { color: "#ff6b6b", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
+  blockingT: { color: "#ff6b6b", fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
   groupChip: {
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  groupT: { color: theme.color.brand, fontSize: 9, fontWeight: "800" },
+  groupT: { color: theme.color.brand, fontSize: 11, fontWeight: "800" },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
   sheet: {
     backgroundColor: theme.color.bg,
     borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "94%",
   },
   detailLabel: {
-    color: theme.color.textDim, fontSize: 10, fontWeight: "800",
+    color: theme.color.textDim, fontSize: 11, fontWeight: "800",
     letterSpacing: 1.3, marginTop: 14, marginBottom: 4,
   },
   detailVal: { color: theme.color.textHi, fontSize: 13 },
@@ -402,5 +402,5 @@ const styles = StyleSheet.create({
     marginBottom: 6, borderLeftWidth: 3, borderLeftColor: theme.color.brand,
   },
   noteText: { color: theme.color.textHi, fontSize: 12 },
-  noteMeta: { color: theme.color.textDim, fontSize: 9, marginTop: 3 },
+  noteMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 3 },
 });

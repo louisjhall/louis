@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
   },
   rowTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 0.6 },
   rowDesc: { color: theme.color.textMuted, fontSize: 11, lineHeight: 15, marginTop: 3 },
-  rowMeta: { color: theme.color.textDim, fontSize: 10, marginTop: 3 },
+  rowMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 3 },
 
   contentBlock: {
     paddingVertical: 10, borderTopWidth: 1, borderTopColor: theme.color.border,
@@ -260,13 +260,13 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end", marginTop: 8,
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.color.brand,
   },
-  saveBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  saveBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   emptyT: { color: theme.color.textMuted, fontSize: 12 },
-  footNote: { color: theme.color.textDim, fontSize: 10, textAlign: "center", marginTop: 8, marginBottom: 30, lineHeight: 14 },
+  footNote: { color: theme.color.textDim, fontSize: 11, textAlign: "center", marginTop: 8, marginBottom: 30, lineHeight: 14 },
 
   auditRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.color.border },
   auditKey: { color: theme.color.text, fontSize: 12, fontWeight: "900" },
-  auditMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  auditMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   auditVal: { color: theme.color.textDim, fontSize: 11, marginTop: 3, fontStyle: "italic" },
 });

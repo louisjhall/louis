@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
   },
   mirrorLabel: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.2,
     marginBottom: 4,

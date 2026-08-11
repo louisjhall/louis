@@ -93,5 +93,5 @@ const styles = StyleSheet.create({
   sub: { color: "#fecaca", fontSize: 11, marginTop: 2 },
   iconBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.15)" },
   exitBtn: { backgroundColor: "#ef4444" },
-  iconBtnT: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
+  iconBtnT: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
 });

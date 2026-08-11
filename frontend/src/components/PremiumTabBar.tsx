@@ -281,13 +281,13 @@ const styles = StyleSheet.create({
   },
   label: {
     fontFamily: theme.font.textSemi ?? theme.font.text,
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: 1.2,
     marginTop: 2,
     includeFontPadding: false,
   },
   labelCompact: {
-    fontSize: 9,
+    fontSize: 11,
     letterSpacing: 0.9,
   },
   labelActive: {
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     color: "#fff",
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     lineHeight: 12,
     includeFontPadding: false,

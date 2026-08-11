@@ -114,7 +114,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     marginBottom: 6,
   },
-  pillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  pillText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
   title: {
     fontSize: 11, fontWeight: "700", color: theme.color.textMuted, letterSpacing: 0.5, marginBottom: 6,
   },
@@ -131,5 +131,5 @@ const styles = StyleSheet.create({
   divider: { width: 1, height: 30, backgroundColor: theme.color.border },
   mVal: { fontSize: 18, fontWeight: "800", color: theme.color.text },
   mSlash: { fontSize: 12, color: theme.color.textMuted, fontWeight: "600" },
-  mLabel: { fontSize: 10, fontWeight: "700", color: theme.color.textMuted, letterSpacing: 0.5, marginTop: 2 },
+  mLabel: { fontSize: 11, fontWeight: "700", color: theme.color.textMuted, letterSpacing: 0.5, marginTop: 2 },
 });

@@ -1037,7 +1037,7 @@ const hStyles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
     backgroundColor: "#3b2a14", borderWidth: 1, borderColor: "#f5b543",
   },
-  streakT: { color: "#f5b543", fontSize: 10, fontWeight: "800" },
+  streakT: { color: "#f5b543", fontSize: 11, fontWeight: "800" },
   actionRow: {
     flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10,
     flexWrap: "wrap",
@@ -1094,7 +1094,7 @@ const styles = StyleSheet.create({
   emptyBody: { color: theme.color.textDim, textAlign: "center", maxWidth: 340 },
 
   sectionTitle: {
-    color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5,
+    color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5,
     fontWeight: "800", marginBottom: 8,
   },
 
@@ -1110,19 +1110,19 @@ const styles = StyleSheet.create({
   badge: {
     backgroundColor: theme.color.brand, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3,
   },
-  badgeText: { color: "#000", fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
+  badgeText: { color: "#000", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   metricRow: { flexDirection: "row", gap: 12, marginTop: 6, flexWrap: "wrap" },
   metric: { alignItems: "center", minWidth: 60 },
   metricN: { color: theme.color.textHi, fontSize: 20, fontWeight: "800" },
   metricMax: { color: theme.color.textDim, fontSize: 12, fontWeight: "600" },
-  metricLabel: { color: theme.color.textDim, fontSize: 10, letterSpacing: 0.5, fontWeight: "700" },
+  metricLabel: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700" },
   notes: { color: theme.color.textHi, fontSize: 12, marginTop: 6, lineHeight: 18 },
   injuryBadge: {
     flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8,
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
     backgroundColor: "#3b1414", borderWidth: 1, borderColor: "#ff6b6b", alignSelf: "flex-start",
   },
-  injuryText: { color: "#ff6b6b", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  injuryText: { color: "#ff6b6b", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
 
   // Messages
   bubble: {
@@ -1136,7 +1136,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border,
   },
   bubbleTxt: { color: theme.color.textHi, fontSize: 13 },
-  bubbleTime: { color: theme.color.textDim, fontSize: 9, marginTop: 4 },
+  bubbleTime: { color: theme.color.textDim, fontSize: 11, marginTop: 4 },
   chatBar: {
     flexDirection: "row", alignItems: "flex-end", gap: 8,
     padding: 12, borderTopWidth: 1, borderTopColor: theme.color.border,
@@ -1185,7 +1185,7 @@ const styles = StyleSheet.create({
     borderRadius: 6, borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.color.border, backgroundColor: "#00000030",
   },
-  smallBtnText: { color: theme.color.textHi, fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
+  smallBtnText: { color: theme.color.textHi, fontSize: 11, fontWeight: "700", letterSpacing: 0.4 },
   briefingText: {
     color: theme.color.textHi, fontSize: 13, lineHeight: 20,
     marginTop: 8, fontStyle: "italic",
@@ -1194,7 +1194,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  loadPillT: { fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  loadPillT: { fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   checkinRow: {
     paddingVertical: 6,
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.border,

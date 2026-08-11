@@ -108,7 +108,7 @@ const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
   sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
   head: { flexDirection: "row", alignItems: "flex-start", padding: 20, gap: 12 },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "800", marginTop: 6, lineHeight: 24 },
   body: { padding: 20, paddingTop: 0, gap: 12 },
   card: {

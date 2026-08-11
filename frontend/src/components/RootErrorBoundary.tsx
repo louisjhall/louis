@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   },
   debugHead: {
     color: "rgba(255,255,255,0.5)",
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 2,
     marginBottom: 6,

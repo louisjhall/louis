@@ -488,7 +488,7 @@ const styles = StyleSheet.create({
   },
   crewBrandSub: {
     color: theme.color.textDim,
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
     marginTop: 2,
@@ -507,7 +507,7 @@ const styles = StyleSheet.create({
   },
   section: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 2,
     marginTop: 14,
@@ -522,13 +522,13 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.4,
   },
   suggestT: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.4,
   },
@@ -630,7 +630,7 @@ const styles = StyleSheet.create({
   },
   credLabel: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
     marginBottom: 4,

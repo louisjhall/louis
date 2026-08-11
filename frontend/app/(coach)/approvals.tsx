@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: { padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   title: { color: theme.color.text, fontSize: 16, letterSpacing: 2, fontWeight: "900" },
-  sub: { color: theme.color.brand, marginTop: 4, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  sub: { color: theme.color.brand, marginTop: 4, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
   count: { color: theme.color.textMuted, marginTop: 4, fontSize: 12 },
   card: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.sm, overflow: "hidden" },
   loadBar: { width: 4, alignSelf: "stretch" },

@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
   errorText: { color: "#ff6666", fontSize: 12, marginTop: 6 },
 
   previewBox: { marginTop: 10, backgroundColor: "#00000030", borderRadius: 6, padding: 10 },
-  previewTitle: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", marginBottom: 6 },
+  previewTitle: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 6 },
   emptyProp: { color: theme.color.textDim, fontStyle: "italic", fontSize: 12 },
   propRow: {
     flexDirection: "row", alignItems: "flex-start", paddingVertical: 6, gap: 4,

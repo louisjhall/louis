@@ -641,7 +641,7 @@ const styles = StyleSheet.create({
   filterRow: { flexDirection: "row", gap: 6, marginTop: 8 },
   filterBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: theme.color.border },
   filterBtnActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
-  filterT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  filterT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   filterTActive: { color: theme.color.brand },
 
   convRow: { flexDirection: "row", alignItems: "center", padding: 10, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
@@ -649,7 +649,7 @@ const styles = StyleSheet.create({
   convRowUnread: { backgroundColor: theme.color.surface },
   convName: { color: theme.color.text, fontSize: 13, fontWeight: "700", flex: 1 },
   convNameUnread: { fontWeight: "900" },
-  convTime: { color: theme.color.textMuted, fontSize: 10, marginLeft: 6 },
+  convTime: { color: theme.color.textMuted, fontSize: 11, marginLeft: 6 },
   convPreview: { color: theme.color.textMuted, fontSize: 11, flex: 1 },
   convPreviewUnread: { color: theme.color.text, fontWeight: "600" },
   badge: {
@@ -657,7 +657,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5, backgroundColor: theme.color.brand,
     alignItems: "center", justifyContent: "center",
   },
-  badgeT: { color: "#fff", fontSize: 10, fontWeight: "900" },
+  badgeT: { color: "#fff", fontSize: 11, fontWeight: "900" },
   // Iter 165b · Pending check-in indicators — small red dot on the avatar
   // + a compact "CHECK-IN" pill next to the client name so the coach can
   // spot outstanding review tasks even on already-read conversations.
@@ -675,7 +675,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(163,24,46,0.45)",
   },
   checkinPillT: {
-    color: theme.color.brand, fontSize: 8, letterSpacing: 1.2,
+    color: theme.color.brand, fontSize: 11, letterSpacing: 1.2,
     fontWeight: "900",
   },
   emptyList: { padding: 30, alignItems: "center" },
@@ -700,14 +700,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  headerBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  headerBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   threadScroll: { flex: 1 },
   emptyThreadT: { color: theme.color.text, fontSize: 14, fontWeight: "800" },
   emptyThreadSub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
 
   daySep: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 12 },
   daySepLine: { flex: 1, height: 1, backgroundColor: theme.color.divider },
-  daySepT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  daySepT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   bubbleRow: { flexDirection: "row", marginVertical: 2 },
   bubbleRowMine: { justifyContent: "flex-end" },
@@ -716,7 +716,7 @@ const styles = StyleSheet.create({
   bubbleMine: { backgroundColor: theme.color.brand, borderBottomRightRadius: 4 },
   bubbleTheirs: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, borderBottomLeftRadius: 4 },
   bubbleText: { fontSize: 14, lineHeight: 20 },
-  bubbleMeta: { color: theme.color.textMuted, fontSize: 9, marginTop: 4, letterSpacing: 0.4 },
+  bubbleMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 4, letterSpacing: 0.4 },
   attImage: { width: 220, height: 160, borderRadius: 8, marginBottom: 6, backgroundColor: "#000" },
   attGeneric: { flexDirection: "row", alignItems: "center", padding: 6, marginBottom: 4, borderRadius: 6, backgroundColor: theme.color.surface },
 
@@ -760,13 +760,13 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
   pillLive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  pillT: { color: theme.color.text, fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  pillT: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
 
   ctxCard: {
     marginTop: 12, padding: 12, borderRadius: 10,
     backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border,
   },
-  ctxLabel: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  ctxLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   ctxValue: { color: theme.color.text, fontSize: 14, fontWeight: "800", marginTop: 4 },
   ctxMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
   ctxNote: { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4 },

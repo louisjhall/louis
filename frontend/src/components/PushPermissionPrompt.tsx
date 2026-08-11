@@ -91,5 +91,5 @@ const styles = StyleSheet.create({
   laterT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
   allowBtn: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 13, borderRadius: 10, backgroundColor: theme.color.brand },
   allowT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  hint: { color: theme.color.textDim, fontSize: 10, marginTop: 12, textAlign: "center" },
+  hint: { color: theme.color.textDim, fontSize: 11, marginTop: 12, textAlign: "center" },
 });

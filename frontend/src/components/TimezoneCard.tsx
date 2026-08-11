@@ -187,13 +187,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  headTitle: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, flex: 1 },
+  headTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, flex: 1 },
   srcPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  srcPillT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  srcPillT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   mainRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   col: { flex: 1, minWidth: 0 },
-  colLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.5, marginBottom: 2 },
+  colLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, marginBottom: 2 },
   colCity: { color: theme.color.text, fontSize: 14, fontWeight: "900", letterSpacing: 1 },
   colMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, fontWeight: "700" },
 
@@ -204,5 +204,5 @@ const styles = StyleSheet.create({
   },
 
   reason: { color: theme.color.textMuted, fontSize: 11, marginTop: 4 },
-  confirmHint: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, marginTop: 4 },
+  confirmHint: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 4 },
 });

@@ -355,7 +355,7 @@ const styles = StyleSheet.create({
   },
   handle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: theme.color.border, marginBottom: 14 },
 
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   title: { color: theme.color.text, fontSize: 22, fontWeight: "900", letterSpacing: -0.5, marginTop: 6 },
   workoutTitle: { color: theme.color.textMuted, fontSize: 12, fontWeight: "700", marginTop: 4, letterSpacing: 0.5 },
 

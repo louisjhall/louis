@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
   leftCol: { flex: 1, minHeight: RING_SIZE, justifyContent: "center", gap: 4 },
   eyebrow: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 2,
   },
@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
   },
   ringLabel: {
     color: theme.color.textMuted,
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
     marginTop: 2,
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
   },
   milestoneLabel: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
   },
@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
   },
   longRunLabel: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
     flex: 1,

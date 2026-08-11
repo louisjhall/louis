@@ -157,13 +157,13 @@ const styles = StyleSheet.create({
     flex: 1, alignItems: "center", justifyContent: "center", padding: 30,
     backgroundColor: theme.color.surface2,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginTop: 12 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginTop: 12 },
   hint: { color: theme.color.textMuted, fontSize: 12, textAlign: "center", marginTop: 10, lineHeight: 17, fontStyle: "italic" },
   scriptCard: {
     marginTop: 16, padding: 16, borderRadius: 12,
     backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
   },
-  scriptEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  scriptEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   scriptBody: { color: theme.color.text, fontSize: 14, lineHeight: 22, marginTop: 10 },
 });

@@ -289,7 +289,7 @@ function BatchGenerateModal({ onClose, onDone }: { onClose: () => void; onDone: 
                 </View>
                 {job.current_name && isRunning && (
                   <Text style={batchStyles.currentT}>
-                    <Text style={{ color: theme.color.textMuted, fontSize: 10 }}>NOW RENDERING · </Text>
+                    <Text style={{ color: theme.color.textMuted, fontSize: 11 }}>NOW RENDERING · </Text>
                     {job.current_name}
                   </Text>
                 )}
@@ -367,15 +367,15 @@ const batchStyles = StyleSheet.create({
   sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "88%" },
   head: { flexDirection: "row", alignItems: "center", gap: 12, padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   headIcon: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.brand },
-  eyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   title: { color: theme.color.text, fontSize: 16, fontWeight: "800", marginTop: 3 },
-  label: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
+  label: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
   filters: { gap: 8, marginBottom: 14 },
   chip: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   chipL: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
   chipLA: { color: theme.color.brand },
-  chipH: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  chipH: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   warn: { flexDirection: "row", gap: 8, padding: 10, borderRadius: 8, backgroundColor: theme.color.brandTint, marginBottom: 14, borderWidth: 1, borderColor: theme.color.brand },
   warnT: { color: theme.color.text, fontSize: 11, lineHeight: 15, flex: 1 },
   startBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 10, backgroundColor: theme.color.brand, flex: 1 },
@@ -392,11 +392,11 @@ const batchStyles = StyleSheet.create({
   stats: { flexDirection: "row", gap: 8, marginTop: 10 },
   statChip: { flex: 1, alignItems: "center", padding: 8, borderRadius: 8, borderWidth: 1 },
   statV: { fontSize: 18, fontWeight: "900" },
-  statL: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginTop: 2 },
+  statL: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, marginTop: 2 },
   currentT: { color: theme.color.text, fontSize: 11, marginTop: 10, fontStyle: "italic" },
   errorBox: { marginTop: 10, padding: 10, borderRadius: 8, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: "#c94a4a" },
-  errorH: { color: "#c94a4a", fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 6 },
-  errorL: { color: theme.color.textMuted, fontSize: 10, lineHeight: 14, marginTop: 2 },
+  errorH: { color: "#c94a4a", fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginBottom: 6 },
+  errorL: { color: theme.color.textMuted, fontSize: 11, lineHeight: 14, marginTop: 2 },
   kindRow: { flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   kindTab: { flex: 1, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", backgroundColor: theme.color.surface2 },
   kindTabActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
@@ -677,12 +677,12 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 12,
     padding: 20, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "800", marginTop: 3 },
   brandRed: { color: theme.color.brand, fontWeight: "900" },
   countPill: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   batchBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, marginRight: 8 },
-  batchBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  batchBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   countPillT: { color: theme.color.brand, fontSize: 12, fontWeight: "900" },
   searchWrap: {
     flexDirection: "row", alignItems: "center", gap: 8,
@@ -710,7 +710,7 @@ const styles = StyleSheet.create({
   },
   flagOn: { backgroundColor: "rgba(34, 197, 94, 0.12)" },
   flagOff: { backgroundColor: theme.color.surface3 },
-  flagT: { color: theme.color.textDim, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  flagT: { color: theme.color.textDim, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   sheetRoot: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.75)" },
@@ -723,7 +723,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
-  sheetEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  sheetEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   sheetTitle: { color: theme.color.text, fontSize: 16, fontWeight: "900", marginTop: 3 },
 
   actionRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
@@ -731,44 +731,44 @@ const styles = StyleSheet.create({
     flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
     paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.brand,
   },
-  actionPrimaryT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  actionPrimaryT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   actionSecondary: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
     paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  actionSecondaryT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  actionSecondaryT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   imgPreview: { width: "100%", height: 200, borderRadius: 10, marginBottom: 16 },
 
   listBlock: { marginBottom: 18 },
   listHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  listLbl: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  listLbl: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   saveBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, backgroundColor: theme.color.brand },
-  saveT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  saveT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   listRow: {
     flexDirection: "row", alignItems: "flex-start", gap: 8,
     padding: 8, marginBottom: 6, borderRadius: 6,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
   listNum: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: 4 },
-  listNumT: { color: theme.color.brand, fontSize: 10, fontWeight: "900" },
+  listNumT: { color: theme.color.brand, fontSize: 11, fontWeight: "900" },
   listInput: { flex: 1, color: theme.color.text, fontSize: 13, minHeight: 34 },
   addBtn: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: theme.color.brand, borderStyle: "dashed" },
-  addT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  addT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   metaBlock: { marginBottom: 16 },
-  metaLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 6, marginTop: 8 },
+  metaLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 6, marginTop: 8 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.text, fontSize: 10, fontWeight: "700" },
+  chipT: { color: theme.color.text, fontSize: 11, fontWeight: "700" },
 
   pendingCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: 10, borderRadius: 10, backgroundColor: "rgba(245, 158, 11, 0.12)", borderWidth: 1, borderColor: theme.color.amber },
-  pendingT: { color: theme.color.amber, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  pendingT: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   pendingS: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
   approveBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.amber },
-  approveT: { color: "#000", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  approveT: { color: "#000", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   doneBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,

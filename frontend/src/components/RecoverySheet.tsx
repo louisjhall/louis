@@ -294,7 +294,7 @@ const styles = StyleSheet.create({
   },
   handle: { alignSelf: "center", width: 44, height: 4, borderRadius: 2, backgroundColor: theme.color.border, marginBottom: 10 },
   head: { flexDirection: "row", alignItems: "flex-start", marginBottom: 12, gap: 12 },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "900", marginTop: 4 },
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
 
@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
   },
   recoT: { color: theme.color.text, fontSize: 13, lineHeight: 18, flex: 1 },
 
-  sectLbl: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 8, marginTop: 4 },
+  sectLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8, marginTop: 4 },
   empty: { color: theme.color.textMuted, fontSize: 12, marginBottom: 10 },
 
   slot: { padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border, marginBottom: 8, backgroundColor: theme.color.surface2 },
@@ -314,7 +314,7 @@ const styles = StyleSheet.create({
   slotReason: { color: theme.color.textMuted, fontSize: 12, marginTop: 3, lineHeight: 17 },
   slotMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   ratePill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
-  ratePillT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  ratePillT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   slotActions: { marginTop: 10, flexDirection: "row", gap: 8 },
   slotBtn: { flex: 1, padding: 10, borderRadius: 8, alignItems: "center" },

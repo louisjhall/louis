@@ -640,8 +640,8 @@ const styles = StyleSheet.create({
   progressTrack: { height: 3, marginHorizontal: 20, backgroundColor: theme.color.surface2, borderRadius: 2, overflow: "hidden" },
   progressFill: { height: 3, backgroundColor: theme.color.brand },
   sectionBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 20 },
-  sectionText: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2.5 },
-  questionsAnswered: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  sectionText: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2.5 },
+  questionsAnswered: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
 
   body: { padding: 20, paddingBottom: 60 },
 
@@ -650,7 +650,7 @@ const styles = StyleSheet.create({
     borderRadius: 16, padding: 20,
   },
   qHead: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
-  qSection: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  qSection: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   qText: { color: theme.color.text, fontSize: 20, fontWeight: "700", lineHeight: 27 },
   qHelp: { color: theme.color.textMuted, fontSize: 12, marginTop: 8, lineHeight: 18 },
 
@@ -694,8 +694,8 @@ const styles = StyleSheet.create({
   rangeTrack: { width: "80%", height: 4, backgroundColor: theme.color.surface, borderRadius: 2, marginTop: 8, overflow: "hidden" },
   rangeFill: { height: 4, backgroundColor: theme.color.brand },
   rangeLabelRow: { flexDirection: "row", justifyContent: "space-between", width: "80%", marginTop: 4 },
-  rangeLabelLeft: { color: theme.color.textDim, fontSize: 10, fontWeight: "700" },
-  rangeLabelRight: { color: theme.color.textDim, fontSize: 10, fontWeight: "700" },
+  rangeLabelLeft: { color: theme.color.textDim, fontSize: 11, fontWeight: "700" },
+  rangeLabelRight: { color: theme.color.textDim, fontSize: 11, fontWeight: "700" },
 
   evPill: {
     flexDirection: "row", alignItems: "center", gap: 10,
@@ -713,7 +713,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   prioChipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  prioTxt: { color: theme.color.text, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  prioTxt: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   evAdd: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
     paddingVertical: 12, borderRadius: 8,
@@ -721,7 +721,7 @@ const styles = StyleSheet.create({
   },
   evAddT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
-  equipLoc: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
+  equipLoc: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
   equipHint: {
     color: theme.color.textDim, fontSize: 11, fontStyle: "italic",
     marginTop: 12, marginBottom: 6, lineHeight: 16,
@@ -735,7 +735,7 @@ const styles = StyleSheet.create({
   continueBtnDisabled: { opacity: 0.35 },
   continueTxt: { color: "#fff", fontSize: 13, fontWeight: "900", letterSpacing: 2 },
   skipBtn: { alignItems: "center", paddingVertical: 12, marginTop: 6 },
-  skipTxt: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 2 },
+  skipTxt: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 2 },
   noneBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     gap: 8, paddingVertical: 12, marginTop: 8,
@@ -774,7 +774,7 @@ const styles = StyleSheet.create({
   },
   dnaRowHighlight: { borderLeftColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   dnaRowDim: { backgroundColor: "transparent", borderLeftColor: theme.color.textDim },
-  dnaLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },
+  dnaLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },
   dnaVal: { color: theme.color.text, fontSize: 14, fontWeight: "700" },
 
   recoBlock: { marginTop: 20 },
@@ -784,6 +784,6 @@ const styles = StyleSheet.create({
     marginTop: 20, padding: 16, borderRadius: 12,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand,
   },
-  summaryLabel: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
+  summaryLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
   summaryText: { color: theme.color.text, fontSize: 13, lineHeight: 20 },
 });

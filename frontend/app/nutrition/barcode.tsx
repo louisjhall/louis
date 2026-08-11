@@ -385,13 +385,13 @@ const styles = StyleSheet.create({
   productBrand: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 0.5, marginTop: 2, fontWeight: "700" },
   productServing: { color: theme.color.textDim, fontSize: 11, marginTop: 4, fontStyle: "italic" },
   sourceBadge: { flexDirection: "row", alignItems: "center", gap: 3, marginTop: 5, alignSelf: "flex-start", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: theme.color.surface3 },
-  sourceT: { color: theme.color.green, fontSize: 8, letterSpacing: 0.8, fontWeight: "900" },
+  sourceT: { color: theme.color.green, fontSize: 11, letterSpacing: 0.8, fontWeight: "900" },
 
   macroCard: { flexDirection: "row", padding: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
-  macroK: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.5, fontWeight: "900" },
+  macroK: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "900" },
   macroV: { color: theme.color.text, fontSize: 17, fontWeight: "900", marginTop: 4, fontFamily: theme.font.display },
 
-  label: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", marginTop: 6, fontFamily: theme.font.textSemi },
+  label: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900", marginTop: 6, fontFamily: theme.font.textSemi },
   servingsRow: { flexDirection: "row", gap: 8, alignItems: "center", flexWrap: "wrap" },
   svBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   svVal: { minWidth: 60, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignItems: "center" },
@@ -399,13 +399,13 @@ const styles = StyleSheet.create({
   svQuick: { flexDirection: "row", gap: 4, flex: 1, justifyContent: "flex-end" },
   svQuickBtn: { paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   svQuickBtnOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  svQuickT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900" },
+  svQuickT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900" },
   svQuickTOn: { color: "#fff" },
 
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  chipT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   chipTOn: { color: "#fff" },
 
   favRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10 },

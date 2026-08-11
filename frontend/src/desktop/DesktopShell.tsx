@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     borderBottomColor: theme.color.border,
   },
   brand: { color: theme.color.text, fontSize: 20, fontWeight: "900", letterSpacing: 3 },
-  tagline: { color: theme.color.brand, fontSize: 9, fontWeight: "800", letterSpacing: 2, marginTop: 2 },
+  tagline: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginTop: 2 },
   userBlock: {
     flexDirection: "row",
     alignItems: "center",
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: theme.color.brand, fontWeight: "900", fontSize: 15 },
   userName: { color: theme.color.text, fontWeight: "800", fontSize: 14 },
-  userTitle: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginTop: 2 },
+  userTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.4, marginTop: 2 },
   userEmail: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   navItem: {
     flexDirection: "row",

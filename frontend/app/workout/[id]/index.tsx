@@ -778,7 +778,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   loadPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.sm },
-  loadPillText: { color: "#fff", fontWeight: "800", fontSize: 10, letterSpacing: 1.5 },
+  loadPillText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 1.5 },
   date: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "700" },
   title: { color: theme.color.text, fontSize: 30, fontWeight: "900", marginTop: 6, letterSpacing: -0.5 },
   titleInput: { color: theme.color.text, fontSize: 26, fontWeight: "900", marginTop: 6, backgroundColor: theme.color.surface2, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border },
@@ -793,7 +793,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, paddingVertical: 10, paddingHorizontal: 8, minHeight: 48,
   },
   variantChipLabel: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
-  variantChipSub: { color: theme.color.textDim, fontSize: 9, marginTop: 1 },
+  variantChipSub: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
   variantNote: {
     flexDirection: "row", alignItems: "center", gap: 8,
     backgroundColor: theme.color.surface2, borderRadius: theme.radius.md,
@@ -804,7 +804,7 @@ const styles = StyleSheet.create({
   realityIconWrapW: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   workoutBanner: { height: 180, borderRadius: 14, marginBottom: 14, overflow: "hidden" },
   workoutBannerInner: { flex: 1, justifyContent: "flex-end", padding: 14, gap: 4 },
-  workoutBannerEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "900", fontFamily: theme.font.textSemi },
+  workoutBannerEyebrow: { color: theme.color.brand, fontSize: 11, letterSpacing: 2.5, fontWeight: "900", fontFamily: theme.font.textSemi },
   workoutBannerTitle: { color: theme.color.text, fontSize: 22, letterSpacing: 0.4, fontWeight: "900", fontFamily: theme.font.display },
   rationale: { marginTop: theme.space.lg, padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
   adaptedBadge: {
@@ -816,7 +816,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
   },
   adaptedLabel: {
-    color: theme.color.brand, fontSize: 9, letterSpacing: 1.6, fontWeight: "800",
+    color: theme.color.brand, fontSize: 11, letterSpacing: 1.6, fontWeight: "800",
   },
   adaptedText: {
     color: theme.color.text, fontSize: 12, fontWeight: "700", marginTop: 1,
@@ -832,7 +832,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   revertBtnT: {
-    color: theme.color.brand, fontSize: 9, letterSpacing: 1.4, fontWeight: "900",
+    color: theme.color.brand, fontSize: 11, letterSpacing: 1.4, fontWeight: "900",
   },
   // Iter 102 — Layover context block
   layoverCtx: {
@@ -844,10 +844,10 @@ const styles = StyleSheet.create({
     borderColor: theme.color.border,
   },
   layoverCtxHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
-  layoverCtxEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  layoverCtxEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   layoverCtxFlag: {
     color: theme.color.amber,
-    fontSize: 8, fontWeight: "900", letterSpacing: 1,
+    fontSize: 11, fontWeight: "900", letterSpacing: 1,
     borderWidth: 1, borderColor: theme.color.amber,
     paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3,
   },
@@ -860,7 +860,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: theme.color.brand,
   },
   changeReasonLabel: {
-    fontSize: 10, letterSpacing: 1.2, fontWeight: "800",
+    fontSize: 11, letterSpacing: 1.2, fontWeight: "800",
     color: theme.color.brand, marginBottom: 4,
   },
   changeReasonText: {
@@ -896,9 +896,9 @@ const styles = StyleSheet.create({
   eqWarnText: {
     fontSize: 11, color: theme.color.textMuted, flex: 1, lineHeight: 15,
   },
-  rLabel: { color: theme.color.brand, letterSpacing: 2, fontSize: 10, fontWeight: "800" },
+  rLabel: { color: theme.color.brand, letterSpacing: 2, fontSize: 11, fontWeight: "800" },
   overrideBanner: { marginTop: theme.space.md, padding: theme.space.md, backgroundColor: "rgba(245, 158, 11, 0.12)", borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.amber },
-  overrideLabel: { color: theme.color.amber, letterSpacing: 2, fontSize: 10, fontWeight: "900" },
+  overrideLabel: { color: theme.color.amber, letterSpacing: 2, fontSize: 11, fontWeight: "900" },
   overrideText: { color: theme.color.text, marginTop: 6, fontSize: 13, lineHeight: 19 },
   realityBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
@@ -911,11 +911,11 @@ const styles = StyleSheet.create({
   realityBtnLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
   realityEmojiW: { fontSize: 20 },
   realityTitleW: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
-  realitySubW: { color: theme.color.textMuted, fontSize: 10, marginTop: 1 },
+  realitySubW: { color: theme.color.textMuted, fontSize: 11, marginTop: 1 },
   rText: { color: theme.color.text, marginTop: 6, fontSize: 13, lineHeight: 19 },
   cycleBtn: { marginTop: theme.space.md, padding: 10, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center" },
   sect: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
-  sectSm: { color: theme.color.textMuted, letterSpacing: 1.5, fontSize: 10, fontWeight: "800" },
+  sectSm: { color: theme.color.textMuted, letterSpacing: 1.5, fontSize: 11, fontWeight: "800" },
   warmupRow: { flexDirection: "row", justifyContent: "space-between", padding: 10, backgroundColor: theme.color.surface2, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, marginBottom: 4 },
   warmupName: { color: theme.color.text, fontSize: 13, fontWeight: "600" },
   warmupTime: { color: theme.color.brand, fontSize: 12, fontWeight: "700" },
@@ -952,13 +952,13 @@ const styles = StyleSheet.create({
   exSmall: { flex: 1, color: theme.color.text, backgroundColor: theme.color.surface3, padding: 8, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, textAlign: "center" },
   addExBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, marginTop: 8 },
   altRow: { flexDirection: "row", padding: 10, backgroundColor: theme.color.surface2, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, marginBottom: 4 },
-  altKey: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", width: 100 },
+  altKey: { color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", width: 100 },
   altVal: { color: theme.color.text, fontSize: 12, flex: 1, marginLeft: 8 },
   lockBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10, padding: 10, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.brand },
-  lockText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  lockText: { color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },
   compBox: { marginTop: theme.space.lg },
   timerBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: theme.space.lg, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand },
-  timerText: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  timerText: { color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },
   sticky: { position: "absolute", left: 0, right: 0, bottom: 0, padding: theme.space.lg, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.border },
   cta: { backgroundColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },

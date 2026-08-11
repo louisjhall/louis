@@ -90,7 +90,7 @@ const s = StyleSheet.create({
   scrim: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: theme.space.lg, paddingBottom: theme.space.xl },
   handle: { alignSelf: "center", width: 42, height: 4, borderRadius: 2, backgroundColor: theme.color.border, marginBottom: theme.space.md },
-  eyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "800" },
+  eyebrow: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800" },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "900", marginTop: 4 },
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
   opt: { flexDirection: "row", alignItems: "center", gap: 12, padding: theme.space.md, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2, minHeight: 60 },

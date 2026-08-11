@@ -521,7 +521,7 @@ const styles = StyleSheet.create({
   dowRow: { flexDirection: "row" },
   dowLabel: {
     flex: 1, textAlign: "center",
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5,
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5,
     paddingVertical: 6,
   },
 
@@ -547,14 +547,14 @@ const styles = StyleSheet.create({
   chipPub: { borderLeftColor: theme.color.green || "#22c55e" },
   chipSched: { borderLeftColor: theme.color.brand },
   chipDraft: { borderLeftColor: theme.color.textMuted },
-  chipTime: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 0.4 },
-  chipTitle: { color: theme.color.text, fontSize: 10, fontWeight: "700", lineHeight: 12 },
+  chipTime: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 0.4 },
+  chipTitle: { color: theme.color.text, fontSize: 11, fontWeight: "700", lineHeight: 12 },
   chipFoot: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
-  chipStatus: { color: theme.color.textMuted, fontSize: 8, letterSpacing: 0.4, fontWeight: "800", textTransform: "uppercase" },
-  moreLine: { color: theme.color.textMuted, fontSize: 9, fontWeight: "700", marginTop: 3 },
+  chipStatus: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 0.4, fontWeight: "800", textTransform: "uppercase" },
+  moreLine: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", marginTop: 3 },
 
   section: {
-    color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2,
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2,
     marginTop: 20, marginBottom: 6,
   },
   upcomingBlock: {},
@@ -566,7 +566,7 @@ const styles = StyleSheet.create({
   upTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
   upMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
   upBadge: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: theme.color.brand },
-  upBadgeT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  upBadgeT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   draftsBlock: {},
   draftRow: {
@@ -575,16 +575,16 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border,
   },
   draftTitle: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
-  draftMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 3 },
+  draftMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
 
   miniBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: theme.color.brand },
-  miniBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  miniBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   miniBtnDanger: { borderColor: theme.color.red },
 
   tabs: { flexDirection: "row", gap: 6, marginBottom: 10 },
   tab: { flex: 1, paddingHorizontal: 8, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border, alignItems: "center" },
   tabActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
-  tabT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  tabT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   tabTActive: { color: theme.color.brand },
 
   rightScroll: { maxHeight: 800 },

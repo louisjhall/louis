@@ -160,16 +160,16 @@ function TinyCard({ icon, color, label, text }: { icon: any; color: string; labe
 }
 
 const styles = StyleSheet.create({
-  hint: { color: theme.color.textDim, fontSize: 10, fontStyle: "italic", marginTop: -8 },
+  hint: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic", marginTop: -8 },
   planCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 10 },
   planHead: { flexDirection: "row", alignItems: "center", gap: 6 },
-  planHeadT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900" },
+  planHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900" },
   mealRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   mealWhen: { minWidth: 100, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: theme.color.brand },
-  mealWhenT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 0.8, textAlign: "center" },
+  mealWhenT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.8, textAlign: "center" },
   mealWhat: { color: theme.color.text, fontSize: 13, flex: 1, lineHeight: 18, fontFamily: theme.font.text },
   tinyCard: { flexDirection: "row", gap: 10, padding: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   tinyIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: theme.color.surface3, alignItems: "center", justifyContent: "center" },
-  tinyLabel: { fontSize: 9, letterSpacing: 1.5, fontWeight: "900" },
+  tinyLabel: { fontSize: 11, letterSpacing: 1.5, fontWeight: "900" },
   tinyText: { color: theme.color.text, fontSize: 12, marginTop: 2, lineHeight: 17, fontFamily: theme.font.text },
 });

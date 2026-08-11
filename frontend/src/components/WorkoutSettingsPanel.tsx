@@ -67,7 +67,7 @@ function Switch({ value }: { value: boolean }) {
 
 const styles = StyleSheet.create({
   wrap: { marginTop: 16 },
-  eyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 8, marginLeft: 4 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8, marginLeft: 4 },
   card: {
     backgroundColor: theme.color.surface2,
     borderRadius: 12,

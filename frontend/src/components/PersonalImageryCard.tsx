@@ -161,7 +161,7 @@ function labelFor(s: string): string {
 const styles = StyleSheet.create({
   card: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, marginTop: 12 },
   head: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
-  headT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi },
+  headT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi },
   hint: { color: theme.color.textMuted, fontSize: 12, lineHeight: 18, marginBottom: 8, fontFamily: theme.font.text },
   input: {
     backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border,
@@ -175,6 +175,6 @@ const styles = StyleSheet.create({
   thumb: { width: 50, height: 50 },
   thumbPh: { alignItems: "center", justifyContent: "center" },
   rowStatus: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1, fontFamily: theme.font.textSemi },
-  rowDate: { color: theme.color.textMuted, fontSize: 10, fontFamily: theme.font.text, marginTop: 2 },
-  rowError: { color: "#f39a9a", fontSize: 10, fontStyle: "italic", marginTop: 2 },
+  rowDate: { color: theme.color.textMuted, fontSize: 11, fontFamily: theme.font.text, marginTop: 2 },
+  rowError: { color: "#f39a9a", fontSize: 11, fontStyle: "italic", marginTop: 2 },
 });

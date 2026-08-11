@@ -421,18 +421,18 @@ const styles = StyleSheet.create({
   heroTitle: { color: theme.color.text, fontSize: 20, fontWeight: "900", fontFamily: theme.font.display, letterSpacing: 0.5, textAlign: "center" },
   heroSub: { color: theme.color.textMuted, fontSize: 13, lineHeight: 20, textAlign: "center", fontFamily: theme.font.text, paddingHorizontal: 20 },
 
-  label: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", marginTop: 6, fontFamily: theme.font.textSemi },
+  label: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900", marginTop: 6, fontFamily: theme.font.textSemi },
 
   modeRow: { flexDirection: "row", gap: 8 },
   modeCard: { flex: 1, padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 4 },
   modeCardOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   modeCardT: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1, marginTop: 4, fontFamily: theme.font.textSemi },
-  modeCardSub: { color: theme.color.textMuted, fontSize: 10, fontFamily: theme.font.text },
+  modeCardSub: { color: theme.color.textMuted, fontSize: 11, fontFamily: theme.font.text },
 
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  chipT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   chipTOn: { color: "#fff" },
 
   primaryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 10, backgroundColor: theme.color.brand },
@@ -447,26 +447,26 @@ const styles = StyleSheet.create({
   reviewPhotoWrap: { position: "relative" },
   reviewPhoto: { width: "100%", aspectRatio: 4 / 3, borderRadius: 14, backgroundColor: theme.color.surface3 },
   confPill: { position: "absolute", top: 10, right: 10, flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-  confT: { color: "#fff", fontSize: 9, letterSpacing: 1, fontWeight: "900" },
+  confT: { color: "#fff", fontSize: 11, letterSpacing: 1, fontWeight: "900" },
 
   tipCard: { padding: 12, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   tipHead: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 6 },
-  tipHeadT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900" },
+  tipHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900" },
   tipT: { color: theme.color.text, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
 
   macroCard: { flexDirection: "row", gap: 6, padding: 10, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   macroCol: { flex: 1, alignItems: "center" },
-  macroK: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.5, fontWeight: "900" },
+  macroK: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "900" },
   macroInputRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
   macroStep: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   macroInput: { width: 44, height: 28, color: theme.color.text, backgroundColor: theme.color.surface3, borderRadius: 6, textAlign: "center", fontSize: 13, fontWeight: "900", fontFamily: theme.font.display, borderWidth: 1, borderColor: theme.color.border, padding: 0 },
-  macroUnit: { color: theme.color.textDim, fontSize: 9, marginTop: 3, letterSpacing: 0.5 },
+  macroUnit: { color: theme.color.textDim, fontSize: 11, marginTop: 3, letterSpacing: 0.5 },
 
   itemRow: { flexDirection: "row", gap: 6, alignItems: "center" },
   itemInput: { color: theme.color.text, backgroundColor: theme.color.surface2, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, borderWidth: 1, borderColor: theme.color.border },
   itemDel: { width: 30, height: 30, borderRadius: 15, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
   addItemBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, borderStyle: "dashed" },
-  addItemBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  addItemBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   favRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10 },
   favT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },

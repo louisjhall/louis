@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   headerT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   introCard: { padding: 16, marginBottom: 20, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
-  introEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  introEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   introT: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 8, lineHeight: 19 },
   introHint: { color: theme.color.textMuted, fontSize: 11, marginTop: 10, lineHeight: 15, fontStyle: "italic" },
   goalPill: {
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   thanksT: { color: theme.color.text, fontSize: 16, fontWeight: "900", letterSpacing: 2 },
   thanksS: { color: theme.color.textMuted, fontSize: 12, marginTop: 8, textAlign: "center" },
   summaryBlock: { padding: 16, marginTop: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
-  blockEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  blockEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   blockBody: { color: theme.color.text, fontSize: 13, lineHeight: 19, marginTop: 8 },
   doneBtn: { marginTop: 20, padding: 14, borderRadius: 12, backgroundColor: theme.color.brand, alignItems: "center" },
   doneT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 2 },

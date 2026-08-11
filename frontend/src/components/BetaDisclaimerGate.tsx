@@ -108,7 +108,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: theme.color.surface, borderRadius: 14, padding: 22, borderWidth: 1, borderColor: theme.color.border, width: "100%", maxWidth: 520 },
   header: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 14 },
   badge: { backgroundColor: theme.color.brand, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 },
-  badgeT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  badgeT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   title: { color: theme.color.text, fontSize: 20, fontWeight: "800", flex: 1 },
   body: { maxHeight: Platform.OS === "web" ? 320 : 260 },
   p: { color: theme.color.text, fontSize: 14, lineHeight: 22, marginBottom: 16 },

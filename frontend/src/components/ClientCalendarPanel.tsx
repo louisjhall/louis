@@ -911,7 +911,7 @@ const styles = StyleSheet.create({
   },
   pagerT: {
     color: theme.color.text,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.5,
   },
@@ -920,7 +920,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
     borderWidth: 1, borderColor: theme.color.border,
   },
-  todayBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  todayBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   loadMoreBtn: {
     padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border,
@@ -928,7 +928,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", justifyContent: "center", gap: 6,
   },
   pastBtn: { backgroundColor: theme.color.surface },
-  loadMoreT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  loadMoreT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
 
   row: {
     flexDirection: "row", alignItems: "stretch",
@@ -948,11 +948,11 @@ const styles = StyleSheet.create({
 
   date: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
   dateSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
-  dateCompact: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  dateCompact: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   titleCompact: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
 
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
-  badgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  badgeT: { fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   // Iter 162 · Bold green Completed badge — replaces the generic status
   // pill whenever the workout is done. High-contrast fill so the client
   // gets an unmistakable "you finished this" visual.
@@ -961,7 +961,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 4,
     borderRadius: 10, backgroundColor: theme.color.green,
   },
-  completedBadgeT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  completedBadgeT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   title: { color: theme.color.text, fontSize: 14, fontWeight: "800", paddingHorizontal: 12, marginTop: 2 },
   titleRest: { color: theme.color.textMuted, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, marginTop: 2, letterSpacing: 1 },
@@ -986,7 +986,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: "auto",
   },
   dutyLoadPillT: {
-    color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1,
+    color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1,
   },
   dutyFlightRow: {
     flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 2,
@@ -995,7 +995,7 @@ const styles = StyleSheet.create({
     color: theme.color.text, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
   },
   dutyFlightAircraft: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "700",
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "700",
   },
   // Iter 116 — Aviation Support (Phase A) rendering
   fsBox: {
@@ -1011,10 +1011,10 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   fsHeaderT: {
-    color: theme.color.text, fontSize: 10, fontWeight: "800", letterSpacing: 1.2,
+    color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
   },
   fsHeaderHint: {
-    color: theme.color.textMuted, fontSize: 9, fontWeight: "600",
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
     fontStyle: "italic", marginLeft: "auto",
   },
   fsRow: {
@@ -1029,11 +1029,11 @@ const styles = StyleSheet.create({
     color: theme.color.text, fontSize: 12, fontWeight: "700",
   },
   fsBundleHint: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "600",
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
     fontStyle: "italic",
   },
   fsReason: {
-    color: theme.color.textMuted, fontSize: 10, marginTop: 1,
+    color: theme.color.textMuted, fontSize: 11, marginTop: 1,
   },
   fsDuration: {
     color: theme.color.brand, fontSize: 12, fontWeight: "700",
@@ -1058,7 +1058,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2,
   },
   v2PillText: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "700",
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "700",
     letterSpacing: 0.8,
   },
   duty: { color: theme.color.textMuted, fontSize: 11, paddingHorizontal: 12, marginTop: 3, fontStyle: "italic" },
@@ -1069,7 +1069,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
     borderRadius: 12, backgroundColor: theme.color.brandTint,
   },
-  actChipT: { color: theme.color.brand, fontSize: 10, fontWeight: "800" },
+  actChipT: { color: theme.color.brand, fontSize: 11, fontWeight: "800" },
 
   // Iter 95h — duty context lives inline in the top-right of every day
   // card as a small round icon dot. If there is extra roster context
@@ -1090,14 +1090,14 @@ const styles = StyleSheet.create({
     borderRadius: 10, borderWidth: 1,
   },
   chipSmall: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
-  chipT: { fontSize: 10, fontWeight: "800", letterSpacing: 0.4 },
-  chipTSmall: { fontSize: 9, letterSpacing: 0.3 },
+  chipT: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
+  chipTSmall: { fontSize: 11, letterSpacing: 0.3 },
 
   missedCopy: { color: theme.color.textMuted, fontSize: 12, paddingHorizontal: 12, marginTop: 6, lineHeight: 17 },
   missedActions: { flexDirection: "row", gap: 8, padding: 12, paddingTop: 8 },
   mBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6 },
   mBtnPrimary: { backgroundColor: theme.color.brand },
-  mBtnPrimaryT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  mBtnPrimaryT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   mBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.brand },
-  mBtnGhostT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  mBtnGhostT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 });

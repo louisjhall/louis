@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
   kpiRow: { flexDirection: "row", gap: 12, marginBottom: 20, flexWrap: "wrap" },
   kpi: { flex: 1, minWidth: 180, padding: 18, backgroundColor: theme.color.surface2, borderRadius: 12, borderWidth: 1, borderColor: theme.color.border },
   kpiTop: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
-  kpiLabel: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  kpiLabel: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
   kpiVal: { color: theme.color.text, fontSize: 30, fontWeight: "900", letterSpacing: -1 },
   kpiSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 4 },
 

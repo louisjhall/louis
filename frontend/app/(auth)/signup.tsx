@@ -455,7 +455,7 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: theme.color.border, borderStyle: "dashed",
     gap: 6,
   },
-  photoPlaceholderText: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
+  photoPlaceholderText: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700" },
 
   ageRow: {
     flexDirection: "row", alignItems: "center", gap: 12,

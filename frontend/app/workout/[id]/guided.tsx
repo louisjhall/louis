@@ -1306,7 +1306,7 @@ const startStyles = StyleSheet.create({
     borderRadius: 20, padding: 24,
     borderWidth: 1, borderColor: theme.color.border,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2.5 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2.5 },
   title: { color: theme.color.text, fontSize: 22, fontWeight: "900", marginTop: 6, letterSpacing: -0.3 },
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, fontWeight: "700", letterSpacing: 1 },
   q: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 22, marginBottom: 14, lineHeight: 21 },
@@ -1346,7 +1346,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   wName: { color: theme.color.text, fontSize: 15, fontWeight: "800" },
-  wMeta: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginTop: 2 },
+  wMeta: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, marginTop: 2 },
   progressTrack: { height: 3, backgroundColor: theme.color.surface3 },
   progressFill: { height: 3, backgroundColor: theme.color.brand },
   body: { padding: 20, paddingBottom: 40 },
@@ -1368,7 +1368,7 @@ const styles = StyleSheet.create({
   },
   mediaImg: { width: "100%", height: SCREEN_W * 0.55 },
   mediaFallback: { height: SCREEN_W * 0.55, alignItems: "center", justifyContent: "center" },
-  mediaFbT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginTop: 8 },
+  mediaFbT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, marginTop: 8 },
 
   cueBox: {
     flexDirection: "row", alignItems: "center", gap: 8,
@@ -1382,13 +1382,13 @@ const styles = StyleSheet.create({
     flex: 1, padding: 12, borderRadius: 10,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
-  prevHead: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  prevHead: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   prevBig: { color: theme.color.text, fontSize: 16, fontWeight: "900", marginTop: 6 },
-  prevSub: { color: theme.color.textMuted, fontSize: 10, marginTop: 4, fontStyle: "italic" },
+  prevSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 4, fontStyle: "italic" },
 
   logGrid: { flexDirection: "row", gap: 8, marginTop: 16 },
   logField: { flex: 1 },
-  logFieldLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 4 },
+  logFieldLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginBottom: 4 },
   logInput: {
     backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
@@ -1428,7 +1428,7 @@ const styles = StyleSheet.create({
   autoContRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 20, justifyContent: "center" },
   autoContT: { color: theme.color.text, fontSize: 12, fontWeight: "600" },
   autopilotHint: {
-    color: theme.color.brand, fontSize: 10, fontWeight: "900",
+    color: theme.color.brand, fontSize: 11, fontWeight: "900",
     letterSpacing: 2, textAlign: "center", marginTop: 14,
   },
   check: {
@@ -1438,7 +1438,7 @@ const styles = StyleSheet.create({
   },
   checkOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
 
-  pausedHint: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 2, textAlign: "center", marginTop: 12, fontWeight: "800" },
+  pausedHint: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 2, textAlign: "center", marginTop: 12, fontWeight: "800" },
   pausedBanner: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: 12, borderRadius: 10, marginBottom: 12,
@@ -1453,7 +1453,7 @@ const styles = StyleSheet.create({
     marginTop: 20, padding: 14, borderRadius: 12,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
-  nextUpEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  nextUpEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   nextUpT: { color: theme.color.text, fontSize: 13, fontWeight: "800", marginTop: 4 },
   nextThenT: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
 
@@ -1472,12 +1472,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   summaryV: { color: theme.color.text, fontSize: 26, fontWeight: "900" },
-  summaryL: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, marginTop: 4 },
+  summaryL: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 4 },
   atlasSummary: {
     marginTop: 24, padding: 16, borderRadius: 12,
     backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
   },
-  atlasEyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  atlasEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   atlasBody: { color: theme.color.text, fontSize: 13, lineHeight: 20, marginTop: 8 },
   doneBtn: {
     marginTop: 30, padding: 16, borderRadius: 12, backgroundColor: theme.color.brand,
@@ -1494,7 +1494,7 @@ const sheetStyles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   pausedNote: { color: theme.color.textMuted, fontSize: 11, marginTop: 4 },
   noVideoCard: {
     flexDirection: "row", alignItems: "center", gap: 10,
@@ -1505,7 +1505,7 @@ const sheetStyles = StyleSheet.create({
   noVideoS: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "800" },
   subtle: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, lineHeight: 17 },
-  h: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 8 },
+  h: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginBottom: 8 },
   line: { flexDirection: "row", gap: 10, marginBottom: 6 },
   n: { color: theme.color.brand, fontSize: 12, fontWeight: "900", width: 18 },
   lineT: { color: theme.color.text, fontSize: 13, lineHeight: 18, flex: 1 },

@@ -137,6 +137,6 @@ const styles = StyleSheet.create({
     minHeight: 76,
   },
   metricCount: { fontSize: 20, fontWeight: "900" },
-  metricLabel: { color: theme.color.textMuted, fontSize: 10, textAlign: "center", fontWeight: "700" },
+  metricLabel: { color: theme.color.textMuted, fontSize: 11, textAlign: "center", fontWeight: "700" },
   cta: { color: theme.color.brand, fontWeight: "900", fontSize: 11, letterSpacing: 1.5, marginTop: 12, textAlign: "right" },
 });

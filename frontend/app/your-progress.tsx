@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
     borderRadius: 999,
   },
-  pillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  pillText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
   reason: { fontSize: 13, color: theme.color.text, lineHeight: 19, marginBottom: 12 },
   metrics: {
     flexDirection: "row", alignItems: "center",
@@ -249,7 +249,7 @@ const styles = StyleSheet.create({
   divider: { width: 1, height: 30, backgroundColor: theme.color.border },
   mVal: { fontSize: 18, fontWeight: "800", color: theme.color.text },
   mSlash: { fontSize: 12, color: theme.color.textMuted, fontWeight: "600" },
-  mLabel: { fontSize: 10, fontWeight: "700", color: theme.color.textMuted, letterSpacing: 0.5, marginTop: 2 },
+  mLabel: { fontSize: 11, fontWeight: "700", color: theme.color.textMuted, letterSpacing: 0.5, marginTop: 2 },
 
   footNote: {
     marginTop: theme.space.lg,

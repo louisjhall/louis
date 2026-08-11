@@ -298,7 +298,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 2,
     borderWidth: 1.5, borderColor: theme.color.bg,
   },
-  streakBadgeT: { color: "#fff", fontSize: 9, fontWeight: "900" },
+  streakBadgeT: { color: "#fff", fontSize: 11, fontWeight: "900" },
   itemLabel: {
     color: theme.color.textMuted,
     fontSize: 11,

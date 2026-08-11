@@ -182,7 +182,7 @@ const styles = StyleSheet.create({
   badge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   badgeRecommended: { backgroundColor: "rgba(47,158,108,0.16)" },
   badgeOptional: { backgroundColor: "rgba(74,144,226,0.16)" },
-  badgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  badgeT: { fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   badgeRecommendedT: { color: "#2f9e6c" },
   badgeOptionalT: { color: "#4a90e2" },
   continueBtn: {

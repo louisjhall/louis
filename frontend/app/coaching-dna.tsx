@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  retakeTxt: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  retakeTxt: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   body: { padding: 20, paddingBottom: 40 },
 
   empty: { alignItems: "center", padding: 40 },
@@ -182,14 +182,14 @@ const styles = StyleSheet.create({
   },
   rowHighlight: { borderLeftColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   rowDim: { backgroundColor: "transparent", borderLeftColor: theme.color.textDim },
-  rowLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },
+  rowLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 4 },
   rowVal: { color: theme.color.text, fontSize: 14, fontWeight: "700" },
 
   timelineCard: {
     padding: 14, borderRadius: 10, marginBottom: 12,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
-  timelineLbl: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
+  timelineLbl: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 10 },
   timelineRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.color.divider },
   timelineEmoji: { fontSize: 18 },
   timelineName: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
@@ -202,6 +202,6 @@ const styles = StyleSheet.create({
     marginTop: 20, padding: 16, borderRadius: 12,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand,
   },
-  summaryLabel: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
+  summaryLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
   summaryText: { color: theme.color.text, fontSize: 13, lineHeight: 20 },
 });

@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.sm },
-  pillText: { color: "#fff", fontWeight: "800", fontSize: 10, letterSpacing: 1.5 },
+  pillText: { color: "#fff", fontWeight: "800", fontSize: 11, letterSpacing: 1.5 },
   body: { flex: 1, alignItems: "center", justifyContent: "center", padding: theme.space.lg },
   workoutTitle: { color: theme.color.text, fontSize: 22, fontWeight: "900", textAlign: "center", letterSpacing: -0.5 },
   progress: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 2, fontWeight: "800", marginTop: theme.space.sm },
@@ -319,5 +319,5 @@ const styles = StyleSheet.create({
   strip: { padding: theme.space.sm, borderRadius: theme.radius.sm, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, minWidth: 100 },
   stripActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   stripText: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
-  stripMeta: { color: theme.color.textDim, fontSize: 10, marginTop: 2 },
+  stripMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
 });

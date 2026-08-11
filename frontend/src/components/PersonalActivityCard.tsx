@@ -203,7 +203,7 @@ const styles = StyleSheet.create({
   meta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   sugBox: { gap: 6 },
   sugTagRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  sugTag: { fontSize: 9, letterSpacing: 1.5, fontWeight: "900" },
+  sugTag: { fontSize: 11, letterSpacing: 1.5, fontWeight: "900" },
   sugBody: { color: theme.color.text, fontSize: 12, lineHeight: 17 },
   actionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
   actionBtn: {
@@ -219,12 +219,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8, borderRadius: 8,
     backgroundColor: "rgba(34,197,94,0.10)", borderWidth: 1, borderColor: theme.color.green,
   },
-  completeT: { color: theme.color.green, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  completeT: { color: theme.color.green, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   skipBtn: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
-  skipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  skipT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   // Iter 94o — prominent swap-workout CTA
   swapBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,

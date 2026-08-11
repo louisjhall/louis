@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
   },
   badgeT: {
     color: "#fff",
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1,
   },

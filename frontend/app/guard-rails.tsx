@@ -96,7 +96,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 12,
     padding: 18, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2.5 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2.5 },
   title: { color: theme.color.text, fontSize: 18, fontWeight: "800", marginTop: 3 },
   brandRed: { color: theme.color.brand, fontWeight: "900" },
   body: { padding: 20, paddingBottom: 40 },

@@ -150,10 +150,10 @@ const styles = StyleSheet.create({
   },
   phaseChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   phaseChipDone: { backgroundColor: "#183020", borderColor: "#183020" },
-  phaseChipText: { color: theme.color.textDim, fontSize: 10, fontWeight: "700" },
+  phaseChipText: { color: theme.color.textDim, fontSize: 11, fontWeight: "700" },
 
   body: { marginTop: 10 },
-  section: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", marginTop: 10, marginBottom: 6 },
+  section: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginTop: 10, marginBottom: 6 },
   eventCard: {
     flexDirection: "row", alignItems: "center", padding: 8, borderRadius: 6,
     backgroundColor: "#00000030", borderWidth: 1, borderColor: theme.color.border,
@@ -163,5 +163,5 @@ const styles = StyleSheet.create({
   quotaRow: { flexDirection: "row", alignItems: "center", paddingVertical: 4 },
   quotaDisc: { color: theme.color.textHi, fontSize: 12, fontWeight: "700" },
   quotaTxt: { color: theme.color.textDim, fontSize: 11 },
-  metaRow: { color: theme.color.textDim, fontSize: 10, marginTop: 10, fontStyle: "italic" },
+  metaRow: { color: theme.color.textDim, fontSize: 11, marginTop: 10, fontStyle: "italic" },
 });

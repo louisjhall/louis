@@ -205,9 +205,9 @@ const styles = StyleSheet.create({
   coreLabel: { color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 3 },
 
   attribution: { alignItems: "center", marginTop: 8, marginBottom: 20 },
-  attrLabel: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 3 },
+  attrLabel: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 3 },
   attrName: { color: theme.color.text, fontSize: 16, fontWeight: "900", letterSpacing: 2, marginTop: 4 },
-  attrRole: { color: theme.color.brand, fontSize: 9, fontWeight: "800", letterSpacing: 2, marginTop: 3 },
+  attrRole: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginTop: 3 },
 
   messageCard: {
     padding: 16, borderRadius: 12, marginBottom: 22,
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
     alignItems: "center", justifyContent: "center",
   },
-  principleNumT: { color: theme.color.brand, fontSize: 9, fontWeight: "900" },
+  principleNumT: { color: theme.color.brand, fontSize: 11, fontWeight: "900" },
   principleT: { color: theme.color.text, fontSize: 13, fontWeight: "600", flex: 1 },
 
   rule: {

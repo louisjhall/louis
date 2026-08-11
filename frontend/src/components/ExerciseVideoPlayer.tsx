@@ -359,10 +359,10 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 10,
   },
-  channel: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 0.5, fontWeight: "700" },
+  channel: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 0.5, fontWeight: "700" },
   title: { color: theme.color.text, fontSize: 12, fontWeight: "600", marginTop: 2 },
-  tapHint: { color: theme.color.brand, fontSize: 9, letterSpacing: 1, fontWeight: "800" },
-  loadingText: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1, fontWeight: "700", padding: 12 },
+  tapHint: { color: theme.color.brand, fontSize: 11, letterSpacing: 1, fontWeight: "800" },
+  loadingText: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1, fontWeight: "700", padding: 12 },
   emptyText: { color: theme.color.textMuted, fontSize: 12, flex: 1 },
 
   modalRoot: { flex: 1, alignItems: "center", justifyContent: "center" },
@@ -400,5 +400,5 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
   },
-  footText: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  footText: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },
 });

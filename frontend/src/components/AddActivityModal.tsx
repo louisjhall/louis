@@ -295,9 +295,9 @@ const styles = StyleSheet.create({
     width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint,
     alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.brand,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   title: { color: theme.color.text, fontSize: 16, fontWeight: "800", marginTop: 3 },
-  label: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginTop: 16, marginBottom: 8 },
+  label: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginTop: 16, marginBottom: 8 },
   presetChip: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20,
@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", gap: 6, padding: 10, marginTop: 12,
     borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.divider,
   },
-  disclaimerT: { color: theme.color.textMuted, fontSize: 10, lineHeight: 14, flex: 1 },
+  disclaimerT: { color: theme.color.textMuted, fontSize: 11, lineHeight: 14, flex: 1 },
   cta: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     paddingVertical: 14, borderRadius: 10, backgroundColor: theme.color.brand,

@@ -40,6 +40,10 @@ export default function NutritionHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [hydrating, setHydrating] = useState(false);
+  // Iter168 · One-tap cleanup — the two 4/5-button grids are collapsed
+  // behind a "More options" toggle. Only Manual Log + Food Search show by
+  // default so the tab reads as one clear action, not a menu.
+  const [showMore, setShowMore] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -197,19 +201,36 @@ export default function NutritionHome() {
         <View style={styles.actionsGrid}>
           <ActionBtn icon="restaurant" label="MANUAL LOG" onPress={() => router.push("/nutrition/log" as any)} testID="nutr-manual" primary />
           <ActionBtn icon="search" label="FOOD SEARCH" onPress={() => router.push("/nutrition/food-search" as any)} testID="nutr-search" />
-          <ActionBtn icon="barcode-outline" label="BARCODE" onPress={() => router.push("/nutrition/barcode" as any)} testID="nutr-barcode" />
-          <ActionBtn icon="camera" label="PHOTO SCAN" onPress={() => router.push("/nutrition/photo-scan" as any)} testID="nutr-photo" />
-          <ActionBtn icon="heart" label="FAVOURITES" onPress={() => router.push("/nutrition/favourites" as any)} testID="nutr-favs" />
         </View>
 
-        {/* Travel section */}
-        <Text style={styles.sect}>TRAVEL &amp; ROSTER</Text>
-        <View style={styles.actionsGrid}>
-          <ActionBtn icon="airplane" label="TRAVEL FOOD" onPress={() => router.push("/nutrition/travel" as any)} testID="nutr-travel" />
-          <ActionBtn icon="help-circle" label="ATLAS DECIDE" onPress={() => router.push("/nutrition/decision" as any)} testID="nutr-decide" />
-          <ActionBtn icon="business" label="AIRPORT MODE" onPress={() => router.push("/nutrition/airport" as any)} testID="nutr-airport" />
-          <ActionBtn icon="time" label="MEAL TIMING" onPress={() => router.push("/nutrition/timing" as any)} testID="nutr-timing" />
-        </View>
+        {/* Iter168 · "More" toggle keeps the extra 7 destinations discoverable
+            without cluttering the tab. Everything below the fold is opt-in. */}
+        <Pressable
+          onPress={() => setShowMore((v) => !v)}
+          style={styles.moreToggle}
+          testID="nutr-more-toggle"
+        >
+          <Ionicons
+            name={showMore ? "chevron-up" : "chevron-down"}
+            size={14}
+            color={theme.color.brand}
+          />
+          <Text style={styles.moreToggleT}>
+            {showMore ? "HIDE MORE OPTIONS" : "MORE LOGGING OPTIONS"}
+          </Text>
+        </Pressable>
+
+        {showMore ? (
+          <View style={styles.actionsGrid} testID="nutr-more-grid">
+            <ActionBtn icon="barcode-outline" label="BARCODE" onPress={() => router.push("/nutrition/barcode" as any)} testID="nutr-barcode" />
+            <ActionBtn icon="camera" label="PHOTO SCAN" onPress={() => router.push("/nutrition/photo-scan" as any)} testID="nutr-photo" />
+            <ActionBtn icon="heart" label="FAVOURITES" onPress={() => router.push("/nutrition/favourites" as any)} testID="nutr-favs" />
+            <ActionBtn icon="airplane" label="TRAVEL FOOD" onPress={() => router.push("/nutrition/travel" as any)} testID="nutr-travel" />
+            <ActionBtn icon="help-circle" label="ATLAS DECIDE" onPress={() => router.push("/nutrition/decision" as any)} testID="nutr-decide" />
+            <ActionBtn icon="business" label="AIRPORT MODE" onPress={() => router.push("/nutrition/airport" as any)} testID="nutr-airport" />
+            <ActionBtn icon="time" label="MEAL TIMING" onPress={() => router.push("/nutrition/timing" as any)} testID="nutr-timing" />
+          </View>
+        ) : null}
 
         {/* Weekly summary */}
         <Text style={styles.sect}>WEEKLY SUMMARY</Text>
@@ -329,29 +350,29 @@ const styles = StyleSheet.create({
 
   headRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   dateT: { color: theme.color.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.5, fontFamily: theme.font.display },
-  goalT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.6, marginTop: 3, fontFamily: theme.font.textSemi },
+  goalT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.6, marginTop: 3, fontFamily: theme.font.textSemi },
   headBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
-  headBtnT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  headBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   ringsRow: { flexDirection: "row", gap: 10 },
   metricCard: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 6 },
   metricRingBg: { height: 5, borderRadius: 3, backgroundColor: theme.color.surface3, overflow: "hidden", marginBottom: 8 },
   metricRingFill: { height: "100%" },
-  metricLabel: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi },
+  metricLabel: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
   metricValue: { color: theme.color.text, fontSize: 22, fontWeight: "900", fontFamily: theme.font.display, letterSpacing: 0.3 },
   metricUnit: { color: theme.color.textDim, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
-  metricPct: { fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  metricPct: { fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   smallRow: { flexDirection: "row", gap: 8 },
   smallCard: { flex: 1, padding: 10, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignItems: "center" },
-  smallLabel: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, fontFamily: theme.font.textSemi },
-  smallValue: { color: theme.color.text, fontSize: 15, fontWeight: "900", marginTop: 4, fontFamily: theme.font.display },
-  smallTarget: { color: theme.color.textDim, fontSize: 9, marginTop: 2 },
+  smallLabel: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, fontFamily: theme.font.textSemi },
+  smallValue: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4, fontFamily: theme.font.display },
+  smallTarget: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
 
   hydCard: { padding: 12, borderRadius: 12, backgroundColor: "#0A1420", borderWidth: 1, borderColor: "#183045" },
   hydCardHead: { flexDirection: "row", alignItems: "center", gap: 8 },
-  hydCardT: { color: "#3B82F6", fontSize: 10, fontWeight: "900", letterSpacing: 2, flex: 1, fontFamily: theme.font.textSemi },
-  hydCardV: { color: theme.color.text, fontSize: 12, fontWeight: "800" },
+  hydCardT: { color: "#3B82F6", fontSize: 11, fontWeight: "800", letterSpacing: 2, flex: 1, fontFamily: theme.font.textSemi },
+  hydCardV: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
   hydBtnRow: { flexDirection: "row", gap: 6, marginTop: 10 },
   hydBtn: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, backgroundColor: "#183045", borderWidth: 1, borderColor: "#264C6D" },
   hydBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
@@ -359,38 +380,49 @@ const styles = StyleSheet.create({
 
   tipCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   tipHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
-  tipHeadT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi },
+  tipHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
   tipT: { color: theme.color.text, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
 
   weeklyCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand, gap: 8 },
   weeklyHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   weeklyIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center" },
-  weeklyHeadT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", flex: 1, fontFamily: theme.font.textSemi },
+  weeklyHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", flex: 1, fontFamily: theme.font.textSemi },
   weeklyBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
-  weeklyBadgeT: { color: "#fff", fontSize: 8, letterSpacing: 0.8, fontWeight: "900" },
+  weeklyBadgeT: { color: "#fff", fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
   weeklyT: { color: theme.color.text, fontSize: 13, lineHeight: 19, fontFamily: theme.font.text },
   weeklyFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
   weeklyPending: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "#1F1608", borderWidth: 1, borderColor: theme.color.amber },
-  weeklyPendingT: { color: theme.color.amber, fontSize: 8, letterSpacing: 0.8, fontWeight: "900" },
-  weeklyLink: { color: theme.color.brand, fontSize: 10, letterSpacing: 1, fontWeight: "900" },
+  weeklyPendingT: { color: theme.color.amber, fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
+  weeklyLink: { color: theme.color.brand, fontSize: 11, letterSpacing: 1, fontWeight: "800" },
 
-  sect: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", marginTop: 8, fontFamily: theme.font.textSemi },
+  sect: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", marginTop: 8, fontFamily: theme.font.textSemi },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   action: { flexBasis: "48%", flexGrow: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexDirection: "row", alignItems: "center", gap: 8 },
   actionPri: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  actionT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1, fontFamily: theme.font.textSemi, flex: 1 },
+  actionT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1, fontFamily: theme.font.textSemi, flex: 1 },
   soonPill: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, backgroundColor: theme.color.surface3 },
-  soonT: { color: theme.color.textMuted, fontSize: 8, fontWeight: "900", letterSpacing: 0.8 },
+  soonT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.8 },
+
+  // Iter168 · Show/hide extra logging destinations.
+  moreToggle: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    alignSelf: "center", paddingVertical: 10, paddingHorizontal: 14,
+    borderRadius: 8, marginTop: -2,
+  },
+  moreToggleT: {
+    color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800",
+    fontFamily: theme.font.textSemi,
+  },
 
   summaryCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 10 },
   summaryTop: { flexDirection: "row", gap: 8 },
-  summaryK: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.5, fontWeight: "900", fontFamily: theme.font.textSemi },
-  summaryV: { color: theme.color.text, fontSize: 14, fontWeight: "900", marginTop: 2, fontFamily: theme.font.display },
+  summaryK: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.textSemi },
+  summaryV: { color: theme.color.text, fontSize: 14, fontWeight: "800", marginTop: 2, fontFamily: theme.font.display },
   barsRow: { flexDirection: "row", justifyContent: "space-between", height: 60, alignItems: "flex-end" },
   barCol: { flex: 1, alignItems: "center", gap: 4 },
   barTrack: { width: 8, height: 40, borderRadius: 4, backgroundColor: theme.color.surface3, justifyContent: "flex-end", overflow: "hidden" },
   barFill: { width: "100%", backgroundColor: theme.color.brand, borderRadius: 4 },
-  barT: { color: theme.color.textDim, fontSize: 9, fontWeight: "800" },
+  barT: { color: theme.color.textDim, fontSize: 11, fontWeight: "700" },
 
-  disclaimer: { color: theme.color.textDim, fontSize: 10, textAlign: "center", lineHeight: 15, marginTop: 12, fontStyle: "italic" },
+  disclaimer: { color: theme.color.textDim, fontSize: 11, textAlign: "center", lineHeight: 16, marginTop: 12, fontStyle: "italic" },
 });

@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
   },
   title: { flex: 1, color: theme.color.textHi, fontSize: 17, fontWeight: "800" },
   section: {
-    color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800",
+    color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800",
     marginTop: 14, marginBottom: 6,
   },
   kindRow: {

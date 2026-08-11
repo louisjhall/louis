@@ -22,7 +22,7 @@ export default function CoachLayout() {
         tabBarActiveTintColor: theme.color.brand,
         tabBarInactiveTintColor: theme.color.textDim,
         tabBarStyle: { backgroundColor: theme.color.surface2, borderTopColor: theme.color.border, height: 82, paddingTop: 8, paddingBottom: 24 },
-        tabBarLabelStyle: { fontSize: 10, letterSpacing: 1, fontWeight: "700" },
+        tabBarLabelStyle: { fontSize: 11, letterSpacing: 1, fontWeight: "700" },
       }}
     >
       <Tabs.Screen name="v2-home" options={{ title: "HOME", tabBarIcon: ({ color }) => <Ionicons name="home" size={22} color={color} /> }} />

@@ -161,7 +161,7 @@ export function NotificationBell({ testID }: { testID?: string }) {
 const styles = StyleSheet.create({
   bell: { padding: 6 },
   badge: { position: "absolute", top: 0, right: 0, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: "#c94a4a", alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
-  badgeT: { color: "#fff", fontSize: 9, fontWeight: "900" },
+  badgeT: { color: "#fff", fontSize: 11, fontWeight: "900" },
   bg: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "80%" },
   sheetHeader: { paddingTop: 10, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 10 },
   title: { color: theme.color.text, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
   readAllBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
-  readAllT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  readAllT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   emptyCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 16, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, justifyContent: "center" },
   emptyT: { color: theme.color.textMuted, fontSize: 12 },
   card: { flexDirection: "row", gap: 10, padding: 12, backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border, alignItems: "center" },
@@ -178,8 +178,8 @@ const styles = StyleSheet.create({
   rowTop: { flexDirection: "row", gap: 8, alignItems: "center", marginBottom: 2 },
   notifTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800", flexShrink: 1 },
   newPill: { paddingHorizontal: 6, paddingVertical: 2, backgroundColor: theme.color.brand, borderRadius: 3 },
-  newPillT: { color: "#fff", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  newPillT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   body: { color: theme.color.textMuted, fontSize: 12, marginTop: 2, lineHeight: 16 },
   metaRow: { flexDirection: "row", marginTop: 4 },
-  meta: { color: theme.color.textDim, fontSize: 10, letterSpacing: 0.5 },
+  meta: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5 },
 });

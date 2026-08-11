@@ -121,12 +121,12 @@ const styles = StyleSheet.create({
   cardEmoji: { fontSize: 26 },
   cardIconWrap: { width: 32, height: 32, borderRadius: 16, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   cardLabel: { color: theme.color.text, fontSize: 13, fontWeight: "800", letterSpacing: 0.5 },
-  cardDate: { color: theme.color.textDim, fontSize: 10, fontWeight: "700", letterSpacing: 1.5, marginTop: 2 },
+  cardDate: { color: theme.color.textDim, fontSize: 11, fontWeight: "700", letterSpacing: 1.5, marginTop: 2 },
   optPill: {
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4,
     backgroundColor: theme.color.brand,
   },
-  optPillText: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  optPillText: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   cardTitle: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
   cardWhy: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, lineHeight: 18 },
   changeList: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 10 },
@@ -135,6 +135,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 4, borderRadius: 4,
     backgroundColor: theme.color.surface3,
   },
-  changeText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700" },
-  cardTime: { color: theme.color.textDim, fontSize: 10, marginTop: 8, fontWeight: "700" },
+  changeText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
+  cardTime: { color: theme.color.textDim, fontSize: 11, marginTop: 8, fontWeight: "700" },
 });

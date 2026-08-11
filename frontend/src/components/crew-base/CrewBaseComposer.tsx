@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 10, padding: 12,
   },
-  section: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, marginTop: 16, marginBottom: 6 },
+  section: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 16, marginBottom: 6 },
   mediaBtn: {
     flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
     padding: 12, borderRadius: 10, borderWidth: 1, borderColor: theme.color.brand,

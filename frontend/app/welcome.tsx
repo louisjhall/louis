@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
   },
   stageMarkerText: {
     color: "#e60023",
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 2,
   },
@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
   },
   tapUnmute: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     letterSpacing: 1.5,
     marginTop: 8,
@@ -327,13 +327,13 @@ const styles = StyleSheet.create({
     shadowColor: theme.color.brand, shadowOpacity: 0.6, shadowRadius: 20, elevation: 10,
   },
   videoName: { color: "#fff", fontSize: 18, fontWeight: "900", letterSpacing: 3, marginTop: 4 },
-  videoRole: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 2.5, marginTop: 3 },
+  videoRole: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2.5, marginTop: 3 },
   videoBadge: {
     flexDirection: "row", alignItems: "center", gap: 6,
     marginTop: 14, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4,
     backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
   },
-  videoBadgeT: { color: theme.color.brand, fontSize: 8, fontWeight: "900", letterSpacing: 1.5 },
+  videoBadgeT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   divider: { height: 1, backgroundColor: theme.color.border, marginBottom: 22 },
 
@@ -359,7 +359,7 @@ const styles = StyleSheet.create({
     marginVertical: 14, padding: 16, borderRadius: 12,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand,
   },
-  cardHead: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 14 },
+  cardHead: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 14 },
   cardRow: { flexDirection: "row", gap: 14 },
   cardDivider: { width: 1, backgroundColor: theme.color.border },
   cardLbl: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
@@ -376,5 +376,5 @@ const styles = StyleSheet.create({
   },
   ctaText: { color: "#fff", fontSize: 14, fontWeight: "900", letterSpacing: 3 },
   skipBtn: { alignItems: "center", paddingVertical: 14 },
-  skipText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 2 },
+  skipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 2 },
 });

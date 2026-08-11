@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 12 },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.color.surface3 },
   coachName: { color: theme.color.text, fontSize: 14, fontWeight: "900" },
-  coachRole: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.2, fontWeight: "800", marginTop: 1 },
+  coachRole: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: "800", marginTop: 1 },
   briefTitle: { color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 1.5, marginTop: 3 },
 
   greeting: { color: theme.color.text, fontSize: 16, fontWeight: "800", marginBottom: 4 },
@@ -212,14 +212,14 @@ const styles = StyleSheet.create({
     width: 26, height: 26, borderRadius: 13, backgroundColor: theme.color.brandTint,
     alignItems: "center", justifyContent: "center",
   },
-  sectionT: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900" },
+  sectionT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900" },
   sectionBody: { color: theme.color.text, fontSize: 13, lineHeight: 18, marginTop: 3 },
 
   habitsCard: {
     marginTop: 14, padding: 10, borderRadius: 10,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
-  habitsT: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", marginBottom: 6 },
+  habitsT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 6 },
   habitRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
   habitLine: { color: theme.color.text, fontSize: 12, flex: 1 },
 
@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   },
   missedT: { color: theme.color.text, fontSize: 12, flex: 1 },
 
-  footerNote: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.2, marginTop: 12, textAlign: "center" },
+  footerNote: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.2, marginTop: 12, textAlign: "center" },
 
   actions: { flexDirection: "row", gap: 8, marginTop: 14 },
   btn: { flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, padding: 12, borderRadius: 10 },

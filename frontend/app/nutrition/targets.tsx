@@ -98,7 +98,7 @@ const styles = StyleSheet.create({
   badge: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   badgeDefault: { backgroundColor: theme.color.textDim },
   badgeCoach: { backgroundColor: theme.color.brand },
-  badgeT: { color: "#fff", fontSize: 9, letterSpacing: 1, fontWeight: "900" },
+  badgeT: { color: "#fff", fontSize: 11, letterSpacing: 1, fontWeight: "900" },
   goal: { color: theme.color.text, fontSize: 18, fontWeight: "900", fontFamily: theme.font.display, letterSpacing: 0.5 },
   notes: { color: theme.color.textMuted, fontSize: 12, fontFamily: theme.font.text },
   row: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },

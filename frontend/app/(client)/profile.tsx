@@ -945,38 +945,38 @@ const styles = StyleSheet.create({
   secEmoji: { fontSize: 18 },
   secTitle: { flex: 1, color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   editBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.brand },
-  editBtnT: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5 },
+  editBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   secBody: { paddingHorizontal: 14, paddingBottom: 14, gap: 6 },
 
   kv: { padding: 8, borderRadius: 6, backgroundColor: theme.color.surface, borderLeftWidth: 2, borderLeftColor: theme.color.border },
-  kvLbl: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginBottom: 3 },
+  kvLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginBottom: 3 },
   kvVal: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
   kvValMulti: { fontSize: 12, lineHeight: 18, fontWeight: "500" },
   kvValHi: { color: theme.color.brand, fontSize: 15, fontWeight: "900" },
-  subLbl: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.5, marginTop: 6, marginBottom: 4 },
+  subLbl: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 6, marginBottom: 4 },
 
   linkTile: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     padding: 10, marginTop: 6, borderRadius: 8,
     backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
   },
-  linkTileT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  linkTileT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
 
   dnaPill: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4,
     backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand,
   },
-  dnaPillLabel: { color: theme.color.brand, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  dnaPillLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   dnaPillNum: { color: theme.color.brand, fontSize: 12, fontWeight: "900" },
 
   countPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, backgroundColor: theme.color.surface3 },
-  countPillT: { color: theme.color.text, fontSize: 10, fontWeight: "900" },
+  countPillT: { color: theme.color.text, fontSize: 11, fontWeight: "900" },
 
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4 },
   chip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.text, fontSize: 10, fontWeight: "700" },
+  chipT: { color: theme.color.text, fontSize: 11, fontWeight: "700" },
 
   evRow: {
     flexDirection: "row", alignItems: "center", gap: 10,
@@ -985,10 +985,10 @@ const styles = StyleSheet.create({
   },
   evEmoji: { fontSize: 18 },
   evName: { color: theme.color.text, fontSize: 12, fontWeight: "800" },
-  evMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  evMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.color.green },
   phasePill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, backgroundColor: theme.color.brandTint },
-  phasePillT: { color: theme.color.brand, fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  phasePillT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   ciRow: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
@@ -1006,7 +1006,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border,
   },
   statNum: { color: theme.color.brand, fontSize: 18, fontWeight: "900" },
-  statLbl: { color: theme.color.textMuted, fontSize: 8, fontWeight: "900", letterSpacing: 1.5, marginTop: 3 },
+  statLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 3 },
 
   badgeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   badge: {
@@ -1016,9 +1016,9 @@ const styles = StyleSheet.create({
   },
   badgeLocked: { opacity: 0.35 },
   badgeEmoji: { fontSize: 22 },
-  badgeTitle: { color: theme.color.text, fontSize: 10, fontWeight: "900", textAlign: "center", marginTop: 3 },
+  badgeTitle: { color: theme.color.text, fontSize: 11, fontWeight: "900", textAlign: "center", marginTop: 3 },
   badgeTitleLocked: { color: theme.color.textDim },
-  badgeSub: { color: theme.color.textDim, fontSize: 8, textAlign: "center", marginTop: 2 },
+  badgeSub: { color: theme.color.textDim, fontSize: 11, textAlign: "center", marginTop: 2 },
 
   prRow: {
     flexDirection: "row", alignItems: "center", gap: 10,
@@ -1030,9 +1030,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brandTint,
     alignItems: "center", justifyContent: "center",
   },
-  prCatT: { color: theme.color.brand, fontSize: 9, fontWeight: "900" },
+  prCatT: { color: theme.color.brand, fontSize: 11, fontWeight: "900" },
   prName: { color: theme.color.text, fontSize: 12, fontWeight: "800" },
-  prMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 2 },
+  prMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   prValue: { color: theme.color.text, fontSize: 15, fontWeight: "900" },
   prUnit: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
 
@@ -1040,13 +1040,13 @@ const styles = StyleSheet.create({
     padding: 8, borderRadius: 6, marginBottom: 4,
     backgroundColor: theme.color.surface, borderLeftWidth: 2, borderLeftColor: theme.color.brand,
   },
-  noteDate: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1, marginBottom: 3 },
+  noteDate: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1, marginBottom: 3 },
   noteText: { color: theme.color.text, fontSize: 12, lineHeight: 18 },
 
   emptyBox: { padding: 14, alignItems: "center", justifyContent: "center" },
   emptyT: { color: theme.color.textMuted, fontSize: 12, textAlign: "center", lineHeight: 18 },
   emptyBtn: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 },
-  emptyBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  emptyBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   retakeCta: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
@@ -1056,7 +1056,7 @@ const styles = StyleSheet.create({
   },
   retakeText: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   legacyCta: { alignItems: "center", paddingVertical: 10 },
-  legacyText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 2 },
+  legacyText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 2 },
 
   editRoot: { flex: 1, justifyContent: "flex-end" },
   editBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.7)" },
@@ -1067,14 +1067,14 @@ const styles = StyleSheet.create({
   },
   editHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.border },
   editTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
-  editLbl: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginTop: 8, marginBottom: 6 },
+  editLbl: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginTop: 8, marginBottom: 6 },
   editInput: {
     color: theme.color.text, fontSize: 13, padding: 10,
     borderRadius: 8, backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
   },
   editInputMulti: { minHeight: 80, textAlignVertical: "top" },
-  editUnit: { color: theme.color.textDim, fontSize: 10, marginTop: 2, fontWeight: "700" },
+  editUnit: { color: theme.color.textDim, fontSize: 11, marginTop: 2, fontWeight: "700" },
   saveBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     padding: 14, borderRadius: 10, marginTop: 20,
@@ -1093,7 +1093,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
     alignItems: "center", justifyContent: "center",
   },
-  systemEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2 },
+  systemEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   systemTitle: { color: theme.color.text, fontSize: 16, fontWeight: "900", letterSpacing: 1, marginTop: 3 },
   systemBody: { color: theme.color.text, fontSize: 12, lineHeight: 18, marginBottom: 14 },
   systemActions: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
@@ -1102,13 +1102,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6,
     backgroundColor: theme.color.brand,
   },
-  systemBtnPrimaryT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  systemBtnPrimaryT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   systemBtnSecondary: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  systemBtnSecondaryT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  systemBtnSecondaryT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 });
 
 /* -------------------------------------------------------------------------- */
@@ -1215,13 +1215,13 @@ const hstyles = StyleSheet.create({
   head: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   toggle: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   toggleOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  toggleT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
-  sub: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginTop: 12, marginBottom: 6 },
+  toggleT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  sub: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, marginTop: 12, marginBottom: 6 },
   card: { padding: 12, backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border },
   hTitle: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
   hReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, lineHeight: 15 },
   metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 },
-  metaChip: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  metaChip: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   emptyCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 10, borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   emptyCtaT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 });

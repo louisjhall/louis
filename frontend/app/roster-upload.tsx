@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
   },
   mergeToggleT: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.2,
   },

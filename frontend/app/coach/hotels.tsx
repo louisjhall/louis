@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
   metaChipText: { fontSize: 10.5, fontWeight: "700", color: theme.color.textMuted, letterSpacing: 0.4 },
 
   subHead: {
-    fontSize: 10, fontWeight: "800", color: theme.color.textMuted,
+    fontSize: 11, fontWeight: "800", color: theme.color.textMuted,
     letterSpacing: 0.8, marginBottom: theme.space.sm, marginTop: theme.space.xs,
   },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: theme.space.md },
@@ -303,7 +303,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 2, borderLeftColor: theme.color.textMuted,
     marginBottom: theme.space.md,
   },
-  notesLabel: { fontSize: 10, fontWeight: "800", color: theme.color.textMuted, letterSpacing: 0.5, marginBottom: 3 },
+  notesLabel: { fontSize: 11, fontWeight: "800", color: theme.color.textMuted, letterSpacing: 0.5, marginBottom: 3 },
   notesText: { fontSize: 12, color: theme.color.text, lineHeight: 17 },
 
   verifyBtn: {

@@ -465,7 +465,7 @@ export default function CoachHomeScreen() {
                       <Text style={[styles.resetRowName, { color: "#ff6b6b" }]}>
                         {u.email || "(no email)"}
                       </Text>
-                      <Text style={[styles.resetRowN, { color: "#ff6b6b", fontSize: 10 }]}>{u.id}</Text>
+                      <Text style={[styles.resetRowN, { color: "#ff6b6b", fontSize: 11 }]}>{u.id}</Text>
                     </View>
                   ))}
 
@@ -475,7 +475,7 @@ export default function CoachHomeScreen() {
                       <Text style={[styles.resetRowName, { color: theme.color.green }]}>
                         {u.email} ({u.role})
                       </Text>
-                      <Text style={[styles.resetRowN, { color: theme.color.green, fontSize: 10 }]}>
+                      <Text style={[styles.resetRowN, { color: theme.color.green, fontSize: 11 }]}>
                         {u.id}
                       </Text>
                     </View>
@@ -808,7 +808,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3, flex: 1,
   },
   buildMarker: {
-    color: theme.color.textDim, fontSize: 10, fontFamily: "monospace" as any,
+    color: theme.color.textDim, fontSize: 11, fontFamily: "monospace" as any,
     textAlign: "center", marginTop: 6, opacity: 0.7,
   },
   newManualBtn: {
@@ -843,7 +843,7 @@ const styles = StyleSheet.create({
   resetTitle: { color: theme.color.textHi, fontWeight: "800", fontSize: 15 },
   resetSubHead: { color: theme.color.textHi, fontSize: 13, marginBottom: 10 },
   resetLabel: {
-    color: theme.color.textDim, fontSize: 10, textTransform: "uppercase",
+    color: theme.color.textDim, fontSize: 11, textTransform: "uppercase",
     letterSpacing: 0.6, marginTop: 14, marginBottom: 6, fontWeight: "700",
   },
   resetRow: {
@@ -864,7 +864,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.card, borderRadius: 6, padding: 10,
     borderWidth: 1, borderColor: theme.color.border, marginTop: 4,
   },
-  resetCmd: { color: theme.color.textHi, fontFamily: "monospace" as any, fontSize: 10 },
+  resetCmd: { color: theme.color.textHi, fontFamily: "monospace" as any, fontSize: 11 },
   resetHint: { color: theme.color.textDim, fontSize: 11, marginBottom: 4 },
   resetCloseBtn: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6,
@@ -925,7 +925,7 @@ const styles = StyleSheet.create({
   },
   sumValue: { color: theme.color.textHi, fontSize: 22, fontWeight: "800", marginLeft: "auto" },
   sumLabel: { color: theme.color.textHi, fontSize: 12, fontWeight: "700", marginTop: 6 },
-  sumHint: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
+  sumHint: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
 
   /* Sections */
   section: { marginTop: 20, paddingHorizontal: 24 },
@@ -953,7 +953,7 @@ const styles = StyleSheet.create({
   taskBody: { flex: 1, minWidth: 0 },
   taskClientRow: { flexDirection: "row", alignItems: "center" },
   taskSystemBadge: {
-    color: "#8b7cd6", fontSize: 9, fontWeight: "800", letterSpacing: 1.5,
+    color: "#8b7cd6", fontSize: 11, fontWeight: "800", letterSpacing: 1.5,
     marginBottom: 2,
   },
   taskClient: { color: theme.color.textHi, fontSize: 14, fontWeight: "800" },
@@ -970,7 +970,7 @@ const styles = StyleSheet.create({
   priorityPill: {
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, borderWidth: 1,
   },
-  priorityPillText: { fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  priorityPillText: { fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   actionBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border,

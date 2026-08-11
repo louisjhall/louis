@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface,
     borderWidth: 1, borderColor: theme.color.brand,
   },
-  countPillT: { color: theme.color.brand, fontSize: 10, fontWeight: "900" },
+  countPillT: { color: theme.color.brand, fontSize: 11, fontWeight: "900" },
 
   taskCard: {
     flexDirection: "row",
@@ -332,7 +332,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: theme.color.brand,
   },
-  approveT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  approveT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
   reviewBtn: {
     flexDirection: "row", alignItems: "center", gap: 5,
     paddingVertical: 8, paddingHorizontal: 12,
@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
     backgroundColor: theme.color.surface,
   },
-  reviewT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  reviewT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
   moreCount: { color: theme.color.textMuted, fontSize: 11, textAlign: "center", marginTop: 4 },
 
   // Modal / preview sheet
@@ -379,7 +379,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   previewV: { color: theme.color.text, fontSize: 24, fontWeight: "900" },
-  previewL: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1, marginTop: 3 },
+  previewL: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1, marginTop: 3 },
 
   todayBlock: {
     marginTop: 14,
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: theme.color.brand,
   },
-  todayEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 1.4 },
+  todayEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
   todayValue: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4 },
 
   publishNote: {

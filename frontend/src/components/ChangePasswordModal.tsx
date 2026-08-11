@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
   field: { marginBottom: 12 },
   fieldLabel: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.4,
     marginBottom: 5,

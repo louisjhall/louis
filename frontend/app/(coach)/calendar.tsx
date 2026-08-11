@@ -504,7 +504,7 @@ const styles = StyleSheet.create({
   },
   clientCol: { width: CLIENT_COL_WIDTH, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: theme.color.bg },
   clientColHeader: { justifyContent: "flex-end" },
-  clientHead: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  clientHead: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },
   dateScroll: { flex: 1 },
   dateHead: {
     borderLeftWidth: 1, borderLeftColor: theme.color.border,
@@ -512,7 +512,7 @@ const styles = StyleSheet.create({
   },
   dateHeadToday: { backgroundColor: "rgba(219,58,74,0.10)" },
   dateHeadWeekend: { backgroundColor: "rgba(255,255,255,0.02)" },
-  dateDow: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.2, fontWeight: "700" },
+  dateDow: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.2, fontWeight: "700" },
   dateDowToday: { color: theme.color.brand },
   dateDdmm: { color: theme.color.textHi, fontSize: 12, fontWeight: "800", marginTop: 1 },
   dateDdmmToday: { color: theme.color.brand },
@@ -534,17 +534,17 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(97,201,130,0.15)", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
   },
   pillDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#61c982" },
-  pillLiveText: { color: "#61c982", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  pillLiveText: { color: "#61c982", fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
   pillNoPlan: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: theme.color.border },
-  pillNoPlanText: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  pillNoPlanText: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
   pillDraft: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: "rgba(245,181,67,0.55)", backgroundColor: "rgba(245,181,67,0.15)" },
-  pillDraftText: { color: "#f5b543", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  pillDraftText: { color: "#f5b543", fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
   newDraftBadge: {
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
     borderWidth: 1, borderColor: "rgba(245,181,67,0.55)",
     backgroundColor: "rgba(245,181,67,0.14)",
   },
-  newDraftText: { color: "#f5b543", fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  newDraftText: { color: "#f5b543", fontSize: 11, fontWeight: "800", letterSpacing: 0.8 },
 
   /* Day cell */
   cell: {
@@ -557,11 +557,11 @@ const styles = StyleSheet.create({
   cellWeekend: { backgroundColor: theme.color.bg },
   rosterTagWrap: {},
   rosterTag: {
-    fontSize: 9, fontWeight: "800", letterSpacing: 0.8,
+    fontSize: 11, fontWeight: "800", letterSpacing: 0.8,
     paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3,
     borderWidth: 1, alignSelf: "flex-start",
   },
-  noRoster: { color: theme.color.textDim, fontSize: 10 },
+  noRoster: { color: theme.color.textDim, fontSize: 11 },
   trainings: { gap: 3 },
   trainingCard: {
     paddingHorizontal: 6, paddingVertical: 4, borderRadius: 4,
@@ -571,14 +571,14 @@ const styles = StyleSheet.create({
   trainingCardKey: { backgroundColor: "rgba(219,58,74,0.10)", borderColor: theme.color.brand },
   trainLabel: { color: theme.color.textHi, fontSize: 11, fontWeight: "800" },
   trainLabelKey: { color: theme.color.brand },
-  trainMeta: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
-  moreLine: { color: theme.color.textDim, fontSize: 9, fontStyle: "italic" },
-  rest: { color: theme.color.textDim, fontSize: 10, fontStyle: "italic" },
+  trainMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
+  moreLine: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic" },
+  rest: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic" },
   fsWrap: {
     marginTop: 3, paddingTop: 3,
     borderTopWidth: 1, borderTopColor: theme.color.border,
   },
   fsHeadRow: { flexDirection: "row", alignItems: "center", gap: 3 },
   fsHead: { color: theme.color.textDim, fontSize: 8.5, fontWeight: "700", letterSpacing: 1 },
-  fsItem: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
+  fsItem: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
 });

@@ -302,7 +302,7 @@ const s = StyleSheet.create({
 
   rowWrap: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginBottom: 10 },
   rowNum: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center", marginTop: 6 },
-  rowNumT: { color: theme.color.brand, fontSize: 10, fontWeight: "900" },
+  rowNumT: { color: theme.color.brand, fontSize: 11, fontWeight: "900" },
   rowInput: { flex: 1, minHeight: 40, color: theme.color.text, backgroundColor: theme.color.surface3, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, textAlignVertical: "top", borderWidth: 1, borderColor: theme.color.border },
   rowActs: { flexDirection: "column", gap: 4, marginTop: 4 },
   iconBtn: { width: 28, height: 22, alignItems: "center", justifyContent: "center", borderRadius: 6, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border },
@@ -311,12 +311,12 @@ const s = StyleSheet.create({
 
   textArea: { color: theme.color.text, backgroundColor: theme.color.surface3, borderRadius: 8, padding: 10, fontSize: 13, textAlignVertical: "top", borderWidth: 1, borderColor: theme.color.border, minHeight: 44 },
 
-  label: { color: theme.color.brand, fontSize: 10, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi, marginTop: 10, marginBottom: 6 },
+  label: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.textSemi, marginTop: 10, marginBottom: 6 },
   input: { color: theme.color.text, backgroundColor: theme.color.surface3, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10, fontSize: 13, borderWidth: 1, borderColor: theme.color.border },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 20, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  chipT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   chipTOn: { color: "#fff" },
 
   empty: { color: theme.color.textDim, textAlign: "center", marginTop: 30, fontStyle: "italic" },
@@ -324,5 +324,5 @@ const s = StyleSheet.create({
   logDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.color.brand, marginTop: 6 },
   logKind: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   logDetail: { color: theme.color.textMuted, fontSize: 12, marginTop: 2, fontFamily: theme.font.text },
-  logTime: { color: theme.color.textDim, fontSize: 10, marginTop: 4 },
+  logTime: { color: theme.color.textDim, fontSize: 11, marginTop: 4 },
 });

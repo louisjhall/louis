@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center", gap: 4,
     padding: 6,
   },
-  placeholderText: { color: theme.color.textDim, fontSize: 9, textAlign: "center", fontWeight: "700" },
+  placeholderText: { color: theme.color.textDim, fontSize: 11, textAlign: "center", fontWeight: "700" },
   badge: {
     position: "absolute", bottom: 6, right: 6,
     flexDirection: "row", alignItems: "center", gap: 3,
@@ -237,7 +237,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6,
     borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
   },
-  badgeText: { color: "#fff", fontSize: 8, fontWeight: "900", letterSpacing: 0.6 },
+  badgeText: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
 
   // Modal
   modalRoot: { flex: 1, backgroundColor: theme.color.surface, paddingTop: Platform.OS === "ios" ? 44 : 20 },

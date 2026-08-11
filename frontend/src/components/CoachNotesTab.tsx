@@ -272,7 +272,7 @@ const styles = StyleSheet.create({
   },
   h1: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 6, lineHeight: 16 },
-  updatedT: { color: theme.color.textDim, fontSize: 10, marginTop: 8, letterSpacing: 0.5, fontStyle: "italic" },
+  updatedT: { color: theme.color.textDim, fontSize: 11, marginTop: 8, letterSpacing: 0.5, fontStyle: "italic" },
   card: {
     padding: theme.space.md,
     borderRadius: theme.radius.md,
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
   },
   counter: {
-    color: theme.color.textDim, fontSize: 10, marginTop: 4, textAlign: "right",
+    color: theme.color.textDim, fontSize: 11, marginTop: 4, textAlign: "right",
   },
   saveRow: { marginTop: 8 },
   saveBtn: {

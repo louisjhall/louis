@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
   iconWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.brand },
   title: { color: theme.color.text, fontSize: 22, fontWeight: "900", letterSpacing: 1, fontFamily: theme.font.display, textAlign: "center" },
   phasePill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
-  phaseT: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 2, fontWeight: "900" },
+  phaseT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 2, fontWeight: "900" },
   desc: { color: theme.color.text, fontSize: 14, lineHeight: 22, textAlign: "center", fontFamily: theme.font.text, paddingHorizontal: 10 },
   list: { gap: 8, padding: 16, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },

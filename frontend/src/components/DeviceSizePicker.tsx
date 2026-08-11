@@ -68,6 +68,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: 3 },
   pill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.15)" },
   pillActive: { backgroundColor: "#fff" },
-  pillT: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  pillT: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 0.3 },
   pillTActive: { color: "#7f1d1d" },
 });

@@ -292,7 +292,7 @@ const styles = StyleSheet.create({
   title: { color: theme.color.text, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 3 },
   section: { marginBottom: 18 },
-  sectionTitle: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 2, marginBottom: 8 },
+  sectionTitle: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginBottom: 8 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
@@ -301,7 +301,7 @@ const styles = StyleSheet.create({
   histRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
   histDot: { width: 8, height: 8, borderRadius: 4 },
   histTitle: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
-  histSub: { color: theme.color.textDim, fontSize: 10, marginTop: 2 },
+  histSub: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   saveBtn: { backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: 10, alignItems: "center", marginTop: 10 },
   saveBtnText: { color: "#fff", fontSize: 12, fontWeight: "800", letterSpacing: 2 },
 });

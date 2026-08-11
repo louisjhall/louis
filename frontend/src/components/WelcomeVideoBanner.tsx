@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.5,
   },
@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
   },
   playChipT: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1.5,
   },

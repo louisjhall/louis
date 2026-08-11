@@ -178,7 +178,7 @@ const styles = StyleSheet.create({
   },
   headRow: { flexDirection: "row", gap: 10, alignItems: "center" },
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.color.surface3 },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   body: { color: theme.color.text, fontSize: 12, marginTop: 4, lineHeight: 17 },
   actions: { marginTop: 10 },
   btn: { flexDirection: "row", justifyContent: "center", alignItems: "center", padding: 10, borderRadius: 8 },
@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
   sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16, paddingBottom: 24, maxHeight: "90%" },
   sheetHead: { flexDirection: "row", gap: 10, alignItems: "center", marginBottom: 10 },
   coachName: { color: theme.color.text, fontSize: 14, fontWeight: "900" },
-  coachRole: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.2, fontWeight: "800" },
+  coachRole: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: "800" },
 
   spacer: { height: 6 },
   h: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginTop: 6 },
@@ -201,7 +201,7 @@ const styles = StyleSheet.create({
 
   statuses: { flexDirection: "row", gap: 8, marginTop: 12 },
   pill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
-  pillT: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  pillT: { fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   footerBtns: { flexDirection: "row", gap: 8, marginTop: 12 },
 });

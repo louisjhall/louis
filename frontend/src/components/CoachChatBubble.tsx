@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
     borderWidth: 2, borderColor: theme.color.bg,
   },
-  badgeT: { color: "#fff", fontSize: 10, fontWeight: "900" },
+  badgeT: { color: "#fff", fontSize: 11, fontWeight: "900" },
   chatDot: {
     position: "absolute", bottom: -2, right: -2,
     width: 16, height: 16, borderRadius: 8,

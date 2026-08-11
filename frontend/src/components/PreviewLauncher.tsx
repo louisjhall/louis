@@ -204,7 +204,7 @@ const styles = StyleSheet.create({
   tileT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1, marginTop: 6, marginBottom: 4 },
   tileS: { color: theme.color.textMuted, fontSize: 11, lineHeight: 15 },
   rowBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.brand },
-  rowBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
+  rowBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", padding: 16, justifyContent: "center", alignItems: "center" },
   picker: { backgroundColor: theme.color.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: theme.color.border, width: "100%", maxWidth: 520 },
   pickerHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },

@@ -204,8 +204,8 @@ function FatLossPanel({ d, onReload }: { d: Dashboard; onReload: () => void }) {
                 dataPointsColor={theme.color.brand}
                 xAxisColor={theme.color.divider}
                 yAxisColor={theme.color.divider}
-                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 10 }}
-                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 9 }}
+                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
+                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
                 hideRules
                 spacing={Math.max(24, Math.min(60, 320 / Math.max(2, w.length)))}
                 initialSpacing={12}
@@ -235,8 +235,8 @@ function FatLossPanel({ d, onReload }: { d: Dashboard; onReload: () => void }) {
                 dataPointsColor={theme.color.green}
                 xAxisColor={theme.color.divider}
                 yAxisColor={theme.color.divider}
-                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 10 }}
-                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 9 }}
+                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
+                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
                 hideRules
                 spacing={Math.max(24, Math.min(60, 320 / Math.max(2, wa.length)))}
                 initialSpacing={12}
@@ -291,8 +291,8 @@ function RunningPanel({ d }: { d: Dashboard }) {
                 dataPointsColor={theme.color.brand}
                 xAxisColor={theme.color.divider}
                 yAxisColor={theme.color.divider}
-                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 10 }}
-                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 9 }}
+                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
+                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
                 hideRules
                 spacing={40}
                 initialSpacing={12}
@@ -344,8 +344,8 @@ function StrengthPanel({ d }: { d: Dashboard }) {
                 initialSpacing={12}
                 xAxisColor={theme.color.divider}
                 yAxisColor={theme.color.divider}
-                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 10 }}
-                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 9 }}
+                yAxisTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
+                xAxisLabelTextStyle={{ color: theme.color.textMuted, fontSize: 11 }}
                 hideRules
               />
             </ChartHolder>
@@ -604,13 +604,13 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border,
     padding: 14, marginBottom: 12,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
+  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
   goalT: { color: theme.color.text, fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   phaseT: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
 
   row3: { flexDirection: "row", gap: 8 },
   metric: { flex: 1, backgroundColor: theme.color.surface3, borderRadius: 8, padding: 10 },
-  metricLbl: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.5, fontWeight: "800", marginBottom: 4 },
+  metricLbl: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 4 },
   metricV: { color: theme.color.text, fontSize: 15, fontWeight: "900" },
 
   habitRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10 },
@@ -622,11 +622,11 @@ const styles = StyleSheet.create({
   emptySub: { color: theme.color.textMuted, fontSize: 11, marginTop: 8 },
 
   chipBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
-  chipBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  chipBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   photo: { marginRight: 8, alignItems: "center" },
-  photoDate: { color: theme.color.text, fontSize: 10, marginTop: 4, fontWeight: "800" },
-  photoAngle: { color: theme.color.textMuted, fontSize: 9, marginTop: 1, letterSpacing: 1 },
+  photoDate: { color: theme.color.text, fontSize: 11, marginTop: 4, fontWeight: "800" },
+  photoAngle: { color: theme.color.textMuted, fontSize: 11, marginTop: 1, letterSpacing: 1 },
 
   sheetRoot: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end" },
   sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.55)" },
@@ -641,9 +641,9 @@ const styles = StyleSheet.create({
   tabRow: { flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" },
   tab: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
   tabActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  tabT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  tabT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
-  fieldLbl: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.5, marginBottom: 4 },
+  fieldLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, marginBottom: 4 },
   input: { backgroundColor: theme.color.surface3, borderRadius: 8, color: theme.color.text, padding: 10, borderWidth: 1, borderColor: theme.color.border },
 
   saveBtn: { marginTop: 16, padding: 14, borderRadius: 10, backgroundColor: theme.color.brand, alignItems: "center" },

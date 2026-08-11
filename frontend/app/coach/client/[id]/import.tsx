@@ -808,7 +808,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   statLabel: {
-    fontSize: 10,
+    fontSize: 11,
     color: theme.color.textDim,
     marginTop: 2,
     textTransform: "uppercase",
@@ -885,7 +885,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   chipText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.4,
   },
@@ -895,7 +895,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   pillText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "800",
     letterSpacing: 0.6,
   },

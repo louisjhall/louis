@@ -614,7 +614,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   createNewTitle: { color: theme.color.textHi, fontWeight: "700", fontSize: 13 },
-  createNewSub: { color: theme.color.textDim, fontSize: 10, marginTop: 2 },
+  createNewSub: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   createBox: {
     marginHorizontal: 10, marginBottom: 8, padding: 12,
     backgroundColor: theme.color.card, borderRadius: 8,

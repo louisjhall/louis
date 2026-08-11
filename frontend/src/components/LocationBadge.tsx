@@ -49,7 +49,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   compact: { paddingHorizontal: 6, paddingVertical: 3 },
-  city: { color: theme.color.text, fontSize: 10, fontWeight: "800", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
-  time: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 0.5, fontFamily: theme.font.text },
+  city: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
+  time: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.5, fontFamily: theme.font.text },
   dot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: theme.color.textDim, opacity: 0.7 },
 });

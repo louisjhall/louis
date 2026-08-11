@@ -388,7 +388,7 @@ const styles = StyleSheet.create({
   statRow: { flexDirection: "row", gap: 12, marginTop: 6 },
   stat: { flex: 1, alignItems: "center", padding: 8, backgroundColor: theme.color.surface3, borderRadius: 8 },
   statN: { color: theme.color.text, fontSize: 20, fontWeight: "900" },
-  statL: { color: theme.color.textMuted, fontSize: 9, letterSpacing: 1.2, fontWeight: "800", marginTop: 2 },
+  statL: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: "800", marginTop: 2 },
 
   row: {
     flexDirection: "row", alignItems: "center",
@@ -398,19 +398,19 @@ const styles = StyleSheet.create({
   rowDesc: { color: theme.color.textMuted, fontSize: 11, lineHeight: 15, marginTop: 3 },
 
   envBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 3, backgroundColor: "#f5b54322", borderWidth: 1, borderColor: "#f5b543" },
-  envBadgeT: { color: "#f5b543", fontSize: 8, fontWeight: "900", letterSpacing: 0.5 },
+  envBadgeT: { color: "#f5b543", fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
 
   bulkBtn: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
     backgroundColor: theme.color.brand,
   },
   bulkBtnDark: { backgroundColor: "#3a3a3a" },
-  bulkBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  bulkBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   envLockedItem: { color: theme.color.textDim, fontSize: 12, paddingVertical: 3 },
 
   emptyT: { color: theme.color.textMuted, fontSize: 12 },
-  footNote: { color: theme.color.textDim, fontSize: 10, textAlign: "center", marginTop: 8, marginBottom: 30, lineHeight: 14 },
+  footNote: { color: theme.color.textDim, fontSize: 11, textAlign: "center", marginTop: 8, marginBottom: 30, lineHeight: 14 },
 
   // Budget-paused banner
   budgetBanner: {
@@ -430,5 +430,5 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flexDirection: "row", alignItems: "center", gap: 6,
   },
-  resumeBtnT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  resumeBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 });

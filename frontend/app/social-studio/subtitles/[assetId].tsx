@@ -421,7 +421,7 @@ const styles = StyleSheet.create({
   previewToggleRow: { flexDirection: "row", gap: 8, padding: 10, backgroundColor: theme.color.surface2 },
   toggleChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border },
   toggleChipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  toggleChipT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  toggleChipT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   toggleChipTOn: { color: "#fff" },
 
   statusBanner: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10 },
@@ -429,14 +429,14 @@ const styles = StyleSheet.create({
   errorLine: { color: "#f39a9a", fontSize: 11, fontStyle: "italic", marginTop: -4 },
 
   card: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, borderRadius: 12, padding: 14, gap: 8 },
-  sect: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  sect: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   hint: { color: theme.color.textMuted, fontSize: 12, lineHeight: 18 },
 
   editorHeader: { flexDirection: "row", alignItems: "baseline", gap: 8 },
-  dirtyDot: { color: theme.color.amber, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  dirtyDot: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   segRow: { paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.color.divider, gap: 4 },
-  segTime: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  segTime: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   segInput: {
     backgroundColor: theme.color.surface, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 8, padding: 10, color: theme.color.text, fontSize: 14, minHeight: 44,
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" },
   downloadRow: { flexDirection: "row", gap: 8, marginTop: 6 },
   downloadBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
-  downloadT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  downloadT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 },
   rowK: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1, fontWeight: "800" },

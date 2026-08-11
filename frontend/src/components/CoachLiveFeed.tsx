@@ -442,7 +442,7 @@ const styles = StyleSheet.create({
     minWidth: 36, alignItems: "center", justifyContent: "center",
   },
   rangeBtnActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  rangeBtnT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  rangeBtnT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   rangeBtnTActive: { color: "#fff" },
   err: {
     flexDirection: "row", gap: 6, alignItems: "center",
@@ -462,7 +462,7 @@ const styles = StyleSheet.create({
     alignItems: "center", gap: 2,
   },
   sumV: { fontSize: 18, fontWeight: "900" },
-  sumL: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  sumL: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   chipsRow: { gap: 6, paddingRight: 8, paddingBottom: 12 },
   chip: {
     paddingHorizontal: 10, paddingVertical: 6,
@@ -471,7 +471,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2,
   },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  chipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  chipT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   chipTActive: { color: "#fff" },
   center: { padding: 30, alignItems: "center" },
   emptyWrap: { padding: 30, alignItems: "center", gap: 8 },
@@ -498,10 +498,10 @@ const styles = StyleSheet.create({
   },
   avatarT: { color: "#fff", fontWeight: "900", fontSize: 12 },
   clientName: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
-  clientMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 1 },
+  clientMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 1 },
   dateBox: { alignItems: "flex-end" },
-  dateT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
-  dateSub: { color: theme.color.textMuted, fontSize: 10, marginTop: 1 },
+  dateT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  dateSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 1 },
   rosterRow: {
     flexDirection: "row", alignItems: "center", gap: 6,
     marginTop: 4,
@@ -532,7 +532,7 @@ const styles = StyleSheet.create({
   },
   workoutTop: { flexDirection: "row", alignItems: "center", gap: 6 },
   workoutTitle: { flex: 1, color: theme.color.text, fontSize: 13, fontWeight: "800" },
-  workoutMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 3, letterSpacing: 0.5 },
+  workoutMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, letterSpacing: 0.5 },
   workoutRat: { color: theme.color.textDim, fontSize: 11, marginTop: 5, fontStyle: "italic" },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 8 },
   badge: {
@@ -540,5 +540,5 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.pill,
     borderWidth: 1,
   },
-  badgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 0.7 },
+  badgeT: { fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
 });

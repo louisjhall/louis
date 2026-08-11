@@ -973,7 +973,7 @@ function DayRowView({ row, desktop, dayState, manualStub, onOpenWorkout, onOpenF
         <Text style={styles.dateMon}>{dt.mon}</Text>
         {badge && (
           <View style={{ marginTop: 4, backgroundColor: badge.color, paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
-            <Text style={{ color: "#000", fontWeight: "700", fontSize: 8 }}>{badge.label}</Text>
+            <Text style={{ color: "#000", fontWeight: "700", fontSize: 11 }}>{badge.label}</Text>
           </View>
         )}
       </Pressable>
@@ -1488,7 +1488,7 @@ const styles = StyleSheet.create({
   },
   adminBtnText: {
     color: theme.color.textHi,
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: 1.2,
     fontWeight: "800",
   },
@@ -1509,7 +1509,7 @@ const styles = StyleSheet.create({
   },
   welcomeBtnText: {
     color: theme.color.text,
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: 1.2,
     fontWeight: "800",
   },
@@ -1517,7 +1517,7 @@ const styles = StyleSheet.create({
   subRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginTop: 2, gap: 8 },
   subMeta: { color: theme.color.textDim, fontSize: 12 },
   kindPill: { backgroundColor: "#22222c", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  kindPillText: { color: theme.color.textDim, fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
+  kindPillText: { color: theme.color.textDim, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
 
   /* Iter 128f — compact plan toolbar (single row, ~44px). */
   toolbar: {
@@ -1573,7 +1573,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 6,
   },
   countPillN: { fontWeight: "800", fontSize: 13 },
-  countPillLabel: { color: theme.color.textDim, fontSize: 10, letterSpacing: 0.5, fontWeight: "700", textTransform: "uppercase" },
+  countPillLabel: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700", textTransform: "uppercase" },
 
   approveBtn: {
     marginLeft: "auto", backgroundColor: theme.color.brand, paddingHorizontal: 14, paddingVertical: 8,
@@ -1615,7 +1615,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.bg,
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
-  colHeadText: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  colHeadText: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },
 
   dayRow: {
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
@@ -1627,9 +1627,9 @@ const styles = StyleSheet.create({
   dateCol: {
     width: 62, alignItems: "center", paddingTop: 2,
   },
-  dateDow: { color: theme.color.textDim, fontSize: 10, letterSpacing: 0.5, fontWeight: "700" },
+  dateDow: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700" },
   dateD: { color: theme.color.textHi, fontSize: 22, fontWeight: "800", lineHeight: 24 },
-  dateMon: { color: theme.color.textDim, fontSize: 10, letterSpacing: 0.5, fontWeight: "700" },
+  dateMon: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700" },
 
   rosterCol: { paddingLeft: 4, paddingRight: 4 },
   planCol: { paddingLeft: 4, paddingRight: 4, gap: 6 },
@@ -1640,13 +1640,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5, paddingVertical: 1, borderRadius: 3,
     backgroundColor: "#f5b54322", borderWidth: StyleSheet.hairlineWidth, borderColor: "#f5b543",
   },
-  needsReviewPillT: { color: "#f5b543", fontSize: 8, fontWeight: "800", letterSpacing: 0.5 },
+  needsReviewPillT: { color: "#f5b543", fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   burdenRow: { flexDirection: "row", alignItems: "center", marginTop: 2 },
   burdenDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
   burdenTxt: { color: theme.color.textDim, fontSize: 11 },
   oppTxt: { color: theme.color.textDim, fontSize: 11 },
   rosterMeta: { color: theme.color.textDim, fontSize: 12, marginTop: 2 },
-  v1Hint: { color: "#f5b543", fontSize: 10, marginTop: 2, fontStyle: "italic" },
+  v1Hint: { color: "#f5b543", fontSize: 11, marginTop: 2, fontStyle: "italic" },
 
   // Duty / flight / hotel details
   dutyBlock: { marginTop: 6, gap: 3 },
@@ -1654,19 +1654,19 @@ const styles = StyleSheet.create({
   flightLine: { color: theme.color.textHi, fontSize: 12, lineHeight: 16 },
   flightNum: { color: "#5aa9e6", fontWeight: "800", fontSize: 12 },
   flightRoute: { color: theme.color.textHi, fontSize: 12, fontWeight: "600" },
-  positioningTxt: { color: theme.color.textDim, fontSize: 10, fontStyle: "italic" },
+  positioningTxt: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic" },
   flightTimes: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
   dutyTimes: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
-  dutyMeta: { color: theme.color.textDim, fontSize: 10, fontStyle: "italic", marginTop: 1 },
+  dutyMeta: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic", marginTop: 1 },
   viewDetailsBtn: { color: theme.color.brand, fontSize: 11, marginTop: 2, fontWeight: "700" },
   hotelRow: { flexDirection: "row", alignItems: "center", marginTop: 3, flexWrap: "wrap" },
   hotelText: { color: theme.color.textDim, fontSize: 11, flex: 1, flexWrap: "wrap" },
   hotelCity: { color: theme.color.textHi, fontWeight: "700", fontSize: 11 },
   hotelName: { color: theme.color.textHi, fontSize: 11 },
   hotelUnknown: { color: "#f5b543", fontSize: 11, fontStyle: "italic" },
-  hotelGym: { color: "#4ade80", fontSize: 10, fontWeight: "700" },
-  hotelNoGym: { color: "#ff6b6b", fontSize: 10, fontWeight: "700" },
-  warnTxt: { color: "#f5b543", fontSize: 10, marginTop: 2 },
+  hotelGym: { color: "#4ade80", fontSize: 11, fontWeight: "700" },
+  hotelNoGym: { color: "#ff6b6b", fontSize: 11, fontWeight: "700" },
+  warnTxt: { color: "#f5b543", fontSize: 11, marginTop: 2 },
 
   planEmpty: { color: theme.color.textDim, fontStyle: "italic", fontSize: 12 },
   // Phase 1A-fix — visible day-action CTA on every row
@@ -1692,7 +1692,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   fsLabel: {
-    color: theme.color.textDim, fontSize: 9, fontWeight: "800",
+    color: theme.color.textDim, fontSize: 11, fontWeight: "800",
     letterSpacing: 1.4,
   },
   fsCard: {
@@ -1705,7 +1705,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", flex: 1,
   },
   fsTitleTxt: { color: theme.color.textHi, fontSize: 11, fontWeight: "600" },
-  fsReasonTxt: { color: theme.color.textDim, fontSize: 10, marginTop: 1 },
+  fsReasonTxt: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
   fsDurTxt: {
     color: theme.color.brand, fontSize: 11, fontWeight: "700", marginLeft: 6,
     minWidth: 30, textAlign: "right",
@@ -1720,7 +1720,7 @@ const styles = StyleSheet.create({
   },
 
   statusChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10 },
-  statusChipText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.3 },
+  statusChipText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.3 },
 
   sectionTitle: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 8 },
   excCard: {
@@ -1758,7 +1758,7 @@ const styles = StyleSheet.create({
   decisionRow: {
     paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: theme.color.border, flexDirection: "row", gap: 8,
   },
-  decisionLayer: { color: theme.color.brand, fontSize: 10, fontWeight: "800", width: 70 },
+  decisionLayer: { color: theme.color.brand, fontSize: 11, fontWeight: "800", width: 70 },
   decisionReason: { color: theme.color.textDim, flex: 1, fontSize: 12 },
 
   primaryBtn: {
@@ -1771,7 +1771,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: "#f5b543", marginTop: 8,
   },
   coachNoteLabel: {
-    color: "#f5b543", fontSize: 9, letterSpacing: 1, fontWeight: "800",
+    color: "#f5b543", fontSize: 11, letterSpacing: 1, fontWeight: "800",
   },
   coachNoteText: { color: theme.color.textHi, fontSize: 12, marginTop: 3 },
   editErrorBanner: {

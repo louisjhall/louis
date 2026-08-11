@@ -538,7 +538,7 @@ const styles = StyleSheet.create({
   addBtnText: { color: "#fff", fontWeight: "900", fontSize: 12, letterSpacing: 1 },
   // Badges
   badge: {
-    fontSize: 9, fontWeight: "900", letterSpacing: 1,
+    fontSize: 11, fontWeight: "900", letterSpacing: 1,
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: "hidden",
   },
   badgeLocal: { backgroundColor: theme.color.brandTint, color: theme.color.brand },
@@ -563,7 +563,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brand,
   },
   atlasBtnText: { color: "#fff", fontWeight: "900", fontSize: 12, letterSpacing: 1.4 },
-  disclaimer: { color: theme.color.textDim, fontSize: 10, textAlign: "center", marginTop: 8, paddingHorizontal: 20, lineHeight: 15 },
+  disclaimer: { color: theme.color.textDim, fontSize: 11, textAlign: "center", marginTop: 8, paddingHorizontal: 20, lineHeight: 15 },
   // Sheet
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)" },
   sheetWrap: { position: "absolute", left: 0, right: 0, bottom: 0 },
@@ -604,7 +604,7 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: theme.color.surface2, borderRadius: 10,
     padding: 8, borderWidth: 1, borderColor: theme.color.border, alignItems: "center",
   },
-  macroBoxLabel: { color: theme.color.textDim, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  macroBoxLabel: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   macroBoxInput: { color: theme.color.text, fontSize: 16, fontWeight: "800", textAlign: "center", minWidth: 50 },
   primaryBtn: {
     marginTop: 18, backgroundColor: theme.color.brand, borderRadius: theme.radius.pill,

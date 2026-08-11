@@ -245,7 +245,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: 1.5,
     fontWeight: "800",
     marginBottom: 2,
@@ -294,7 +294,7 @@ const styles = StyleSheet.create({
   },
   editorLabel: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: 1.5,
     fontWeight: "800",
     marginBottom: 6,

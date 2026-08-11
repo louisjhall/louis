@@ -39,6 +39,20 @@ export const REALITY_KINDS: Kind[] = [
 ];
 
 /* -------------------------------------------------------------------------- */
+/*  Iter168 · Category groups — reduce cognitive load. The 17 tiles are now   */
+/*  organised into 5 short lists with headers, in a 2-column grid.            */
+/* -------------------------------------------------------------------------- */
+type Category = { title: string; keys: string[] };
+
+const REALITY_CATEGORIES: Category[] = [
+  { title: "Body & Energy",    keys: ["exhausted", "feeling_amazing", "feeling_ill", "injured"] },
+  { title: "Environment",      keys: ["no_gym", "hotel_changed", "bad_weather", "travelling"] },
+  { title: "Schedule",         keys: ["less_time", "more_time", "flight_delayed", "roster_changed", "want_to_move"] },
+  { title: "Life",             keys: ["family_commitments", "annual_leave", "missed_yesterday"] },
+  { title: "Other",            keys: ["other"] },
+];
+
+/* -------------------------------------------------------------------------- */
 /*  Component                                                                 */
 /* -------------------------------------------------------------------------- */
 type Stage = "pick" | "loading" | "review" | "applying" | "done";
@@ -155,20 +169,36 @@ export function RealityModal({
                 </Pressable>
               ) : null}
               <View style={styles.grid}>
-                {REALITY_KINDS.map((k) => (
-                  <Pressable
-                    key={k.key}
-                    testID={`reality-kind-${k.key}`}
-                    onPress={() => submit(k)}
-                    style={({ pressed }) => [styles.kindCard, pressed && styles.kindPressed]}
-                  >
-                    <View style={styles.kindIconWrap}>
-                      <Ionicons name={k.icon as any} size={22} color={theme.color.brand} />
+                {/* Iter168 · Render category-by-category with a short header,
+                    2-column tiles, 13pt labels and lighter hints for
+                    readability. Keeps the same submit(k) semantics. */}
+                {REALITY_CATEGORIES.map((cat) => {
+                  const items = cat.keys
+                    .map((key) => REALITY_KINDS.find((r) => r.key === key))
+                    .filter(Boolean) as Kind[];
+                  if (!items.length) return null;
+                  return (
+                    <View key={cat.title} style={styles.catBlock}>
+                      <Text style={styles.catHead}>{cat.title.toUpperCase()}</Text>
+                      <View style={styles.catGrid}>
+                        {items.map((k) => (
+                          <Pressable
+                            key={k.key}
+                            testID={`reality-kind-${k.key}`}
+                            onPress={() => submit(k)}
+                            style={({ pressed }) => [styles.kindCard, styles.kindCardTwo, pressed && styles.kindPressed]}
+                          >
+                            <View style={styles.kindIconWrap}>
+                              <Ionicons name={k.icon as any} size={22} color={theme.color.brand} />
+                            </View>
+                            <Text style={styles.kindLabel} numberOfLines={2}>{k.label}</Text>
+                            {k.hint ? <Text style={styles.kindHint} numberOfLines={1}>{k.hint}</Text> : null}
+                          </Pressable>
+                        ))}
+                      </View>
                     </View>
-                    <Text style={styles.kindLabel} numberOfLines={2}>{k.label}</Text>
-                    {k.hint ? <Text style={styles.kindHint} numberOfLines={1}>{k.hint}</Text> : null}
-                  </Pressable>
-                ))}
+                  );
+                })}
               </View>
 
               <Text style={styles.optionalLabel}>OPTIONAL — TIME AVAILABLE (MIN)</Text>
@@ -364,11 +394,24 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", padding: 16,
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
-  title: { color: theme.color.text, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
+  title: { color: theme.color.text, fontSize: 15, fontWeight: "900", letterSpacing: 2 },
   sub: { color: theme.color.textMuted, fontSize: 12, marginTop: 3 },
   body: { padding: 16, paddingBottom: 48 },
-  dateLine: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginBottom: 12 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  dateLine: { color: theme.color.brand, fontSize: 12, fontWeight: "800", letterSpacing: 2, marginBottom: 12 },
+
+  /* Iter168 · Category-based reality grid — 5 groups, 2-column tiles. */
+  grid: { gap: 18 },
+  catBlock: { gap: 10 },
+  catHead: {
+    color: theme.color.brand,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 2.2,
+    marginBottom: 2,
+    fontFamily: theme.font.textSemi,
+  },
+  catGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+
   kindCard: {
     width: "31%",
     minHeight: 110,
@@ -380,12 +423,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-start",
   },
+  // Iter168 · Two-column variant for the grouped grid.
+  kindCardTwo: {
+    width: "48%",
+    flexGrow: 0,
+    minHeight: 118,
+    padding: 12,
+  },
   kindPressed: { backgroundColor: theme.color.brandTint, borderColor: theme.color.brand },
   kindEmoji: { fontSize: 26, marginBottom: 6 },
   kindIconWrap: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginBottom: 8 },
-  kindLabel: { color: theme.color.text, fontSize: 11, fontWeight: "800", textAlign: "center", letterSpacing: 0.3 },
-  kindHint: { color: theme.color.textDim, fontSize: 9, marginTop: 3, textAlign: "center" },
-  optionalLabel: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 2, marginTop: 20, marginBottom: 6 },
+  // Iter168 · Bumped from 11 → 13pt (readability) and dropped weight 800 → 700
+  // for calmer visual weight in the grouped layout.
+  kindLabel: { color: theme.color.text, fontSize: 13, fontWeight: "700", textAlign: "center", letterSpacing: 0.2 },
+  // Iter168 · Hint text was 9pt / theme.color.textDim (nearly invisible).
+  // Bumped to 11pt and colour bumped from textDim → textSoft for a readable
+  // secondary gray without competing with the label.
+  kindHint: { color: theme.color.textSoft, fontSize: 11, marginTop: 4, textAlign: "center", lineHeight: 15 },
+  optionalLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginTop: 20, marginBottom: 6 },
   input: {
     color: theme.color.text, fontSize: 13, padding: 12,
     backgroundColor: theme.color.surface2,
@@ -405,7 +460,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
     marginBottom: 16,
   },
-  recoveryLabel: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 2 },
+  recoveryLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2 },
   recoverySub: { color: theme.color.text, fontSize: 12, marginTop: 4 },
   recoveryDial: {
     width: 60, height: 60, borderRadius: 30, borderWidth: 3,
@@ -425,18 +480,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4,
     backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border,
   },
-  optIdText: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  optIdText: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   lockedPill: {
     flexDirection: "row", alignItems: "center", gap: 3,
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
     backgroundColor: "rgba(245, 158, 11, 0.15)",
   },
-  lockedText: { color: theme.color.amber, fontSize: 9, fontWeight: "900", letterSpacing: 1 },
+  lockedText: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   riskPill: {
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
     backgroundColor: theme.color.surface3, marginLeft: "auto",
   },
-  riskText: { color: theme.color.textDim, fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  riskText: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   optTitle: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginBottom: 6, lineHeight: 20 },
   optWhy: { color: theme.color.textMuted, fontSize: 12, lineHeight: 18, marginBottom: 10 },
   actionsList: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginBottom: 10 },
@@ -445,7 +500,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 4, borderRadius: 4,
     backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border,
   },
-  actionText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700" },
+  actionText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
   applyBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
     paddingVertical: 10, borderRadius: 8,
@@ -457,5 +512,5 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4,
     marginTop: 4, paddingVertical: 10,
   },
-  backText: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.5 },
+  backText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
 });

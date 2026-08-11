@@ -51,5 +51,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4,
     borderWidth: 1, alignSelf: "flex-start",
   },
-  label: { fontSize: 9, fontWeight: "800", letterSpacing: 1.2 },
+  label: { fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
 });

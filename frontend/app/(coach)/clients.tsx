@@ -480,7 +480,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8, gap: 16,
   },
   colHeadText: {
-    color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800",
+    color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800",
   },
   colClient: { flex: 2.4, flexDirection: "row", alignItems: "center", minWidth: 200 },
   colGoal:   { flex: 1.2, minWidth: 130 },

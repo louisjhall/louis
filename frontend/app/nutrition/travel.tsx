@@ -142,6 +142,6 @@ const styles = StyleSheet.create({
 
   goalCard: { padding: 14, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand },
   goalHead: { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: theme.color.brand },
-  goalHeadT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
+  goalHeadT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
   goalT: { color: theme.color.text, fontSize: 13, marginTop: 8, lineHeight: 19, fontFamily: theme.font.text },
 });

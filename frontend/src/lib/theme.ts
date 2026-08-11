@@ -77,6 +77,21 @@ export const theme = {
     textSemi: "SourceSans3-SemiBold",
     textBold: "SourceSans3-Bold",
   },
+  /**
+   * Iter168 · Global typography weights.
+   *   hero    (900) — reserved for ONE hero title per screen.
+   *   header  (800) — section headers / eyebrow labels / primary CTAs.
+   *   strong  (700) — meta labels / prominent secondary text.
+   *   body    (600) — default body copy.
+   *
+   * Ensure no font in the app is smaller than `size.xxs` (11pt).
+   */
+  weight: {
+    hero:   "900" as const,
+    header: "800" as const,
+    strong: "700" as const,
+    body:   "600" as const,
+  },
 } as const;
 
 export const loadColor = (l?: string) => {

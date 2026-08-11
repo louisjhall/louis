@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
     borderWidth: 1, borderColor: "rgba(255,255,255,0.15)",
   },
-  labelPillT: { color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 1.4 },
+  labelPillT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
   dotsRow: {
     position: "absolute", bottom: 10, left: 0, right: 0,
     flexDirection: "row", justifyContent: "center", gap: 6,
@@ -323,5 +323,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 6,
     borderWidth: 1, borderColor: "rgba(245,158,11,0.5)",
   },
-  draftPillT: { color: "#F59E0B", fontSize: 10, fontWeight: "800", letterSpacing: 0.8, flex: 1 },
+  draftPillT: { color: "#F59E0B", fontSize: 11, fontWeight: "800", letterSpacing: 0.8, flex: 1 },
 });

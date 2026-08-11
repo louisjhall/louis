@@ -890,7 +890,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2, borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
   summaryRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 4 },
-  sumLabel: { color: theme.color.textMuted, fontSize: 10, letterSpacing: 1.5, fontWeight: "700" },
+  sumLabel: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
   sumVal: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
   summaryHint: { color: AMBER, fontSize: 12, marginTop: 6, lineHeight: 16 },
   queueBar: {
@@ -930,7 +930,7 @@ const styles = StyleSheet.create({
   badgeAmber: { flexDirection: "row", alignItems: "center", backgroundColor: AMBER, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, gap: 4 },
   badgeConfirmed: { flexDirection: "row", alignItems: "center", backgroundColor: CONFIRMED, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, gap: 4 },
   badgeSwap: { flexDirection: "row", alignItems: "center", backgroundColor: theme.color.brand, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, gap: 4 },
-  badgeText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 1 },
+  badgeText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   confirmMini: { flex: 1, backgroundColor: theme.color.brand, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center" },
   confirmMiniText: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   editMini: { flex: 1, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.border, paddingVertical: 8, borderRadius: theme.radius.sm, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 },
@@ -963,7 +963,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
     minHeight: 40,
   },
-  shiftBtnT: { color: theme.color.brand, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
+  shiftBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   // Iter 83 · Tool 2 · Swap-mode banner + card highlight
   swapBanner: {
     flexDirection: "row", alignItems: "center", gap: 10,
@@ -971,7 +971,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brand,
     marginBottom: theme.space.md,
   },
-  swapBannerT: { color: "#fff", fontSize: 10, letterSpacing: 1.5, fontWeight: "900" },
+  swapBannerT: { color: "#fff", fontSize: 11, letterSpacing: 1.5, fontWeight: "900" },
   swapBannerSub: { color: "rgba(255,255,255,0.9)", fontSize: 11, marginTop: 2 },
   swapCancelT: { color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   cardSwapSource: {
@@ -994,7 +994,7 @@ const styles = StyleSheet.create({
     minHeight: 28,
   },
   quickChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  quickChipT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "700" },
+  quickChipT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
   sticky: {
     position: "absolute", bottom: 0, left: 0, right: 0,
     padding: theme.space.lg, backgroundColor: theme.color.surface,
@@ -1009,7 +1009,7 @@ const styles = StyleSheet.create({
   modalSheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: theme.space.lg, paddingBottom: theme.space.xl },
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: theme.space.md },
   modalTitle: { color: theme.color.text, fontSize: 18, fontWeight: "900" },
-  editorLabel: { color: theme.color.brand, fontSize: 10, letterSpacing: 1.5, fontWeight: "800", marginTop: theme.space.md, marginBottom: 6 },
+  editorLabel: { color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginTop: theme.space.md, marginBottom: 6 },
   dutyGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   dutyChip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   dutyChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
@@ -1056,7 +1056,7 @@ const styles = StyleSheet.create({
   },
   eqPillT: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     letterSpacing: 0.5,
   },
@@ -1090,7 +1090,7 @@ const styles = StyleSheet.create({
   },
   overlapBtnPrimary: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   overlapBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1 },
-  overlapBtnSub: { color: "rgba(255,255,255,0.85)", fontSize: 10, marginTop: 2, lineHeight: 13 },
+  overlapBtnSub: { color: "rgba(255,255,255,0.85)", fontSize: 11, marginTop: 2, lineHeight: 13 },
   overlapChosen: {
     flexDirection: "row", alignItems: "center", gap: 6,
     padding: 10,
@@ -1099,8 +1099,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.brand,
     marginBottom: theme.space.md,
   },
-  overlapChosenT: { flex: 1, color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
-  overlapChangeT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  overlapChosenT: { flex: 1, color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
+  overlapChangeT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
   // Traffic-light overview strip
   tlOverview: {
     marginTop: 10,
@@ -1110,7 +1110,7 @@ const styles = StyleSheet.create({
   },
   tlOverviewLabel: {
     color: theme.color.textMuted,
-    fontSize: 10,
+    fontSize: 11,
     letterSpacing: 1.5,
     fontWeight: "700",
     marginBottom: 6,

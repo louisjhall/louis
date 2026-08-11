@@ -267,7 +267,7 @@ const styles = StyleSheet.create({
   dateCol: {
     width: 42, alignItems: "center", justifyContent: "center",
   },
-  dow: { color: theme.color.textMuted, fontSize: 9, fontWeight: "800", letterSpacing: 1.2 },
+  dow: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
   dnum: { color: theme.color.text, fontSize: 20, fontWeight: "900", marginTop: 1 },
 
   rosterCol: {
@@ -278,24 +278,24 @@ const styles = StyleSheet.create({
   },
   rosterHead: { flexDirection: "row", alignItems: "center", gap: 5, marginBottom: 2 },
   rosterLabel: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4, flex: 1 },
-  rosterMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 2, lineHeight: 13 },
+  rosterMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 13 },
   reviewPill: {
     flexDirection: "row", alignItems: "center", gap: 2,
     paddingHorizontal: 4, paddingVertical: 2, borderRadius: 3,
     backgroundColor: "#dc2626",
   },
-  reviewPillT: { color: "#fff", fontSize: 7, fontWeight: "900", letterSpacing: 0.5 },
+  reviewPillT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
 
   planCol: { flex: 1.5, padding: 8, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, justifyContent: "center" },
   planHead: { flexDirection: "row", alignItems: "center", gap: 6 },
   planTitle: { color: theme.color.text, fontSize: 12, fontWeight: "800", flex: 1 },
-  planMeta: { color: theme.color.textMuted, fontSize: 10, marginTop: 3 },
+  planMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
   planChips: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 6 },
   chip: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 3 },
-  chipT: { color: "#fff", fontSize: 8, fontWeight: "900", letterSpacing: 0.6 },
+  chipT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.6 },
   planEmpty: { paddingVertical: 4 },
   planEmptyTitle: { color: theme.color.textMuted, fontSize: 12, fontWeight: "800", fontStyle: "italic" },
-  planEmptySub: { color: theme.color.textMuted, fontSize: 10, marginTop: 3 },
+  planEmptySub: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
 });
 
 export default ScheduleRow;

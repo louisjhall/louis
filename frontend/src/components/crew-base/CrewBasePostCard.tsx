@@ -328,8 +328,8 @@ const styles = StyleSheet.create({
   avatarInitials: { fontWeight: "900", letterSpacing: 0.5 },
   authorName: { color: theme.color.text, fontWeight: "800", fontSize: 14 },
   authorSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 1 },
-  coachOnly: { color: theme.color.amber, fontSize: 10, marginTop: 2, letterSpacing: 0.3 },
-  coachOnlySmall: { color: theme.color.amber, fontSize: 9, marginTop: 3, letterSpacing: 0.3 },
+  coachOnly: { color: theme.color.amber, fontSize: 11, marginTop: 2, letterSpacing: 0.3 },
+  coachOnlySmall: { color: theme.color.amber, fontSize: 11, marginTop: 3, letterSpacing: 0.3 },
   body: { color: theme.color.text, fontSize: 14, lineHeight: 20, marginTop: theme.space.sm },
   media: { width: "100%", height: 220, marginTop: theme.space.sm, borderRadius: theme.radius.sm, backgroundColor: "#000" },
 
@@ -359,8 +359,8 @@ const styles = StyleSheet.create({
   commentBubble: { backgroundColor: theme.color.surface2, padding: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
   commentAuthor: { color: theme.color.text, fontWeight: "800", fontSize: 12 },
   commentText: { color: theme.color.text, fontSize: 13, lineHeight: 18, marginTop: 2 },
-  commentMeta: { color: theme.color.textDim, fontSize: 10, marginTop: 3, letterSpacing: 0.3 },
-  commentDelete: { color: theme.color.red, fontSize: 10, letterSpacing: 0.3 },
+  commentMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 3, letterSpacing: 0.3 },
+  commentDelete: { color: theme.color.red, fontSize: 11, letterSpacing: 0.3 },
   viewAll: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.6, marginTop: theme.space.sm },
 
   composer: {

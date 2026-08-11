@@ -248,7 +248,7 @@ const s = StyleSheet.create({
   },
   optT: { flex: 1, color: theme.color.text, fontSize: 14, fontWeight: "700" },
   hint: { color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", marginTop: 6 },
-  subHead: { color: theme.color.textMuted, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 8 },
+  subHead: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.4, marginBottom: 8 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: theme.color.border },
   chipOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },

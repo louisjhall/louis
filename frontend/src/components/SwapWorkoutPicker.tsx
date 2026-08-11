@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   },
   title: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   sub: { color: theme.color.textMuted, fontSize: 11, marginTop: 4, letterSpacing: 0.5 },
-  blockedT: { color: theme.color.textDim, fontSize: 10, marginTop: 4, fontStyle: "italic" },
+  blockedT: { color: theme.color.textDim, fontSize: 11, marginTop: 4, fontStyle: "italic" },
   grip: {
     alignSelf: "center", marginVertical: 8,
     width: 40, height: 4, borderRadius: 2,
@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
   cardMeta: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, letterSpacing: 0.3 },
   cardRat: { color: theme.color.textDim, fontSize: 12, marginTop: 8, lineHeight: 17 },
   fitPill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill },
-  fitPillT: { color: "#fff", fontSize: 9, fontWeight: "900", letterSpacing: 0.8 },
+  fitPillT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
   exList: { marginTop: 8, gap: 3 },
   exLine: { color: theme.color.text, fontSize: 12 },
   exMore: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, fontStyle: "italic" },

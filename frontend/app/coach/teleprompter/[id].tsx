@@ -493,7 +493,7 @@ function fmt(sec: number): string { const m = Math.floor(sec / 60); const s = se
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, backgroundColor: theme.color.surface },
-  title: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
+  title: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   welcomeRow: {
     paddingHorizontal: 12, paddingBottom: 10, backgroundColor: theme.color.surface, gap: 6,
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
@@ -510,7 +510,7 @@ const styles = StyleSheet.create({
     borderColor: theme.color.brand,
   },
   welcomeChipT: {
-    color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5,
+    color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5,
   },
   welcomeHint: {
     color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
@@ -524,15 +524,15 @@ const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#c94a4a" },
   recT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   promptWrap: { flex: 1, backgroundColor: theme.color.surface },
-  promptEyebrow: { color: theme.color.brand, fontSize: 9, fontWeight: "900", letterSpacing: 2, padding: 12 },
+  promptEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, padding: 12 },
   promptScroll: { flex: 1, paddingHorizontal: 20 },
   promptText: { color: theme.color.text, fontSize: 28, lineHeight: 40, fontWeight: "700", letterSpacing: 0.3 },
-  editT: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.5, paddingHorizontal: 8, paddingVertical: 4 },
+  editT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, paddingHorizontal: 8, paddingVertical: 4 },
   scriptEdit: { flex: 1, marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 8, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 18, lineHeight: 26, textAlignVertical: "top" },
   controls: { flexDirection: "row", gap: 8, padding: 12, justifyContent: "center", backgroundColor: theme.color.surface2 },
   speedBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
   speedBtnOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  speedT: { color: theme.color.text, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  speedT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   speedTOn: { color: "#fff" },
   mainAction: { padding: 20, alignItems: "center", backgroundColor: theme.color.surface },
   recordBtn: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#c94a4a", paddingHorizontal: 24, paddingVertical: 14, borderRadius: 30 },

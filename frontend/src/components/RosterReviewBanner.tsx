@@ -99,7 +99,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     color: theme.color.brand,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "900",
     letterSpacing: 2,
     marginBottom: 4,

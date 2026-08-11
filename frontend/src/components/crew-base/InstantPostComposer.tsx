@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 6,
     backgroundColor: theme.color.surface2, alignItems: "center", justifyContent: "center",
   },
-  previewT: { color: theme.color.textMuted, fontSize: 9, marginTop: 2 },
+  previewT: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
   previewRemove: { marginLeft: "auto", padding: 4 },
 });
 

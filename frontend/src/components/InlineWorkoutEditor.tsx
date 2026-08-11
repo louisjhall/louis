@@ -449,7 +449,7 @@ function MiniField({ label, val, onChange, onBlur, keyboardType, testID }: {
 const styles = StyleSheet.create({
   wrap: { padding: 16 },
   headRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-  head: { color: theme.color.textDim, fontSize: 10, letterSpacing: 1.5, fontWeight: "800" },
+  head: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },
   exitBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: 5,
@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
   exitBtnText: { color: theme.color.brand, fontSize: 11, fontWeight: "700" },
 
   label: {
-    color: theme.color.textDim, fontSize: 10, letterSpacing: 0.8,
+    color: theme.color.textDim, fontSize: 11, letterSpacing: 0.8,
     fontWeight: "700", marginBottom: 4, marginTop: 8, textTransform: "uppercase",
   },
   input: {
@@ -516,7 +516,7 @@ const styles = StyleSheet.create({
   },
   exGrid: { flexDirection: "row", gap: 6, marginTop: 8 },
   miniFieldWrap: { flex: 1 },
-  miniFieldLabel: { color: theme.color.textDim, fontSize: 9, letterSpacing: 0.5, fontWeight: "700" },
+  miniFieldLabel: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700" },
   miniFieldInput: {
     backgroundColor: theme.color.bg, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 4, paddingHorizontal: 6, paddingVertical: 4,

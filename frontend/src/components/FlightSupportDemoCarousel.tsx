@@ -199,14 +199,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6,
   },
   slotBadgeText: {
-    color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 1.2,
+    color: "#fff", fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
   },
   placeholderName: {
     color: theme.color.text, fontSize: 13, fontWeight: "800",
     textAlign: "center", marginTop: 10, paddingHorizontal: 14,
   },
   placeholderHint: {
-    color: theme.color.textMuted, fontSize: 10, marginTop: 4,
+    color: theme.color.textMuted, fontSize: 11, marginTop: 4,
   },
   dotsRow: {
     flexDirection: "row", gap: 6, marginTop: 10,

@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   eyebrow: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     color: "#3B82F6",
     letterSpacing: 0.8,
@@ -261,7 +261,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   rationaleLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "700",
     color: "#3B82F6",
     letterSpacing: 0.8,

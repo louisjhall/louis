@@ -1,48 +1,85 @@
+/**
+ * Iter169 · Dual-theme palette (Dark + Light).
+ * `theme.color` starts as DARK. On boot we read AsyncStorage and, if the
+ * user has opted into light mode, we MUTATE the exported `theme.color`
+ * object in place before StyleSheets are created. Toggling at runtime
+ * mutates the same object AND emits a change event so the app can
+ * choose to reload (recommended for a clean switch).
+ */
+export type ThemeMode = "dark" | "light";
+
+export const DARK_PALETTE = {
+  // Iter169 · Deeper black bg + lifted card surface so cards visibly
+  // sit "above" the app background (previously #121212 flat).
+  surface: "#1E1E1E",
+  surface2: "#1E1E1E",
+  surface3: "#242427",
+  border: "#2C2C2E",
+  borderStrong: "#3A3A3E",
+  divider: "#1E1E22",
+  text: "#F3F4F6",
+  textHi: "#F3F4F6",
+  bg: "#0B0B0D",
+  bgGradientTop: "#000000",
+  bgGradientBottom: "#0B0B0D",
+  // Iter169 · Slightly brighter muted tones for better readability on
+  // the darker background.
+  textMuted: "#A8ADB5",
+  textDim: "#7A808B",
+  textSoft: "#8E8E93",
+  card: "#1E1E1E",
+  brand: "#A3182E",
+  brandDark: "#7A1122",
+  brandTint: "#2A0810",
+  brandGlow: "#C42239",
+  onBrand: "#FFFFFF",
+  green: "#10B981",
+  amber: "#F59E0B",
+  red: "#EF4444",
+  info: "#6B7280",
+  navy: "#0A1220",
+  navySoft: "#101828",
+} as const;
+
+export const LIGHT_PALETTE = {
+  // Iter169 · Bright surfaces. Cards use a subtle purple-tinted off-white
+  // so they float above the pure-white background without needing a
+  // heavy border.
+  surface: "#F4F4F9",
+  surface2: "#F4F4F9",
+  surface3: "#ECECF3",
+  border: "#D4D4DC",
+  borderStrong: "#B8B8C4",
+  divider: "#E5E5EC",
+  text: "#0E0E12",
+  textHi: "#000000",
+  bg: "#FFFFFF",
+  bgGradientTop: "#FFFFFF",
+  bgGradientBottom: "#F4F4F9",
+  // Iter169 · Stronger contrast on light so muted secondary text is
+  // actually legible against the white surface.
+  textMuted: "#4B5563",
+  textDim: "#6B7280",
+  textSoft: "#7A808B",
+  card: "#F4F4F9",
+  brand: "#A3182E",
+  brandDark: "#7A1122",
+  brandTint: "#FBE3E7",
+  brandGlow: "#C42239",
+  onBrand: "#FFFFFF",
+  green: "#059669",
+  amber: "#D97706",
+  red: "#DC2626",
+  info: "#4B5563",
+  navy: "#0A1220",
+  navySoft: "#1F2937",
+} as const;
+
 export const theme = {
-  color: {
-    // Surfaces — dark charcoal gray for the refreshed dashboard (Iter 151).
-    // Previously #000000 (pure black) — softened to #121212 for better
-    // readability and less harsh contrast.
-    surface: "#121212",
-    surface2: "#0E0E12",
-    surface3: "#1A1A20",
-    // Iter 162 · Premium V2 — neutral dark gray for card borders.
-    // Reserves red exclusively for primary CTAs and critical alerts;
-    // ambient outlines/dividers switch to this subtle mid-gray.
-    border: "#2C2C2E",
-    borderStrong: "#3A3A3E",
-    divider: "#1E1E22",
-    text: "#F3F4F6",
-    /** Alias — high-contrast text (used by V2 components). Same as `text`. */
-    textHi: "#F3F4F6",
-    /** Alias — page background (used by V2 components). Charcoal gray. */
-    bg: "#121212",
-    /** Iter 162 · Gradient stops for the app root — pure black at the top of
-     *  the viewport fading into the charcoal card surface at the bottom.
-     *  Applied via <LinearGradient/> in each screen root. */
-    bgGradientTop: "#000000",
-    bgGradientBottom: "#121212",
-    textMuted: "#9CA3AF",
-    textDim: "#6B7280",
-    /** Iter 162 · Secondary/tertiary text tone — softer gray used for meta
-     *  lines, timestamps, and dim captions per the Premium V2 spec. */
-    textSoft: "#8E8E93",
-    /** Alias — elevated card background (used by V2 + manual builder). */
-    card: "#0E0E12",
-    // Brand — CrewFit crimson wings on black
-    brand: "#A3182E",
-    brandDark: "#7A1122",
-    brandTint: "#2A0810",
-    brandGlow: "#C42239",
-    onBrand: "#FFFFFF",
-    green: "#10B981",
-    amber: "#F59E0B",
-    red: "#EF4444",
-    info: "#6B7280",
-    // Deep aviation navy for premium cards
-    navy: "#0A1220",
-    navySoft: "#101828",
-  },
+  // Iter169 · `color` starts as DARK. Setter below mutates in place.
+  color: { ...DARK_PALETTE } as Record<string, string>,
+  // Track current mode so useThemeMode() can read it at boot.
+  mode: "dark" as ThemeMode,
   space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48,
            /** Iter 162 · Section gap between major dashboard blocks. */
            section: 20 },
@@ -69,9 +106,11 @@ export const theme = {
     display: 32,
   },
   font: {
-    /** Display / headline — Creo (licensed). Falls back to system if font not yet loaded. */
-    display: "Creo-ExtraBold",
-    displayLight: "Creo-ExtraLight",
+    /** Display / headline — Creo (licensed). Key uses a SPACE (not hyphen)
+     *  to match the expo-font config plugin registration in app.json so
+     *  production builds resolve the family reliably. */
+    display: "Creo ExtraBold",
+    displayLight: "Creo ExtraLight",
     /** Body — Source Sans 3 */
     text: "SourceSans3-Regular",
     textSemi: "SourceSans3-SemiBold",
@@ -92,7 +131,46 @@ export const theme = {
     strong: "700" as const,
     body:   "600" as const,
   },
-} as const;
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Iter169 · Runtime theme switching                                          */
+/* -------------------------------------------------------------------------- */
+
+// Listeners subscribed via `subscribeThemeMode`. Called after every mutation.
+const _themeListeners: Array<(mode: ThemeMode) => void> = [];
+
+/** Read the current theme mode. */
+export function getThemeMode(): ThemeMode {
+  return (theme as any).mode as ThemeMode;
+}
+
+/** Change the theme mode. Mutates `theme.color` in place AND notifies
+ *  listeners so any React component using `useThemeMode()` re-renders.
+ *  Note: existing StyleSheet.create() calls that captured colours at
+ *  first-render time will keep their old values until the JS bundle
+ *  reloads. Restart the app to fully repaint. */
+export function setThemeMode(mode: ThemeMode): void {
+  const palette = mode === "light" ? LIGHT_PALETTE : DARK_PALETTE;
+  // In-place mutation so any reference to `theme.color.xxx` in a running
+  // component gets the new value on next render.
+  for (const k of Object.keys(palette)) {
+    (theme.color as any)[k] = (palette as any)[k];
+  }
+  (theme as any).mode = mode;
+  for (const fn of _themeListeners) {
+    try { fn(mode); } catch { /* ignore */ }
+  }
+}
+
+/** Subscribe to theme changes. Returns an unsubscribe function. */
+export function subscribeThemeMode(fn: (mode: ThemeMode) => void): () => void {
+  _themeListeners.push(fn);
+  return () => {
+    const i = _themeListeners.indexOf(fn);
+    if (i >= 0) _themeListeners.splice(i, 1);
+  };
+}
 
 export const loadColor = (l?: string) => {
   switch (l) {

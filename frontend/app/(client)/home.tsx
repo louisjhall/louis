@@ -11,6 +11,7 @@ import { theme, loadColor } from "@/src/lib/theme";
 import { CrewFitWings } from "@/src/components/Logo";
 import { ClientProfileHeader } from "@/src/components/ClientProfileHeader";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
+import { BrandLogo } from "@/src/components/BrandLogo";
 import { RealityModal } from "@/src/components/RealityModal";
 // Iter168 · WeeklyCheckinCard, WeeklyReviewCard, DualSessionCard and
 // HabitTodayCard now render inside <DailyRitualsCard/>. Kept the imports
@@ -407,22 +408,33 @@ export default function Home() {
                   flex-1 spacer, so the 120×38 logo sits at the exact
                   midpoint of the header regardless of bell size. */}
               <View style={styles.topBar}>
-                <Image
-                  source={require("@/assets/images/crewfit-logo-full.png")}
-                  style={styles.topLogoCentered}
-                  contentFit="contain"
-                  accessibilityLabel="CrewFit"
-                />
+                <BrandLogo style={styles.topLogoCentered} />
                 <View style={styles.topBarRight}>
                   <NotificationBell testID="client-notif-bell" />
                 </View>
               </View>
 
+              {/* Iter169 · If today is a REST DAY, we already render the
+                  dedicated Rest Day card down in the action zone (line
+                  ~757). Repeating "REST DAY" as the header dayTitle would
+                  duplicate the message. Suppress the header title on rest
+                  days so only the main action card carries the label. */}
               <ClientProfileHeader
                 user={user as any}
                 todayLoad={todaysWorkout?.day_load || todaysDay?.load || "grey"}
                 dayType={todaysDay?.day_type || todaysDay?.type || null}
-                dayTitle={todaysWorkout ? todaysWorkout.title : "REST & RECOVER"}
+                dayTitle={
+                  (() => {
+                    const t = String(todaysWorkout?.title || "").toLowerCase();
+                    const wt = String(todaysWorkout?.workout_type || "").toLowerCase();
+                    const isRestDayHere =
+                      wt === "rest" || wt === "recovery" || wt === "off" ||
+                      wt === "day_off" || t.startsWith("rest") ||
+                      t.startsWith("off") || t.includes("full rest");
+                    if (isRestDayHere) return "";      // main card owns the label
+                    return todaysWorkout ? todaysWorkout.title : "";
+                  })()
+                }
                 isStandby={!!standbyToday?.is_standby}
                 centered
               />

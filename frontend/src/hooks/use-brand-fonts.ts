@@ -9,8 +9,10 @@ export const BRAND_FONTS = {
   "SourceSans3-SemiBold": require("../../assets/fonts/SourceSans3-SemiBold.ttf"),
   "SourceSans3-Bold":     require("../../assets/fonts/SourceSans3-Bold.ttf"),
   // Display / Headline — Creo (licensed)
-  "Creo-ExtraBold":  require("../../assets/fonts/CreoExtraBold.ttf"),
-  "Creo-ExtraLight": require("../../assets/fonts/CreoExtraLight.ttf"),
+  // Iter169 · Font keys use SPACES (no hyphens) so they match the
+  // production expo-font config plugin registration in app.json.
+  "Creo ExtraBold":  require("../../assets/fonts/CreoExtraBold.ttf"),
+  "Creo ExtraLight": require("../../assets/fonts/CreoExtraLight.ttf"),
 } as const;
 
 /** Reads as `[loaded, error]`. Non-blocking — App can still render if this fails. */

@@ -2,7 +2,7 @@
   "expo": {
     "name": "CrewFit",
     "slug": "crewfit",
-    "version": "1.0.3",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "crewfit",
@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "net.crewfit.app",
-      "buildNumber": "402",
+      "buildNumber": "403",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -50,7 +50,7 @@
       }
     },
     "android": {
-      "versionCode": 402,
+      "versionCode": 403,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
@@ -83,10 +83,23 @@
           "backgroundColor": "#000000"
         }
       ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/CreoExtraBold.ttf",
+            "./assets/fonts/CreoExtraLight.ttf",
+            "./assets/fonts/SourceSans3-Regular.ttf",
+            "./assets/fonts/SourceSans3-SemiBold.ttf",
+            "./assets/fonts/SourceSans3-Bold.ttf"
+          ]
+        }
+      ],
       "@react-native-community/datetimepicker",
       "expo-audio",
       "expo-video"
     ],
+    "assetBundlePatterns": ["**/*"],
     "experiments": {
       "typedRoutes": true
     }

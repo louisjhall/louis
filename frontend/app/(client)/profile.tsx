@@ -14,6 +14,7 @@ import { theme } from "@/src/lib/theme";
 import { confirm as uxConfirm } from "@/src/lib/ux";
 import { DateField } from "@/src/components/DateField";
 import { WorkoutSettingsPanel } from "@/src/components/WorkoutSettingsPanel";
+import { PreferencesTogglesCard } from "@/src/components/PreferencesTogglesCard";
 import { NotificationPreferencesCard } from "@/src/components/NotificationPreferencesCard";
 import { ProfilePhotoRow } from "@/src/components/ProfilePhotoRow";
 import { PersonalImageryCard } from "@/src/components/PersonalImageryCard";
@@ -576,6 +577,7 @@ export default function ProfileScreen() {
           </Section>
 
           {/* Legacy panels — habits, notifications, workout settings */}
+          <PreferencesTogglesCard />
           <HabitsProfileSection />
           <NotificationPreferencesCard />
           <WorkoutSettingsPanel />

@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { LogBox, Platform, StatusBar, Text as RNText, TextInput as RNTextInput } from "react-native";
@@ -9,6 +9,7 @@ import * as Linking from "expo-linking";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
+import { bootstrapThemeMode } from "@/src/hooks/use-theme-mode";
 import { useOtaUpdates } from "@/src/hooks/use-ota-updates";
 import { AuthProvider, useAuth } from "@/src/lib/auth";
 import { ToastHost } from "@/src/lib/ux";
@@ -76,6 +77,14 @@ export default function RootLayout() {
   const [brandLoaded, brandError] = useBrandFonts();
   const router = useRouter();
 
+  // Iter169 · Read persisted theme mode from AsyncStorage BEFORE the first
+  // paint so StyleSheet.create() calls in child components pick up the
+  // correct palette. Runs once at boot.
+  const [themeBooted, setThemeBooted] = useState(false);
+  useEffect(() => {
+    bootstrapThemeMode().finally(() => setThemeBooted(true));
+  }, []);
+
   // Iter 95a — silent OTA check (no-ops in web / Expo Go / dev).
   useOtaUpdates();
 
@@ -85,7 +94,9 @@ export default function RootLayout() {
   // visible on the CrewFit intro headline and the tab bar labels.
   const fontsReady    = loaded && brandLoaded;
   const fontsErrored  = !!(error || brandError);
-  const canRender     = fontsReady || fontsErrored;
+  // Iter169 · Also require the theme palette to be resolved before we
+  // dismiss the splash screen — first paint must use the correct colours.
+  const canRender     = (fontsReady || fontsErrored) && themeBooted;
 
   useEffect(() => {
     if (canRender) SplashScreen.hideAsync();

@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { FlightSupportProtocolModal } from "@/src/components/FlightSupportProtocolModal";
+import { getHideFlightSupport } from "@/src/components/PreferencesTogglesCard";
 
 type Intervention = {
   id: string;
@@ -48,6 +49,16 @@ export function TodayFlightSupport({
   const [skipBusy, setSkipBusy] = useState<string | null>(null);
   const openedForDeepLink = React.useRef<string | undefined>(undefined);
 
+  // Iter169 · Respect the client's "Hide Flight Support" preference (set in
+  // Profile ▸ Preferences). When ON we render nothing. NB: mounted before
+  // any early returns so the hook order stays stable across re-renders.
+  const [prefHidden, setPrefHidden] = useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    getHideFlightSupport().then((v) => { if (!cancelled) setPrefHidden(v); });
+    return () => { cancelled = true; };
+  }, []);
+
   const enabled = snapshot ? snapshot.auto_flight_support_enabled !== false : false;
   const items: Intervention[] = (snapshot && snapshot.flight_support) || [];
   const role: string = (snapshot && snapshot.role) || "role_unknown";
@@ -74,6 +85,9 @@ export function TodayFlightSupport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deepLinkKind, items.length]);
 
+  // Iter169 · Hide-preference short-circuit lives AFTER all hooks so React's
+  // exhaustive rule stays happy.
+  if (prefHidden) return null;
   if (!snapshot) return null;
 
   if (role === "role_unknown") {

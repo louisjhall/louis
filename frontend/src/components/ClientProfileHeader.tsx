@@ -142,9 +142,9 @@ export function ClientProfileHeader({
           </View>
         ) : null}
         {dt ? (
-          <Text style={styles.dayType} numberOfLines={1} ellipsizeMode="tail">{dt}</Text>
+          <Text style={[styles.dayType, centered && styles.dayTypeCentered]} numberOfLines={1} ellipsizeMode="tail">{dt}</Text>
         ) : (
-          <Text style={styles.dayline} numberOfLines={1} ellipsizeMode="tail">{fmtDayline()}</Text>
+          <Text style={[styles.dayline, centered && styles.dayTypeCentered]} numberOfLines={1} ellipsizeMode="tail">{fmtDayline()}</Text>
         )}
       </View>
 
@@ -209,8 +209,16 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(245,158,11,0.14)",
   },
   standbyT: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
-  dayType: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.3, fontWeight: "800", fontFamily: theme.font.textSemi, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
-  dayline: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0 },
+  dayType: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.3, fontWeight: "800", fontFamily: theme.font.textSemi, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0, textAlign: "center" },
+  dayline: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0, textAlign: "center" },
+  // Iter169 · Explicit centered variant for the Layover Arrival / Day Type
+  // strip. Overrides marginLeft so the text sits truly centred rather than
+  // hugging the left edge of its flex-1 slot when no standby pill precedes it.
+  dayTypeCentered: {
+    marginLeft: 0,
+    textAlign: "center",
+    alignSelf: "center",
+  },
 
   dayTitle: {
     color: theme.color.text, fontSize: 18, letterSpacing: 0.8,

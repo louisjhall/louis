@@ -158,9 +158,14 @@ async def _aggregate_summary(client_id: str) -> dict:
     }
 
     # ---------------------------------------------------------------- checkins
-    checkins = await db.checkins.find(
+    # Iter170 · Unified weekly check-ins live in `db.check_ins` (with
+    # underscore) sorted by `submitted_at`. The legacy `db.checkins`
+    # collection holds DAILY tracking rows and no longer feeds this
+    # summary. This aligns the coach Summary tab with the weekly cadence
+    # everywhere else in the app.
+    checkins = await db.check_ins.find(
         {"user_id": client_id}, {"_id": 0}
-    ).sort("created_at", -1).to_list(5)
+    ).sort("submitted_at", -1).to_list(5)
 
     # ---------------------------------------------------- progression snapshot
     prog_pill = None
@@ -346,8 +351,24 @@ async def coach_client_summary_briefing(
         "adherence_28d": summary["adherence"],
         "progression_pill": summary["client"].get("progression_pill"),
         "recent_checkins": [
-            {k: c.get(k) for k in ("created_at", "rpe", "sleep", "energy", "mood",
-                                    "nutrition", "notes", "adherence")}
+            # Iter170 · Weekly check-ins use `submitted_at` + `_score`
+            # suffixed keys, plus a nested `answers` sub-object. Prefer
+            # the weekly schema and fall back to legacy daily keys so
+            # historic rows still contribute if any linger.
+            {
+                "submitted_at": c.get("submitted_at") or c.get("created_at"),
+                "energy":    c.get("energy_score")   or (c.get("answers") or {}).get("energy"),
+                "sleep":     c.get("sleep_score")    or (c.get("answers") or {}).get("sleep"),
+                "stress":    c.get("stress_score")   or (c.get("answers") or {}).get("stress"),
+                "recovery":  c.get("recovery_score") or (c.get("answers") or {}).get("recovery"),
+                "nutrition": (c.get("answers") or {}).get("nutrition") or c.get("nutrition"),
+                "notes":     (c.get("answers") or {}).get("for_louis")
+                             or (c.get("answers") or {}).get("biggest_challenge")
+                             or c.get("notes"),
+                "next_week_focus": c.get("next_week_focus"),
+                "adherence": c.get("training_adherence") or c.get("adherence"),
+                "injury_flag": c.get("injury_flag"),
+            }
             for c in (summary.get("checkins") or [])[:3]
         ],
         "recent_directives": [

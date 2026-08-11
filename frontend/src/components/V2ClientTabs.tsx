@@ -20,10 +20,107 @@ import React, { useCallback, useEffect, useState } from "react";
 import {
   View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, TextInput,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { confirm, toast } from "@/src/lib/ux";
+
+/* -------------------------------------------------------- CHECKINS HELPERS */
+
+// Iter170 · Score keys treated as numeric scale values (drawn as Metric).
+// Anything NOT in this list is rendered as a text/choice "Note" in the card.
+const SCALE_KEYS = new Set([
+  "energy", "sleep", "stress", "recovery",
+  // legacy daily-checkin field names
+  "sleep_hours", "soreness", "mood",
+]);
+
+// Iter170 · Human labels for known text/choice answers. Falls back to
+// key.replace(/_/g, " ") when a label is not in this map.
+const ANSWER_LABELS: Record<string, string> = {
+  overall: "Overall week",
+  pain: "Pain / injury",
+  pain_where: "Pain — where",
+  pain_worse: "Pain — worse with",
+  nutrition: "Nutrition consistency",
+  biggest_win: "Biggest win",
+  biggest_challenge: "Biggest challenge",
+  for_louis: "For Louis",
+  run_long_done: "Long run",
+  run_mileage_feel: "Weekly mileage feel",
+  run_pacing: "Pacing",
+  legs_ready: "Legs ready for next key session",
+  run_niggles: "Running niggles",
+  shoe_check: "Running shoes",
+  weight_trend: "Weight trend",
+  hunger: "Hunger",
+  protein: "Protein consistency",
+  food_env: "Food environments",
+  adjust_cals: "Calorie adjustment",
+  strength_trend: "Strength trend",
+  prs_hit: "PRs / top sets",
+  exercise_difficulty: "Exercise difficulty",
+  appetite: "Appetite",
+  protein_hit: "Protein target",
+  swim_consistency: "Swim consistency",
+  bike_consistency: "Bike consistency",
+  run_consistency: "Run consistency",
+  biggest_limiter: "Biggest limiter",
+  activity_days: "Active days",
+  movement_notes: "Movement notes",
+  flying_impact: "Flying impact",
+  jetlag: "Jet-lag",
+  post_duty_sleep: "Post-duty sleep",
+  layover_gym: "Layover / hotel gym",
+};
+
+// Iter170 · Derive the display scale max dynamically from the score values.
+// The weekly schema uses 1–5 but historical rows or free-text scales may go
+// to 10, which caused the "7/5" bug. If ANY score exceeds 5, treat the row
+// as a 10-point scale.
+function deriveScaleMax(...values: any[]): number {
+  let maxSeen = 0;
+  for (const v of values) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (Number.isFinite(n) && n > maxSeen) maxSeen = n;
+  }
+  return maxSeen > 5 ? 10 : 5;
+}
+
+// Iter170 · Grab a scale value with graceful fallbacks:
+// weekly-schema top-level → nested `answers.<key>` → legacy daily field.
+function pickScore(c: any, ...keys: string[]): number | undefined {
+  for (const k of keys) {
+    const top = c?.[k];
+    if (top != null && top !== "") return Number(top);
+    const nested = c?.answers?.[k];
+    if (nested != null && nested !== "") return Number(nested);
+  }
+  return undefined;
+}
+
+// Iter170 · Return a de-duplicated list of {key, label, value} entries for
+// every text/choice answer in the check-in — INCLUDING the free-text
+// `notes` field and the AI-generated `next_week_focus` blurb.
+function collectNotes(c: any): { key: string; label: string; value: string }[] {
+  const out: { key: string; label: string; value: string }[] = [];
+  const answers = c?.answers && typeof c.answers === "object" ? c.answers : {};
+  for (const [k, v] of Object.entries(answers)) {
+    if (SCALE_KEYS.has(k)) continue;                                // numeric — shown as Metric
+    if (v == null) continue;
+    const s = String(v).trim();
+    if (!s) continue;
+    out.push({ key: k, label: ANSWER_LABELS[k] || k.replace(/_/g, " "), value: s });
+  }
+  if (c?.notes && String(c.notes).trim()) {
+    out.push({ key: "notes", label: "Notes", value: String(c.notes).trim() });
+  }
+  if (c?.next_week_focus && String(c.next_week_focus).trim()) {
+    out.push({ key: "next_week_focus", label: "Next-week focus", value: String(c.next_week_focus).trim() });
+  }
+  return out;
+}
 
 export type V2Tab = "plan" | "checkins" | "messages" | "progress" | "history" | "summary" | "goals" | "habits";
 
@@ -40,6 +137,7 @@ export function V2ClientTabs({ clientId, tab }: { clientId: string; tab: V2Tab }
 /* -------------------------------------------------------------- CHECK-INS */
 
 function CheckinsPanel({ clientId }: { clientId: string }) {
+  const router = useRouter();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -67,35 +165,66 @@ function CheckinsPanel({ clientId }: { clientId: string }) {
   return (
     <ScrollView contentContainerStyle={styles.body} testID="v2-checkins-panel">
       <Text style={styles.sectionTitle}>WEEKLY CHECK-INS · {rows.length}</Text>
-      {rows.map((c, i) => (
-        <View key={c.id || i} style={styles.card}>
-          <View style={styles.cardHead}>
-            {/* Iter169 · Prefer submitted_at (weekly schema) but fall back to
-                created_at so any legacy daily rows still render. */}
-            <Text style={styles.cardHeadText}>{fmtDateTime(c.submitted_at || c.created_at)}</Text>
-            {c.coach_review_required && !c.reviewed_at && (
-              <View style={styles.badge}><Text style={styles.badgeText}>REVIEW</Text></View>
-            )}
-          </View>
-          <View style={styles.metricRow}>
-            {/* Iter169 · Read the weekly-schema field names first
-                (energy_score / sleep_score / stress_score / recovery_score)
-                and gracefully fall back to legacy daily field names so old
-                data still renders. Weekly scale is 1-5. */}
-            <Metric label="Energy"   n={c.energy_score   ?? c.energy}   max={5} />
-            <Metric label="Sleep"    n={c.sleep_score    ?? c.sleep_hours ?? c.sleep} max={5} />
-            <Metric label="Stress"   n={c.stress_score   ?? c.stress}   max={5} />
-            <Metric label="Recovery" n={c.recovery_score ?? c.recovery} max={5} />
-          </View>
-          {c.notes && <Text style={styles.notes} numberOfLines={3}>{c.notes}</Text>}
-          {c.injury_flag && c.injury_flag !== "none" && (
-            <View style={styles.injuryBadge}>
-              <Ionicons name="warning" size={12} color="#ff6b6b" />
-              <Text style={styles.injuryText}>Injury: {c.injury_flag}</Text>
+      {rows.map((c, i) => {
+        // Iter170 · Pull scores with layered fallbacks (top-level weekly
+        // fields → nested answers → legacy daily fields) and derive the
+        // scale max dynamically so old 1–10 data doesn't render as "7/5".
+        const energy   = pickScore(c, "energy_score",   "energy");
+        const sleep    = pickScore(c, "sleep_score",    "sleep", "sleep_hours");
+        const stress   = pickScore(c, "stress_score",   "stress");
+        const recovery = pickScore(c, "recovery_score", "recovery", "soreness");
+        const maxScale = deriveScaleMax(energy, sleep, stress, recovery);
+        const notes    = collectNotes(c);
+        const hasReview = !!c.reviewed_at;
+        return (
+          <Pressable
+            key={c.id || i}
+            onPress={() => c.id && router.push(`/coach/checkin/${c.id}` as any)}
+            style={({ pressed }) => [styles.card, pressed && { opacity: 0.7 }]}
+            testID={`checkin-card-${i}`}
+          >
+            <View style={styles.cardHead}>
+              {/* Iter169 · Prefer submitted_at (weekly schema) but fall back to
+                  created_at so any legacy daily rows still render. */}
+              <Text style={styles.cardHeadText}>{fmtDateTime(c.submitted_at || c.created_at)}</Text>
+              <View style={{ flex: 1 }} />
+              {c.coach_review_required && !hasReview && (
+                <View style={styles.badge}><Text style={styles.badgeText}>REVIEW</Text></View>
+              )}
+              <Ionicons name="chevron-forward" size={16} color={theme.color.textDim} style={{ marginLeft: 6 }} />
             </View>
-          )}
-        </View>
-      ))}
+            <View style={styles.metricRow}>
+              {/* Iter170 · Scores with fallbacks + dynamic scale max. */}
+              <Metric label="Energy"   n={energy}   max={maxScale} />
+              <Metric label="Sleep"    n={sleep}    max={maxScale} />
+              <Metric label="Stress"   n={stress}   max={maxScale} />
+              <Metric label="Recovery" n={recovery} max={maxScale} />
+            </View>
+            {/* Iter170 · Show every text/choice answer from `answers`, plus
+                any `notes` field and the AI `next_week_focus`. */}
+            {notes.length > 0 && (
+              <View style={styles.notesBlock}>
+                {notes.map((n) => (
+                  <View key={n.key} style={styles.noteRow}>
+                    <Text style={styles.noteLabel}>{n.label.toUpperCase()}</Text>
+                    <Text style={styles.noteValue}>{n.value}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {c.injury_flag && c.injury_flag !== "none" && (
+              <View style={styles.injuryBadge}>
+                <Ionicons name="warning" size={12} color="#ff6b6b" />
+                <Text style={styles.injuryText}>Injury: {c.injury_flag}</Text>
+              </View>
+            )}
+            <View style={styles.openReviewHint}>
+              <Ionicons name="sparkles" size={11} color={theme.color.brand} />
+              <Text style={styles.openReviewHintT}>TAP TO REVIEW · GENERATE SCRIPT · RECORD VIDEO</Text>
+            </View>
+          </Pressable>
+        );
+      })}
     </ScrollView>
   );
 }
@@ -1123,6 +1252,24 @@ const styles = StyleSheet.create({
   metricMax: { color: theme.color.textDim, fontSize: 12, fontWeight: "600" },
   metricLabel: { color: theme.color.textDim, fontSize: 11, letterSpacing: 0.5, fontWeight: "700" },
   notes: { color: theme.color.textHi, fontSize: 12, marginTop: 6, lineHeight: 18 },
+  // Iter170 · Stacked "notes" block — one row per text/choice answer.
+  notesBlock: {
+    marginTop: 10, paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.color.border,
+    gap: 6,
+  },
+  noteRow: { gap: 2 },
+  noteLabel: {
+    color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1,
+  },
+  noteValue: { color: theme.color.textHi, fontSize: 13, lineHeight: 18 },
+  openReviewHint: {
+    flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10,
+    paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.color.border,
+  },
+  openReviewHintT: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
+  },
   injuryBadge: {
     flexDirection: "row", alignItems: "center", gap: 5, marginTop: 8,
     paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,

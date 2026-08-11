@@ -27,11 +27,17 @@ Endpoints (all `coach` role required)
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from typing import Any, Optional
 
 from fastapi import Depends
 
 from server import api, db, require_role, now_iso
+
+# Iter 165d · Named logger so runtime errors in per-client task derivation
+# surface with a searchable prefix instead of being silently swallowed by
+# the outer try/except at line ~512.
+logger = logging.getLogger("crewfit.coach_home")
 
 # `_extract_exceptions` and `_ACTIVE_DRAFT_FILTER` live in the publish
 # module. Importing here keeps a single source of truth for exception
@@ -297,62 +303,132 @@ async def _client_tasks(client: dict) -> list[dict]:
     #    We emit at most ONE card per client — reality_events wins, then
     #    coach_tasks, then check_ins — with the most-recent timestamp for
     #    the "Submitted {ago}" meta line.
+    #
+    #    Iter 165d · Hardened against legacy documents that lack a string
+    #    `id` field (some old check_ins and reality_events were inserted
+    #    with only `_id`). We now:
+    #      * fetch the `_id` alongside `id` so a stringified ObjectId can
+    #        be used as a stable fallback,
+    #      * use `.get(...)` everywhere,
+    #      * skip the row (and log) instead of crashing when no usable
+    #        identifier exists,
+    #      * wrap each individual source query in try/except so a mongo
+    #        hiccup on one collection can't drop the card entirely.
     # -----------------------------------------------------------
+    def _stable_id(doc: dict) -> Optional[str]:
+        """Return the first non-empty identifier a doc has, or None."""
+        if not doc:
+            return None
+        for k in ("id", "task_id", "check_in_id", "event_id"):
+            v = doc.get(k)
+            if v:
+                return str(v)
+        oid = doc.get("_id")
+        if oid is not None:
+            try:
+                return str(oid)
+            except Exception:
+                return None
+        return None
+
+    def _stable_created_at(doc: dict) -> Optional[str]:
+        """Return the first timestamp field the doc has, coerced to str."""
+        if not doc:
+            return None
+        for k in ("created_at", "submitted_at", "updated_at", "sent_at", "date"):
+            v = doc.get(k)
+            if v is None:
+                continue
+            # Some legacy docs store datetime objects instead of ISO strings.
+            try:
+                return v if isinstance(v, str) else v.isoformat()
+            except Exception:
+                return str(v)
+        return None
+
     checkin_source: Optional[dict] = None
-    ci = await db.reality_events.find_one(
-        {"user_id": cid, "status": "ask_coach"},
-        {"_id": 0, "id": 1, "date": 1, "reality_label": 1, "created_at": 1},
-        sort=[("created_at", -1)],
-    )
-    if ci:
+    try:
+        ci = await db.reality_events.find_one(
+            {"user_id": cid, "status": "ask_coach"},
+            # Include `_id` in the projection so we can fall back to the
+            # ObjectId when a legacy doc has no string `id` field.
+            {"id": 1, "date": 1, "reality_label": 1, "created_at": 1, "_id": 1},
+            sort=[("created_at", -1)],
+        )
+    except Exception:
+        logger.exception("action_queue: reality_events lookup failed for client %s", cid)
+        ci = None
+    if ci and _stable_id(ci):
         checkin_source = {
             "kind": "reality_event",
-            "id": ci["id"],
-            "created_at": ci.get("created_at"),
+            "id": _stable_id(ci),
+            "created_at": _stable_created_at(ci),
             "label": ci.get("reality_label") or "Awaiting your response.",
         }
     else:
-        ct = await db.coach_tasks.find_one(
-            {"user_id": cid, "task_type": "check_in_review", "status": "todo"},
-            {"_id": 0, "id": 1, "title": 1, "description": 1, "created_at": 1, "check_in_id": 1},
-            sort=[("created_at", -1)],
-        )
-        if ct:
+        try:
+            ct = await db.coach_tasks.find_one(
+                {"user_id": cid, "task_type": "check_in_review", "status": "todo"},
+                {"id": 1, "title": 1, "description": 1, "created_at": 1,
+                 "check_in_id": 1, "_id": 1},
+                sort=[("created_at", -1)],
+            )
+        except Exception:
+            logger.exception("action_queue: coach_tasks lookup failed for client %s", cid)
+            ct = None
+        if ct and _stable_id(ct):
             checkin_source = {
                 "kind": "coach_task",
-                "id": ct["id"],
-                "created_at": ct.get("created_at"),
-                "label": ct.get("description") or ct.get("title") or "Check-in ready to review.",
+                "id": _stable_id(ct),
+                "created_at": _stable_created_at(ct),
+                "label": (ct.get("description") or ct.get("title")
+                          or "Check-in ready to review."),
             }
         else:
-            raw = await db.check_ins.find_one(
-                {"user_id": cid, "coach_review_status": "pending"},
-                {"_id": 0, "id": 1, "week_start": 1, "submitted_at": 1, "created_at": 1},
-                sort=[("submitted_at", -1)],
-            )
-            if raw:
+            try:
+                raw = await db.check_ins.find_one(
+                    {"user_id": cid, "coach_review_status": "pending"},
+                    {"id": 1, "week_start": 1, "submitted_at": 1,
+                     "created_at": 1, "_id": 1},
+                    sort=[("submitted_at", -1)],
+                )
+            except Exception:
+                logger.exception("action_queue: check_ins lookup failed for client %s", cid)
+                raw = None
+            if raw and _stable_id(raw):
                 checkin_source = {
                     "kind": "check_in",
-                    "id": raw["id"],
-                    "created_at": raw.get("submitted_at") or raw.get("created_at"),
-                    "label": (f"Week of {raw.get('week_start')}" if raw.get("week_start")
+                    "id": _stable_id(raw),
+                    "created_at": _stable_created_at(raw),
+                    "label": (f"Week of {raw.get('week_start')}"
+                              if raw.get("week_start")
                               else "Weekly check-in submitted."),
                 }
+            elif raw or ct or ci:
+                # Row exists but no usable identifier — log & skip so we
+                # can spot the offending doc during triage instead of
+                # rendering a broken card.
+                logger.warning(
+                    "action_queue: check-in row for client=%s has no usable id "
+                    "(ci=%s ct=%s raw=%s)",
+                    cid,
+                    bool(ci), bool(ct), bool(raw),
+                )
     if checkin_source:
-        ago = _humanise_iso(checkin_source["created_at"]) or ""
+        ago = _humanise_iso(checkin_source.get("created_at")) or ""
         tasks.append({
-            "id": f"checkin_review:{cid}:{checkin_source['id']}",
+            "id": f"checkin_review:{cid}:{checkin_source.get('id') or 'unknown'}",
             "type": "checkin_review",
             "priority": "attention",
             "client_id": cid,
             "client_name": name,
             "client_subtitle": _client_subtitle(client, has_live),
             "title": "Check-in needs review",
-            "context": checkin_source["label"],
+            "context": checkin_source.get("label") or "Awaiting your response.",
             "meta": f"Submitted {ago}" if ago else None,
             "action_label": "Review check-in",
             "deep_link": f"/coach/client/{cid}/workspace",
-            "checkin_source_kind": checkin_source["kind"],
+            "checkin_source_kind": checkin_source.get("kind"),
         })
 
     # -----------------------------------------------------------
@@ -510,7 +586,14 @@ async def endpoint_coach_home_action_queue(
         try:
             items = await _client_tasks(c)
         except Exception:
-            # A single client's failure must never poison the whole queue.
+            # A single client's failure must never poison the whole queue,
+            # but we must not swallow the error silently — Iter 165d added
+            # explicit logging so future regressions (KeyError on missing
+            # `id`, malformed docs, etc.) show up in supervisor logs.
+            logger.exception(
+                "action_queue: _client_tasks failed for client %s — card dropped",
+                (c or {}).get("id") or (c or {}).get("email"),
+            )
             items = []
         all_tasks.extend(items)
 

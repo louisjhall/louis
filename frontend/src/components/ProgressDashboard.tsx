@@ -644,9 +644,9 @@ function ChangeMetric({ label, delta, unit }: { label: string; delta?: number | 
 //   `card`     uses `surface2` → charcoal (Dark) or brand red (Light)
 //   `metric`   uses `surface3` → dark grey (Dark) or deep red (Light)
 // Any text inside those tokens MUST use `theme.color.onRed` (#FFFFFF).
-// `_onRedMuted` / `_onRedDim` are white-alpha for secondary/tertiary.
-const _onRedMuted = "rgba(255,255,255,0.82)";   // secondary on-red text
-const _onRedDim   = "rgba(255,255,255,0.68)";   // tertiary on-red text
+// Iter178 · Removed the semi-transparent `_onRedMuted` / `_onRedDim`
+// helper tokens per PRD — every word on a red card is now pure
+// opaque #FFFFFF (theme.color.onRed) for maximum contrast.
 
 function makeStyles(_mode: ThemeMode) {
   return StyleSheet.create({
@@ -669,23 +669,23 @@ function makeStyles(_mode: ThemeMode) {
   // Iter175 · "BUILD MUSCLE" goal title — MUST be pure white on red / charcoal.
   goalT: { color: theme.color.onRed, fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   // Iter175 · Phase subtitle sits on the same red card — semi-transparent white.
-  phaseT: { color: _onRedMuted, fontSize: 12, marginTop: 4 },
+  phaseT: { color: theme.color.onRed, fontSize: 12, marginTop: 4 },
 
   row3: { flexDirection: "row", gap: 8 },
   // Iter175 · `metric` uses `surface3` which is #7A1122 (deep red) in Light.
   // Text tokens below use `onRed` so stats stay legible on the dark-red tile.
   metric: { flex: 1, backgroundColor: theme.color.surface3, borderRadius: 8, padding: 10 },
-  metricLbl: { color: _onRedMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 4 },
+  metricLbl: { color: theme.color.onRed, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 4 },
   metricV: { color: theme.color.onRed, fontSize: 15, fontWeight: "900" },
 
   habitRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10 },
   habitT: { color: theme.color.onRed, fontSize: 12 },
-  smallNote: { color: _onRedDim, fontSize: 11, marginTop: 6, lineHeight: 15 },
+  smallNote: { color: theme.color.onRed, fontSize: 11, marginTop: 6, lineHeight: 15 },
 
   // Iter175 · `emptyBox` sits inside cards on the nested surface3 tile.
   emptyBox: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 8, backgroundColor: theme.color.surface3, marginTop: 4 },
   emptyT: { color: theme.color.onRed, fontSize: 12, flex: 1, lineHeight: 16 },
-  emptySub: { color: _onRedDim, fontSize: 11, marginTop: 8 },
+  emptySub: { color: theme.color.onRed, fontSize: 11, marginTop: 8 },
 
   chipBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: "rgba(255,255,255,0.4)" },
   // Iter175 · Chip label sits on the red card — force white.

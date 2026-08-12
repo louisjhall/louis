@@ -26,11 +26,11 @@ export const DARK_PALETTE = {
   bg: "#0B0B0D",
   bgGradientTop: "#000000",
   bgGradientBottom: "#0B0B0D",
-  // Iter169 · Slightly brighter muted tones for better readability on
-  // the darker background.
-  textMuted: "#A8ADB5",
-  textDim: "#7A808B",
-  textSoft: "#8E8E93",
+  // Iter178 · PURE RULE — no grey text. All muted tokens collapse to
+  // pure white in Dark Mode so nothing renders as low-contrast grey.
+  textMuted: "#FFFFFF",
+  textDim: "#FFFFFF",
+  textSoft: "#FFFFFF",
   card: "#1E1E1E",
   brand: "#A3182E",
   brandDark: "#7A1122",
@@ -39,11 +39,18 @@ export const DARK_PALETTE = {
   onBrand: "#FFFFFF",
   // Iter173 · Text/icon color for on-red surfaces (same in both modes).
   onRed: "#FFFFFF",
-  onBrandMuted: "#F5D5DA",
+  onBrandMuted: "#FFFFFF",
+  // Iter178 · Semantic "button inside a card" tokens.
+  //   Dark Mode  : PRIMARY buttons on the page use brand-red bg.
+  //   Both modes : buttons INSIDE a red card use black bg + white text.
+  cardBtnBg: "#000000",
+  cardBtnText: "#FFFFFF",
+  primaryBtnBg: "#A3182E",
+  primaryBtnText: "#FFFFFF",
   green: "#10B981",
   amber: "#F59E0B",
   red: "#EF4444",
-  info: "#6B7280",
+  info: "#FFFFFF",
   navy: "#0A1220",
   navySoft: "#101828",
 } as const;
@@ -68,27 +75,33 @@ export const LIGHT_PALETTE = {
   bg: "#FFFFFF",
   bgGradientTop: "#FFFFFF",
   bgGradientBottom: "#F4F4F9",
-  // Iter173 · Deeper mutes for reliable secondary-text legibility.
-  //   textMuted (labels, captions): 12.6:1 vs white — AAA
-  //   textDim   (metadata):          7.4:1  — AAA large / AA normal
-  //   textSoft  (tertiary hints):    5.7:1  — AA large / AA normal
-  textMuted: "#1F2937",
-  textDim: "#374151",
-  textSoft: "#4B5563",
+  // Iter178 · PURE RULE — no grey text in Light Mode either.
+  //   textMuted / Dim / Soft = #000000 when on the white page bg
+  //   Text INSIDE a red card is `theme.color.onRed` (#FFFFFF) — set
+  //   explicitly on each card-interior style, never inherited from
+  //   these muted tokens.
+  textMuted: "#000000",
+  textDim: "#000000",
+  textSoft: "#000000",
   card: "#A3182E",
   brand: "#A3182E",
   brandDark: "#7A1122",
   brandTint: "#FBE3E7",
   brandGlow: "#C42239",
-  // Iter174 · MANDATORY — Every card that sits on brand red must
-  // render its text with `theme.color.onBrand` / `theme.color.onRed`.
+  // Iter174 · Every card sits on brand red — text on red MUST use
+  // `theme.color.onBrand` / `theme.color.onRed`.
   onBrand: "#FFFFFF",
   onRed: "#FFFFFF",
-  onBrandMuted: "#F5D5DA",
+  onBrandMuted: "#FFFFFF",
+  // Iter178 · Semantic button tokens (see DARK_PALETTE comment).
+  cardBtnBg: "#000000",
+  cardBtnText: "#FFFFFF",
+  primaryBtnBg: "#A3182E",
+  primaryBtnText: "#FFFFFF",
   green: "#047857",
   amber: "#B45309",
   red: "#B91C1C",
-  info: "#374151",
+  info: "#000000",
   navy: "#0A1220",
   navySoft: "#1F2937",
 } as const;

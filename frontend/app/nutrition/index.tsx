@@ -346,10 +346,10 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
-  headerT: { color: theme.color.text, fontSize: 14, letterSpacing: 3, fontWeight: "900", fontFamily: theme.font.display },
+  headerT: { color: theme.color.onRed, fontSize: 14, letterSpacing: 3, fontWeight: "900", fontFamily: theme.font.display },
 
   headRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  dateT: { color: theme.color.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.5, fontFamily: theme.font.display },
+  dateT: { color: theme.color.onRed, fontSize: 18, fontWeight: "900", letterSpacing: 0.5, fontFamily: theme.font.display },
   goalT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.6, marginTop: 3, fontFamily: theme.font.textSemi },
   headBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   headBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
@@ -358,16 +358,16 @@ const styles = StyleSheet.create({
   metricCard: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 6 },
   metricRingBg: { height: 5, borderRadius: 3, backgroundColor: theme.color.surface3, overflow: "hidden", marginBottom: 8 },
   metricRingFill: { height: "100%" },
-  metricLabel: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
-  metricValue: { color: theme.color.text, fontSize: 22, fontWeight: "900", fontFamily: theme.font.display, letterSpacing: 0.3 },
-  metricUnit: { color: theme.color.textDim, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
+  metricLabel: { color: theme.color.onRed, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
+  metricValue: { color: theme.color.onRed, fontSize: 22, fontWeight: "900", fontFamily: theme.font.display, letterSpacing: 0.3 },
+  metricUnit: { color: theme.color.onRed, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   metricPct: { fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   smallRow: { flexDirection: "row", gap: 8 },
   smallCard: { flex: 1, padding: 10, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignItems: "center" },
-  smallLabel: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, fontFamily: theme.font.textSemi },
-  smallValue: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4, fontFamily: theme.font.display },
-  smallTarget: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
+  smallLabel: { color: theme.color.onRed, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, fontFamily: theme.font.textSemi },
+  smallValue: { color: theme.color.onRed, fontSize: 15, fontWeight: "800", marginTop: 4, fontFamily: theme.font.display },
+  smallTarget: { color: theme.color.onRed, fontSize: 11, marginTop: 2 },
 
   // Iter173 · Was hardcoded navy-blue (#0A1420 / #183045) which turned
   // invisible in Light Mode. Uses theme surface tokens so it repaints
@@ -375,7 +375,7 @@ const styles = StyleSheet.create({
   hydCard: { padding: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   hydCardHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   hydCardT: { color: "#3B82F6", fontSize: 11, fontWeight: "800", letterSpacing: 2, flex: 1, fontFamily: theme.font.textSemi },
-  hydCardV: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
+  hydCardV: { color: theme.color.onRed, fontSize: 12, fontWeight: "700" },
   hydBtnRow: { flexDirection: "row", gap: 6, marginTop: 10 },
   // Iter173 · Was hardcoded #183045 (dark navy) which made buttons
   // invisible in Light Mode. Now uses the brand red so quick-add
@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
   tipCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   tipHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   tipHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
-  tipT: { color: theme.color.text, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
+  tipT: { color: theme.color.onRed, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
 
   weeklyCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand, gap: 8 },
   weeklyHead: { flexDirection: "row", alignItems: "center", gap: 8 },
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
   weeklyHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", flex: 1, fontFamily: theme.font.textSemi },
   weeklyBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
   weeklyBadgeT: { color: "#fff", fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
-  weeklyT: { color: theme.color.text, fontSize: 13, lineHeight: 19, fontFamily: theme.font.text },
+  weeklyT: { color: theme.color.onRed, fontSize: 13, lineHeight: 19, fontFamily: theme.font.text },
   weeklyFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
   // Iter173 · Was hardcoded dark-amber (#1F1608) which was near-black
   // on Light Mode. Uses a semi-transparent amber wash so the badge
@@ -408,9 +408,9 @@ const styles = StyleSheet.create({
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   action: { flexBasis: "48%", flexGrow: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexDirection: "row", alignItems: "center", gap: 8 },
   actionPri: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  actionT: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1, fontFamily: theme.font.textSemi, flex: 1 },
+  actionT: { color: theme.color.onRed, fontSize: 12, fontWeight: "800", letterSpacing: 1, fontFamily: theme.font.textSemi, flex: 1 },
   soonPill: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, backgroundColor: theme.color.surface3 },
-  soonT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 0.8 },
+  soonT: { color: theme.color.onRed, fontSize: 11, fontWeight: "700", letterSpacing: 0.8 },
 
   // Iter168 · Show/hide extra logging destinations.
   moreToggle: {
@@ -425,13 +425,13 @@ const styles = StyleSheet.create({
 
   summaryCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 10 },
   summaryTop: { flexDirection: "row", gap: 8 },
-  summaryK: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.textSemi },
-  summaryV: { color: theme.color.text, fontSize: 14, fontWeight: "800", marginTop: 2, fontFamily: theme.font.display },
+  summaryK: { color: theme.color.onRed, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.textSemi },
+  summaryV: { color: theme.color.onRed, fontSize: 14, fontWeight: "800", marginTop: 2, fontFamily: theme.font.display },
   barsRow: { flexDirection: "row", justifyContent: "space-between", height: 60, alignItems: "flex-end" },
   barCol: { flex: 1, alignItems: "center", gap: 4 },
   barTrack: { width: 8, height: 40, borderRadius: 4, backgroundColor: theme.color.surface3, justifyContent: "flex-end", overflow: "hidden" },
   barFill: { width: "100%", backgroundColor: theme.color.brand, borderRadius: 4 },
-  barT: { color: theme.color.textDim, fontSize: 11, fontWeight: "700" },
+  barT: { color: theme.color.onRed, fontSize: 11, fontWeight: "700" },
 
-  disclaimer: { color: theme.color.textDim, fontSize: 11, textAlign: "center", lineHeight: 16, marginTop: 12, fontStyle: "italic" },
+  disclaimer: { color: theme.color.onRed, fontSize: 11, textAlign: "center", lineHeight: 16, marginTop: 12, fontStyle: "italic" },
 });

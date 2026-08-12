@@ -193,7 +193,20 @@ export default function RosterManagement() {
           <>
             <Text style={styles.sectionH}>ACTIONS</Text>
 
-            <Pressable onPress={() => router.push("/roster/confirm")} style={styles.actionRow}>
+            <Pressable
+              onPress={() => {
+                // Iter171 · Route to the dynamic confirm screen using the
+                // client's currently active roster id, so the review UI
+                // loads the right days instead of a blank generic form.
+                const rid = active?.id || data?.pending_replacement?.id;
+                if (rid) {
+                  router.push(`/roster/confirm/${rid}` as any);
+                } else {
+                  router.push("/roster/confirm" as any);
+                }
+              }}
+              style={styles.actionRow}
+            >
               <Ionicons name="create-outline" size={20} color={theme.color.text} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.actionTitle}>Review or edit roster</Text>

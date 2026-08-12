@@ -169,6 +169,9 @@ const styles = StyleSheet.create({
     color: theme.color.brand, fontSize: 11, letterSpacing: 3, fontWeight: "900",
     fontFamily: theme.font.textSemi,
   },
+  // Iter174 · Header user-name MUST use `theme.color.text`. With the
+  // Iter174 palette fix forcing dark-mode text to #FFFFFF, this
+  // guarantees names like "PIETRO" render legibly on the dark hero.
   name: {
     color: theme.color.text, fontSize: 28, letterSpacing: 1.4,
     fontWeight: "900", fontFamily: theme.font.display, lineHeight: 32,

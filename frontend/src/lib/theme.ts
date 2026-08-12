@@ -9,18 +9,20 @@
 export type ThemeMode = "dark" | "light";
 
 export const DARK_PALETTE = {
-  // Iter172 · Depth. Page-level `surface` uses the deep black bg so
-  // screens paint truly dark, while cards (`surface2`) sit on top at
-  // #1E1E1E for visible elevation. `surface3` is the raised-inside-card
-  // shade used for chips / metric wells.
+  // Iter174 · MANDATORY UI RESTORATION — locked palette per PRD.
+  //   bg / surface  : #0B0B0D  (Deep Black)   — page background
+  //   surface2/card : #1E1E1E  (Charcoal)     — visible card elevation
+  //   text / textHi : #FFFFFF  (Pure White)   — ensures names like
+  //                                             "PIETRO" render legibly
+  //   onBrand/onRed : #FFFFFF                  — text/icons on brand-red
   surface: "#0B0B0D",
   surface2: "#1E1E1E",
   surface3: "#242427",
   border: "#2C2C2E",
   borderStrong: "#3A3A3E",
   divider: "#1E1E22",
-  text: "#F3F4F6",
-  textHi: "#F3F4F6",
+  text: "#FFFFFF",
+  textHi: "#FFFFFF",
   bg: "#0B0B0D",
   bgGradientTop: "#000000",
   bgGradientBottom: "#0B0B0D",
@@ -47,13 +49,17 @@ export const DARK_PALETTE = {
 } as const;
 
 export const LIGHT_PALETTE = {
-  // Iter173 · HIGH-CONTRAST light palette. Pure white bg + pure black
-  // primary text guarantees WCAG AAA text contrast (21:1). Muted /
-  // dim tokens are also strengthened so nothing ever renders as
-  // light-grey-on-white and disappears.
+  // Iter174 · MANDATORY UI RESTORATION — locked palette per PRD.
+  //   bg / surface   : #FFFFFF (Pure White)  — page background
+  //   surface2/card  : #A3182E (Brand Red)   — every card sits on red
+  //   onRed/onBrand  : #FFFFFF               — text/icons on red MUST
+  //                                            use this token so cards
+  //                                            never render red-on-red
+  //   text / textHi  : #000000               — primary black text on
+  //                                            the white page background
   surface: "#FFFFFF",
-  surface2: "#F4F4F9",
-  surface3: "#ECECF3",
+  surface2: "#A3182E",
+  surface3: "#7A1122",
   border: "#D4D4DC",
   borderStrong: "#B8B8C4",
   divider: "#E5E5EC",
@@ -69,14 +75,13 @@ export const LIGHT_PALETTE = {
   textMuted: "#1F2937",
   textDim: "#374151",
   textSoft: "#4B5563",
-  card: "#F4F4F9",
+  card: "#A3182E",
   brand: "#A3182E",
   brandDark: "#7A1122",
   brandTint: "#FBE3E7",
   brandGlow: "#C42239",
-  // Iter173 · Text/icon color to use when placed ON the brand red
-  // (#A3182E). Explicit pure white so no component accidentally
-  // renders red-on-red.
+  // Iter174 · MANDATORY — Every card that sits on brand red must
+  // render its text with `theme.color.onBrand` / `theme.color.onRed`.
   onBrand: "#FFFFFF",
   onRed: "#FFFFFF",
   onBrandMuted: "#F5D5DA",

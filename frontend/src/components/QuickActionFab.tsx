@@ -160,9 +160,10 @@ const styles = StyleSheet.create({
   container: {
     position: "absolute",
     right: 18,
-    // Sits above the bottom tab bar which contains the chat/messages tab.
-    // Tab bar height on Expo Router defaults to ~80–90; we add breathing room.
-    bottom: 96,
+    // Iter174 · Raised from 96 → 180 so the FAB clears the floating
+    // Coach Chat bubble on every client tab (the chat launcher
+    // renders at bottom-right ~90–120px above the tab bar).
+    bottom: 180,
     alignItems: "flex-end",
     zIndex: 60,
   },

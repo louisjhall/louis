@@ -1,12 +1,17 @@
 /**
- * QuickActionFab — Iter173
+ * QuickActionFab — Iter174
  *
  * A red floating (+) button pinned to the bottom-right of every
- * client tab. Tapping expands FOUR shortcut chips:
- *   📸 Photo Scan   → /nutrition/photo
- *   🔍 Food Search  → /nutrition/food-search
- *   ✍️  Manual Log   → /nutrition/log
- *   🏋️  Start Workout → today's workout list (or calendar if none)
+ * client tab. Tapping expands exactly TWO shortcut chips:
+ *   🍽️  Log a Meal    → /nutrition/pick  (existing nutrition menu
+ *                        that already surfaces Photo Scan / Food
+ *                        Search / Manual Log inline)
+ *   🏋️  Start Workout → today's workout list (or the calendar if
+ *                        no workout is scheduled today)
+ *
+ * Iter173 briefly expanded the menu to four items; Iter174 rolls
+ * back to two, per PRD, since the nutrition sub-choices are already
+ * one tap away on the /nutrition/pick screen.
  *
  * The button sits ABOVE the bottom tab bar (which contains the chat
  * icon on the messages tab) so it never collides with tab targets.
@@ -67,25 +72,14 @@ export function QuickActionFab() {
 
   const shortcuts = useMemo<Shortcut[]>(() => [
     {
-      key: "photo",
-      label: "PHOTO SCAN",
-      emoji: "📸",
-      icon: "camera",
-      onPress: () => { close(); router.push("/nutrition/photo-scan" as any); },
-    },
-    {
-      key: "search",
-      label: "FOOD SEARCH",
-      emoji: "🔍",
-      icon: "search",
-      onPress: () => { close(); router.push("/nutrition/food-search" as any); },
-    },
-    {
-      key: "manual",
-      label: "MANUAL LOG",
-      emoji: "✍️",
-      icon: "create",
-      onPress: () => { close(); router.push("/nutrition/log" as any); },
+      key: "meal",
+      label: "LOG A MEAL",
+      emoji: "🍽️",
+      icon: "restaurant",
+      // Iter174 · Route to the nutrition-picker screen, which already
+      // exposes Photo Scan / Food Search / Manual Log side-by-side.
+      // Avoids duplicating those three choices inside the FAB.
+      onPress: () => { close(); router.push("/nutrition/pick" as any); },
     },
     {
       key: "workout",

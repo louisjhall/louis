@@ -87,7 +87,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: theme.space.lg, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   title: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900" },
   label: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.md, marginBottom: theme.space.sm },
-  input: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.text, padding: theme.space.md, borderWidth: 1, borderColor: theme.color.border },
+  input: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.onRed, padding: theme.space.md, borderWidth: 1, borderColor: theme.color.border },
   chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexShrink: 0 },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },

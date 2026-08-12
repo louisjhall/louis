@@ -505,7 +505,7 @@ const styles = StyleSheet.create({
     width: 40, height: 40, borderRadius: 20, backgroundColor: theme.color.surface2,
     alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: theme.color.border,
   },
-  input: { flex: 1, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, padding: theme.space.md, color: theme.color.text, borderWidth: 1, borderColor: theme.color.border, maxHeight: 120 },
+  input: { flex: 1, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, padding: theme.space.md, color: theme.color.onRed, borderWidth: 1, borderColor: theme.color.border, maxHeight: 120 },
   sendBtn: { backgroundColor: theme.color.brand, width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   footerNote: { color: theme.color.textDim, fontSize: 11, textAlign: "center", paddingHorizontal: theme.space.lg, paddingBottom: 10, paddingTop: 2 },
   // Empty state

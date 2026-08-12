@@ -348,6 +348,6 @@ const styles = StyleSheet.create({
   assetSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, letterSpacing: 0.5 },
   altBtn: { paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   altT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  input: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 14 },
+  input: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.onRed, fontSize: 14 },
   hint: { color: theme.color.textMuted, fontSize: 11, marginTop: 6, fontStyle: "italic" },
 });

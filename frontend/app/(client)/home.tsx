@@ -1189,7 +1189,11 @@ export default function Home() {
 function QuickBtn({ icon, label, onPress, testID, styles }: any) {
   return (
     <Pressable onPress={onPress} testID={testID} style={styles.qBtn}>
-      <Ionicons name={icon} size={18} color={theme.color.brand} />
+      {/* Iter179 · Pure Rule — this pill sits on `surface2` which is red
+          in Light Mode. Icon + label MUST be white so they never
+          disappear on red. `onRed` is #FFFFFF in both palettes and the
+          charcoal Dark Mode card already expects white. */}
+      <Ionicons name={icon} size={18} color={theme.color.onRed} />
       <Text style={styles.qBtnText}>{label}</Text>
     </Pressable>
   );
@@ -1557,7 +1561,7 @@ function makeStyles(_mode: ThemeMode) {
   },
   addActivityT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   qBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12 },
-  qBtnText: { color: theme.color.text, letterSpacing: 1.5, fontWeight: "700", fontSize: 11 },
+  qBtnText: { color: theme.color.onRed, letterSpacing: 1.5, fontWeight: "700", fontSize: 11 },
   sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
   sectionHint: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic", marginBottom: theme.space.sm, marginTop: -6 },
   focusBanner: {

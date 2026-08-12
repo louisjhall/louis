@@ -732,7 +732,7 @@ const styles = StyleSheet.create({
   iconBtn: { padding: 8, borderRadius: 6 },
   composerInput: {
     flex: 1, minHeight: 40, maxHeight: 120,
-    color: theme.color.text, fontSize: 14,
+    color: theme.color.onRed, fontSize: 14,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8,
   },

@@ -262,7 +262,7 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   modalTitle: { color: theme.color.text, fontSize: 14, fontWeight: "900", letterSpacing: 2 },
   field: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginTop: 12, marginBottom: 4 },
-  input: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.text, padding: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 14 },
+  input: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.onRed, padding: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 14 },
   tierBtn: { flex: 1, paddingVertical: 10, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface2, alignItems: "center" },
   tierBtnActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   tierBtnText: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },

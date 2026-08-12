@@ -1058,7 +1058,7 @@ const styles = StyleSheet.create({
   },
   sectionHeadT: { color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   sectionHeadCount: {
-    color: theme.color.textMuted, fontSize: 11, fontWeight: "800",
+    color: theme.color.onRed, fontSize: 11, fontWeight: "800",
     backgroundColor: theme.color.surface2, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8,
   },
 

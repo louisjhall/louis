@@ -133,7 +133,7 @@ function confStyle(c: string) {
 
 export const travelStyles = StyleSheet.create({
   section: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "900", marginTop: 6, fontFamily: theme.font.textSemi },
-  input: { color: theme.color.text, backgroundColor: theme.color.surface2, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: theme.color.border },
+  input: { color: theme.color.onRed, backgroundColor: theme.color.surface2, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: theme.color.border },
   primaryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 14, borderRadius: 10, backgroundColor: theme.color.brand },
   primaryBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
   disclaimer: { color: theme.color.textDim, fontSize: 11, textAlign: "center", fontStyle: "italic", lineHeight: 15, paddingHorizontal: 8, marginTop: 6 },

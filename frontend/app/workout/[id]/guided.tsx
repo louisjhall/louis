@@ -1393,12 +1393,12 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 8, padding: 10,
-    color: theme.color.text, fontSize: 15, fontWeight: "800", textAlign: "center",
+    color: theme.color.onRed, fontSize: 15, fontWeight: "800", textAlign: "center",
   },
   noteInput: {
     marginTop: 10, backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border, borderRadius: 8,
-    padding: 10, color: theme.color.text, fontSize: 13,
+    padding: 10, color: theme.color.onRed, fontSize: 13,
   },
 
   completeBtn: {

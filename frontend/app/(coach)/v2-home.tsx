@@ -872,7 +872,7 @@ const styles = StyleSheet.create({
   },
   resetCloseText: { color: theme.color.textHi, fontWeight: "700" },
   executeInput: {
-    backgroundColor: theme.color.card, color: theme.color.textHi,
+    backgroundColor: theme.color.card, color: theme.color.onRed,
     borderRadius: 8, paddingHorizontal: 10, paddingVertical: 10,
     borderWidth: 1, borderColor: "#ff6b6b55",
     fontFamily: "monospace" as any, letterSpacing: 1,

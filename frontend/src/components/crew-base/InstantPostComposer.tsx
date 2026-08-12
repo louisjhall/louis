@@ -151,7 +151,7 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   input: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 13,
     minHeight: 44,
     maxHeight: 100,

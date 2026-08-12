@@ -156,7 +156,7 @@ export function DateField({
 const styles = StyleSheet.create({
   wrap: { width: "100%" },
   textInput: {
-    color: theme.color.text, fontSize: 14, padding: 10,
+    color: theme.color.onRed, fontSize: 14, padding: 10,
     borderRadius: 8, backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
   },

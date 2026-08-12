@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   presetChipActive: { backgroundColor: theme.color.brand },
   presetChipT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 0.5 },
   input: {
-    backgroundColor: theme.color.surface2, color: theme.color.text,
+    backgroundColor: theme.color.surface2, color: theme.color.onRed,
     borderRadius: 10, padding: 12, borderWidth: 1, borderColor: theme.color.border,
     fontSize: 14,
   },

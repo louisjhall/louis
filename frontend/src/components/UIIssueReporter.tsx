@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
   h1: { color: theme.color.text, fontSize: 18, fontWeight: "800", marginBottom: 4 },
   sub: { color: theme.color.textDim, fontSize: 12, marginBottom: 12 },
   label: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1, marginTop: 12, marginBottom: 6 },
-  textarea: { color: theme.color.text, backgroundColor: theme.color.surface2, borderRadius: 8, padding: 12, minHeight: 80, textAlignVertical: "top", borderWidth: 1, borderColor: theme.color.border },
+  textarea: { color: theme.color.onRed, backgroundColor: theme.color.surface2, borderRadius: 8, padding: 12, minHeight: 80, textAlignVertical: "top", borderWidth: 1, borderColor: theme.color.border },
   row: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
   chip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },

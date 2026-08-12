@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   picker: { backgroundColor: theme.color.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: theme.color.border, width: "100%", maxWidth: 520 },
   pickerHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   pickerTitle: { color: theme.color.text, fontSize: 14, fontWeight: "800", letterSpacing: 1 },
-  pickerInput: { color: theme.color.text, backgroundColor: theme.color.surface2, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: theme.color.border, marginBottom: 10 },
+  pickerInput: { color: theme.color.onRed, backgroundColor: theme.color.surface2, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: theme.color.border, marginBottom: 10 },
   pickerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   pickerName: { color: theme.color.text, fontSize: 14, fontWeight: "700" },
   pickerEmail: { color: theme.color.textDim, fontSize: 12 },

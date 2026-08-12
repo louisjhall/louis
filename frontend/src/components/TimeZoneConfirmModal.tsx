@@ -117,5 +117,5 @@ const styles = StyleSheet.create({
   tzRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 12, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   tzRowOn: { backgroundColor: theme.color.brandTint },
   tzRowT: { color: theme.color.text, fontSize: 13 },
-  tzInput: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, marginBottom: 12 },
+  tzInput: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.onRed, marginBottom: 12 },
 });

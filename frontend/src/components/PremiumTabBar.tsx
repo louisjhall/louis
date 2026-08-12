@@ -225,7 +225,11 @@ const BAR_HEIGHT_CONTENT = 54;   // Icon+label block. Total = this + safe-area i
 
 const styles = StyleSheet.create({
   wrap: {
-    backgroundColor: "#08080B",     // slightly deeper than surface2 for panel feel
+    // Iter179 · Was hardcoded #08080B which stayed dark in Light Mode
+    // and hid the tab icons on a white page. `theme.color.surface`
+    // resolves to #FFFFFF in Light and #0B0B0D in Dark — both give the
+    // bar a proper visible ground plane.
+    backgroundColor: theme.color.surface,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.color.borderStrong,
     // Subtle upward glow on iOS — invisible on Android but harmless.
@@ -309,7 +313,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1.5,
-    borderColor: "#08080B",
+    borderColor: theme.color.surface,
   },
   badgeText: {
     color: "#fff",
@@ -330,6 +334,6 @@ const styles = StyleSheet.create({
     borderRadius: 4.5,
     backgroundColor: theme.color.brand,
     borderWidth: 1.5,
-    borderColor: "#08080B",
+    borderColor: theme.color.surface,
   },
 });

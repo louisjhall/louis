@@ -282,7 +282,7 @@ const styles = StyleSheet.create({
   sheetHandle: { alignSelf: "center", width: 40, height: 4, backgroundColor: theme.color.borderStrong, borderRadius: 2, marginBottom: 12 },
   sheetTitle: { color: theme.color.text, fontSize: 16, fontWeight: "900" },
   sheetSub: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
-  input: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 14 },
+  input: { padding: 12, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.onRed, fontSize: 14 },
   subLabel: { color: theme.color.textMuted, fontSize: 12, marginTop: 8 },
   canChip: { flex: 1, alignItems: "center", paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   canChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },

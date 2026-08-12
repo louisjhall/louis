@@ -302,7 +302,7 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: theme.color.surface2,
     borderRadius: theme.radius.md,
-    color: theme.color.text,
+    color: theme.color.onRed,
     paddingHorizontal: theme.space.md,
     paddingVertical: 12,
     borderWidth: 1,

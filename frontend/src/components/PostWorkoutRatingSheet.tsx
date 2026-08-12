@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.color.border,
     backgroundColor: theme.color.surface2,
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 14,
     textAlignVertical: "top",
   },

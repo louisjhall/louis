@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
     marginTop: theme.space.md, marginBottom: theme.space.xs, fontWeight: "700",
   },
   input: {
-    backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.text,
+    backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.onRed,
     paddingHorizontal: theme.space.md, paddingVertical: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 15,
   },
   pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },

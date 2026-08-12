@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: theme.color.bg, borderRadius: 14, width: "100%", maxWidth: 460, padding: 18, borderWidth: 1, borderColor: theme.color.border },
   title: { color: theme.color.textHi, fontSize: 16, fontWeight: "700", marginBottom: 8 },
   body: { color: theme.color.textDim, fontSize: 13, marginBottom: 12 },
-  input: { backgroundColor: theme.color.card, color: theme.color.textHi, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: theme.color.border },
+  input: { backgroundColor: theme.color.card, color: theme.color.onRed, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: theme.color.border },
   subLabel: { color: theme.color.textDim, fontSize: 12, marginBottom: 8 },
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 8 },
   rowText: { color: theme.color.textHi, fontSize: 13, flex: 1 },

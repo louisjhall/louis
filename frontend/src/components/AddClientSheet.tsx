@@ -539,7 +539,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === "ios" ? 12 : 8,
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 15,
   },
   fieldError: {

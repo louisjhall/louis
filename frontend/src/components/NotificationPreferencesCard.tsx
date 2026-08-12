@@ -290,5 +290,5 @@ const styles = StyleSheet.create({
   rowLabel: { color: theme.color.text, fontSize: 13, fontWeight: "700" },
   rowDesc: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
   sect: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginTop: 20, marginBottom: 8 },
-  timeInput: { marginTop: 6, padding: 10, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 14, fontWeight: "700" },
+  timeInput: { marginTop: 6, padding: 10, borderRadius: 8, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, color: theme.color.onRed, fontSize: 14, fontWeight: "700" },
 });

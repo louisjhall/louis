@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
   footerBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
 
   // Manual entry
-  manualInput: { color: theme.color.text, backgroundColor: theme.color.surface2, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 16, fontSize: 22, borderWidth: 1, borderColor: theme.color.border, fontFamily: theme.font.display, letterSpacing: 2, textAlign: "center" },
+  manualInput: { color: theme.color.onRed, backgroundColor: theme.color.surface2, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 16, fontSize: 22, borderWidth: 1, borderColor: theme.color.border, fontFamily: theme.font.display, letterSpacing: 2, textAlign: "center" },
   hint: { color: theme.color.textDim, fontSize: 11, textAlign: "center", fontStyle: "italic" },
   webNote: { color: theme.color.textDim, fontSize: 11, textAlign: "center", fontStyle: "italic", marginTop: 10, lineHeight: 17 },
 });

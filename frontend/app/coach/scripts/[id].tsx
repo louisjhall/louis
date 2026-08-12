@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
   chipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   generateBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: theme.color.brand, padding: 14, borderRadius: theme.radius.md, marginTop: theme.space.md },
   generateText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 12 },
-  scriptInput: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, padding: theme.space.md, color: theme.color.text, fontSize: 14, minHeight: 200, textAlignVertical: "top" },
+  scriptInput: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, padding: theme.space.md, color: theme.color.onRed, fontSize: 14, minHeight: 200, textAlignVertical: "top" },
   actionsRow: { flexDirection: "row", gap: 8, marginTop: 8 },
   smallBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand },
   smallBtnText: { color: theme.color.brand, fontSize: 11, letterSpacing: 1.5, fontWeight: "800" },

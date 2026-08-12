@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
   chip: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   chipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   chipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
-  notes: { color: theme.color.text, fontSize: 13, padding: 12, backgroundColor: theme.color.surface2, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border, minHeight: 80, textAlignVertical: "top" },
+  notes: { color: theme.color.onRed, fontSize: 13, padding: 12, backgroundColor: theme.color.surface2, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border, minHeight: 80, textAlignVertical: "top" },
   histRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
   histDot: { width: 8, height: 8, borderRadius: 4 },
   histTitle: { color: theme.color.text, fontSize: 12, fontWeight: "700" },

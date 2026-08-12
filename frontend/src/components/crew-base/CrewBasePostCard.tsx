@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 36,
     maxHeight: 100,
-    color: theme.color.text,
+    color: theme.color.onRed,
     backgroundColor: theme.color.surface2,
     borderRadius: 8,
     borderWidth: 1,

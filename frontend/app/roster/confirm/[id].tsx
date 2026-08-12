@@ -1014,7 +1014,7 @@ const styles = StyleSheet.create({
   dutyChip: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   dutyChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   dutyChipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700" },
-  input: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.text, paddingHorizontal: theme.space.md, paddingVertical: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 14 },
+  input: { backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, color: theme.color.onRed, paddingHorizontal: theme.space.md, paddingVertical: 12, borderWidth: 1, borderColor: theme.color.border, fontSize: 14 },
   row2: { flexDirection: "row", gap: theme.space.md },
   editorDone: { marginTop: theme.space.md, backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: theme.radius.md, alignItems: "center" },
   editorDoneText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 13 },

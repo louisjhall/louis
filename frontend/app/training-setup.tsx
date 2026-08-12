@@ -626,7 +626,7 @@ const s = StyleSheet.create({
   textArea: {
     backgroundColor: theme.color.surface2,
     borderRadius: theme.radius.md,
-    color: theme.color.text,
+    color: theme.color.onRed,
     padding: theme.space.md,
     borderWidth: 1, borderColor: theme.color.border,
     minHeight: 80, fontSize: 13,

@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
   recChange: { color: theme.color.text, fontSize: 13, fontWeight: "700", marginTop: 4 },
   recReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 4, lineHeight: 15 },
   recField: { color: theme.color.text, fontSize: 11, marginTop: 4 },
-  noteInput: { minHeight: 80, backgroundColor: theme.color.surface2, borderRadius: 10, padding: 12, color: theme.color.text, borderWidth: 1, borderColor: theme.color.border, textAlignVertical: "top" },
+  noteInput: { minHeight: 80, backgroundColor: theme.color.surface2, borderRadius: 10, padding: 12, color: theme.color.onRed, borderWidth: 1, borderColor: theme.color.border, textAlignVertical: "top" },
   actionBar: { position: "absolute", left: 0, right: 0, bottom: 0, flexDirection: "row", gap: 10, padding: 14, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.divider },
   rejectBtn: { paddingHorizontal: 20, paddingVertical: 14, backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border },
   rejectT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },

@@ -726,7 +726,11 @@ function Section({
   return (
     <View style={styles.section}>
       <Pressable style={styles.secHeader} onPress={() => !disabled && onToggle(id)} disabled={disabled}>
-        <Ionicons name={icon || "ellipse-outline"} size={16} color={theme.color.brand} />
+        {/* Iter179 · Section header sits inside a `surface2` card which
+            resolves to red in Light Mode. Icon + chevron colours must be
+            white on red (Pure Rule); `onRed` is #FFFFFF in both palettes
+            and Dark Mode charcoal cards already expect white icons. */}
+        <Ionicons name={icon || "ellipse-outline"} size={16} color={theme.color.onRed} />
         <Text style={[styles.secTitle, disabled && { opacity: 0.4 }]}>{title}</Text>
         {rightSlot ? <View>{rightSlot}</View> : null}
         {onEdit && !disabled ? (
@@ -736,10 +740,10 @@ function Section({
         ) : null}
         {onOpen ? (
           <Pressable onPress={onOpen} testID={`open-${id}`} hitSlop={8}>
-            <Ionicons name="open-outline" size={16} color={theme.color.brand} />
+            <Ionicons name="open-outline" size={16} color={theme.color.onRed} />
           </Pressable>
         ) : null}
-        <Ionicons name={on ? "chevron-up" : "chevron-down"} size={16} color={theme.color.textDim} />
+        <Ionicons name={on ? "chevron-up" : "chevron-down"} size={16} color={theme.color.onRed} />
       </Pressable>
       {on && !disabled && <View style={styles.secBody}>{children}</View>}
     </View>
@@ -1016,9 +1020,9 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   secEmoji: { fontSize: 18 },
-  secTitle: { flex: 1, color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
-  editBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.brand },
-  editBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  secTitle: { flex: 1, color: theme.color.onRed, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  editBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.onRed },
+  editBtnT: { color: theme.color.onRed, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   secBody: { paddingHorizontal: 14, paddingBottom: 14, gap: 6 },
 
   kv: { padding: 8, borderRadius: 6, backgroundColor: theme.color.surface, borderLeftWidth: 2, borderLeftColor: theme.color.border },
@@ -1142,7 +1146,7 @@ const styles = StyleSheet.create({
   editTitle: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   editLbl: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginTop: 8, marginBottom: 6 },
   editInput: {
-    color: theme.color.text, fontSize: 13, padding: 10,
+    color: theme.color.onRed, fontSize: 13, padding: 10,
     borderRadius: 8, backgroundColor: theme.color.surface2,
     borderWidth: 1, borderColor: theme.color.border,
   },

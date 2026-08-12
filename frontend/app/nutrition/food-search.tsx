@@ -587,7 +587,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center",
   },
   servingInput: {
-    width: 60, textAlign: "center", color: theme.color.text, fontWeight: "900", fontSize: 18,
+    width: 60, textAlign: "center", color: theme.color.onRed, fontWeight: "900", fontSize: 18,
     backgroundColor: theme.color.surface2, borderRadius: 10, paddingVertical: 8,
     borderWidth: 1, borderColor: theme.color.border,
   },

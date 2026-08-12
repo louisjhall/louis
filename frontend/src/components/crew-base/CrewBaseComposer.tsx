@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
   sheetHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   sheetTitle: { color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   composerBig: {
-    color: theme.color.text, fontSize: 15, lineHeight: 20,
+    color: theme.color.onRed, fontSize: 15, lineHeight: 20,
     minHeight: 90, textAlignVertical: "top",
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 10, padding: 12,
@@ -281,7 +281,7 @@ const styles = StyleSheet.create({
   scheduleDateT: { color: theme.color.brand, fontWeight: "800", fontSize: 12 },
   timeInput: {
     width: 56, textAlign: "center",
-    color: theme.color.text, fontSize: 15, fontWeight: "800",
+    color: theme.color.onRed, fontSize: 15, fontWeight: "800",
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: 8, padding: 8,
   },

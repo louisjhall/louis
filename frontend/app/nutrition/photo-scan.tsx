@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   macroUnit: { color: theme.color.textDim, fontSize: 11, marginTop: 3, letterSpacing: 0.5 },
 
   itemRow: { flexDirection: "row", gap: 6, alignItems: "center" },
-  itemInput: { color: theme.color.text, backgroundColor: theme.color.surface2, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, borderWidth: 1, borderColor: theme.color.border },
+  itemInput: { color: theme.color.onRed, backgroundColor: theme.color.surface2, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, borderWidth: 1, borderColor: theme.color.border },
   itemDel: { width: 30, height: 30, borderRadius: 15, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
   addItemBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 10, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, borderStyle: "dashed" },
   addItemBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1 },

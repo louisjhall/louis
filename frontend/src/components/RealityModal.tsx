@@ -529,7 +529,7 @@ const styles = StyleSheet.create({
   kindHint: { color: theme.color.textSoft, fontSize: 11, marginTop: 4, textAlign: "center", lineHeight: 15 },
   optionalLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2, marginTop: 20, marginBottom: 6 },
   input: {
-    color: theme.color.text, fontSize: 13, padding: 12,
+    color: theme.color.onRed, fontSize: 13, padding: 12,
     backgroundColor: theme.color.surface2,
     borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
   },

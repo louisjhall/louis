@@ -244,7 +244,7 @@ const styles = StyleSheet.create({
   warningTitle: { color: theme.color.textHi, fontWeight: "700", marginBottom: 6, fontSize: 12 },
   warningRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginBottom: 4 },
   warningText: { color: theme.color.textHi, fontSize: 12, flex: 1 },
-  reason: { minHeight: 56, backgroundColor: theme.color.card, color: theme.color.textHi, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: theme.color.border, marginBottom: 12, textAlignVertical: "top" },
+  reason: { minHeight: 56, backgroundColor: theme.color.card, color: theme.color.onRed, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: theme.color.border, marginBottom: 12, textAlignVertical: "top" },
   footNote: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic" },
   footer: { flexDirection: "row", padding: 12, borderTopWidth: 1, borderTopColor: theme.color.border, gap: 8 },
   cancelBtn: { flex: 1, paddingVertical: 12, alignItems: "center", borderWidth: 1, borderColor: theme.color.border, borderRadius: 8 },

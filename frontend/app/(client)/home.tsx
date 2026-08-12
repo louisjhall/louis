@@ -488,21 +488,34 @@ export default function Home() {
         {/* Iter 162 · Premium V2 · section spacing bumped from 12 → 20 so
             major dashboard blocks breathe more clearly. */}
         <View style={{ padding: theme.space.lg, gap: theme.space.section }}>
-          {/* Iter 159 — Roster Needed hero. Shows ONLY when the client has
-              zero confirmed roster days AND no upload/parse job is in
-              flight. Placed as the very first surface so a brand-new
-              client sees exactly one thing they need to do next: import
-              their roster. Disappears the moment /roster/current returns
-              a doc with days. */}
-          <RosterNeededHeroCard
-            needsRoster={!roster || !(roster.days && roster.days.length > 0)}
-            jobInFlight={
-              !!rosterJob &&
-              (rosterJob.status === "queued" ||
-                rosterJob.status === "processing" ||
-                rosterJob.status === "awaiting_confirmation")
-            }
-          />
+          {/* Iter 159 — Roster Needed hero. Iter171 · STRICT hide when the
+              client has an active *confirmed* roster (is_active on the
+              backend + `status === "confirmed"` or `confirmed === true`).
+              A coach-uploaded roster now auto-confirms server-side, so
+              the banner will never appear for those clients. Still
+              renders when there is no roster, when the only roster is
+              pending_confirmation, or during an in-flight upload. */}
+          {(() => {
+            const hasActiveConfirmedRoster = !!(
+              roster &&
+              (roster as any).id &&
+              ((roster as any).status === "confirmed" || (roster as any).confirmed === true) &&
+              Array.isArray((roster as any).days) &&
+              (roster as any).days.length > 0
+            );
+            if (hasActiveConfirmedRoster) return null;
+            return (
+              <RosterNeededHeroCard
+                needsRoster={true}
+                jobInFlight={
+                  !!rosterJob &&
+                  (rosterJob.status === "queued" ||
+                    rosterJob.status === "processing" ||
+                    rosterJob.status === "awaiting_confirmation")
+                }
+              />
+            );
+          })()}
 
           {/* Iter 156 — Welcome-from-coach one-shot banner. Renders nothing
               until the client actually has an unwatched welcome video.

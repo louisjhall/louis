@@ -205,12 +205,43 @@ async def coach_upload_parse(
                 job_id,
                 pending_roster_id=pending["id"],
                 overlap=overlap,
-                status="awaiting_confirmation",
+                # Iter171 · AUTO-CONFIRM. When a coach uploads a roster we
+                # skip the "Awaiting Confirmation" review state entirely —
+                # the coach IS the reviewer, so clients should never see the
+                # "please review your roster" banner for a coach upload.
+                # The parse job is marked Confirmed + is_active: true, and
+                # the confirm + generation pipeline runs inline against the
+                # freshly-persisted pending roster.
+                status="Confirmed",
+                is_active=True,
                 stage="ready_to_confirm",
                 progress=100,
-                message="Roster ready to review",
+                message="Roster confirmed automatically (coach upload)",
                 completed_at=now_iso(),
+                auto_confirmed=True,
+                auto_confirmed_at=now_iso(),
             )
+            # Fire the same confirmation + generation pipeline the explicit
+            # /roster/pending/{rid}/confirm endpoint runs. This spawns its
+            # own background worker (generation, V2 bridge, coach tasks,
+            # etc.) so we don't block this parse worker.
+            try:
+                await _run_coach_confirm(
+                    client_id=client_id, rid=pending["id"], coach=coach,
+                )
+            except Exception:
+                logger.exception(
+                    "coach upload — auto-confirm failed for roster=%s (non-fatal — "
+                    "roster remains pending and can be confirmed manually)",
+                    pending["id"],
+                )
+                await _set_job(
+                    job_id,
+                    status="awaiting_confirmation",
+                    is_active=False,
+                    auto_confirmed=False,
+                    message="Roster parsed — auto-confirm failed, please review",
+                )
         except Exception as e:
             logger.exception("coach roster parse job %s failed", job_id)
             await _set_job(job_id, status="failed", error=str(e)[:400], message="Roster processing failed")
@@ -244,6 +275,15 @@ async def coach_pending_confirm(
     Unlike the client flow, this does NOT enforce that every
     low-confidence day be reviewed first — the coach IS the reviewer.
     """
+    return await _run_coach_confirm(client_id=client_id, rid=rid, coach=coach)
+
+
+# ---------------------------------------------------------------------------
+# Internal helper — the actual confirm + generation pipeline. Extracted so
+# the coach upload-parse worker can auto-confirm inline (Iter171) without
+# forcing the coach to make a second API call.
+# ---------------------------------------------------------------------------
+async def _run_coach_confirm(*, client_id: str, rid: str, coach: dict) -> dict:
     pending = await db.rosters.find_one(
         {"id": rid, "user_id": client_id, "status": "pending_confirmation"},
         {"_id": 0},

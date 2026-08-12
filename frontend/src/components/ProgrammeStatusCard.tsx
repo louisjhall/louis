@@ -76,6 +76,9 @@ const HEADLINE: Record<string, { eyebrow: string; title: string; body: string; i
 // Dynamic "today" card shown INSIDE the ProgrammeStatusCard when the
 // programme is live but today is not a training day, OR after approval
 // has just landed. Kept tight and confident — no automated language.
+// Iter172 · The block that consumed TODAY_COPY has been removed but
+// the dictionary itself is kept so a future re-enable is one edit.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const TODAY_COPY: Record<string, { eyebrow: string; title: string; body: string; icon: any }> = {
   rest_day: {
     eyebrow: "TODAY · REST DAY",
@@ -201,9 +204,13 @@ export function ProgrammeStatusCard({
     ps === "programme_needs_update";
 
   const head = HEADLINE[ps];
-  const todayCopy = today && today !== "session_planned" && today !== "programme_waiting_approval" && today !== "roster_needs_review"
-    ? TODAY_COPY[today]
-    : null;
+  // Iter172 · `todayCopy` block removed — kept the const commented out so a
+  // future re-introduction has the derivation ready. If you re-enable
+  // the block below, also restore the "SEE UPCOMING" secondary CTA in
+  // the actions row and the TODAY_COPY dictionary above.
+  // const todayCopy = today && today !== "session_planned" && today !== "programme_waiting_approval" && today !== "roster_needs_review"
+  //   ? TODAY_COPY[today]
+  //   : null;
 
   return (
     <View style={styles.card} testID="programme-status-card">
@@ -225,21 +232,12 @@ export function ProgrammeStatusCard({
         </View>
       ) : null}
 
-      {/* TODAY block — shown alongside a live programme when today is
-          rest/travel/layover/etc. Also shown BELOW the waiting headline
-          when meaningful. */}
-      {todayCopy ? (
-        <View style={[styles.todayRow, isWaiting && { marginTop: 14 }]}>
-          <View style={styles.todayIconWrap}>
-            <Ionicons name={todayCopy.icon} size={18} color={theme.color.brand} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.todayEyebrow}>{todayCopy.eyebrow}</Text>
-            <Text style={styles.todayTitle}>{state.today_plan_state?.label || todayCopy.title}</Text>
-            <Text style={styles.todayBody}>{todayCopy.body}</Text>
-          </View>
-        </View>
-      ) : null}
+      {/* Iter172 · Removed the embedded "TODAY · RECOVERY / REST / LAYOVER"
+          informational block and its companion "SEE UPCOMING" button —
+          the Today tab already surfaces day-type context through the
+          ClientProfileHeader / DailyRitualsCard, so this card was
+          duplicative. Kept the state machine intact so waiting states
+          still show their timeline. */}
 
       {/* TIMELINE — always rendered while not fully live */}
       {isWaiting ? (
@@ -320,17 +318,9 @@ export function ProgrammeStatusCard({
             <Text style={styles.ctaSecondaryT}>SEE PROGRESS</Text>
           </Pressable>
         ) : null}
-        {/* No workout to open on non-training days — offer the calendar. */}
-        {ps === "programme_live" && todayCopy ? (
-          <Pressable
-            testID="ps-cta-open-calendar"
-            onPress={() => router.push("/(client)/calendar" as any)}
-            style={styles.ctaSecondary}
-          >
-            <Ionicons name="calendar" size={14} color={theme.color.brand} />
-            <Text style={styles.ctaSecondaryT}>SEE UPCOMING</Text>
-          </Pressable>
-        ) : null}
+        {/* Iter172 · Removed the "SEE UPCOMING" CTA — the calendar tab is
+            already one tap away from the Today bottom-nav; a second CTA
+            here was noise. */}
       </View>
     </View>
   );

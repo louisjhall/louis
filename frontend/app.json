@@ -2,7 +2,7 @@
   "expo": {
     "name": "CrewFit",
     "slug": "crewfit",
-    "version": "1.0.17",
+    "version": "1.0.18",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "crewfit",
@@ -19,7 +19,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "net.crewfit.app",
-      "buildNumber": "404",
+      "buildNumber": "405",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
@@ -50,7 +50,7 @@
       }
     },
     "android": {
-      "versionCode": 404,
+      "versionCode": 405,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"

@@ -43,8 +43,18 @@ export default function CalendarScreen() {
       setActiveJob(aj && aj.id ? aj : null);
       setActivities(acts);
       if (!selectedIsoMonth) {
-        const currentMonth = (tl.today || "").slice(0, 7);
-        const m = (tl.months || []).find((mm: any) => mm.iso.slice(0, 7) === currentMonth) || tl.months?.[0];
+        // Iter172 · Prefer the client's ACTUAL current month over
+        // `tl.today` (which can be stale if the server clock or the
+        // roster timeline lags). Compute YYYY-MM locally, then look for
+        // a matching timeline row; fall back to `tl.today`'s month, and
+        // finally to the newest timeline row so we never crash.
+        const now = new Date();
+        const localMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const currentMonth = localMonth || (tl.today || "").slice(0, 7);
+        const m =
+          (tl.months || []).find((mm: any) => mm.iso.slice(0, 7) === currentMonth) ||
+          (tl.months || []).find((mm: any) => mm.iso.slice(0, 7) === (tl.today || "").slice(0, 7)) ||
+          tl.months?.[0];
         if (m) setSelectedIsoMonth(m.iso);
       }
     } finally { setLoading(false); }

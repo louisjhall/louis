@@ -44,8 +44,20 @@ function cacheKey(c: ImageContext): string {
 export function AIHeroImage({ ctx, style, gradient = true, children, showLoader = false }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Iter172 · Theme-aware hero background. In LIGHT MODE the entire
+  // upper header section paints pure white so the ClientProfileHeader
+  // sits on a clean white surface (per brand refresh). We suppress
+  // both the AI image AND the dark gradient overlay in light mode.
+  const isLight = theme.mode === "light";
 
   useEffect(() => {
+    // Iter172 · Skip the image fetch entirely in light mode — the hero
+    // is a solid white surface so there's nothing to load.
+    if (isLight) {
+      setUrl(null);
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -70,11 +82,11 @@ export function AIHeroImage({ ctx, style, gradient = true, children, showLoader 
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey(ctx)]);
+  }, [cacheKey(ctx), isLight]);
 
   return (
-    <View style={[styles.wrap, style]}>
-      {url ? (
+    <View style={[styles.wrap, isLight && styles.wrapLight, style]}>
+      {url && !isLight ? (
         <Image
           source={{ uri: url }}
           style={StyleSheet.absoluteFill}
@@ -83,11 +95,11 @@ export function AIHeroImage({ ctx, style, gradient = true, children, showLoader 
           accessibilityLabel="CrewFit brand image"
         />
       ) : (
-        <View style={[StyleSheet.absoluteFill, styles.fallback]}>
-          {loading && showLoader ? <ActivityIndicator color={theme.color.brand} /> : null}
+        <View style={[StyleSheet.absoluteFill, isLight ? styles.fallbackLight : styles.fallback]}>
+          {loading && showLoader && !isLight ? <ActivityIndicator color={theme.color.brand} /> : null}
         </View>
       )}
-      {gradient ? (
+      {gradient && !isLight ? (
         <LinearGradient
           colors={["rgba(0,0,0,0.35)", "rgba(0,0,0,0.85)", "#000000"]}
           locations={[0, 0.55, 1]}
@@ -101,8 +113,14 @@ export function AIHeroImage({ ctx, style, gradient = true, children, showLoader 
 
 const styles = StyleSheet.create({
   wrap: { backgroundColor: theme.color.surface, overflow: "hidden" },
+  // Iter172 · Light-mode override — pure white bg beneath the hero.
+  wrapLight: { backgroundColor: "#FFFFFF" },
   fallback: {
     backgroundColor: theme.color.navy,
+    alignItems: "center", justifyContent: "center",
+  },
+  fallbackLight: {
+    backgroundColor: "#FFFFFF",
     alignItems: "center", justifyContent: "center",
   },
 });

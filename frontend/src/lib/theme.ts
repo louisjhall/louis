@@ -9,9 +9,11 @@
 export type ThemeMode = "dark" | "light";
 
 export const DARK_PALETTE = {
-  // Iter169 · Deeper black bg + lifted card surface so cards visibly
-  // sit "above" the app background (previously #121212 flat).
-  surface: "#1E1E1E",
+  // Iter172 · Depth. Page-level `surface` uses the deep black bg so
+  // screens paint truly dark, while cards (`surface2`) sit on top at
+  // #1E1E1E for visible elevation. `surface3` is the raised-inside-card
+  // shade used for chips / metric wells.
+  surface: "#0B0B0D",
   surface2: "#1E1E1E",
   surface3: "#242427",
   border: "#2C2C2E",
@@ -42,10 +44,10 @@ export const DARK_PALETTE = {
 } as const;
 
 export const LIGHT_PALETTE = {
-  // Iter169 · Bright surfaces. Cards use a subtle purple-tinted off-white
-  // so they float above the pure-white background without needing a
-  // heavy border.
-  surface: "#F4F4F9",
+  // Iter172 · Light-mode depth. Page-level `surface` is pure white so
+  // Nutrition / Workout / Home all repaint white in Light Mode. Cards
+  // (`surface2`) sit slightly warmer at #F4F4F9 for gentle contrast.
+  surface: "#FFFFFF",
   surface2: "#F4F4F9",
   surface3: "#ECECF3",
   border: "#D4D4DC",

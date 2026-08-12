@@ -211,13 +211,16 @@ const styles = StyleSheet.create({
   standbyT: { color: theme.color.amber, fontSize: 11, fontWeight: "900", letterSpacing: 1.2, fontFamily: theme.font.textSemi },
   dayType: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.3, fontWeight: "800", fontFamily: theme.font.textSemi, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0, textAlign: "center" },
   dayline: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1.5, fontWeight: "700", fontFamily: theme.font.text, marginLeft: 2, flex: 1, flexShrink: 1, minWidth: 0, textAlign: "center" },
-  // Iter169 · Explicit centered variant for the Layover Arrival / Day Type
-  // strip. Overrides marginLeft so the text sits truly centred rather than
-  // hugging the left edge of its flex-1 slot when no standby pill precedes it.
+  // Iter172 · Explicit centered variant for the Layover Arrival / Day Type
+  // strip. Drops flex so the text hugs its own width and centres via the
+  // parent metaRow's `justifyContent: center` — otherwise `flex: 1` on
+  // the base dayType style pushed the text left of the visual midpoint.
   dayTypeCentered: {
+    flex: 0,
     marginLeft: 0,
     textAlign: "center",
     alignSelf: "center",
+    paddingHorizontal: 8,
   },
 
   dayTitle: {

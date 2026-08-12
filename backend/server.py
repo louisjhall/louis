@@ -3932,6 +3932,23 @@ async def _emit_reassessment_prompt(user_id: str, kind: str, reason: str, meta: 
     })
     if existing:
         return
+
+    # Iter172 · SMART DISMISS. If the user recently tapped "Not Now" on a
+    # `missed_workouts` prompt, respect that decision for the rest of the
+    # day — don't immediately re-emit a fresh copy the next time the
+    # analyser runs. This is what turns "Not Now" from a one-second hide
+    # into a real dismissal until tomorrow.
+    if kind == "missed_workouts":
+        dismiss_cutoff = (_dt.now(_tz.utc) - _td(hours=24)).isoformat()
+        recently_dismissed = await db.reassessment_prompts.find_one({
+            "user_id": user_id,
+            "kind": "missed_workouts",
+            "dismissed": True,
+            "dismissed_at": {"$gte": dismiss_cutoff},
+        })
+        if recently_dismissed:
+            return
+
     await db.reassessment_prompts.insert_one({
         "id": new_id(),
         "user_id": user_id,

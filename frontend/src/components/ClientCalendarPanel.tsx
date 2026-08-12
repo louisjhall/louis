@@ -159,7 +159,7 @@ type BadgeStyle = { label: string; bg: string; fg: string };
 function badgeStyle(b: string): BadgeStyle {
   switch (b) {
     case "completed":              return { label: "COMPLETED",   bg: theme.color.green,     fg: "#fff" };
-    case "planned":                return { label: "PLANNED",     bg: theme.color.surface3,  fg: theme.color.textMuted };
+    case "planned":                return { label: "PLANNED",     bg: "transparent",         fg: theme.color.onRed };
     case "missed":                 return { label: "MISSED",      bg: theme.color.red,       fg: "#fff" };
     case "recovered":              return { label: "RECOVERED",   bg: theme.color.brand,     fg: "#fff" };
     case "moved":                  return { label: "MOVED",       bg: theme.color.amber,     fg: "#fff" };
@@ -676,7 +676,14 @@ function DayRow({
       ]}
       testID={`cal-day-${card.date}`}
     >
-      <View style={[styles.loadBar, { backgroundColor: barColor }]} />
+      {/* Iter181 · Suppress the coloured left load-bar in the expanded
+          state. The user reported the strip looked like a rendering
+          artefact on the TODAY card and did not match the collapsed
+          cards' visual language. The bar is still rendered in the
+          collapsed tile above where it serves as a compact load hint. */}
+      {!card.is_today ? (
+        <View style={[styles.loadBar, { backgroundColor: barColor }]} />
+      ) : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <View style={styles.rowHead}>
           <View style={{ flex: 1 }}>
@@ -696,7 +703,7 @@ function DayRow({
                 <Text style={styles.completedBadgeT}>COMPLETED</Text>
               </View>
             ) : (
-              <View style={[styles.badge, { backgroundColor: bs.bg }]}>
+              <View style={[styles.badge, styles.badgePlanned, { backgroundColor: bs.bg }]}>
                 <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
               </View>
             )}
@@ -758,8 +765,15 @@ function DayRow({
         {_hasDutyContext ? (
           <View style={styles.dutyBox}>
             <View style={styles.dutyHeaderRow}>
-              <Ionicons name={dutyChip.icon} size={13} color={dutyChipColors(dutyChip.tone).fg} />
-              <Text style={[styles.dutyHeader, { color: dutyChipColors(dutyChip.tone).fg }]}>
+              {/* Iter181 · The duty box sits directly on the red card
+                  surface (surface2). Force icon + label to WHITE on red
+                  per Pure Rule — previously they inherited the
+                  chip-tone brand red which rendered red-on-red and
+                  read as an empty pink bar in Light Mode. Dark Mode
+                  charcoal card already expects white so this is a
+                  no-op there. */}
+              <Ionicons name={dutyChip.icon} size={13} color={theme.color.onRed} />
+              <Text style={[styles.dutyHeader, { color: theme.color.onRed }]}>
                 {dutyChip.label.toUpperCase()}
               </Text>
               {_hasLayover ? (
@@ -767,13 +781,10 @@ function DayRow({
                   {"  ·  "}{rd?.layover_city}
                 </Text>
               ) : null}
-              {/* Iter 162 · Removed the BLUE / GREEN / AMBER / RED load-text
-                  pill — the coloured left edge (loadBar) already conveys
-                  intensity without needing the literal label. */}
             </View>
             {_flights.map((f) => (
               <View key={f.key} style={styles.dutyFlightRow}>
-                <Ionicons name="airplane" size={11} color={theme.color.brand} />
+                <Ionicons name="airplane" size={11} color={theme.color.onRed} />
                 <Text style={styles.dutyFlightT} numberOfLines={1}>
                   {f.text}
                 </Text>
@@ -851,6 +862,35 @@ function DayRow({
               <Text style={styles.mBtnPrimaryT}>RECOVER</Text>
             </Pressable>
           </View>
+        ) : card.is_today && !!card.workout?.id ? (
+          // Iter181 · TODAY expanded card — primary action surfaced. The
+          // whole card is already tappable (Pressable → onOpenWorkout);
+          // this explicit BLACK button gives the user an unmistakable
+          // primary CTA on top of the red card in Light Mode. Dark Mode
+          // keeps the same black-on-charcoal treatment which reads well.
+          // Move-to-another-day drops beneath as a small secondary link.
+          <View style={styles.todayActions}>
+            <Pressable
+              onPress={(e) => { e.stopPropagation?.(); onOpenWorkout(); }}
+              style={styles.todayPrimaryBtn}
+              testID={`cal-open-${card.date}`}
+              hitSlop={6}
+            >
+              <Text style={styles.todayPrimaryBtnT}>OPEN WORKOUT</Text>
+              <Ionicons name="arrow-forward" size={14} color="#FFFFFF" />
+            </Pressable>
+            {canMove ? (
+              <Pressable
+                onPress={(e) => { e.stopPropagation?.(); onMove?.(); }}
+                style={styles.todaySecondaryLink}
+                testID={`cal-move-${card.date}`}
+                hitSlop={6}
+              >
+                <Ionicons name="swap-horizontal" size={12} color={theme.color.onRed} />
+                <Text style={styles.todaySecondaryLinkT}>Move to another day</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : canMove ? (
           <View style={styles.missedActions}>
             <Pressable
@@ -859,7 +899,7 @@ function DayRow({
               testID={`cal-move-${card.date}`}
               hitSlop={6}
             >
-              <Ionicons name="swap-horizontal" size={13} color={theme.color.brand} />
+              <Ionicons name="swap-horizontal" size={13} color={theme.color.onRed} />
               <Text style={styles.mBtnGhostT}>MOVE TO ANOTHER DAY</Text>
             </Pressable>
           </View>
@@ -937,7 +977,12 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: theme.color.border,
     marginBottom: 8, overflow: "hidden",
   },
-  rowToday: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
+  // Iter181 · Was `backgroundColor: theme.color.brandTint` (pink in
+  // Light) which made the expanded TODAY card look washed-out and
+  // inconsistent with the collapsed red day cards below. Now inherits
+  // the shared red `surface2` card bg from `.row`; the brand border
+  // keeps the "this is today" accent without diluting the fill.
+  rowToday: { borderColor: theme.color.brand, borderWidth: 2 },
   rowMissed: { borderColor: theme.color.red, backgroundColor: "rgba(239,68,68,0.06)" },
   // Iter 162 · Compact tile — future/past days collapse into a single-row
   // strip; chevron toggles expansion. Reduces dashboard clutter and lets
@@ -952,6 +997,15 @@ const styles = StyleSheet.create({
   titleCompact: { color: theme.color.onRed, fontSize: 14, fontWeight: "700", marginTop: 2 },
 
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
+  // Iter181 · PLANNED badge sits on the red day card. User asked for
+  // clear contrast; use a transparent bg with a white outline + white
+  // text so it reads unmistakably on both red (Light) and charcoal
+  // (Dark) surfaces without competing with the primary CTA.
+  badgePlanned: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: theme.color.onRed,
+  },
   badgeT: { fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   // Iter 162 · Bold green Completed badge — replaces the generic status
   // pill whenever the workout is done. High-contrast fill so the client
@@ -1098,6 +1152,46 @@ const styles = StyleSheet.create({
   mBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6 },
   mBtnPrimary: { backgroundColor: theme.color.brand },
   mBtnPrimaryT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  mBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.brand },
-  mBtnGhostT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  mBtnGhost: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.onRed },
+  mBtnGhostT: { color: theme.color.onRed, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  // Iter181 · TODAY expanded card actions — primary OPEN WORKOUT button
+  // (black on red per user spec) with the secondary "Move to another
+  // day" as a small pill link below. The primary bg is a hard black
+  // literal in both modes because the red / charcoal card behind it
+  // already provides enough tonal separation for a black CTA.
+  todayActions: {
+    paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, gap: 8,
+  },
+  todayPrimaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#000000",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+  },
+  todayPrimaryBtnT: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+  },
+  todaySecondaryLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    alignSelf: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  todaySecondaryLinkT: {
+    color: theme.color.onRed,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    opacity: 0.85,
+  },
 });

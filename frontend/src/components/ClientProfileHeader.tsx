@@ -15,6 +15,7 @@ import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { theme } from "@/src/lib/theme";
+import type { ThemeMode } from "@/src/lib/theme";
 import { useThemeMode } from "@/src/hooks/use-theme-mode";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 import { LocationBadge } from "@/src/components/LocationBadge";
@@ -69,8 +70,9 @@ export function ClientProfileHeader({
   // `buildStyles()` whose `theme.color.*` reads are evaluated at call
   // time — i.e. AFTER the palette mutation lands.
   const { mode } = useThemeMode();
+  // Iter177 · Dynamic styles via `makeStyles(mode)` factory.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const styles = useMemo(() => buildStyles(), [mode]);
+  const styles = useMemo(() => makeStyles(mode), [mode]);
   const p = user?.profile || {};
   const role = p.job_title;
   const airline = p.airline;
@@ -164,12 +166,10 @@ export function ClientProfileHeader({
   );
 }
 
-// Iter175 · Style factory. Called from inside the component via
-// `useMemo(..., [mode])` so every `theme.color.xxx` read happens AT
-// RENDER TIME, not at module-import time. This is what unfreezes the
-// header from the initial (booted) palette and lets it repaint the
-// moment the user toggles the theme picker.
-function buildStyles() {
+// Iter177 · Style factory. Called from inside <ClientProfileHeader/>
+// via `useMemo(..., [mode])` so every `theme.color.xxx` read happens
+// at render time and the header repaints instantly on theme toggle.
+function makeStyles(_mode: ThemeMode) {
   return StyleSheet.create({
   wrap: { paddingHorizontal: 4, paddingBottom: 12, gap: 12 },
   // Iter 162b · centered variant — used when a large CrewFit logo sits

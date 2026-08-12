@@ -43,6 +43,7 @@ import { EventPrioritySheet } from "@/src/components/EventPrioritySheet";
 import { EventProgressBanner } from "@/src/components/EventProgressBanner";
 import { toast as uxToast } from "@/src/lib/ux";
 import { useThemeMode } from "@/src/hooks/use-theme-mode";
+import type { ThemeMode } from "@/src/lib/theme";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -136,8 +137,11 @@ export default function Home() {
   // instantly on Light ↔ Dark toggle. Styles rebuild via `buildStyles()`
   // whose `theme.color.*` reads happen at call time.
   const { mode } = useThemeMode();
+  // Iter177 · Dynamic styles via `makeStyles(mode)` factory. useMemo
+  // dep-key on `mode` guarantees an instant repaint on Light ↔ Dark
+  // toggle without a full JS reload.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const styles = useMemo(() => buildStyles(), [mode]);
+  const styles = useMemo(() => makeStyles(mode), [mode]);
   // Iter 127 — deep-link from Flight Support push notification tap. Value is
   // the event type, e.g. "flight_support_pre_flight". TodayFlightSupport
   // auto-opens the first matching intervention when this is set.
@@ -1191,11 +1195,10 @@ function QuickBtn({ icon, label, onPress, testID, styles }: any) {
   );
 }
 
-// Iter175 · Style factory. Called from inside <Home/> via
+// Iter177 · Style factory. Called from inside <Home/> via
 // `useMemo(..., [mode])` so every `theme.color.xxx` read happens at
-// render time — unfreezing this screen from the initial-boot palette
-// and letting it repaint the moment the theme picker flips.
-function buildStyles() {
+// render time — the screen repaints instantly on theme toggle.
+function makeStyles(_mode: ThemeMode) {
   return StyleSheet.create({
   root: {
     flex: 1,

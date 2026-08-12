@@ -11,7 +11,7 @@
  * Charts via react-native-gifted-charts (widely used, expo-compatible).
  * Empty states are explicit ("Not enough data yet") — never a broken chart.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, RefreshControl,
   ActivityIndicator, TextInput, Alert,
@@ -24,7 +24,27 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import type { ThemeMode } from "@/src/lib/theme";
+import { useThemeMode } from "@/src/hooks/use-theme-mode";
 import { toast } from "@/src/lib/ux";
+
+/* --------------------------------------------------------------------------
+ * Iter177 · Styles context.
+ *
+ * ProgressDashboard has many helper components (SummaryCard, AdherenceCard,
+ * FatLossPanel, ChangeMetric, etc.) that historically read a module-level
+ * `styles` object. Moving to a `makeStyles(mode)` factory + `useMemo`
+ * inside the main component means the helpers need a runtime channel to
+ * receive the fresh stylesheet — otherwise they'd still capture the
+ * initial-boot values. React Context gives us exactly that.
+ * ------------------------------------------------------------------------ */
+type StyleMap = ReturnType<typeof makeStyles>;
+const StylesCtx = createContext<StyleMap | null>(null);
+function useStyles(): StyleMap {
+  const s = useContext(StylesCtx);
+  if (!s) throw new Error("StylesCtx not provided — wrap in <StylesCtx.Provider>");
+  return s;
+}
 
 type Series = { date: string; value: number };
 type Photo = { id: string; date: string; angle: string; url: string; expires_at_epoch: number };
@@ -67,6 +87,11 @@ function fmtDelta(n: number | null | undefined, unit = ""): { text: string; posi
 
 export function ProgressDashboard() {
   const router = useRouter();
+  // Iter177 · Dynamic styles via `makeStyles(mode)`. Wrapped in
+  // `StylesCtx.Provider` below so every helper component picks up the
+  // same fresh stylesheet on Light ↔ Dark toggle.
+  const { mode } = useThemeMode();
+  const styles = useMemo(() => makeStyles(mode), [mode]);
   const [d, setD] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -85,14 +110,17 @@ export function ProgressDashboard() {
 
   if (loading && !d) {
     return (
-      <SafeAreaView style={styles.root}>
-        <ActivityIndicator color={theme.color.brand} style={{ marginTop: 60 }} />
-      </SafeAreaView>
+      <StylesCtx.Provider value={styles}>
+        <SafeAreaView style={styles.root}>
+          <ActivityIndicator color={theme.color.brand} style={{ marginTop: 60 }} />
+        </SafeAreaView>
+      </StylesCtx.Provider>
     );
   }
   if (!d) return null;
 
   return (
+    <StylesCtx.Provider value={styles}>
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={10}><Ionicons name="chevron-back" size={24} color={theme.color.text} /></Pressable>
@@ -129,7 +157,8 @@ export function ProgressDashboard() {
           onSaved={() => { setShowLogSheet(false); load(); }}
         />
       ) : null}
-    </SafeAreaView>
+      </SafeAreaView>
+    </StylesCtx.Provider>
   );
 }
 
@@ -138,6 +167,7 @@ export function ProgressDashboard() {
 /* -------------------------------------------------------------------------- */
 
 function SummaryCard({ d }: { d: Dashboard }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>YOUR GOAL</Text>
@@ -148,6 +178,7 @@ function SummaryCard({ d }: { d: Dashboard }) {
 }
 
 function AdherenceCard({ d }: { d: Dashboard }) {
+  const styles = useStyles();
   const a = d.adherence;
   return (
     <View style={styles.card}>
@@ -168,6 +199,7 @@ function AdherenceCard({ d }: { d: Dashboard }) {
 }
 
 function Metric({ label, value }: { label: string; value: string | number }) {
+  const styles = useStyles();
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLbl}>{label}</Text>
@@ -181,6 +213,7 @@ function Metric({ label, value }: { label: string; value: string | number }) {
 /* -------------------------------------------------------------------------- */
 
 function FatLossPanel({ d, onReload }: { d: Dashboard; onReload: () => void }) {
+  const styles = useStyles();
   const w = d.body.series_weight;
   const wa = d.body.series_waist;
   return (
@@ -270,6 +303,7 @@ function FatLossPanel({ d, onReload }: { d: Dashboard; onReload: () => void }) {
 /* -------------------------------------------------------------------------- */
 
 function RunningPanel({ d }: { d: Dashboard }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>RUNNING · LAST 12 WEEKS</Text>
@@ -313,6 +347,7 @@ function RunningPanel({ d }: { d: Dashboard }) {
 /* -------------------------------------------------------------------------- */
 
 function StrengthPanel({ d }: { d: Dashboard }) {
+  const styles = useStyles();
   if (d.strength.key_lifts.length === 0) {
     return (
       <View style={styles.card}>
@@ -361,6 +396,7 @@ function StrengthPanel({ d }: { d: Dashboard }) {
 /* -------------------------------------------------------------------------- */
 
 function HealthPanel({ d }: { d: Dashboard }) {
+  const styles = useStyles();
   return (
     <View style={styles.card}>
       <Text style={styles.eyebrow}>CONSISTENCY & RECOVERY</Text>
@@ -385,6 +421,7 @@ function HealthPanel({ d }: { d: Dashboard }) {
 /* -------------------------------------------------------------------------- */
 
 function PhotosCard({ photos, onReload }: { photos: Photo[]; onReload: () => void }) {
+  const styles = useStyles();
   const pick = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
@@ -460,6 +497,7 @@ function PhotosCard({ photos, onReload }: { photos: Photo[]; onReload: () => voi
 function LogSheet({
   goalClass, onClose, onSaved,
 }: { goalClass: string; onClose: () => void; onSaved: () => void }) {
+  const styles = useStyles();
   const [kind, setKind] = useState<"body" | "running" | "strength">(
     goalClass === "running" ? "running" : goalClass === "strength" ? "strength" : "body"
   );
@@ -557,6 +595,7 @@ function LogSheet({
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={{ marginTop: 12 }}>
       <Text style={styles.fieldLbl}>{label}</Text>
@@ -566,6 +605,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function EmptyState({ label }: { label: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.emptyBox}>
       <Ionicons name="analytics-outline" size={22} color={theme.color.textMuted} />
@@ -579,6 +619,7 @@ function ChartHolder({ children }: { children: React.ReactNode }) {
 }
 
 function ChangeMetric({ label, delta, unit }: { label: string; delta?: number | null; unit: string }) {
+  const styles = useStyles();
   const d = fmtDelta(delta, unit);
   return (
     <View style={styles.metric}>
@@ -594,21 +635,21 @@ function ChangeMetric({ label, delta, unit }: { label: string; delta?: number | 
   );
 }
 
-// Iter175 · CONTRAST RULE for Progress dashboard.
-// -----------------------------------------------------------------------
-// The `card` uses `theme.color.surface2` which resolves to #A3182E
-// (brand red) in Light Mode. Any text placed inside a card MUST
-// render in `theme.color.onRed` (#FFFFFF) so it stays legible on
-// BOTH palettes:
-//   Dark  — white on charcoal #1E1E1E
-//   Light — white on brand-red #A3182E
-// `_onRedMuted` / `_onRedDim` are semi-transparent whites that
-// preserve secondary/tertiary text hierarchy on either background.
-// -----------------------------------------------------------------------
+// Iter177 · makeStyles factory. Called from inside <ProgressDashboard/>
+// via `useMemo(..., [mode])`. Every `theme.color.xxx` read happens at
+// render time so the whole dashboard repaints instantly on Light ↔
+// Dark toggle. Helpers receive this via `StylesCtx` (see top of file).
+//
+// CONTRAST RULE (Iter175 unchanged):
+//   `card`     uses `surface2` → charcoal (Dark) or brand red (Light)
+//   `metric`   uses `surface3` → dark grey (Dark) or deep red (Light)
+// Any text inside those tokens MUST use `theme.color.onRed` (#FFFFFF).
+// `_onRedMuted` / `_onRedDim` are white-alpha for secondary/tertiary.
 const _onRedMuted = "rgba(255,255,255,0.82)";   // secondary on-red text
 const _onRedDim   = "rgba(255,255,255,0.68)";   // tertiary on-red text
 
-const styles = StyleSheet.create({
+function makeStyles(_mode: ThemeMode) {
+  return StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
@@ -677,4 +718,5 @@ const styles = StyleSheet.create({
 
   saveBtn: { marginTop: 16, padding: 14, borderRadius: 10, backgroundColor: theme.color.brand, alignItems: "center" },
   saveBtnT: { color: theme.color.onBrand, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
-});
+  });
+}

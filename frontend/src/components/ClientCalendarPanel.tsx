@@ -282,13 +282,16 @@ function DutyChipView({ chip, small }: { chip: DutyChip; small?: boolean }) {
  * Long-press / tap-through opens the workout; we don't add own handler.
  */
 function DutyIconDot({ chip }: { chip: DutyChip }) {
-  const c = dutyChipColors(chip.tone);
+  // Iter181 · The dot sits on the red day-card in Light Mode. Force it
+  // to a transparent bg + WHITE outline + WHITE icon so it reads clearly
+  // in both palettes (Dark Mode charcoal card also gets a clean white
+  // outline). Ignores per-tone colouring — the chip label conveys type.
   return (
     <View
       accessibilityLabel={chip.label}
-      style={[styles.dutyDot, { backgroundColor: c.bg, borderColor: c.border }]}
+      style={[styles.dutyDot, { backgroundColor: "transparent", borderColor: theme.color.onRed }]}
     >
-      <Ionicons name={chip.icon} size={12} color={c.fg} />
+      <Ionicons name={chip.icon} size={12} color={theme.color.onRed} />
     </View>
   );
 }
@@ -804,7 +807,7 @@ function DayRow({
         {(card.flight_support && card.flight_support.length > 0) ? (
           <View style={styles.fsBox}>
             <View style={styles.fsHeader}>
-              <Ionicons name="airplane-outline" size={11} color={theme.color.textMuted} />
+              <Ionicons name="airplane-outline" size={11} color={theme.color.onRed} />
               <Text style={styles.fsHeaderT}>FLIGHT SUPPORT</Text>
               <Text style={styles.fsHeaderHint}>Not counted as training</Text>
             </View>
@@ -1065,11 +1068,11 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   fsHeaderT: {
-    color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
+    color: theme.color.onRed, fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
   },
   fsHeaderHint: {
-    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
-    fontStyle: "italic", marginLeft: "auto",
+    color: theme.color.onRed, fontSize: 11, fontWeight: "600",
+    fontStyle: "italic", marginLeft: "auto", opacity: 0.85,
   },
   fsRow: {
     flexDirection: "row", alignItems: "center", gap: 8,
@@ -1080,17 +1083,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   fsTitle: {
-    color: theme.color.text, fontSize: 12, fontWeight: "700",
+    color: theme.color.onRed, fontSize: 12, fontWeight: "700",
   },
   fsBundleHint: {
-    color: theme.color.textMuted, fontSize: 11, fontWeight: "600",
-    fontStyle: "italic",
+    color: theme.color.onRed, fontSize: 11, fontWeight: "600",
+    fontStyle: "italic", opacity: 0.85,
   },
   fsReason: {
-    color: theme.color.textMuted, fontSize: 11, marginTop: 1,
+    color: theme.color.onRed, fontSize: 11, marginTop: 1, opacity: 0.9,
   },
   fsDuration: {
-    color: theme.color.brand, fontSize: 12, fontWeight: "700",
+    color: theme.color.onRed, fontSize: 12, fontWeight: "700",
     minWidth: 32, textAlign: "right",
   },
   // Iter 112 — V2 rationale + priority pill styles
@@ -1099,7 +1102,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, marginTop: 6, paddingRight: 12,
   },
   v2ReasonText: {
-    color: theme.color.text, fontSize: 11, lineHeight: 15, flex: 1,
+    color: theme.color.onRed, fontSize: 11, lineHeight: 15, flex: 1,
     fontStyle: "italic", opacity: 0.9,
   },
   v2PillRow: {
@@ -1107,12 +1110,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, marginTop: 6,
   },
   v2Pill: {
-    borderWidth: 1, borderColor: theme.color.border,
+    borderWidth: 1, borderColor: theme.color.onRed,
     borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3,
-    backgroundColor: theme.color.surface2,
+    backgroundColor: "transparent",
   },
   v2PillText: {
-    color: theme.color.textMuted, fontSize: 11, fontWeight: "700",
+    color: theme.color.onRed, fontSize: 11, fontWeight: "700",
     letterSpacing: 0.8,
   },
   duty: { color: theme.color.textMuted, fontSize: 11, paddingHorizontal: 12, marginTop: 3, fontStyle: "italic" },

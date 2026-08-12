@@ -792,15 +792,15 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border,
     backgroundColor: theme.color.surface2, paddingVertical: 10, paddingHorizontal: 8, minHeight: 48,
   },
-  variantChipLabel: { color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
-  variantChipSub: { color: theme.color.textDim, fontSize: 11, marginTop: 1 },
+  variantChipLabel: { color: theme.color.onRed, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  variantChipSub: { color: theme.color.onRed, fontSize: 11, marginTop: 1, opacity: 0.85 },
   variantNote: {
     flexDirection: "row", alignItems: "center", gap: 8,
     backgroundColor: theme.color.surface2, borderRadius: theme.radius.md,
     borderWidth: 1, borderColor: theme.color.border,
     paddingVertical: 10, paddingHorizontal: 12, marginTop: theme.space.sm,
   },
-  variantNoteText: { color: theme.color.textMuted, fontSize: 12, flex: 1, lineHeight: 16 },
+  variantNoteText: { color: theme.color.onRed, fontSize: 12, flex: 1, lineHeight: 16 },
   realityIconWrapW: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   workoutBanner: { height: 180, borderRadius: 14, marginBottom: 14, overflow: "hidden" },
   workoutBannerInner: { flex: 1, justifyContent: "flex-end", padding: 14, gap: 4 },
@@ -942,11 +942,15 @@ const styles = StyleSheet.create({
   },
   exCard: { padding: theme.space.md, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, marginBottom: theme.space.sm },
   exPreviewRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
-  exName: { color: theme.color.text, fontSize: 15, fontWeight: "800" },
-  exMeta: { color: theme.color.brand, marginTop: 4, letterSpacing: 1, fontWeight: "600", fontSize: 13 },
-  exNotes: { color: theme.color.textMuted, marginTop: 4, fontSize: 12 },
-  demoBtn: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: theme.radius.sm, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, alignSelf: "flex-start" },
-  demoText: { color: theme.color.text, fontSize: 11, fontWeight: "700" },
+  // Iter181 · Exercise cards sit on `surface2` which is red in Light Mode.
+  // Cue / name / meta must be WHITE per Pure Rule. `onRed` = #FFFFFF in
+  // both palettes so Dark Mode's charcoal card (also white text) is a
+  // no-op visually.
+  exName: { color: theme.color.onRed, fontSize: 15, fontWeight: "800" },
+  exMeta: { color: theme.color.onRed, marginTop: 4, letterSpacing: 1, fontWeight: "600", fontSize: 13 },
+  exNotes: { color: theme.color.onRed, marginTop: 4, fontSize: 12, opacity: 0.9 },
+  demoBtn: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, paddingVertical: 6, paddingHorizontal: 10, borderRadius: theme.radius.sm, backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.onRed, alignSelf: "flex-start" },
+  demoText: { color: theme.color.onRed, fontSize: 11, fontWeight: "700" },
   exNameInput: { color: theme.color.text, fontSize: 15, fontWeight: "700", backgroundColor: theme.color.surface3, padding: 10, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border },
   exRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
   exSmall: { flex: 1, color: theme.color.text, backgroundColor: theme.color.surface3, padding: 8, borderRadius: theme.radius.sm, borderWidth: 1, borderColor: theme.color.border, textAlign: "center" },
@@ -962,6 +966,11 @@ const styles = StyleSheet.create({
   sticky: { position: "absolute", left: 0, right: 0, bottom: 0, padding: theme.space.lg, backgroundColor: theme.color.surface, borderTopWidth: 1, borderTopColor: theme.color.border },
   cta: { backgroundColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 13 },
-  ctaSecondary: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.red, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
-  ctaSecondaryText: { color: theme.color.red, fontWeight: "800", letterSpacing: 2, fontSize: 13 },
+  // Iter181 · Secondary CTA (MARK DONE / REJECT etc) — sits on the
+  // white sticky footer in Light Mode. Original had bg=surface2 (red)
+  // with border/text=red which read as red-on-red. Convert to a clean
+  // outlined pill: transparent bg + brand-red border + brand-red text.
+  // Dark Mode: sticky footer is dark, brand-red outline still reads.
+  ctaSecondary: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
+  ctaSecondaryText: { color: theme.color.brand, fontWeight: "800", letterSpacing: 2, fontSize: 13 },
 });

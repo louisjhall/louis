@@ -291,8 +291,12 @@ const styles = StyleSheet.create({
   selectedMonthLabel: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 2 },
   monthChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   monthChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
-  monthChipEmpty: { opacity: 0.55 },
-  monthChipText: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
+  // Iter181 · Empty-month chips were fading to 0.55 which combined with a
+  // textMuted (black in Light) label made them read as barely-legible
+  // dark-grey on pink. Ease the opacity and switch label to WHITE on the
+  // red chip surface for consistent Pure-Rule contrast.
+  monthChipEmpty: { opacity: 0.75 },
+  monthChipText: { color: theme.color.onRed, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   monthBlock: { marginBottom: 20, backgroundColor: theme.color.surface2, borderRadius: 10, borderWidth: 1, borderColor: theme.color.border, padding: 12 },
   monthHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },

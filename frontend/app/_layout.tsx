@@ -9,7 +9,7 @@ import * as Linking from "expo-linking";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { useBrandFonts } from "@/src/hooks/use-brand-fonts";
-import { bootstrapThemeMode } from "@/src/hooks/use-theme-mode";
+import { bootstrapThemeMode, useThemeMode } from "@/src/hooks/use-theme-mode";
 import { useOtaUpdates } from "@/src/hooks/use-ota-updates";
 import { AuthProvider, useAuth } from "@/src/lib/auth";
 import { ToastHost } from "@/src/lib/ux";
@@ -85,6 +85,15 @@ export default function RootLayout() {
     bootstrapThemeMode().finally(() => setThemeBooted(true));
   }, []);
 
+  // Iter174 · Subscribe to the reactive theme mode so the whole
+  // navigator can be re-keyed whenever the user toggles Dark ↔ Light.
+  // Applied as `key={mode}` on the <Stack> below — this unmounts and
+  // remounts every mounted screen so any inline `theme.color.xxx`
+  // usages in JSX pick up the fresh palette immediately. Persisted
+  // auth / providers above the Stack survive the remount so the user
+  // stays logged in.
+  const { mode } = useThemeMode();
+
   // Iter 95a — silent OTA check (no-ops in web / Expo Go / dev).
   useOtaUpdates();
 
@@ -140,9 +149,24 @@ export default function RootLayout() {
             <AppConfigProvider>
               <PreviewWiring>
                 <CrewFitIntroAnimation>
-                  <StatusBar barStyle="light-content" backgroundColor={theme.color.bg} />
+                  <StatusBar
+                    key={`sb-${mode}`}
+                    barStyle={mode === "light" ? "dark-content" : "light-content"}
+                    backgroundColor={theme.color.bg}
+                  />
                   <PreviewBanner />
-                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.color.bg }, animation: "fade" }} />
+                  {/*
+                    Iter174 · `key={mode}` forces a full remount of the
+                    Expo Router stack whenever the theme flips. Every
+                    screen re-runs its render function so inline
+                    `theme.color.xxx` reads (which happen at render
+                    time) pick up the new palette instantly — no need
+                    to force-close and reopen the app.
+                  */}
+                  <Stack
+                    key={mode}
+                    screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.color.bg }, animation: "fade" }}
+                  />
                   <BetaDisclaimerGate />
                   <TrainingSetupGate />
                   <ToastHost />

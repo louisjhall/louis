@@ -656,7 +656,7 @@ function DayRow({
                   <Text style={[styles.badgeT, { color: bs.fg }]}>{bs.label}</Text>
                 </View>
               )}
-              <Ionicons name="chevron-down" size={16} color={theme.color.textMuted} />
+              <Ionicons name="chevron-down" size={16} color={theme.color.onRed} />
             </View>
           </View>
         </View>
@@ -704,7 +704,7 @@ function DayRow({
                 (chevron-up), future/past days default collapsed but can be
                 opened via the compact tile. */}
             <Pressable onPress={onToggle} hitSlop={8} testID={`cal-day-${card.date}-toggle`}>
-              <Ionicons name="chevron-up" size={16} color={theme.color.textMuted} />
+              <Ionicons name="chevron-up" size={16} color={theme.color.onRed} />
             </Pressable>
           </View>
         </View>
@@ -946,10 +946,10 @@ const styles = StyleSheet.create({
   loadBar: { width: 4, backgroundColor: theme.color.border },
   rowHead: { flexDirection: "row", alignItems: "flex-start", padding: 12, paddingBottom: 4 },
 
-  date: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
-  dateSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
-  dateCompact: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  titleCompact: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
+  date: { color: theme.color.onRed, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
+  dateSub: { color: theme.color.onRed, fontSize: 11, marginTop: 2 },
+  dateCompact: { color: theme.color.onRed, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  titleCompact: { color: theme.color.onRed, fontSize: 14, fontWeight: "700", marginTop: 2 },
 
   badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
   badgeT: { fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
@@ -963,9 +963,9 @@ const styles = StyleSheet.create({
   },
   completedBadgeT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
-  title: { color: theme.color.text, fontSize: 14, fontWeight: "800", paddingHorizontal: 12, marginTop: 2 },
-  titleRest: { color: theme.color.textMuted, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, marginTop: 2, letterSpacing: 1 },
-  meta: { color: theme.color.textMuted, fontSize: 11, paddingHorizontal: 12, marginTop: 3 },
+  title: { color: theme.color.onRed, fontSize: 14, fontWeight: "800", paddingHorizontal: 12, marginTop: 2 },
+  titleRest: { color: theme.color.onRed, fontSize: 12, fontWeight: "800", paddingHorizontal: 12, marginTop: 2, letterSpacing: 1 },
+  meta: { color: theme.color.onRed, fontSize: 11, paddingHorizontal: 12, marginTop: 3 },
   // Iter 113 — duty info block (flights + layover city + load)
   dutyBox: {
     marginHorizontal: 12, marginTop: 8, paddingHorizontal: 10, paddingVertical: 8,
@@ -980,7 +980,7 @@ const styles = StyleSheet.create({
     fontSize: 11, fontWeight: "800", letterSpacing: 1.2,
   },
   dutyCity: {
-    color: theme.color.textMuted, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
+    color: theme.color.onRed, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
   },
   dutyLoadPill: {
     paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginLeft: "auto",
@@ -992,10 +992,10 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 6, paddingTop: 2,
   },
   dutyFlightT: {
-    color: theme.color.text, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
+    color: theme.color.onRed, fontSize: 11, fontWeight: "600", flex: 1, minWidth: 0,
   },
   dutyFlightAircraft: {
-    color: theme.color.textMuted, fontSize: 11, fontWeight: "700",
+    color: theme.color.onRed, fontSize: 11, fontWeight: "700",
   },
   // Iter 116 — Aviation Support (Phase A) rendering
   fsBox: {
@@ -1093,7 +1093,7 @@ const styles = StyleSheet.create({
   chipT: { fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
   chipTSmall: { fontSize: 11, letterSpacing: 0.3 },
 
-  missedCopy: { color: theme.color.textMuted, fontSize: 12, paddingHorizontal: 12, marginTop: 6, lineHeight: 17 },
+  missedCopy: { color: theme.color.onRed, fontSize: 12, paddingHorizontal: 12, marginTop: 6, lineHeight: 17 },
   missedActions: { flexDirection: "row", gap: 8, padding: 12, paddingTop: 8 },
   mBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, flexDirection: "row", alignItems: "center", gap: 6 },
   mBtnPrimary: { backgroundColor: theme.color.brand },

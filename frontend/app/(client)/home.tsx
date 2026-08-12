@@ -1560,7 +1560,11 @@ function makeStyles(_mode: ThemeMode) {
     backgroundColor: theme.color.brandTint,
   },
   addActivityT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  qBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingVertical: 12 },
+  // Iter180 · MONTHLY / CHECK-IN / PROGRESS action pills. User requested
+  // these pills be BLACK in Light Mode (creates clean separation from the
+  // red coaching cards below). Dark Mode keeps its charcoal look via the
+  // existing surface2 token. Icon/text remain white via `onRed`.
+  qBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: _mode === "light" ? "#000000" : theme.color.surface2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: _mode === "light" ? "#000000" : theme.color.border, paddingVertical: 12 },
   qBtnText: { color: theme.color.onRed, letterSpacing: 1.5, fontWeight: "700", fontSize: 11 },
   sectionTitle: { color: theme.color.textMuted, letterSpacing: 2, fontSize: 11, fontWeight: "800", marginTop: theme.space.lg, marginBottom: theme.space.sm },
   sectionHint: { color: theme.color.textDim, fontSize: 11, fontStyle: "italic", marginBottom: theme.space.sm, marginTop: -6 },

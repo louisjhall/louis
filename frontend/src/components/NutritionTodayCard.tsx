@@ -17,6 +17,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import type { ThemeMode } from "@/src/lib/theme";
+import { useThemeMode } from "@/src/hooks/use-theme-mode";
 
 type Totals = { calories: number; protein_g: number; carbs_g?: number; fats_g?: number; count?: number };
 type Target  = { calories?: number; protein_g?: number };
@@ -53,13 +55,14 @@ function barColor(current: number, target?: number): string {
 }
 
 function ProgressRow({
-  label, current, target, unit, testID,
+  label, current, target, unit, testID, styles,
 }: {
   label: string;
   current: number;
   target?: number;
   unit: string;
   testID?: string;
+  styles: any;
 }) {
   const p = pct01(current, target);
   const pctLabel = target ? `${Math.round(p * 100)}%` : "";
@@ -90,6 +93,11 @@ function ProgressRow({
 
 export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) {
   const router = useRouter();
+  const { mode } = useThemeMode();
+  // Iter180 · Dynamic styles so the red card's text/icons/CTA repaint on
+  // theme toggle. The user requires WHITE text/icons on the red card in
+  // Light Mode and a BLACK "LOG FIRST MEAL" CTA button inside the card.
+  const styles = useMemo(() => makeStyles(mode), [mode]);
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -125,7 +133,7 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
       {/* Header — click opens Nutrition detail */}
       <Pressable onPress={openSummary} style={styles.head} testID="nutrition-open">
         <Text style={styles.title}>TODAY&apos;S NUTRITION</Text>
-        <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+        <Ionicons name="chevron-forward" size={16} color={theme.color.onRed} />
       </Pressable>
 
       {/* Calories */}
@@ -135,6 +143,7 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
         target={target.calories}
         unit="kcal"
         testID="nutrition-calories-row"
+        styles={styles}
       />
 
       {/* Protein */}
@@ -144,6 +153,7 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
         target={target.protein_g}
         unit="g"
         testID="nutrition-protein-row"
+        styles={styles}
       />
 
       {/* Combined meals + CTA row */}
@@ -163,7 +173,14 @@ export function NutritionTodayCard({ refreshKey = 0 }: { refreshKey?: number }) 
   );
 }
 
-const styles = StyleSheet.create({
+// Iter180 · Style factory — swapped from static `StyleSheet.create` so the
+// user-requested Pure Rule (WHITE text/icons on the red card) applies in
+// Light Mode and the CTA button flips to BLACK inside the red card per
+// spec. Dark Mode keeps its charcoal-card look via `surface2` and the
+// same white text tokens.
+function makeStyles(mode: ThemeMode) {
+  const isLight = mode === "light";
+  return StyleSheet.create({
   card: {
     backgroundColor: theme.color.surface2,
     borderRadius: theme.radius.md,
@@ -182,7 +199,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   title: {
-    color: theme.color.brand,
+    color: theme.color.onRed,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 2,
@@ -198,22 +215,22 @@ const styles = StyleSheet.create({
   },
   metricLbl: {
     flex: 1,
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 13,
   },
   metricLblStrong: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 13,
     fontWeight: "800",
   },
   metricSep: { fontSize: 13 },
   metricV: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 13,
     fontWeight: "800",
   },
   metricTgt: {
-    color: theme.color.textMuted,
+    color: theme.color.onRed,
     fontSize: 13,
     fontWeight: "600",
   },
@@ -222,14 +239,17 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   metricLeft: {
-    color: theme.color.textMuted,
+    color: theme.color.onRed,
     fontSize: 12,
     fontWeight: "600",
   },
 
   barBg: {
     height: 8,
-    backgroundColor: theme.color.surface3,
+    // Iter180 · Bar track: subtle white wash in Light Mode (on the red
+    // card) so the empty portion of the progress bar is readable but not
+    // aggressive. Dark Mode keeps the existing surface3 charcoal.
+    backgroundColor: isLight ? "rgba(255,255,255,0.28)" : theme.color.surface3,
     borderRadius: 4,
     overflow: "hidden",
   },
@@ -244,12 +264,12 @@ const styles = StyleSheet.create({
   },
   footLeft: { flex: 1 },
   footMeals: {
-    color: theme.color.textMuted,
+    color: theme.color.onRed,
     fontSize: 12,
     fontWeight: "600",
   },
   footMealsN: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontWeight: "900",
   },
 
@@ -260,7 +280,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: theme.color.brand,
+    // Iter180 · CTA button lives INSIDE the red nutrition card. Per user
+    // spec: RED CARD → WHITE TEXT → BLACK ACTION BUTTON → WHITE TEXT.
+    // Dark Mode keeps the classic brand-red primary button.
+    backgroundColor: isLight ? "#000000" : theme.color.brand,
   },
   ctaT: {
     color: "#fff",
@@ -269,3 +292,4 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
 });
+}

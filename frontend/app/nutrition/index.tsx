@@ -5,7 +5,7 @@
  * quick-log entry, weekly summary card, and clearly-labelled navigation to
  * later-phase features (Barcode, Photo Scan, Travel Guidance).
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet,
   Text, View,
@@ -15,6 +15,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import type { ThemeMode } from "@/src/lib/theme";
+import { useThemeMode } from "@/src/hooks/use-theme-mode";
 import { toast } from "@/src/lib/ux";
 
 type Today = {
@@ -33,6 +35,11 @@ type Summary = {
 
 export default function NutritionHome() {
   const router = useRouter();
+  // Iter180 · Dynamic styles so the Hydration heading (BLACK on page bg),
+  // water quick-add buttons (BLACK bg with WHITE labels), and Atlas
+  // Insight text (BLACK on the pale card) all repaint on theme toggle.
+  const { mode } = useThemeMode();
+  const styles = useMemo(() => makeStyles(mode), [mode]);
   const [today, setToday] = useState<Today | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [tip, setTip] = useState<string>("");
@@ -123,6 +130,7 @@ export default function NutritionHome() {
             target={targetCal}
             unit="kcal"
             color={theme.color.brand}
+            styles={styles}
           />
           <MetricCard
             label="PROTEIN"
@@ -130,20 +138,21 @@ export default function NutritionHome() {
             target={targetPro}
             unit="g"
             color={theme.color.green}
+            styles={styles}
           />
         </View>
 
         {/* Carbs + fats + hydration */}
         <View style={styles.smallRow}>
-          <SmallMetric label="CARBS" value={t?.totals.carbs_g || 0} unit="g" target={t?.target.carbs_g} />
-          <SmallMetric label="FATS" value={t?.totals.fats_g || 0} unit="g" target={t?.target.fats_g} />
-          <SmallMetric label="HYDRATION" value={t?.hydration_ml || 0} unit="ml" target={targetHyd} />
+          <SmallMetric label="CARBS" value={t?.totals.carbs_g || 0} unit="g" target={t?.target.carbs_g} styles={styles} />
+          <SmallMetric label="FATS" value={t?.totals.fats_g || 0} unit="g" target={t?.target.fats_g} styles={styles} />
+          <SmallMetric label="HYDRATION" value={t?.hydration_ml || 0} unit="ml" target={targetHyd} styles={styles} />
         </View>
 
         {/* Hydration quick actions */}
         <View style={styles.hydCard}>
           <View style={styles.hydCardHead}>
-            <Ionicons name="water" size={18} color="#3B82F6" />
+            <Ionicons name="water" size={18} color={theme.color.onRed} />
             <Text style={styles.hydCardT}>HYDRATION</Text>
             <Text style={styles.hydCardV}>{(t?.hydration_ml || 0)} / {targetHyd}ml</Text>
           </View>
@@ -156,7 +165,7 @@ export default function NutritionHome() {
             ))}
             <Pressable onPress={() => addWater(-250)} disabled={hydrating}
               style={[styles.hydBtn, styles.hydBtnGhost, hydrating && { opacity: 0.4 }]}>
-              <Ionicons name="remove" size={14} color={theme.color.textMuted} />
+              <Ionicons name="remove" size={14} color={theme.color.onRed} />
             </Pressable>
           </View>
         </View>
@@ -199,8 +208,8 @@ export default function NutritionHome() {
         {/* Quick actions */}
         <Text style={styles.sect}>LOG A MEAL</Text>
         <View style={styles.actionsGrid}>
-          <ActionBtn icon="restaurant" label="MANUAL LOG" onPress={() => router.push("/nutrition/log" as any)} testID="nutr-manual" primary />
-          <ActionBtn icon="search" label="FOOD SEARCH" onPress={() => router.push("/nutrition/food-search" as any)} testID="nutr-search" />
+          <ActionBtn icon="restaurant" label="MANUAL LOG" onPress={() => router.push("/nutrition/log" as any)} testID="nutr-manual" primary styles={styles} />
+          <ActionBtn icon="search" label="FOOD SEARCH" onPress={() => router.push("/nutrition/food-search" as any)} testID="nutr-search" styles={styles} />
         </View>
 
         {/* Iter168 · "More" toggle keeps the extra 7 destinations discoverable
@@ -222,13 +231,13 @@ export default function NutritionHome() {
 
         {showMore ? (
           <View style={styles.actionsGrid} testID="nutr-more-grid">
-            <ActionBtn icon="barcode-outline" label="BARCODE" onPress={() => router.push("/nutrition/barcode" as any)} testID="nutr-barcode" />
-            <ActionBtn icon="camera" label="PHOTO SCAN" onPress={() => router.push("/nutrition/photo-scan" as any)} testID="nutr-photo" />
-            <ActionBtn icon="heart" label="FAVOURITES" onPress={() => router.push("/nutrition/favourites" as any)} testID="nutr-favs" />
-            <ActionBtn icon="airplane" label="TRAVEL FOOD" onPress={() => router.push("/nutrition/travel" as any)} testID="nutr-travel" />
-            <ActionBtn icon="help-circle" label="ATLAS DECIDE" onPress={() => router.push("/nutrition/decision" as any)} testID="nutr-decide" />
-            <ActionBtn icon="business" label="AIRPORT MODE" onPress={() => router.push("/nutrition/airport" as any)} testID="nutr-airport" />
-            <ActionBtn icon="time" label="MEAL TIMING" onPress={() => router.push("/nutrition/timing" as any)} testID="nutr-timing" />
+            <ActionBtn icon="barcode-outline" label="BARCODE" onPress={() => router.push("/nutrition/barcode" as any)} testID="nutr-barcode" styles={styles} />
+            <ActionBtn icon="camera" label="PHOTO SCAN" onPress={() => router.push("/nutrition/photo-scan" as any)} testID="nutr-photo" styles={styles} />
+            <ActionBtn icon="heart" label="FAVOURITES" onPress={() => router.push("/nutrition/favourites" as any)} testID="nutr-favs" styles={styles} />
+            <ActionBtn icon="airplane" label="TRAVEL FOOD" onPress={() => router.push("/nutrition/travel" as any)} testID="nutr-travel" styles={styles} />
+            <ActionBtn icon="help-circle" label="ATLAS DECIDE" onPress={() => router.push("/nutrition/decision" as any)} testID="nutr-decide" styles={styles} />
+            <ActionBtn icon="business" label="AIRPORT MODE" onPress={() => router.push("/nutrition/airport" as any)} testID="nutr-airport" styles={styles} />
+            <ActionBtn icon="time" label="MEAL TIMING" onPress={() => router.push("/nutrition/timing" as any)} testID="nutr-timing" styles={styles} />
           </View>
         ) : null}
 
@@ -276,7 +285,7 @@ export default function NutritionHome() {
 
 /* -------------------------------------------------------------------------- */
 
-function MetricCard({ label, value, target, unit, color }: { label: string; value: number; target: number; unit: string; color: string; }) {
+function MetricCard({ label, value, target, unit, color, styles }: { label: string; value: number; target: number; unit: string; color: string; styles: any; }) {
   const pct = Math.min(1, target ? value / target : 0);
   return (
     <View style={styles.metricCard}>
@@ -290,7 +299,7 @@ function MetricCard({ label, value, target, unit, color }: { label: string; valu
   );
 }
 
-function SmallMetric({ label, value, target, unit }: { label: string; value: number; target?: number; unit: string; }) {
+function SmallMetric({ label, value, target, unit, styles }: { label: string; value: number; target?: number; unit: string; styles: any; }) {
   return (
     <View style={styles.smallCard}>
       <Text style={styles.smallLabel}>{label}</Text>
@@ -300,11 +309,16 @@ function SmallMetric({ label, value, target, unit }: { label: string; value: num
   );
 }
 
-function ActionBtn({ icon, label, onPress, primary, soon, testID }: { icon: any; label: string; onPress: () => void; primary?: boolean; soon?: boolean; testID?: string; }) {
+function ActionBtn({ icon, label, onPress, primary, soon, testID, styles }: { icon: any; label: string; onPress: () => void; primary?: boolean; soon?: boolean; testID?: string; styles: any; }) {
   return (
     <Pressable onPress={onPress} style={[styles.action, primary && styles.actionPri]} testID={testID}>
-      <Ionicons name={icon} size={20} color={primary ? "#fff" : theme.color.brand} />
-      <Text style={[styles.actionT, primary && { color: "#fff" }]}>{label}</Text>
+      {/* Iter180 · Both primary and non-primary Log-A-Meal buttons sit on
+          a red (`surface2`/`brand`) background in Light Mode. Icons MUST
+          be white so they never disappear. `theme.color.onRed = #FFFFFF`
+          in both palettes so Dark Mode's charcoal buttons keep the same
+          white icon they already had. */}
+      <Ionicons name={icon} size={20} color={theme.color.onRed} />
+      <Text style={[styles.actionT, primary && { color: theme.color.onRed }]}>{label}</Text>
       {soon ? <View style={styles.soonPill}><Text style={styles.soonT}>SOON</Text></View> : null}
     </Pressable>
   );
@@ -342,21 +356,38 @@ function actionBadgeColor(a: string) {
   return { backgroundColor: theme.color.textDim };
 }
 
-const styles = StyleSheet.create({
+// Iter180 · Style factory. Called from inside `NutritionHome` via
+// `useMemo(..., [mode])` so all `theme.color.xxx` reads happen at render
+// time and the screen repaints instantly on theme toggle. Mode-specific
+// overrides implement the user's Light Mode spec:
+//   - HYDRATION heading readable (WHITE on the red hydration card)
+//   - Water quick-add buttons rendered BLACK in Light Mode
+//   - Atlas Insight body text BLACK on the pale pink card
+//   - Section headings ("LOG A MEAL", "WEEKLY SUMMARY") stay brand-red on
+//     the white page background — already readable in both modes.
+function makeStyles(mode: ThemeMode) {
+  const isLight = mode === "light";
+  return StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
   center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
-  headerT: { color: theme.color.onRed, fontSize: 14, letterSpacing: 3, fontWeight: "900", fontFamily: theme.font.display },
+  // Iter180 · "NUTRITION" page heading sits on the plain page background
+  // (white in Light, dark in Dark). Use `text` so it is black-in-light
+  // and white-in-dark — both high contrast.
+  headerT: { color: theme.color.text, fontSize: 14, letterSpacing: 3, fontWeight: "900", fontFamily: theme.font.display },
 
   headRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  dateT: { color: theme.color.onRed, fontSize: 18, fontWeight: "900", letterSpacing: 0.5, fontFamily: theme.font.display },
+  // Iter180 · Date line (e.g. "WEDNESDAY, AUG 12") sits on the white page
+  // in Light Mode — must be BLACK for readability. `text` token is
+  // black-in-light / white-in-dark.
+  dateT: { color: theme.color.text, fontSize: 18, fontWeight: "900", letterSpacing: 0.5, fontFamily: theme.font.display },
   goalT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.6, marginTop: 3, fontFamily: theme.font.textSemi },
   headBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   headBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
 
   ringsRow: { flexDirection: "row", gap: 10 },
   metricCard: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, gap: 6 },
-  metricRingBg: { height: 5, borderRadius: 3, backgroundColor: theme.color.surface3, overflow: "hidden", marginBottom: 8 },
+  metricRingBg: { height: 5, borderRadius: 3, backgroundColor: isLight ? "rgba(255,255,255,0.28)" : theme.color.surface3, overflow: "hidden", marginBottom: 8 },
   metricRingFill: { height: "100%" },
   metricLabel: { color: theme.color.onRed, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
   metricValue: { color: theme.color.onRed, fontSize: 22, fontWeight: "900", fontFamily: theme.font.display, letterSpacing: 0.3 },
@@ -369,41 +400,47 @@ const styles = StyleSheet.create({
   smallValue: { color: theme.color.onRed, fontSize: 15, fontWeight: "800", marginTop: 4, fontFamily: theme.font.display },
   smallTarget: { color: theme.color.onRed, fontSize: 11, marginTop: 2 },
 
-  // Iter173 · Was hardcoded navy-blue (#0A1420 / #183045) which turned
-  // invisible in Light Mode. Uses theme surface tokens so it repaints
-  // properly on both dark and light backgrounds.
   hydCard: { padding: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   hydCardHead: { flexDirection: "row", alignItems: "center", gap: 8 },
-  hydCardT: { color: "#3B82F6", fontSize: 11, fontWeight: "800", letterSpacing: 2, flex: 1, fontFamily: theme.font.textSemi },
+  // Iter180 · HYDRATION heading inside the red hydration card MUST be
+  // WHITE (Pure Rule: text on a red container is white). Previously it
+  // was blue (#3B82F6) which read poorly on red.
+  hydCardT: { color: theme.color.onRed, fontSize: 11, fontWeight: "800", letterSpacing: 2, flex: 1, fontFamily: theme.font.textSemi },
   hydCardV: { color: theme.color.onRed, fontSize: 12, fontWeight: "700" },
   hydBtnRow: { flexDirection: "row", gap: 6, marginTop: 10 },
-  // Iter173 · Was hardcoded #183045 (dark navy) which made buttons
-  // invisible in Light Mode. Now uses the brand red so quick-add
-  // buttons pop on both palettes.
-  hydBtn: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, backgroundColor: theme.color.brand, borderWidth: 1, borderColor: theme.color.brandDark },
+  // Iter180 · Water quick-add buttons (+250ml / +500ml / +750ml). User
+  // spec: BLACK bg with WHITE text in LIGHT MODE only so the buttons
+  // clearly separate from the red hydration card. Dark Mode keeps the
+  // classic brand-red button.
+  hydBtn: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, backgroundColor: isLight ? "#000000" : theme.color.brand, borderWidth: 1, borderColor: isLight ? "#000000" : theme.color.brandDark },
   hydBtnT: { color: theme.color.onBrand, fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
-  hydBtnGhost: { flex: 0, width: 40, backgroundColor: theme.color.surface3, borderColor: theme.color.border },
+  hydBtnGhost: { flex: 0, width: 40, backgroundColor: isLight ? "#000000" : theme.color.surface3, borderColor: isLight ? "#000000" : theme.color.border },
 
   tipCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   tipHead: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 },
   tipHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", fontFamily: theme.font.textSemi },
-  tipT: { color: theme.color.onRed, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
+  // Iter180 · Atlas Insight body sits on the pale brand-tint (pink in
+  // Light) card. User spec: BLACK / strong dark text for readability.
+  // `theme.color.text` is black in Light and white in Dark — both
+  // render clearly on the tinted card.
+  tipT: { color: theme.color.text, fontSize: 13, lineHeight: 20, fontFamily: theme.font.text },
 
   weeklyCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.brand, gap: 8 },
   weeklyHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   weeklyIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: theme.color.brandTint, alignItems: "center", justifyContent: "center" },
-  weeklyHeadT: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", flex: 1, fontFamily: theme.font.textSemi },
+  weeklyHeadT: { color: theme.color.onRed, fontSize: 11, letterSpacing: 2, fontWeight: "800", flex: 1, fontFamily: theme.font.textSemi },
   weeklyBadge: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4 },
   weeklyBadgeT: { color: "#fff", fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
   weeklyT: { color: theme.color.onRed, fontSize: 13, lineHeight: 19, fontFamily: theme.font.text },
   weeklyFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
-  // Iter173 · Was hardcoded dark-amber (#1F1608) which was near-black
-  // on Light Mode. Uses a semi-transparent amber wash so the badge
-  // reads clearly on both palettes.
   weeklyPending: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "rgba(217,119,6,0.15)", borderWidth: 1, borderColor: theme.color.amber },
   weeklyPendingT: { color: theme.color.amber, fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
-  weeklyLink: { color: theme.color.brand, fontSize: 11, letterSpacing: 1, fontWeight: "800" },
+  weeklyLink: { color: theme.color.onRed, fontSize: 11, letterSpacing: 1, fontWeight: "800" },
 
+  // Iter180 · Section headers ("LOG A MEAL", "WEEKLY SUMMARY") sit on
+  // the white page bg in Light Mode. Brand red on white is high contrast
+  // and matches the intended premium accent. Dark Mode keeps brand red
+  // on the dark bg — also readable.
   sect: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800", marginTop: 8, fontFamily: theme.font.textSemi },
   actionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   action: { flexBasis: "48%", flexGrow: 1, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, flexDirection: "row", alignItems: "center", gap: 8 },
@@ -412,7 +449,6 @@ const styles = StyleSheet.create({
   soonPill: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, backgroundColor: theme.color.surface3 },
   soonT: { color: theme.color.onRed, fontSize: 11, fontWeight: "700", letterSpacing: 0.8 },
 
-  // Iter168 · Show/hide extra logging destinations.
   moreToggle: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
     alignSelf: "center", paddingVertical: 10, paddingHorizontal: 14,
@@ -429,9 +465,12 @@ const styles = StyleSheet.create({
   summaryV: { color: theme.color.onRed, fontSize: 14, fontWeight: "800", marginTop: 2, fontFamily: theme.font.display },
   barsRow: { flexDirection: "row", justifyContent: "space-between", height: 60, alignItems: "flex-end" },
   barCol: { flex: 1, alignItems: "center", gap: 4 },
-  barTrack: { width: 8, height: 40, borderRadius: 4, backgroundColor: theme.color.surface3, justifyContent: "flex-end", overflow: "hidden" },
-  barFill: { width: "100%", backgroundColor: theme.color.brand, borderRadius: 4 },
+  barTrack: { width: 8, height: 40, borderRadius: 4, backgroundColor: isLight ? "rgba(255,255,255,0.28)" : theme.color.surface3, justifyContent: "flex-end", overflow: "hidden" },
+  barFill: { width: "100%", backgroundColor: isLight ? "#FFFFFF" : theme.color.brand, borderRadius: 4 },
   barT: { color: theme.color.onRed, fontSize: 11, fontWeight: "700" },
 
-  disclaimer: { color: theme.color.onRed, fontSize: 11, textAlign: "center", lineHeight: 16, marginTop: 12, fontStyle: "italic" },
+  // Iter180 · Disclaimer sits on the white page bg in Light Mode — must
+  // be dark for readability. `text` = black in Light, white in Dark.
+  disclaimer: { color: theme.color.text, fontSize: 11, textAlign: "center", lineHeight: 16, marginTop: 12, fontStyle: "italic" },
 });
+}

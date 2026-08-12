@@ -23,11 +23,13 @@
  * All React Native primitives + react-native-svg (already used by
  * RestTimer). NO react-dom / window / DOM APIs — safe for iOS + Android.
  */
-import React from "react";
+import React, { useMemo } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Svg, { Circle } from "react-native-svg";
 import { theme } from "@/src/lib/theme";
+import type { ThemeMode } from "@/src/lib/theme";
+import { useThemeMode } from "@/src/hooks/use-theme-mode";
 
 const RING_SIZE = 92;
 const RING_STROKE = 8;
@@ -83,6 +85,15 @@ export function EventProgressBanner({
   onLongPress?: () => void;
   testID?: string;
 }) {
+  // Iter180 · Dynamic theme wiring — the Target Marathon card sits on
+  // `surface2` which is red in Light Mode. User spec: all card content
+  // (eyebrow, event name, date, milestone label/value, long-run label,
+  // circular countdown value + label + ring, and both flag / walk icons)
+  // must be WHITE in Light. Dark Mode keeps its existing charcoal-card
+  // look — `onRed = #FFFFFF` in both palettes so no visual regression.
+  const { mode } = useThemeMode();
+  const styles = useMemo(() => makeStyles(mode), [mode]);
+  const isLight = mode === "light";
   const phase = _prettyPhase(event.phase_info?.phase || null);
   const weeksRemaining =
     event.phase_info?.weeks_to_race != null
@@ -126,21 +137,24 @@ export function EventProgressBanner({
 
         <View style={styles.ringCol}>
           <Svg width={RING_SIZE} height={RING_SIZE}>
-            {/* Track */}
+            {/* Track — Iter180: subtle white wash on the red card so the
+                unfilled portion of the ring is visible in Light Mode. */}
             <Circle
               cx={RING_SIZE / 2}
               cy={RING_SIZE / 2}
               r={radius}
-              stroke={theme.color.border}
+              stroke={isLight ? "rgba(255,255,255,0.3)" : theme.color.border}
               strokeWidth={RING_STROKE}
               fill="transparent"
             />
-            {/* Progress arc — rotate -90° so it starts at 12 o'clock. */}
+            {/* Progress arc — rotate -90° so it starts at 12 o'clock.
+                Iter180: WHITE progress arc in Light (on red card) so the
+                remaining-weeks indicator is unmistakable. */}
             <Circle
               cx={RING_SIZE / 2}
               cy={RING_SIZE / 2}
               r={radius}
-              stroke={theme.color.brand}
+              stroke={isLight ? "#FFFFFF" : theme.color.brand}
               strokeWidth={RING_STROKE}
               fill="transparent"
               strokeLinecap="round"
@@ -163,7 +177,7 @@ export function EventProgressBanner({
       {/* Row 2 — next milestone */}
       {phase ? (
         <View style={styles.milestoneRow}>
-          <Ionicons name="flag-outline" size={13} color={theme.color.textMuted} />
+          <Ionicons name="flag-outline" size={13} color={theme.color.onRed} />
           <Text style={styles.milestoneLabel}>NEXT MILESTONE</Text>
           <Text style={styles.milestoneValue}>{phase}</Text>
         </View>
@@ -174,7 +188,7 @@ export function EventProgressBanner({
         <>
           <View style={styles.divider} />
           <View style={styles.longRunRow}>
-            <Ionicons name="walk-outline" size={13} color={theme.color.textMuted} />
+            <Ionicons name="walk-outline" size={13} color={theme.color.onRed} />
             <Text style={styles.longRunLabel}>THIS WEEK&apos;S LONG RUN</Text>
             <Text style={styles.longRunValue}>{`${Number(longRunKm).toFixed(Number(longRunKm) % 1 === 0 ? 0 : 1)} km`}</Text>
           </View>
@@ -187,7 +201,13 @@ export function EventProgressBanner({
 // Re-export the pure helpers for unit-testing without a component mount.
 export const _internals = { _progressFromWeeks, _prettyPhase };
 
-const styles = StyleSheet.create({
+// Iter180 · Style factory — all text/icons inside the red Target Marathon
+// card must render WHITE per user spec. `theme.color.onRed = #FFFFFF` in
+// both palettes, so Dark Mode's charcoal card (which already expected
+// white text) is visually unchanged.
+function makeStyles(mode: ThemeMode) {
+  const isLight = mode === "light";
+  return StyleSheet.create({
   wrap: {
     backgroundColor: theme.color.surface2,
     borderRadius: theme.radius.card,
@@ -199,19 +219,19 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   leftCol: { flex: 1, minHeight: RING_SIZE, justifyContent: "center", gap: 4 },
   eyebrow: {
-    color: theme.color.brand,
+    color: theme.color.onRed,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 2,
   },
   name: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 20,
     fontWeight: "800",
     letterSpacing: -0.3,
   },
   dateLine: {
-    color: theme.color.textSoft,
+    color: theme.color.onRed,
     fontSize: 13,
     fontWeight: "500",
     marginTop: 2,
@@ -229,14 +249,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   ringValue: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 28,
     fontWeight: "900",
     fontVariant: ["tabular-nums"],
     lineHeight: 30,
   },
   ringLabel: {
-    color: theme.color.textMuted,
+    color: theme.color.onRed,
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
@@ -249,20 +269,20 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   milestoneLabel: {
-    color: theme.color.textMuted,
+    color: theme.color.onRed,
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
   },
   milestoneValue: {
-    color: theme.color.text,
+    color: theme.color.onRed,
     fontSize: 13,
     fontWeight: "700",
     marginLeft: 4,
   },
   divider: {
     height: 1,
-    backgroundColor: theme.color.divider,
+    backgroundColor: isLight ? "rgba(255,255,255,0.28)" : theme.color.divider,
     marginVertical: 4,
   },
   longRunRow: {
@@ -271,16 +291,17 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   longRunLabel: {
-    color: theme.color.textMuted,
+    color: theme.color.onRed,
     fontSize: 11,
     fontWeight: "800",
     letterSpacing: 1.5,
     flex: 1,
   },
   longRunValue: {
-    color: theme.color.brand,
+    color: theme.color.onRed,
     fontSize: 14,
     fontWeight: "900",
     fontVariant: ["tabular-nums"],
   },
 });
+}

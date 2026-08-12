@@ -583,12 +583,30 @@ function ChangeMetric({ label, delta, unit }: { label: string; delta?: number | 
   return (
     <View style={styles.metric}>
       <Text style={styles.metricLbl}>{label}</Text>
-      <Text style={[styles.metricV, { color: delta == null ? theme.color.text : d.positive ? theme.color.green : theme.color.red }]}>
+      {/* Iter175 · Was `theme.color.text` which resolves to BLACK in
+          Light Mode — invisible on the red `surface3` tile. Now falls
+          back to `theme.color.onRed` (pure white) so a null / neutral
+          delta still reads on both palettes. */}
+      <Text style={[styles.metricV, { color: delta == null ? theme.color.onRed : d.positive ? theme.color.green : theme.color.red }]}>
         {d.text}
       </Text>
     </View>
   );
 }
+
+// Iter175 · CONTRAST RULE for Progress dashboard.
+// -----------------------------------------------------------------------
+// The `card` uses `theme.color.surface2` which resolves to #A3182E
+// (brand red) in Light Mode. Any text placed inside a card MUST
+// render in `theme.color.onRed` (#FFFFFF) so it stays legible on
+// BOTH palettes:
+//   Dark  — white on charcoal #1E1E1E
+//   Light — white on brand-red #A3182E
+// `_onRedMuted` / `_onRedDim` are semi-transparent whites that
+// preserve secondary/tertiary text hierarchy on either background.
+// -----------------------------------------------------------------------
+const _onRedMuted = "rgba(255,255,255,0.82)";   // secondary on-red text
+const _onRedDim   = "rgba(255,255,255,0.68)";   // tertiary on-red text
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
@@ -598,35 +616,44 @@ const styles = StyleSheet.create({
   },
   headerTitle: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900" },
 
+  // Iter175 · Card container — see contrast rule above.
   card: {
     backgroundColor: theme.color.surface2,
     borderRadius: theme.radius.md,
     borderWidth: 1, borderColor: theme.color.border,
     padding: 14, marginBottom: 12,
   },
-  eyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
-  goalT: { color: theme.color.text, fontSize: 18, fontWeight: "900", letterSpacing: 1 },
-  phaseT: { color: theme.color.textMuted, fontSize: 12, marginTop: 4 },
+  // Iter175 · Was `theme.color.brand` → red-on-red in Light Mode. Now WHITE.
+  eyebrow: { color: theme.color.onRed, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 8 },
+  // Iter175 · "BUILD MUSCLE" goal title — MUST be pure white on red / charcoal.
+  goalT: { color: theme.color.onRed, fontSize: 18, fontWeight: "900", letterSpacing: 1 },
+  // Iter175 · Phase subtitle sits on the same red card — semi-transparent white.
+  phaseT: { color: _onRedMuted, fontSize: 12, marginTop: 4 },
 
   row3: { flexDirection: "row", gap: 8 },
+  // Iter175 · `metric` uses `surface3` which is #7A1122 (deep red) in Light.
+  // Text tokens below use `onRed` so stats stay legible on the dark-red tile.
   metric: { flex: 1, backgroundColor: theme.color.surface3, borderRadius: 8, padding: 10 },
-  metricLbl: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 4 },
-  metricV: { color: theme.color.text, fontSize: 15, fontWeight: "900" },
+  metricLbl: { color: _onRedMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "800", marginBottom: 4 },
+  metricV: { color: theme.color.onRed, fontSize: 15, fontWeight: "900" },
 
   habitRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10 },
-  habitT: { color: theme.color.textMuted, fontSize: 12 },
-  smallNote: { color: theme.color.textMuted, fontSize: 11, marginTop: 6, lineHeight: 15 },
+  habitT: { color: theme.color.onRed, fontSize: 12 },
+  smallNote: { color: _onRedDim, fontSize: 11, marginTop: 6, lineHeight: 15 },
 
+  // Iter175 · `emptyBox` sits inside cards on the nested surface3 tile.
   emptyBox: { flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: 8, backgroundColor: theme.color.surface3, marginTop: 4 },
-  emptyT: { color: theme.color.textMuted, fontSize: 12, flex: 1, lineHeight: 16 },
-  emptySub: { color: theme.color.textMuted, fontSize: 11, marginTop: 8 },
+  emptyT: { color: theme.color.onRed, fontSize: 12, flex: 1, lineHeight: 16 },
+  emptySub: { color: _onRedDim, fontSize: 11, marginTop: 8 },
 
-  chipBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
-  chipBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  chipBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: "rgba(255,255,255,0.4)" },
+  // Iter175 · Chip label sits on the red card — force white.
+  chipBtnT: { color: theme.color.onRed, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   photo: { marginRight: 8, alignItems: "center" },
-  photoDate: { color: theme.color.text, fontSize: 11, marginTop: 4, fontWeight: "800" },
-  photoAngle: { color: theme.color.textMuted, fontSize: 11, marginTop: 1, letterSpacing: 1 },
+  // Iter175 · Progress photos date / angle sit on the red card too.
+  photoDate: { color: theme.color.onRed, fontSize: 11, marginTop: 4, fontWeight: "800" },
+  photoAngle: { color: theme.color.onRed, fontSize: 11, marginTop: 1, letterSpacing: 1 },
 
   sheetRoot: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, justifyContent: "flex-end" },
   sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.55)" },
@@ -641,11 +668,13 @@ const styles = StyleSheet.create({
   tabRow: { flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" },
   tab: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
   tabActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  // Iter175 · Tab labels sit on the outer sheet (`surface` = white in
+  // Light Mode) so keep the neutral muted text here.
   tabT: { color: theme.color.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
 
   fieldLbl: { color: theme.color.textMuted, fontSize: 11, fontWeight: "800", letterSpacing: 1.5, marginBottom: 4 },
   input: { backgroundColor: theme.color.surface3, borderRadius: 8, color: theme.color.text, padding: 10, borderWidth: 1, borderColor: theme.color.border },
 
   saveBtn: { marginTop: 16, padding: 14, borderRadius: 10, backgroundColor: theme.color.brand, alignItems: "center" },
-  saveBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
+  saveBtnT: { color: theme.color.onBrand, fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
 });

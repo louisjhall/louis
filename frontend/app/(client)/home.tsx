@@ -41,7 +41,6 @@ import { AddActivityModal } from "@/src/components/AddActivityModal";
 import { RosterDayPickerSheet, type RosterDayPickerTarget } from "@/src/components/RosterDayPickerSheet";
 import { EventPrioritySheet } from "@/src/components/EventPrioritySheet";
 import { EventProgressBanner } from "@/src/components/EventProgressBanner";
-import { QuickActionFab } from "@/src/components/QuickActionFab";
 import { toast as uxToast } from "@/src/lib/ux";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
@@ -1170,10 +1169,8 @@ export default function Home() {
         onClose={() => setDayPickerTarget(null)}
         onSaved={() => load()}
       />
-      {/* Iter172 · Red Quick-Action FAB — pinned bottom-right, floats
-          above the bottom tab bar (chat icon). Expands to reveal the
-          two most-common shortcuts on the Today tab. */}
-      <QuickActionFab todayWorkoutId={todaysWorkout?.id || null} />
+      {/* Iter172 · Red Quick-Action FAB moved to `(client)/_layout.tsx`
+          in Iter173 so it appears on ALL client tabs, not just Today. */}
     </View>
   );
 }

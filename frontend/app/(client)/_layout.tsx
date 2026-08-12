@@ -2,6 +2,7 @@ import { Tabs } from "expo-router";
 import { View } from "react-native";
 import { PremiumTabBar } from "@/src/components/PremiumTabBar";
 import { CoachChatBubble } from "@/src/components/CoachChatBubble";
+import { QuickActionFab } from "@/src/components/QuickActionFab";
 
 /**
  * Client tab layout — uses the bespoke <PremiumTabBar />.
@@ -16,6 +17,12 @@ import { CoachChatBubble } from "@/src/components/CoachChatBubble";
  * card. Mounting it here caused the video player to autoplay in the
  * background (audio without a visible frame) on the client home. If we
  * ever need a modal replay, we can re-mount it later gated on visibility.
+ *
+ * Iter173 — Global Quick-Action FAB is mounted at this root so the
+ * red (+) button is visible above the chat launcher on EVERY client
+ * tab (Today, Calendar, Nutrition, Base, Profile). It automatically
+ * disappears when a non-tab screen (e.g. workout logger) pushes on
+ * top of the stack, per Expo Router's screen-outside-tabs behaviour.
  */
 export default function ClientLayout() {
   return (
@@ -34,6 +41,7 @@ export default function ClientLayout() {
         {/* Crew Base settings — hidden from the bar; opened from the Base header gear */}
         <Tabs.Screen name="crew-base-settings" options={{ href: null }} />
       </Tabs>
+      <QuickActionFab />
       <CoachChatBubble />
     </View>
   );

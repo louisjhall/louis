@@ -1070,10 +1070,10 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 12, padding: 14,
     borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
-  thumbWrap: { width: 60, height: 60, borderRadius: 10, overflow: "hidden", backgroundColor: "#0A0A0B" },
+  thumbWrap: { width: 60, height: 60, borderRadius: 10, overflow: "hidden", backgroundColor: theme.color.surface3 },
   thumb: { width: "100%", height: "100%" },
   thumbPh: {
-    backgroundColor: "#0A0A0B", alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.surface3, alignItems: "center", justifyContent: "center",
   },
   exName: { color: theme.color.text, fontSize: 17, fontWeight: "800" },
   exMeta: { color: theme.color.textDim, fontSize: 13, marginTop: 3 },
@@ -1167,7 +1167,7 @@ const styles = StyleSheet.create({
   hero: {
     width: "100%",
     aspectRatio: 4 / 3,
-    backgroundColor: "#0A0A0B",
+    backgroundColor: theme.color.surface3,
     // Iter 161 · Was 240px fixed height + default resizeMode="cover" which
     // centre-cropped every Library image. Switched to contain + aspectRatio
     // so the WHOLE approved image is visible on iPhone and Android.

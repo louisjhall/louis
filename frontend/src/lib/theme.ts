@@ -35,6 +35,9 @@ export const DARK_PALETTE = {
   brandTint: "#2A0810",
   brandGlow: "#C42239",
   onBrand: "#FFFFFF",
+  // Iter173 · Text/icon color for on-red surfaces (same in both modes).
+  onRed: "#FFFFFF",
+  onBrandMuted: "#F5D5DA",
   green: "#10B981",
   amber: "#F59E0B",
   red: "#EF4444",
@@ -44,35 +47,43 @@ export const DARK_PALETTE = {
 } as const;
 
 export const LIGHT_PALETTE = {
-  // Iter172 · Light-mode depth. Page-level `surface` is pure white so
-  // Nutrition / Workout / Home all repaint white in Light Mode. Cards
-  // (`surface2`) sit slightly warmer at #F4F4F9 for gentle contrast.
+  // Iter173 · HIGH-CONTRAST light palette. Pure white bg + pure black
+  // primary text guarantees WCAG AAA text contrast (21:1). Muted /
+  // dim tokens are also strengthened so nothing ever renders as
+  // light-grey-on-white and disappears.
   surface: "#FFFFFF",
   surface2: "#F4F4F9",
   surface3: "#ECECF3",
   border: "#D4D4DC",
   borderStrong: "#B8B8C4",
   divider: "#E5E5EC",
-  text: "#0E0E12",
+  text: "#000000",
   textHi: "#000000",
   bg: "#FFFFFF",
   bgGradientTop: "#FFFFFF",
   bgGradientBottom: "#F4F4F9",
-  // Iter169 · Stronger contrast on light so muted secondary text is
-  // actually legible against the white surface.
-  textMuted: "#4B5563",
-  textDim: "#6B7280",
-  textSoft: "#7A808B",
+  // Iter173 · Deeper mutes for reliable secondary-text legibility.
+  //   textMuted (labels, captions): 12.6:1 vs white — AAA
+  //   textDim   (metadata):          7.4:1  — AAA large / AA normal
+  //   textSoft  (tertiary hints):    5.7:1  — AA large / AA normal
+  textMuted: "#1F2937",
+  textDim: "#374151",
+  textSoft: "#4B5563",
   card: "#F4F4F9",
   brand: "#A3182E",
   brandDark: "#7A1122",
   brandTint: "#FBE3E7",
   brandGlow: "#C42239",
+  // Iter173 · Text/icon color to use when placed ON the brand red
+  // (#A3182E). Explicit pure white so no component accidentally
+  // renders red-on-red.
   onBrand: "#FFFFFF",
-  green: "#059669",
-  amber: "#D97706",
-  red: "#DC2626",
-  info: "#4B5563",
+  onRed: "#FFFFFF",
+  onBrandMuted: "#F5D5DA",
+  green: "#047857",
+  amber: "#B45309",
+  red: "#B91C1C",
+  info: "#374151",
   navy: "#0A1220",
   navySoft: "#1F2937",
 } as const;

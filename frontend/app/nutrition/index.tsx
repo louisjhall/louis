@@ -369,13 +369,19 @@ const styles = StyleSheet.create({
   smallValue: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 4, fontFamily: theme.font.display },
   smallTarget: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
 
-  hydCard: { padding: 12, borderRadius: 12, backgroundColor: "#0A1420", borderWidth: 1, borderColor: "#183045" },
+  // Iter173 · Was hardcoded navy-blue (#0A1420 / #183045) which turned
+  // invisible in Light Mode. Uses theme surface tokens so it repaints
+  // properly on both dark and light backgrounds.
+  hydCard: { padding: 12, borderRadius: 12, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   hydCardHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   hydCardT: { color: "#3B82F6", fontSize: 11, fontWeight: "800", letterSpacing: 2, flex: 1, fontFamily: theme.font.textSemi },
   hydCardV: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
   hydBtnRow: { flexDirection: "row", gap: 6, marginTop: 10 },
-  hydBtn: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, backgroundColor: "#183045", borderWidth: 1, borderColor: "#264C6D" },
-  hydBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
+  // Iter173 · Was hardcoded #183045 (dark navy) which made buttons
+  // invisible in Light Mode. Now uses the brand red so quick-add
+  // buttons pop on both palettes.
+  hydBtn: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 8, backgroundColor: theme.color.brand, borderWidth: 1, borderColor: theme.color.brandDark },
+  hydBtnT: { color: theme.color.onBrand, fontSize: 11, fontWeight: "900", letterSpacing: 0.5 },
   hydBtnGhost: { flex: 0, width: 40, backgroundColor: theme.color.surface3, borderColor: theme.color.border },
 
   tipCard: { padding: 14, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
@@ -391,7 +397,10 @@ const styles = StyleSheet.create({
   weeklyBadgeT: { color: "#fff", fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
   weeklyT: { color: theme.color.text, fontSize: 13, lineHeight: 19, fontFamily: theme.font.text },
   weeklyFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
-  weeklyPending: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "#1F1608", borderWidth: 1, borderColor: theme.color.amber },
+  // Iter173 · Was hardcoded dark-amber (#1F1608) which was near-black
+  // on Light Mode. Uses a semi-transparent amber wash so the badge
+  // reads clearly on both palettes.
+  weeklyPending: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "rgba(217,119,6,0.15)", borderWidth: 1, borderColor: theme.color.amber },
   weeklyPendingT: { color: theme.color.amber, fontSize: 11, letterSpacing: 0.8, fontWeight: "800" },
   weeklyLink: { color: theme.color.brand, fontSize: 11, letterSpacing: 1, fontWeight: "800" },
 

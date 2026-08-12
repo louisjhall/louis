@@ -1,69 +1,139 @@
 /**
- * QuickActionFab — Iter172
+ * QuickActionFab — Iter173
  *
- * A red floating action button (+) pinned to the bottom-right of the
- * client Today screen. Tapping expands two shortcut chips:
- *   · Log a Meal  → /nutrition/log
- *   · Start Workout → today's workout list (or the workouts calendar
- *     if no workout is scheduled today)
+ * A red floating (+) button pinned to the bottom-right of every
+ * client tab. Tapping expands FOUR shortcut chips:
+ *   📸 Photo Scan   → /nutrition/photo
+ *   🔍 Food Search  → /nutrition/food-search
+ *   ✍️  Manual Log   → /nutrition/log
+ *   🏋️  Start Workout → today's workout list (or calendar if none)
  *
  * The button sits ABOVE the bottom tab bar (which contains the chat
- * icon on the messages tab) via `bottom: 96` so it never collides
- * with tab targets.
+ * icon on the messages tab) so it never collides with tab targets.
+ *
+ * Rendered at the (client) layout root so it stays visible when the
+ * user hops between Today / Calendar / Nutrition / Base / Profile /
+ * Messages, and disappears automatically when a non-tab screen
+ * (e.g. the workout logger itself) pushes on top of the stack.
  */
-import React, { useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { View, Text, StyleSheet, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { theme } from "@/src/lib/theme";
+import { api } from "@/src/lib/api";
 
-export function QuickActionFab({
-  todayWorkoutId,
-}: {
-  /** ID of today's workout, if any. Used to jump straight into the logger. */
-  todayWorkoutId?: string | null;
-}) {
+// Iter173 · Local YYYY-MM-DD helper. Kept inline to avoid a new import
+// dependency chain from the client-tab layout entry point.
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+type Shortcut = {
+  key: string;
+  label: string;
+  emoji: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  onPress: () => void;
+};
+
+export function QuickActionFab() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [todayWorkoutId, setTodayWorkoutId] = useState<string | null>(null);
 
-  const toggle = useCallback(() => setOpen((v) => !v), []);
+  // Iter173 · Pull today's workout id lazily so "Start Workout" opens
+  // the logger directly when there is one scheduled today.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const day = todayIso();
+        const rows = await api<any[]>(`/workouts?date=${day}`);
+        if (!cancelled) {
+          const first = Array.isArray(rows) && rows.length ? rows[0] : null;
+          setTodayWorkoutId(first?.id || null);
+        }
+      } catch {
+        // best-effort — the shortcut falls back to the calendar
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const close = useCallback(() => setOpen(false), []);
+  const toggle = useCallback(() => setOpen((v) => !v), []);
 
-  const goMeal = useCallback(() => {
-    close();
-    router.push("/nutrition/log" as any);
-  }, [router, close]);
-
-  const goWorkout = useCallback(() => {
-    close();
-    if (todayWorkoutId) {
-      router.push(`/workout/${todayWorkoutId}/list` as any);
-    } else {
-      router.push("/(client)/calendar" as any);
-    }
-  }, [router, close, todayWorkoutId]);
+  const shortcuts = useMemo<Shortcut[]>(() => [
+    {
+      key: "photo",
+      label: "PHOTO SCAN",
+      emoji: "📸",
+      icon: "camera",
+      onPress: () => { close(); router.push("/nutrition/photo-scan" as any); },
+    },
+    {
+      key: "search",
+      label: "FOOD SEARCH",
+      emoji: "🔍",
+      icon: "search",
+      onPress: () => { close(); router.push("/nutrition/food-search" as any); },
+    },
+    {
+      key: "manual",
+      label: "MANUAL LOG",
+      emoji: "✍️",
+      icon: "create",
+      onPress: () => { close(); router.push("/nutrition/log" as any); },
+    },
+    {
+      key: "workout",
+      label: "START WORKOUT",
+      emoji: "🏋️",
+      icon: "barbell",
+      onPress: () => {
+        close();
+        if (todayWorkoutId) {
+          router.push(`/workout/${todayWorkoutId}/list` as any);
+        } else {
+          router.push("/(client)/calendar" as any);
+        }
+      },
+    },
+  ], [router, todayWorkoutId, close]);
 
   return (
     <View pointerEvents="box-none" style={styles.container} testID="quick-action-fab-wrap">
       {open ? (
-        <View style={styles.actionsCol} pointerEvents="box-none">
-          <Pressable style={styles.actionRow} onPress={goMeal} testID="quick-action-meal">
-            <View style={styles.actionLabel}>
-              <Text style={styles.actionLabelT}>LOG A MEAL</Text>
-            </View>
-            <View style={[styles.miniFab, styles.miniFabAlt]}>
-              <Ionicons name="restaurant" size={18} color="#fff" />
-            </View>
-          </Pressable>
-          <Pressable style={styles.actionRow} onPress={goWorkout} testID="quick-action-workout">
-            <View style={styles.actionLabel}>
-              <Text style={styles.actionLabelT}>START WORKOUT</Text>
-            </View>
-            <View style={[styles.miniFab, styles.miniFabAlt]}>
-              <Ionicons name="barbell" size={18} color="#fff" />
-            </View>
-          </Pressable>
-        </View>
+        <>
+          {/* Tap-outside catcher — closes the menu when the user taps
+              anywhere else on the tab (below/behind the shortcuts). */}
+          <Pressable
+            style={StyleSheet.absoluteFillObject}
+            onPress={close}
+            testID="quick-action-scrim"
+          />
+          <View style={styles.actionsCol} pointerEvents="box-none">
+            {shortcuts.map((s) => (
+              <Pressable
+                key={s.key}
+                style={styles.actionRow}
+                onPress={s.onPress}
+                testID={`quick-action-${s.key}`}
+              >
+                <View style={styles.actionLabel}>
+                  <Text style={styles.actionLabelT}>
+                    {s.emoji}  {s.label}
+                  </Text>
+                </View>
+                <View style={styles.miniFab}>
+                  <Ionicons name={s.icon} size={18} color={theme.color.onBrand} />
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        </>
       ) : null}
       <Pressable
         onPress={toggle}
@@ -74,7 +144,7 @@ export function QuickActionFab({
         <Ionicons
           name={open ? "close" : "add"}
           size={30}
-          color="#fff"
+          color={theme.color.onBrand}
         />
       </Pressable>
     </View>
@@ -100,13 +170,14 @@ const styles = StyleSheet.create({
     // Tab bar height on Expo Router defaults to ~80–90; we add breathing room.
     bottom: 96,
     alignItems: "flex-end",
-    gap: 12,
     zIndex: 60,
   },
   fab: {
     width: 60,
     height: 60,
     borderRadius: 30,
+    // Iter173 · Brand red per PRD — pure white icon (theme.color.onBrand)
+    // ensures the "+" is never lost against the button.
     backgroundColor: theme.color.brand,
     alignItems: "center",
     justifyContent: "center",
@@ -129,6 +200,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
+    // Iter173 · Dark chip in BOTH modes so the label reads clearly
+    // when placed over a white tab background (Light Mode).
     backgroundColor: "#1E1E1E",
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: "rgba(255,255,255,0.15)",
@@ -144,11 +217,11 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 23,
+    // Iter173 · Uses brand red so the mini FABs read as siblings of
+    // the primary + button.
+    backgroundColor: theme.color.brand,
     alignItems: "center",
     justifyContent: "center",
     ...(shadow as object),
-  },
-  miniFabAlt: {
-    backgroundColor: theme.color.brand,
   },
 });

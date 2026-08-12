@@ -42,6 +42,7 @@ import { RosterDayPickerSheet, type RosterDayPickerTarget } from "@/src/componen
 import { EventPrioritySheet } from "@/src/components/EventPrioritySheet";
 import { EventProgressBanner } from "@/src/components/EventProgressBanner";
 import { toast as uxToast } from "@/src/lib/ux";
+import { useThemeMode } from "@/src/hooks/use-theme-mode";
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -131,6 +132,12 @@ function dayLabel(dateStr: string, todayStr: string, tomorrowStr: string): { pri
 export default function Home() {
   const { user } = useAuth();
   const router = useRouter();
+  // Iter175 · Subscribe to theme mode so the home screen repaints
+  // instantly on Light ↔ Dark toggle. Styles rebuild via `buildStyles()`
+  // whose `theme.color.*` reads happen at call time.
+  const { mode } = useThemeMode();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const styles = useMemo(() => buildStyles(), [mode]);
   // Iter 127 — deep-link from Flight Support push notification tap. Value is
   // the event type, e.g. "flight_support_pre_flight". TodayFlightSupport
   // auto-opens the first matching intervention when this is set.
@@ -530,9 +537,9 @@ export default function Home() {
               training action zone. Everything below preserves the Iter 128
               information architecture. */}
           <View style={styles.quickRow} testID="quick-nav-top">
-            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" />
-            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" />
-            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" />
+            <QuickBtn icon="calendar" label="MONTHLY" onPress={() => router.push("/(client)/calendar")} testID="qs-month" styles={styles} />
+            <QuickBtn icon="clipboard" label="CHECK-IN" onPress={() => router.push("/checkin")} testID="qs-checkin" styles={styles} />
+            <QuickBtn icon="trending-up" label="PROGRESS" onPress={() => router.push("/progress")} testID="qs-progress" styles={styles} />
           </View>
 
           {/* Iter 128 — Home information architecture (2026 rework).
@@ -1175,7 +1182,7 @@ export default function Home() {
   );
 }
 
-function QuickBtn({ icon, label, onPress, testID }: any) {
+function QuickBtn({ icon, label, onPress, testID, styles }: any) {
   return (
     <Pressable onPress={onPress} testID={testID} style={styles.qBtn}>
       <Ionicons name={icon} size={18} color={theme.color.brand} />
@@ -1184,7 +1191,12 @@ function QuickBtn({ icon, label, onPress, testID }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+// Iter175 · Style factory. Called from inside <Home/> via
+// `useMemo(..., [mode])` so every `theme.color.xxx` read happens at
+// render time — unfreezing this screen from the initial-boot palette
+// and letting it repaint the moment the theme picker flips.
+function buildStyles() {
+  return StyleSheet.create({
   root: {
     flex: 1,
     // Iter 162 · Premium V2 — pure black base; gradient overlay above the
@@ -1652,4 +1664,5 @@ const styles = StyleSheet.create({
   sheetSub: { color: theme.color.textMuted, fontSize: 12, marginBottom: theme.space.md },
   sheetRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: theme.space.md, borderRadius: theme.radius.md, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, marginBottom: 6 },
   sheetRowText: { color: theme.color.text, fontSize: 14, fontFamily: theme.font.text },
-});
+  });
+}

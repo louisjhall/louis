@@ -93,11 +93,47 @@ export const LIGHT_PALETTE = {
   navySoft: "#1F2937",
 } as const;
 
+/* --------------------------------------------------------------------------
+ * Iter175 · SYNCHRONOUS palette pick at module init.
+ *
+ * Every `StyleSheet.create({ backgroundColor: theme.color.surface })` bakes
+ * the hex STRING at import time. If we wait for AsyncStorage (async), all
+ * stylesheets across the app get frozen to the DARK default before the
+ * user's saved preference has a chance to apply — which is exactly why
+ * names like "PIETRO" render invisible in Light Mode.
+ *
+ * The fix: read the persisted mode SYNCHRONOUSLY, before we build the
+ * exported `theme` object. On web this is `localStorage` (native sync
+ * API). On native we fall through to the DARK default and rely on the
+ * existing async bootstrap for subsequent loads (native cold-start is
+ * serial so this path isn't racy in practice).
+ * ------------------------------------------------------------------------ */
+function _readInitialModeSync(): ThemeMode {
+  try {
+    if (typeof globalThis !== "undefined") {
+      // Web / Expo Web: localStorage is the AsyncStorage backing on web.
+      const ls: Storage | undefined = (globalThis as any).localStorage;
+      if (ls && typeof ls.getItem === "function") {
+        const raw = ls.getItem("crewfit.theme.mode");
+        if (raw === "light" || raw === "dark") return raw;
+      }
+    }
+  } catch {
+    /* ignore — fall through to DARK default */
+  }
+  return "dark";
+}
+
+const _INITIAL_MODE: ThemeMode = _readInitialModeSync();
+const _INITIAL_PALETTE = _INITIAL_MODE === "light" ? LIGHT_PALETTE : DARK_PALETTE;
+
 export const theme = {
-  // Iter169 · `color` starts as DARK. Setter below mutates in place.
-  color: { ...DARK_PALETTE } as Record<string, string>,
+  // Iter175 · Palette is pre-selected SYNCHRONOUSLY (see above) so every
+  // StyleSheet.create() call in the codebase captures the CORRECT hex
+  // values on its very first evaluation.
+  color: { ..._INITIAL_PALETTE } as Record<string, string>,
   // Track current mode so useThemeMode() can read it at boot.
-  mode: "dark" as ThemeMode,
+  mode: _INITIAL_MODE,
   space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48,
            /** Iter 162 · Section gap between major dashboard blocks. */
            section: 20 },

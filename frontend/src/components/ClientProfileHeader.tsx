@@ -10,11 +10,12 @@
  * monogram, and if today's day-type is unknown the day-load pill still
  * renders.
  */
-import React from "react";
+import React, { useMemo } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { theme } from "@/src/lib/theme";
+import { useThemeMode } from "@/src/hooks/use-theme-mode";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 import { LocationBadge } from "@/src/components/LocationBadge";
 import { CrewFitWings } from "@/src/components/Logo";
@@ -63,6 +64,13 @@ export function ClientProfileHeader({
   centered = false,
 }: Props) {
   const router = useRouter();
+  // Iter175 · Subscribe to the theme mode so this header repaints
+  // instantly on Light ↔ Dark toggle. `styles` is rebuilt via
+  // `buildStyles()` whose `theme.color.*` reads are evaluated at call
+  // time — i.e. AFTER the palette mutation lands.
+  const { mode } = useThemeMode();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const styles = useMemo(() => buildStyles(), [mode]);
   const p = user?.profile || {};
   const role = p.job_title;
   const airline = p.airline;
@@ -156,7 +164,13 @@ export function ClientProfileHeader({
   );
 }
 
-const styles = StyleSheet.create({
+// Iter175 · Style factory. Called from inside the component via
+// `useMemo(..., [mode])` so every `theme.color.xxx` read happens AT
+// RENDER TIME, not at module-import time. This is what unfreezes the
+// header from the initial (booted) palette and lets it repaint the
+// moment the user toggles the theme picker.
+function buildStyles() {
+  return StyleSheet.create({
   wrap: { paddingHorizontal: 4, paddingBottom: 12, gap: 12 },
   // Iter 162b · centered variant — used when a large CrewFit logo sits
   // above the header. Whole card stacks vertically and aligns to centre.
@@ -236,4 +250,5 @@ const styles = StyleSheet.create({
   baseRowCentered: { justifyContent: "center" },
   metaRowCentered: { justifyContent: "center", marginTop: 4 },
   dayTitleCentered: { textAlign: "center", marginTop: 4 },
-});
+  });
+}

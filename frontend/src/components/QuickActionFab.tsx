@@ -159,18 +159,18 @@ const shadow = Platform.select({
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    right: 18,
-    // Iter174 · Raised from 96 → 180 so the FAB clears the floating
-    // Coach Chat bubble on every client tab (the chat launcher
-    // renders at bottom-right ~90–120px above the tab bar).
+    // Iter176 · Match CoachChatBubble exactly so the (+) and the chat
+    // avatar sit on the same vertical axis. Both use right: 16 and a
+    // 56×56 hit-target — the FAB stacks directly above the chat.
+    right: 16,
     bottom: 180,
     alignItems: "flex-end",
     zIndex: 60,
   },
   fab: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     // Iter173 · Brand red per PRD — pure white icon (theme.color.onBrand)
     // ensures the "+" is never lost against the button.
     backgroundColor: theme.color.brand,

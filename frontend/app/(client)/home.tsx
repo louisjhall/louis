@@ -1636,20 +1636,28 @@ function buildStyles() {
     color: theme.color.textMuted, fontSize: 11, marginTop: 2,
     fontWeight: "600", letterSpacing: 0.2,
   },
-  // Plan C2 — Programme Overview card
-  progCard: { backgroundColor: theme.color.cardBg, borderWidth: 1, borderColor: theme.color.line, borderRadius: theme.radius.md, padding: theme.space.md, marginTop: theme.space.md, marginBottom: theme.space.sm },
+  // Iter176 · Programme Overview card.
+  //   - `cardBg` / `line` were undefined tokens in the palette → they
+  //     resolved to `undefined` and RN silently fell back to transparent
+  //     which broke the card outline. Remapped to canonical
+  //     `surface2` / `border` so the card renders correctly on both
+  //     Dark (charcoal card, faint border) AND Light (brand-red card).
+  //   - All interior text tokens force-swapped to `theme.color.onBrand`
+  //     (pure white) so the name / goal / metrics stay readable when
+  //     the card sits on brand-red in Light Mode.
+  progCard: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, borderRadius: theme.radius.md, padding: theme.space.md, marginTop: theme.space.md, marginBottom: theme.space.sm },
   progHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  progHeader: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.2, fontWeight: "800" },
+  progHeader: { color: theme.color.onBrand, fontSize: 11, letterSpacing: 1.2, fontWeight: "800" },
   progWarn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4, backgroundColor: "rgba(245,158,11,0.10)", borderWidth: 1, borderColor: "rgba(245,158,11,0.35)" },
   progWarnT: { color: theme.color.amber, fontSize: 11, letterSpacing: 1.0, fontWeight: "800" },
-  progGoal: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 6 },
-  progFocus: { color: theme.color.textMuted, fontSize: 12, marginTop: 4, lineHeight: 17 },
+  progGoal: { color: theme.color.onBrand, fontSize: 15, fontWeight: "800", marginTop: 6 },
+  progFocus: { color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 4, lineHeight: 17 },
   progMetricsRow: { flexDirection: "row", gap: 16, marginTop: 12 },
   progMetric: { alignItems: "flex-start" },
-  progMetricV: { color: theme.color.text, fontSize: 18, fontWeight: "900" },
-  progMetricL: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 0.8, fontWeight: "700", marginTop: 2, textTransform: "uppercase" },
-  progNext: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.color.line },
-  progNextL: { color: theme.color.text, fontSize: 12, fontWeight: "700" },
+  progMetricV: { color: theme.color.onBrand, fontSize: 18, fontWeight: "900" },
+  progMetricL: { color: "rgba(255,255,255,0.75)", fontSize: 11, letterSpacing: 0.8, fontWeight: "700", marginTop: 2, textTransform: "uppercase" },
+  progNext: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.25)" },
+  progNextL: { color: theme.color.onBrand, fontSize: 12, fontWeight: "700" },
   pulseCard: { flexDirection: "row", alignItems: "center", padding: theme.space.md, backgroundColor: theme.color.brandTint, borderRadius: theme.radius.md, borderLeftWidth: 3, borderLeftColor: theme.color.brand, marginTop: theme.space.md },
   pulseTitle: { color: theme.color.text, fontSize: 12, letterSpacing: 1.5, fontWeight: "800" },
   pulseSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },

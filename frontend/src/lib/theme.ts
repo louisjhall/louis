@@ -102,26 +102,73 @@ export const LIGHT_PALETTE = {
  * user's saved preference has a chance to apply — which is exactly why
  * names like "PIETRO" render invisible in Light Mode.
  *
- * The fix: read the persisted mode SYNCHRONOUSLY, before we build the
- * exported `theme` object. On web this is `localStorage` (native sync
- * API). On native we fall through to the DARK default and rely on the
- * existing async bootstrap for subsequent loads (native cold-start is
- * serial so this path isn't racy in practice).
+ * The fix (Iter176 · native): read the persisted mode SYNCHRONOUSLY on
+ * BOTH web and native.
+ *   • Web / Expo Web:  `localStorage.getItem` (native sync API).
+ *   • iOS / Android:   `expo-secure-store`'s sync `getItem` (added in
+ *                      SDK 51). Wrapped in try/catch so a missing
+ *                      keychain entry falls through to DARK gracefully.
  * ------------------------------------------------------------------------ */
+const _THEME_STORAGE_KEY = "crewfit.theme.mode";
+
+// Lazy-required so the Metro web bundle doesn't fail if the native module
+// isn't shimmed there (SecureStore no-ops on web anyway, but the require
+// path can throw in some SSR setups).
+let _SecureStore: {
+  getItem?: (k: string) => string | null;
+  setItem?: (k: string, v: string) => void;
+} | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  _SecureStore = require("expo-secure-store");
+} catch {
+  _SecureStore = null;
+}
+
 function _readInitialModeSync(): ThemeMode {
+  // 1) Web: localStorage is the AsyncStorage backing on Expo Web. This
+  //    remains the primary path in the browser preview.
   try {
     if (typeof globalThis !== "undefined") {
-      // Web / Expo Web: localStorage is the AsyncStorage backing on web.
       const ls: Storage | undefined = (globalThis as any).localStorage;
       if (ls && typeof ls.getItem === "function") {
-        const raw = ls.getItem("crewfit.theme.mode");
+        const raw = ls.getItem(_THEME_STORAGE_KEY);
         if (raw === "light" || raw === "dark") return raw;
       }
     }
   } catch {
-    /* ignore — fall through to DARK default */
+    /* ignore */
+  }
+  // 2) Native (iOS / Android): SecureStore.getItem is fully synchronous
+  //    from Expo SDK 51+ and reads straight from the platform keychain
+  //    with no bridge round-trip. This unfreezes the theme on physical
+  //    devices — StyleSheets across the app now capture the correct
+  //    palette on very first module evaluation.
+  try {
+    if (_SecureStore && typeof _SecureStore.getItem === "function") {
+      const raw = _SecureStore.getItem(_THEME_STORAGE_KEY);
+      if (raw === "light" || raw === "dark") return raw;
+    }
+  } catch {
+    /* ignore */
   }
   return "dark";
+}
+
+// Iter176 · Exported so `useThemeMode` can mirror-write on toggle. Sync
+// on both platforms → the value is durable for the very next reload.
+export function persistThemeModeSync(mode: ThemeMode): void {
+  try {
+    if (typeof globalThis !== "undefined") {
+      const ls: Storage | undefined = (globalThis as any).localStorage;
+      if (ls && typeof ls.setItem === "function") ls.setItem(_THEME_STORAGE_KEY, mode);
+    }
+  } catch { /* ignore */ }
+  try {
+    if (_SecureStore && typeof _SecureStore.setItem === "function") {
+      _SecureStore.setItem(_THEME_STORAGE_KEY, mode);
+    }
+  } catch { /* ignore */ }
 }
 
 const _INITIAL_MODE: ThemeMode = _readInitialModeSync();

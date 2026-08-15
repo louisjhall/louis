@@ -147,6 +147,39 @@ export default function AutoMediaSettingsScreen() {
     } finally { setSaving(null); }
   };
 
+  // Iter181 · Sweep every exercise currently in "Needs Review" through
+  // the same auto-generation pipeline that fires on new exercises.
+  // Hard-capped server-side at 100 per call — coach can re-tap to keep
+  // running batches until the report shows zero pending.
+  const [backfilling, setBackfilling] = useState(false);
+  const runNeedsReviewBackfill = async () => {
+    if (backfilling) return;
+    setBackfilling(true);
+    try {
+      // Dry-run first so the coach sees the count before spending credits.
+      const dry = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
+        method: "POST", body: { dry_run: true, limit: 500 },
+      });
+      const would = Number(dry?.would_queue_count || 0);
+      if (!would) {
+        toast("No exercises in Needs Review — nothing to backfill.", "info");
+        return;
+      }
+      // Iter181b · Default to text-only (skip_images=true) to keep the
+      // whole-library sweep bounded in credit cost. Coach can still run
+      // per-exercise image regen from the Library detail view. Server
+      // now filters by the same criteria the NEEDS REVIEW / MISSING tabs
+      // use, so what the coach sees is what gets swept.
+      const r = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
+        method: "POST", body: { dry_run: false, limit: 500, skip_images: true },
+      });
+      const q = Number(r?.queued_count || 0);
+      toast(`Queued ${q} of ${would} Needs-Review exercises (text only).`, "success");
+    } catch (e: any) {
+      toast(e?.message || "Backfill failed.", "error");
+    } finally { setBackfilling(false); }
+  };
+
   const imageKinds = useMemo(() => {
     if (!data) return [] as string[];
     return IMAGE_KINDS.filter((k) => k in data.labels);
@@ -289,6 +322,31 @@ export default function AutoMediaSettingsScreen() {
               </Pressable>
               {saving === "__bulk__" && <ActivityIndicator color={theme.color.brand} />}
             </View>
+            {/* Iter181 · Sweep every "Needs Review" exercise through the
+                same auto-generation pipeline. Server hard-caps at 100
+                per call; coach can tap again to keep clearing. */}
+            <Pressable
+              style={[styles.backfillBtn, backfilling && { opacity: 0.5 }]}
+              onPress={runNeedsReviewBackfill}
+              disabled={backfilling}
+              testID="run-needs-review-backfill"
+            >
+              {backfilling ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="refresh-circle" size={16} color="#fff" />
+                  <Text style={styles.backfillBtnT}>RUN FOR ALL NEEDS REVIEW</Text>
+                </>
+              )}
+            </Pressable>
+            <Text style={styles.backfillHint}>
+              Sweeps every exercise in Needs Review / Missing (matches the
+              coach Library tabs) through the enabled text kinds. Images
+              are skipped by default to keep the sweep cheap — regenerate
+              images per-exercise from the Library detail view. Capped at
+              500 per run.
+            </Text>
           </View>
 
           <View style={styles.card}>
@@ -406,6 +464,18 @@ const styles = StyleSheet.create({
   },
   bulkBtnDark: { backgroundColor: "#3a3a3a" },
   bulkBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+  // Iter181 · Needs-Review backfill CTA — same visual language as the
+  // primary brand pill so coach can spot it quickly, but placed under
+  // the ALL ON/OFF bulk row so it isn't mistaken for a global toggle.
+  backfillBtn: {
+    marginTop: 10, backgroundColor: theme.color.brand,
+    paddingVertical: 12, paddingHorizontal: 14, borderRadius: 10,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+  },
+  backfillBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
+  backfillHint: {
+    color: theme.color.textMuted, fontSize: 11, marginTop: 6, lineHeight: 15,
+  },
 
   envLockedItem: { color: theme.color.textDim, fontSize: 12, paddingVertical: 3 },
 

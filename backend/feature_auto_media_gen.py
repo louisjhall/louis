@@ -75,7 +75,7 @@ _KIND_DEFAULTS: dict[str, bool] = {
     "coaching_points": True,
     "common_mistakes": True,
     "alternatives":    True,
-    "instructions":    False,
+    "instructions":    True,
 }
 
 # Env-var overrides (checked last as a hard kill-switch — flipping any of
@@ -331,9 +331,39 @@ async def _safe_run_image_job(image_id: str, prompt: str, *,
         logger.exception("auto_media_gen: post-image budget check failed")
 
 
+async def _next_persona_for_new_exercise(force: Optional[str] = None) -> str:
+    """Iter181 · Male↔female alternation counter for auto-media generation.
+
+    Ensures the exercise library shows diverse demonstrators without the
+    coach having to think about it. The counter lives in `db.settings`
+    under the key ``auto_media_gen_persona_counter`` so alternation is
+    global across every creation path (coach form, JSON imports, v2
+    resolver, backfill).
+
+    ``force`` — when a coach explicitly picks a persona for a specific
+    creation (e.g. from the admin form) that value wins and the counter
+    is left untouched, keeping the alternation deterministic.
+    """
+    if force in ("male", "female", "pilot"):
+        return force
+    doc = await db.settings.find_one({"key": "auto_media_gen_persona_counter"}) or {}
+    n = int(doc.get("value") or 0)
+    persona = "female" if (n % 2) == 1 else "male"
+    try:
+        await db.settings.update_one(
+            {"key": "auto_media_gen_persona_counter"},
+            {"$set": {"value": n + 1, "updated_at": now_iso()}},
+            upsert=True,
+        )
+    except Exception:
+        logger.warning("auto_media_gen: persona counter increment failed", exc_info=True)
+    return persona
+
+
 async def auto_enqueue_media_for_exercise(
     ex_id: str, *, triggered_by: Optional[str] = None,
     suppress_kinds: tuple[str, ...] = (),
+    persona: Optional[str] = None,
 ) -> dict:
     """Kick off auto-generation for one exercise. Returns a summary dict.
 
@@ -410,8 +440,11 @@ async def auto_enqueue_media_for_exercise(
                 _build_ex_prompt, _run_image_job, _resolve_persona,
                 _slot_map_field_for_persona,
             )
-            persona = _resolve_persona(None, False)  # default male-louis frame
-            slot_map_field = _slot_map_field_for_persona(persona)
+            # Iter181 · Alternate male/female by default so the library
+            # shows diversity. Callers can force a persona for a specific
+            # exercise via the `persona` kwarg (e.g. coach admin form).
+            resolved_persona = await _next_persona_for_new_exercise(force=persona)
+            slot_map_field = _slot_map_field_for_persona(resolved_persona)
 
             legacy_key_by_slot = {
                 "primary": "primary_image_id",
@@ -432,12 +465,12 @@ async def auto_enqueue_media_for_exercise(
                     continue
 
                 image_id = new_id()
-                prompt = _build_ex_prompt(ex, slot, None, persona=persona)
+                prompt = _build_ex_prompt(ex, slot, None, persona=resolved_persona)
                 await db.exercise_content_images.insert_one({
                     "id": image_id, "exercise_id": ex_id, "slot": slot,
                     "requested_slot": slot,
-                    "gender": "male",
-                    "persona": persona,
+                    "gender": resolved_persona if resolved_persona in ("male", "female") else "male",
+                    "persona": resolved_persona,
                     "prompt": prompt, "status": "generating",
                     "storage_path": None, "size_bytes": None, "mime": None,
                     "created_by": creator, "auto": True,
@@ -453,6 +486,11 @@ async def auto_enqueue_media_for_exercise(
             if set_updates:
                 set_updates["approved_image_status"] = "Needs Review"
                 set_updates["content_status.images"] = True
+                # Iter181 · Persist which demonstrator persona this
+                # exercise was rendered with so the coach UI can show a
+                # small M/F chip and offer a one-tap "regenerate as
+                # opposite gender" action.
+                set_updates["auto_persona"] = resolved_persona
                 set_updates["updated_at"] = now_iso()
                 await db.exercises_v2.update_one({"id": ex_id}, {"$set": set_updates})
         except Exception as e:
@@ -1028,3 +1066,111 @@ logger.info(
     f"slots={_AUTO_SLOTS} kinds={list(_KIND_LABELS)} "
     f"env_kill_switches={[k for k,v in _KIND_ENV_OFF.items() if v] or 'none'}"
 )
+
+
+# ---------------------------------------------------------------------------
+# Iter181 · Bulk Needs-Review backfill — scans the library for every
+# exercise that is not fully approved and runs the same auto-generation
+# pipeline for each. Distinct from `/backfill-run` (which needs explicit
+# ids) so the coach can trigger a whole-library sweep in one tap.
+# ---------------------------------------------------------------------------
+
+@api.post("/coach/auto-media-gen/backfill-needs-review")
+async def auto_media_gen_backfill_needs_review(
+    body: Optional[dict] = None,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Run auto-generation for every exercise currently in Needs Review.
+
+    Body (all optional):
+        limit: int    hard-capped at 500 (default 500) so a whole-library
+                      sweep completes in one tap.
+        dry_run: bool when true, returns the list of exercises that
+                      WOULD be queued without spending credits.
+        skip_images: bool when true, skips the (expensive) image kinds
+                      and only queues text content (coaching_points,
+                      common_mistakes, alternatives, instructions).
+                      Default False — matches original behaviour.
+
+    Filter mirrors the coach Exercise-Library `NEEDS REVIEW` and `MISSING`
+    tabs so what the coach sees on-screen is what gets swept:
+        · status ∈ (draft_requested, coach_review_needed, draft, Draft)
+        · OR approved_image_status ∈ (Needs Review, Missing, missing)
+        · OR approval_status ∈ (pending, needs_review, draft)
+    Aliases of a canonical exercise are also skipped by the underlying
+    `auto_enqueue_media_for_exercise` guard.
+    """
+    body = body or {}
+    dry_run = bool(body.get("dry_run"))
+    skip_images = bool(body.get("skip_images"))
+    try:
+        limit = max(1, min(int(body.get("limit") or 500), 500))
+    except Exception:
+        limit = 500
+
+    query = {
+        "$or": [
+            {"status": {"$in": ["draft_requested", "coach_review_needed", "draft", "Draft"]}},
+            {"approved_image_status": {"$in": ["Needs Review", "Missing", "missing"]}},
+            {"approval_status": {"$in": ["pending", "needs_review", "draft"]}},
+        ],
+    }
+    projection = {
+        "_id": 0, "id": 1, "exercise_name": 1,
+        "approved_image_status": 1, "approval_status": 1,
+        "canonical_id": 1,
+    }
+    cursor = db.exercises_v2.find(query, projection).limit(limit)
+    exs = await cursor.to_list(length=limit)
+
+    # Filter out aliases before we consume budget on them.
+    scannable = [
+        ex for ex in exs
+        if not (ex.get("canonical_id") and ex["canonical_id"] != ex.get("id"))
+    ]
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "total_needs_review_scanned": len(exs),
+            "would_queue_count": len(scannable),
+            "results": [
+                {
+                    "id": ex["id"],
+                    "name": ex.get("exercise_name"),
+                    "approved_image_status": ex.get("approved_image_status"),
+                    "approval_status": ex.get("approval_status"),
+                }
+                for ex in scannable
+            ],
+        }
+
+    queued = 0
+    results = []
+    # When skip_images is set, force-suppress the three image slots for
+    # this whole batch (still updates DB fields for text kinds only).
+    _suppress = ("image_primary", "image_start", "image_end") if skip_images else ()
+    for ex in scannable:
+        try:
+            res = await auto_enqueue_media_for_exercise(
+                ex["id"], triggered_by=coach.get("id"),
+                suppress_kinds=_suppress,
+            )
+            if not res.get("skipped"):
+                queued += 1
+            results.append({"id": ex["id"], "name": ex.get("exercise_name"), **res})
+        except Exception as e:
+            logger.warning(
+                "auto_media_gen: backfill-needs-review failed for %s: %s",
+                ex.get("id"), e,
+            )
+            results.append({"id": ex.get("id"), "error": str(e)})
+
+    return {
+        "dry_run": False,
+        "total_needs_review_scanned": len(exs),
+        "queued_count": queued,
+        "skip_images": skip_images,
+        "results": results,
+    }
+

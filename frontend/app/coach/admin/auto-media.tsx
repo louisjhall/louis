@@ -165,16 +165,42 @@ export default function AutoMediaSettingsScreen() {
         toast("No exercises in Needs Review — nothing to backfill.", "info");
         return;
       }
-      // Iter181b · Default to text-only (skip_images=true) to keep the
-      // whole-library sweep bounded in credit cost. Coach can still run
-      // per-exercise image regen from the Library detail view. Server
-      // now filters by the same criteria the NEEDS REVIEW / MISSING tabs
-      // use, so what the coach sees is what gets swept.
-      const r = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
-        method: "POST", body: { dry_run: false, limit: 500, skip_images: true },
-      });
-      const q = Number(r?.queued_count || 0);
-      toast(`Queued ${q} of ${would} Needs-Review exercises (text only).`, "success");
+      // Iter181c · Loop the endpoint until has_more=false. Each call is
+      // capped at ~40 exercises server-side so it lands under the k8s
+      // ingress timeout. Backend runs LLM calls INLINE with a
+      // semaphore-bounded concurrency of 6 — so when this loop returns,
+      // the DB writes are already durable.
+      let totalWrote = 0;
+      let totalProcessed = 0;
+      const errAgg: Record<string, number> = {};
+      let paused = false;
+      let iter = 0;
+      // Hard safety cap: at 40 per iter, 40 iters = 1600 possible
+      // exercises. Prevents infinite loops if server misbehaves.
+      while (iter < 40) {
+        iter += 1;
+        const r = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
+          method: "POST", body: { dry_run: false, limit: 40, skip_images: true },
+        });
+        totalWrote   += Number(r?.queued_count    || 0);
+        totalProcessed += Number(r?.processed_count || 0);
+        for (const [k, v] of Object.entries(r?.error_summary || {})) {
+          errAgg[k] = (errAgg[k] || 0) + Number(v || 0);
+        }
+        if (r?.budget_paused) { paused = true; break; }
+        if (!r?.has_more) break;
+        // In-progress toast every iter so coach sees momentum.
+        toast(`… backfilling · ${totalWrote} written so far`, "info");
+      }
+
+      const errCount = Object.values(errAgg).reduce((a, b) => a + b, 0);
+      if (paused) {
+        toast(`Budget paused mid-run — wrote ${totalWrote}/${totalProcessed}. Top up + resume + re-tap.`, "error");
+      } else if (errCount) {
+        toast(`Wrote content on ${totalWrote}/${totalProcessed} exercises (${errCount} errors — see logs).`, "info");
+      } else {
+        toast(`Wrote content on ${totalWrote}/${totalProcessed} exercises.`, "success");
+      }
     } catch (e: any) {
       toast(e?.message || "Backfill failed.", "error");
     } finally { setBackfilling(false); }
@@ -341,11 +367,12 @@ export default function AutoMediaSettingsScreen() {
               )}
             </Pressable>
             <Text style={styles.backfillHint}>
-              Sweeps every exercise in Needs Review / Missing (matches the
-              coach Library tabs) through the enabled text kinds. Images
-              are skipped by default to keep the sweep cheap — regenerate
-              images per-exercise from the Library detail view. Capped at
-              500 per run.
+              Sweeps every Needs Review / Missing exercise through the
+              enabled text kinds (coaching points, common mistakes,
+              alternatives, client instructions). LLM calls run inline
+              in batches of 40 — the button waits until the full library
+              is done. Images are skipped by default; regenerate images
+              per-exercise from the Library detail view.
             </Text>
           </View>
 

@@ -46,6 +46,37 @@ _AUTO_USER_ID = "system_auto_media_gen"
 
 
 # ---------------------------------------------------------------------------
+# CRITICAL — Fire-and-forget task tracking.
+# ---------------------------------------------------------------------------
+# Python's `asyncio.create_task` only keeps a WEAK reference to the returned
+# Task object. Per the official asyncio docs: "Save a reference to the
+# result of this function, to avoid a task disappearing mid-execution.
+# The event loop only keeps weak references to tasks."
+#
+# In production, under load / worker recycling / GC pressure, this means
+# fire-and-forget background tasks (LLM calls, image gen) can be silently
+# garbage-collected mid-run, leaving DB writes never happening. That's
+# exactly what happened during the 222-exercise Needs-Review backfill on
+# https://flight-fit-plans.emergent.host — the endpoint returned "queued
+# 222" but many tasks were GC'd before their Claude calls completed.
+#
+# Fix: keep every fire-and-forget task in this module-level set, and add
+# a done-callback that removes them once they finish (so the set doesn't
+# grow forever). This is the exact idiom recommended by the CPython docs.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Fire-and-forget wrapper that STRONGLY references the task so it
+    can't be GC'd mid-execution. Always use this instead of a bare
+    `asyncio.create_task(...)` inside this module."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
+
+# ---------------------------------------------------------------------------
 # Per-kind toggles — coach flips at runtime without a redeploy.
 # ---------------------------------------------------------------------------
 
@@ -479,7 +510,7 @@ async def auto_enqueue_media_for_exercise(
                 set_updates[f"{slot_map_field}.{slot}"] = image_id
                 set_updates[legacy_key] = image_id
                 queued_images.append(slot)
-                asyncio.create_task(
+                _spawn_bg(
                     _safe_run_image_job(image_id, prompt, ex_id=ex_id, slot=slot)
                 )
 
@@ -521,7 +552,17 @@ async def auto_enqueue_media_for_exercise(
             )
             if already_populated:
                 continue
-            asyncio.create_task(_auto_generate_content(ex_id, kind, creator))
+            _spawn_bg(_auto_generate_content(ex_id, kind, creator))
+            # ^^ INTENTIONAL: this path is used by single-exercise
+            # creation triggers (Atlas alternatives, hotel conversions,
+            # manual add). We rely on the caller keeping the endpoint
+            # response short; for bulk sweeps, the backfill endpoint
+            # switches to inline `await` (see /backfill-needs-review)
+            # so GC / worker-recycle cannot drop mid-execution tasks.
+            #
+            # Even on this path we STRONGLY reference the task via the
+            # module-level _BG_TASKS set so Python's weak-ref GC can't
+            # drop it.
             queued_content.append(kind)
     except Exception as e:
         logger.warning(f"auto_media_gen: content queue failed for {ex_id}: {e}")
@@ -1104,15 +1145,33 @@ async def auto_media_gen_backfill_needs_review(
     dry_run = bool(body.get("dry_run"))
     skip_images = bool(body.get("skip_images"))
     try:
-        limit = max(1, min(int(body.get("limit") or 500), 500))
+        # Default 40 per call — with semaphore=6 concurrency this lands
+        # under any typical k8s ingress timeout (~60s). Frontend loops
+        # this endpoint until has_more=false so the coach can sweep
+        # everything with one tap.
+        limit = max(1, min(int(body.get("limit") or 40), 500))
     except Exception:
-        limit = 500
+        limit = 40
 
     query = {
-        "$or": [
-            {"status": {"$in": ["draft_requested", "coach_review_needed", "draft", "Draft"]}},
-            {"approved_image_status": {"$in": ["Needs Review", "Missing", "missing"]}},
-            {"approval_status": {"$in": ["pending", "needs_review", "draft"]}},
+        "$and": [
+            # UI-visible tab criteria — must be in NEEDS REVIEW or MISSING
+            {"$or": [
+                {"status": {"$in": ["draft_requested", "coach_review_needed", "draft", "Draft"]}},
+                {"approved_image_status": {"$in": ["Needs Review", "Missing", "missing"]}},
+                {"approval_status": {"$in": ["pending", "needs_review", "draft"]}},
+            ]},
+            # AND at least one of the three coach-visible text fields is
+            # empty. We deliberately EXCLUDE `alternatives` from this
+            # check because generating alternatives fans out into new
+            # library drafts (Atlas depth-1 fanout), and those drafts
+            # would re-appear in the very next iteration with an empty
+            # `alternatives` field, causing an infinite loop.
+            {"$or": [
+                {"coaching_points":            {"$in": [None, [], ""]}},
+                {"common_mistakes":            {"$in": [None, [], ""]}},
+                {"client_facing_instructions": {"$in": [None, ""]}},
+            ]},
         ],
     }
     projection = {
@@ -1147,30 +1206,134 @@ async def auto_media_gen_backfill_needs_review(
 
     queued = 0
     results = []
-    # When skip_images is set, force-suppress the three image slots for
-    # this whole batch (still updates DB fields for text kinds only).
-    _suppress = ("image_primary", "image_start", "image_end") if skip_images else ()
-    for ex in scannable:
-        try:
-            res = await auto_enqueue_media_for_exercise(
-                ex["id"], triggered_by=coach.get("id"),
-                suppress_kinds=_suppress,
-            )
-            if not res.get("skipped"):
-                queued += 1
-            results.append({"id": ex["id"], "name": ex.get("exercise_name"), **res})
-        except Exception as e:
-            logger.warning(
-                "auto_media_gen: backfill-needs-review failed for %s: %s",
-                ex.get("id"), e,
-            )
-            results.append({"id": ex.get("id"), "error": str(e)})
+    # ------------------------------------------------------------------
+    # Inline execution — bounded concurrency.
+    #
+    # Prior version fired ~888 fire-and-forget asyncio tasks (222 ex ×
+    # 4 content kinds) via `auto_enqueue_media_for_exercise`. On
+    # production this failed silently for two reasons:
+    #   1) Python's `asyncio.create_task` keeps only a WEAK reference;
+    #      under load the GC dropped tasks mid-run before their DB
+    #      writes landed.
+    #   2) Anthropic sustained-throughput rate limits kicked in once
+    #      more than a few dozen calls fired at once, returning 429s
+    #      that were logged but never surfaced.
+    #
+    # Fix: run the LLM calls INLINE (still async, but awaited) with a
+    # semaphore-bounded fan-out of 6 concurrent calls. This lets the
+    # coach see the real completion count in the HTTP response and
+    # keeps us well under Anthropic's 60-rpm sustained limit.
+    # ------------------------------------------------------------------
+    # `alternatives` is DELIBERATELY excluded from the bulk backfill —
+    # it triggers Atlas depth-1 fanout (creates 3 new library drafts
+    # per exercise) which would explode DB size and cause the sweep
+    # loop to appear "infinite" (new empty drafts keep appearing).
+    # Coach can still regenerate alternatives per-exercise from the
+    # Library detail view; that path is unchanged.
+    _CONTENT_KINDS_BULK = ("coaching_points", "common_mistakes", "instructions")
+    sem = asyncio.Semaphore(6)
+    toggles = await _load_kind_toggles()
+
+    async def _process(ex: dict) -> dict:
+        ex_id = ex["id"]
+        # Re-fetch full doc so we know which kinds are already populated.
+        full = await db.exercises_v2.find_one({"id": ex_id}) or {}
+        # Alias short-circuit (defensive — outer filter already dropped
+        # them but the doc may have been aliased mid-scan).
+        if full.get("canonical_id") and full["canonical_id"] != ex_id:
+            return {"id": ex_id, "name": ex.get("exercise_name"),
+                    "skipped": True, "reason": "alias"}
+        if full.get("approval_status") == "approved" and \
+           full.get("approved_image_status") == "Approved":
+            return {"id": ex_id, "name": ex.get("exercise_name"),
+                    "skipped": True, "reason": "already approved"}
+        if await is_budget_paused():
+            return {"id": ex_id, "name": ex.get("exercise_name"),
+                    "skipped": True, "reason": "budget_paused"}
+
+        wrote: list[str] = []
+        errors: list[str] = []
+        for kind in _CONTENT_KINDS_BULK:
+            if not toggles.get(kind, True):
+                continue
+            field = _kind_to_field(kind)
+            existing = full.get(field)
+            if (isinstance(existing, list) and existing) or (
+                isinstance(existing, str) and existing.strip()
+            ):
+                continue
+            try:
+                async with sem:
+                    await _auto_generate_content(ex_id, kind, coach.get("id") or _AUTO_USER_ID)
+                # Verify the write actually landed.
+                verify = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0, field: 1})
+                v = (verify or {}).get(field)
+                if (isinstance(v, list) and v) or (isinstance(v, str) and v.strip()):
+                    wrote.append(kind)
+                else:
+                    errors.append(f"{kind}:empty_after_run")
+            except Exception as e:
+                errors.append(f"{kind}:{str(e)[:80]}")
+                logger.warning(
+                    "auto_media_gen.backfill: %s kind=%s failed: %s",
+                    ex_id, kind, e,
+                )
+
+        # Images — only if the caller didn't opt-out AND the kinds are on.
+        if not skip_images:
+            try:
+                async with sem:
+                    img_res = await auto_enqueue_media_for_exercise(
+                        ex_id, triggered_by=coach.get("id"),
+                    )
+                if img_res.get("queued_images"):
+                    wrote += [f"image_{s}" for s in img_res["queued_images"]]
+            except Exception as e:
+                errors.append(f"images:{str(e)[:80]}")
+
+        return {
+            "id": ex_id, "name": ex.get("exercise_name"),
+            "wrote": wrote, "errors": errors,
+            "skipped": not wrote and not errors,
+        }
+
+    # Bounded gather — keeps concurrency at semaphore=6 across all
+    # exercises. Never bubbles exceptions out of the gather itself.
+    per_ex = await asyncio.gather(
+        *(_process(ex) for ex in scannable),
+        return_exceptions=True,
+    )
+    for r in per_ex:
+        if isinstance(r, Exception):
+            results.append({"error": str(r)[:200]})
+            continue
+        results.append(r)
+        if r.get("wrote"):
+            queued += 1
+
+    # Aggregate error stats so the coach can see rate-limit / budget
+    # hits without scrolling every row.
+    error_summary: dict[str, int] = {}
+    for r in results:
+        if isinstance(r, dict):
+            for err in (r.get("errors") or []):
+                key = err.split(":", 1)[0]
+                error_summary[key] = error_summary.get(key, 0) + 1
 
     return {
         "dry_run": False,
         "total_needs_review_scanned": len(exs),
+        "processed_count": len(results),
+        # `queued_count` retained for FE back-compat — now means "at
+        # least one field was written". Detailed per-exercise `wrote`
+        # array in `results`.
         "queued_count": queued,
+        # If we hit the limit, there's very likely more waiting — the
+        # frontend uses this to loop until fully drained.
+        "has_more": len(exs) >= limit,
+        "budget_paused": await is_budget_paused(),
         "skip_images": skip_images,
+        "error_summary": error_summary,
         "results": results,
     }
 

@@ -185,8 +185,25 @@ async def migrate_exercises(dry_run: bool = Query(True),
                     "id": ex_id, "created_at": now,
                     "created_by": admin["id"], **common,
                 }
-                await db.exercises_v2.insert_one(doc)
-                inserted += 1
+                # Iter181c — use the shared upsert helper so a re-run
+                # against a partially-migrated DB doesn't blow up with
+                # DuplicateKeyError on canonical_name_key collisions.
+                try:
+                    from feature_exercise_dedup import (
+                        safe_upsert_exercise, canonical_key as _ck,
+                    )
+                    doc.setdefault(
+                        "canonical_name_key", _ck(doc.get("exercise_name")),
+                    )
+                    r = await safe_upsert_exercise(doc)
+                    if r.get("inserted"):
+                        inserted += 1
+                    else:
+                        updated += 1
+                except Exception:
+                    logger.exception("migration: safe_upsert failed, raw insert")
+                    await db.exercises_v2.insert_one(doc)
+                    inserted += 1
         except Exception as e:
             logger.exception("migrate exercise failed")
             errors.append({"id": (old or {}).get("id"), "error": str(e)[:200]})

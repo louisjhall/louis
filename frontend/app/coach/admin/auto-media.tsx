@@ -158,49 +158,81 @@ export default function AutoMediaSettingsScreen() {
     try {
       // Dry-run first so the coach sees the count before spending credits.
       const dry = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
-        method: "POST", body: { dry_run: true, limit: 500 },
+        method: "POST", body: { dry_run: true },
       });
       const would = Number(dry?.would_queue_count || 0);
       if (!would) {
         toast("No exercises in Needs Review — nothing to backfill.", "info");
         return;
       }
-      // Iter181c · Loop the endpoint until has_more=false. Each call is
-      // capped at ~40 exercises server-side so it lands under the k8s
-      // ingress timeout. Backend runs LLM calls INLINE with a
-      // semaphore-bounded concurrency of 6 — so when this loop returns,
-      // the DB writes are already durable.
-      let totalWrote = 0;
-      let totalProcessed = 0;
-      const errAgg: Record<string, number> = {};
-      let paused = false;
-      let iter = 0;
-      // Hard safety cap: at 40 per iter, 40 iters = 1600 possible
-      // exercises. Prevents infinite loops if server misbehaves.
-      while (iter < 40) {
-        iter += 1;
-        const r = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
-          method: "POST", body: { dry_run: false, limit: 40, skip_images: true },
+
+      // Iter181d · Fire-and-forget kickoff — server returns 202 with a
+      // job_id and we POLL /backfill-status/{job_id} every 2s until the
+      // background worker reports complete/failed. Browser can never
+      // time out because we never hold an HTTP request open during LLM
+      // work. Kill-switches (MANUAL_MODE / EXERCISE_BACKFILL_DISABLED)
+      // return 403 which surfaces via the api() error path.
+      let kickoff: any;
+      try {
+        kickoff = await api<any>("/coach/auto-media-gen/backfill-needs-review", {
+          method: "POST", body: { skip_images: true },
         });
-        totalWrote   += Number(r?.queued_count    || 0);
-        totalProcessed += Number(r?.processed_count || 0);
-        for (const [k, v] of Object.entries(r?.error_summary || {})) {
-          errAgg[k] = (errAgg[k] || 0) + Number(v || 0);
+      } catch (e: any) {
+        // 409 already_running → attach to in-flight job_id (server sends
+        // it in the response body). 403 kill-switch → surface message.
+        const detail = e?.response?.detail || e?.detail || e?.message;
+        const inflightJobId = e?.response?.job_id;
+        if (inflightJobId) {
+          kickoff = { job_id: inflightJobId, status: "already_running" };
+          toast("Attaching to sweep already in progress…", "info");
+        } else {
+          toast(detail || "Backfill kickoff failed.", "error");
+          return;
         }
-        if (r?.budget_paused) { paused = true; break; }
-        if (!r?.has_more) break;
-        // In-progress toast every iter so coach sees momentum.
-        toast(`… backfilling · ${totalWrote} written so far`, "info");
       }
 
-      const errCount = Object.values(errAgg).reduce((a, b) => a + b, 0);
-      if (paused) {
-        toast(`Budget paused mid-run — wrote ${totalWrote}/${totalProcessed}. Top up + resume + re-tap.`, "error");
-      } else if (errCount) {
-        toast(`Wrote content on ${totalWrote}/${totalProcessed} exercises (${errCount} errors — see logs).`, "info");
-      } else {
-        toast(`Wrote content on ${totalWrote}/${totalProcessed} exercises.`, "success");
+      const jobId: string = kickoff?.job_id;
+      if (!jobId) {
+        toast("Backfill: server did not return a job id.", "error");
+        return;
       }
+
+      // Poll loop — 2s interval, cap at 15 min (450 polls).
+      let last = 0;
+      for (let i = 0; i < 450; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let status: any;
+        try {
+          status = await api<any>(`/coach/auto-media-gen/backfill-status/${jobId}`);
+        } catch {
+          continue;                     // transient network — keep polling
+        }
+        const wrote = Number(status?.wrote || 0);
+        const processed = Number(status?.processed || 0);
+        const total = Number(status?.total_in_scope || would);
+        if (wrote !== last) {
+          toast(`… backfilling · ${wrote}/${total} written`, "info");
+          last = wrote;
+        }
+        if (status?.status === "complete") {
+          const errCount = Object.values(status?.errors || {}).reduce(
+            (a: number, b: any) => a + Number(b || 0), 0,
+          );
+          if (status.budget_paused) {
+            toast(`Budget paused mid-run — wrote ${wrote}/${processed}. Top up + resume + re-tap.`, "error");
+          } else if (errCount) {
+            toast(`Wrote content on ${wrote}/${processed} exercises (${errCount} errors — see logs).`, "info");
+          } else {
+            toast(`Wrote content on ${wrote}/${processed} exercises.`, "success");
+          }
+          return;
+        }
+        if (status?.status === "failed") {
+          toast(`Backfill failed: ${status?.error || "unknown"}.`, "error");
+          return;
+        }
+      }
+      toast("Backfill still running after 15 min — check job status manually.", "info");
     } catch (e: any) {
       toast(e?.message || "Backfill failed.", "error");
     } finally { setBackfilling(false); }

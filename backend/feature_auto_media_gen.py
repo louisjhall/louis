@@ -415,6 +415,20 @@ async def auto_enqueue_media_for_exercise(
     if not AUTO_MEDIA_GEN_ENABLED:
         return {"skipped": True, "reason": "AUTO_MEDIA_GEN disabled"}
 
+    # Iter181c · MANUAL_MODE kill-switch. When ON, all AUTOMATIC exercise
+    # media triggers (Atlas alternatives fanout, hotel conversion, alt
+    # stubs from subs_allowed, new-exercise-on-create) short-circuit.
+    # Coach-tapped bulk sweep + per-exercise regen still go through
+    # dedicated endpoints that respect their own env guards.
+    try:
+        from feature_exercise_dedup import manual_mode_active
+        if manual_mode_active():
+            return {"skipped": True, "reason": "MANUAL_MODE"}
+    except Exception:
+        # Import failure is non-fatal — auto-gen simply keeps its old
+        # behaviour if the dedup module is unavailable for some reason.
+        pass
+
     # Global budget pause — one blown budget stops all kinds until the
     # coach clears it from the Generation Control panel.
     if await is_budget_paused():
@@ -1110,230 +1124,312 @@ logger.info(
 
 
 # ---------------------------------------------------------------------------
-# Iter181 · Bulk Needs-Review backfill — scans the library for every
-# exercise that is not fully approved and runs the same auto-generation
-# pipeline for each. Distinct from `/backfill-run` (which needs explicit
-# ids) so the coach can trigger a whole-library sweep in one tap.
+# Iter181 · Bulk Needs-Review backfill.
 # ---------------------------------------------------------------------------
+# Coach taps "RUN FOR ALL NEEDS REVIEW" → we spawn a single background
+# worker that iterates the whole library, respecting:
+#   · single-flight lock (only one sweep in flight globally)
+#   · MANUAL_MODE / EXERCISE_BACKFILL_DISABLED kill-switches
+#   · budget_paused settings marker
+#   · bounded LLM concurrency (Semaphore(6))
+#
+# The HTTP endpoint returns HTTP 202 immediately with a `job_id`; the
+# UI polls `GET /coach/auto-media-gen/backfill-status/{job_id}` every
+# 2 s so the browser can never time out. Progress is persisted to the
+# `backfill_jobs` collection so a worker recycle mid-sweep leaves an
+# audit trail (job stays `running` until either finished or manually
+# marked `failed`).
+# ---------------------------------------------------------------------------
+from fastapi import Response  # noqa: E402
+from feature_exercise_dedup import (  # noqa: E402
+    exercise_backfill_disabled,
+    manual_mode_active,
+)
+
+# Single-flight lock. Protects the WORKER function, so a concurrent
+# request can distinguish "sweep in flight" from "spawn a new one".
+_BACKFILL_LOCK: asyncio.Lock = asyncio.Lock()
+
+
+async def _record_job(job_id: str, patch: dict) -> None:
+    """Idempotent upsert of the job doc; keeps updated_at fresh."""
+    from datetime import datetime, timezone
+    patch = {**patch, "updated_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        await db.backfill_jobs.update_one(
+            {"_id": job_id}, {"$set": patch}, upsert=True,
+        )
+    except Exception:
+        logger.exception("backfill_jobs write failed for %s", job_id)
+
+
+async def _backfill_worker(job_id: str, *, coach_id: str, skip_images: bool) -> None:
+    """Runs under `_BACKFILL_LOCK`. Sweeps the whole library — no per-call
+    limit — while respecting the shared semaphore.  Progress is persisted
+    to `backfill_jobs` after every processed exercise so the polling UI
+    can render a live counter."""
+    from datetime import datetime, timezone
+    started = datetime.now(timezone.utc).isoformat()
+    try:
+        async with _BACKFILL_LOCK:
+            await _record_job(job_id, {
+                "status": "running",
+                "started_at": started,
+                "coach_id": coach_id,
+                "skip_images": skip_images,
+                "processed": 0, "wrote": 0,
+                "errors": {}, "results_sample": [],
+            })
+
+            # Same filter as the coach UI's NEEDS REVIEW + MISSING tabs.
+            query = {
+                "$and": [
+                    {"$or": [
+                        {"status": {"$in": ["draft_requested", "coach_review_needed", "draft", "Draft"]}},
+                        {"approved_image_status": {"$in": ["Needs Review", "Missing", "missing"]}},
+                        {"approval_status": {"$in": ["pending", "needs_review", "draft"]}},
+                    ]},
+                    {"$or": [
+                        {"coaching_points":            {"$in": [None, [], ""]}},
+                        {"common_mistakes":            {"$in": [None, [], ""]}},
+                        {"client_facing_instructions": {"$in": [None, ""]}},
+                    ]},
+                    # Skip aliases — they resolve to canonical content.
+                    {"$or": [
+                        {"canonical_id": None},
+                        {"canonical_id": {"$exists": False}},
+                        {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+                    ]},
+                ],
+            }
+            projection = {"_id": 0, "id": 1, "exercise_name": 1}
+            exs = await db.exercises_v2.find(query, projection).to_list(length=1000)
+
+            sem = asyncio.Semaphore(6)
+            toggles = await _load_kind_toggles()
+            _CONTENT_KINDS_BULK = ("coaching_points", "common_mistakes", "instructions")
+
+            processed = 0
+            wrote_total = 0
+            errors: dict[str, int] = {}
+            sample: list[dict] = []
+
+            async def _process(ex: dict) -> dict:
+                ex_id = ex["id"]
+                full = await db.exercises_v2.find_one({"id": ex_id}) or {}
+                if full.get("canonical_id") and full["canonical_id"] != ex_id:
+                    return {"id": ex_id, "skipped": True, "reason": "alias"}
+                if await is_budget_paused():
+                    return {"id": ex_id, "skipped": True, "reason": "budget_paused"}
+                wrote: list[str] = []
+                errs: list[str] = []
+                for kind in _CONTENT_KINDS_BULK:
+                    if not toggles.get(kind, True):
+                        continue
+                    field = _kind_to_field(kind)
+                    existing = full.get(field)
+                    if (isinstance(existing, list) and existing) or (
+                        isinstance(existing, str) and existing.strip()
+                    ):
+                        continue
+                    try:
+                        async with sem:
+                            await _auto_generate_content(ex_id, kind, coach_id or _AUTO_USER_ID)
+                        verify = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0, field: 1})
+                        v = (verify or {}).get(field)
+                        if (isinstance(v, list) and v) or (isinstance(v, str) and v.strip()):
+                            wrote.append(kind)
+                        else:
+                            errs.append(f"{kind}:empty_after_run")
+                    except Exception as e:
+                        errs.append(f"{kind}:{str(e)[:80]}")
+                        logger.warning(
+                            "auto_media_gen.backfill: %s kind=%s failed: %s",
+                            ex_id, kind, e,
+                        )
+                if not skip_images:
+                    try:
+                        async with sem:
+                            img_res = await auto_enqueue_media_for_exercise(
+                                ex_id, triggered_by=coach_id,
+                            )
+                        if img_res.get("queued_images"):
+                            wrote += [f"image_{s}" for s in img_res["queued_images"]]
+                    except Exception as e:
+                        errs.append(f"images:{str(e)[:80]}")
+                return {
+                    "id": ex_id, "name": ex.get("exercise_name"),
+                    "wrote": wrote, "errors": errs,
+                }
+
+            # Iterate in gather-batches of 12 so progress writes stay lively.
+            _BATCH = 12
+            for i in range(0, len(exs), _BATCH):
+                chunk = exs[i:i + _BATCH]
+                per_ex = await asyncio.gather(
+                    *(_process(ex) for ex in chunk), return_exceptions=True,
+                )
+                for r in per_ex:
+                    if isinstance(r, Exception):
+                        errors["exception"] = errors.get("exception", 0) + 1
+                        continue
+                    processed += 1
+                    if r.get("wrote"):
+                        wrote_total += 1
+                    for e in (r.get("errors") or []):
+                        k = e.split(":", 1)[0]
+                        errors[k] = errors.get(k, 0) + 1
+                    if len(sample) < 20 and r.get("wrote"):
+                        sample.append({"id": r.get("id"), "name": r.get("name"), "wrote": r.get("wrote")})
+                # Flush progress after each batch.
+                await _record_job(job_id, {
+                    "processed": processed, "wrote": wrote_total,
+                    "errors": errors, "results_sample": sample,
+                    "total_in_scope": len(exs),
+                    "budget_paused": await is_budget_paused(),
+                })
+
+            await _record_job(job_id, {
+                "status": "complete",
+                "processed": processed, "wrote": wrote_total,
+                "errors": errors, "results_sample": sample,
+                "total_in_scope": len(exs),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "budget_paused": await is_budget_paused(),
+            })
+    except Exception as e:
+        logger.exception("backfill worker crashed job=%s", job_id)
+        try:
+            await _record_job(job_id, {
+                "status": "failed",
+                "error": str(e)[:200],
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+
 
 @api.post("/coach/auto-media-gen/backfill-needs-review")
 async def auto_media_gen_backfill_needs_review(
     body: Optional[dict] = None,
     coach: dict = Depends(require_role("coach")),
+    response: Response = None,
 ):
-    """Run auto-generation for every exercise currently in Needs Review.
+    """Fire-and-forget kickoff.
 
     Body (all optional):
-        limit: int    hard-capped at 500 (default 500) so a whole-library
-                      sweep completes in one tap.
-        dry_run: bool when true, returns the list of exercises that
-                      WOULD be queued without spending credits.
-        skip_images: bool when true, skips the (expensive) image kinds
-                      and only queues text content (coaching_points,
-                      common_mistakes, alternatives, instructions).
-                      Default False — matches original behaviour.
+        dry_run: bool     when true, returns the queue snapshot only.
+        skip_images: bool default true — skips image kinds.
 
-    Filter mirrors the coach Exercise-Library `NEEDS REVIEW` and `MISSING`
-    tabs so what the coach sees on-screen is what gets swept:
-        · status ∈ (draft_requested, coach_review_needed, draft, Draft)
-        · OR approved_image_status ∈ (Needs Review, Missing, missing)
-        · OR approval_status ∈ (pending, needs_review, draft)
-    Aliases of a canonical exercise are also skipped by the underlying
-    `auto_enqueue_media_for_exercise` guard.
+    Response 202 + {"job_id": ...} — poll `/backfill-status/{job_id}`
+    every 2 s until `status ∈ ("complete","failed")`.
+
+    Kill-switches (both return 403):
+      · `MANUAL_MODE=true`
+      · `EXERCISE_BACKFILL_DISABLED=true`
+
+    Single-flight lock: if a sweep is already running, returns 409
+    with the in-flight `job_id` so the UI can attach to it.
     """
     body = body or {}
     dry_run = bool(body.get("dry_run"))
-    skip_images = bool(body.get("skip_images"))
-    try:
-        # Default 40 per call — with semaphore=6 concurrency this lands
-        # under any typical k8s ingress timeout (~60s). Frontend loops
-        # this endpoint until has_more=false so the coach can sweep
-        # everything with one tap.
-        limit = max(1, min(int(body.get("limit") or 40), 500))
-    except Exception:
-        limit = 40
+    skip_images = bool(body.get("skip_images", True))
 
-    query = {
-        "$and": [
-            # UI-visible tab criteria — must be in NEEDS REVIEW or MISSING
-            {"$or": [
-                {"status": {"$in": ["draft_requested", "coach_review_needed", "draft", "Draft"]}},
-                {"approved_image_status": {"$in": ["Needs Review", "Missing", "missing"]}},
-                {"approval_status": {"$in": ["pending", "needs_review", "draft"]}},
-            ]},
-            # AND at least one of the three coach-visible text fields is
-            # empty. We deliberately EXCLUDE `alternatives` from this
-            # check because generating alternatives fans out into new
-            # library drafts (Atlas depth-1 fanout), and those drafts
-            # would re-appear in the very next iteration with an empty
-            # `alternatives` field, causing an infinite loop.
-            {"$or": [
-                {"coaching_points":            {"$in": [None, [], ""]}},
-                {"common_mistakes":            {"$in": [None, [], ""]}},
-                {"client_facing_instructions": {"$in": [None, ""]}},
-            ]},
-        ],
-    }
-    projection = {
-        "_id": 0, "id": 1, "exercise_name": 1,
-        "approved_image_status": 1, "approval_status": 1,
-        "canonical_id": 1,
-    }
-    cursor = db.exercises_v2.find(query, projection).limit(limit)
-    exs = await cursor.to_list(length=limit)
-
-    # Filter out aliases before we consume budget on them.
-    scannable = [
-        ex for ex in exs
-        if not (ex.get("canonical_id") and ex["canonical_id"] != ex.get("id"))
-    ]
-
-    if dry_run:
+    # ---- Kill switches ------------------------------------------------
+    if manual_mode_active():
+        if response is not None:
+            response.status_code = 403
         return {
-            "dry_run": True,
-            "total_needs_review_scanned": len(exs),
-            "would_queue_count": len(scannable),
-            "results": [
-                {
-                    "id": ex["id"],
-                    "name": ex.get("exercise_name"),
-                    "approved_image_status": ex.get("approved_image_status"),
-                    "approval_status": ex.get("approval_status"),
-                }
-                for ex in scannable
+            "status": "blocked",
+            "reason": "MANUAL_MODE",
+            "detail": "MANUAL_MODE=true — automatic sweeps are disabled. "
+                      "Turn MANUAL_MODE off (or use per-exercise regen) to run this.",
+        }
+    if exercise_backfill_disabled():
+        if response is not None:
+            response.status_code = 403
+        return {
+            "status": "blocked",
+            "reason": "EXERCISE_BACKFILL_DISABLED",
+            "detail": "EXERCISE_BACKFILL_DISABLED=true — sweep is frozen. "
+                      "Unset the env var to re-enable.",
+        }
+
+    # ---- Dry-run (fast path — no job spawned) -------------------------
+    if dry_run:
+        query = {
+            "$and": [
+                {"$or": [
+                    {"status": {"$in": ["draft_requested", "coach_review_needed", "draft", "Draft"]}},
+                    {"approved_image_status": {"$in": ["Needs Review", "Missing", "missing"]}},
+                    {"approval_status": {"$in": ["pending", "needs_review", "draft"]}},
+                ]},
+                {"$or": [
+                    {"coaching_points":            {"$in": [None, [], ""]}},
+                    {"common_mistakes":            {"$in": [None, [], ""]}},
+                    {"client_facing_instructions": {"$in": [None, ""]}},
+                ]},
+                {"$or": [
+                    {"canonical_id": None},
+                    {"canonical_id": {"$exists": False}},
+                    {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+                ]},
             ],
         }
+        n = await db.exercises_v2.count_documents(query)
+        return {"dry_run": True, "would_queue_count": n}
 
-    queued = 0
-    results = []
-    # ------------------------------------------------------------------
-    # Inline execution — bounded concurrency.
-    #
-    # Prior version fired ~888 fire-and-forget asyncio tasks (222 ex ×
-    # 4 content kinds) via `auto_enqueue_media_for_exercise`. On
-    # production this failed silently for two reasons:
-    #   1) Python's `asyncio.create_task` keeps only a WEAK reference;
-    #      under load the GC dropped tasks mid-run before their DB
-    #      writes landed.
-    #   2) Anthropic sustained-throughput rate limits kicked in once
-    #      more than a few dozen calls fired at once, returning 429s
-    #      that were logged but never surfaced.
-    #
-    # Fix: run the LLM calls INLINE (still async, but awaited) with a
-    # semaphore-bounded fan-out of 6 concurrent calls. This lets the
-    # coach see the real completion count in the HTTP response and
-    # keeps us well under Anthropic's 60-rpm sustained limit.
-    # ------------------------------------------------------------------
-    # `alternatives` is DELIBERATELY excluded from the bulk backfill —
-    # it triggers Atlas depth-1 fanout (creates 3 new library drafts
-    # per exercise) which would explode DB size and cause the sweep
-    # loop to appear "infinite" (new empty drafts keep appearing).
-    # Coach can still regenerate alternatives per-exercise from the
-    # Library detail view; that path is unchanged.
-    _CONTENT_KINDS_BULK = ("coaching_points", "common_mistakes", "instructions")
-    sem = asyncio.Semaphore(6)
-    toggles = await _load_kind_toggles()
-
-    async def _process(ex: dict) -> dict:
-        ex_id = ex["id"]
-        # Re-fetch full doc so we know which kinds are already populated.
-        full = await db.exercises_v2.find_one({"id": ex_id}) or {}
-        # Alias short-circuit (defensive — outer filter already dropped
-        # them but the doc may have been aliased mid-scan).
-        if full.get("canonical_id") and full["canonical_id"] != ex_id:
-            return {"id": ex_id, "name": ex.get("exercise_name"),
-                    "skipped": True, "reason": "alias"}
-        if full.get("approval_status") == "approved" and \
-           full.get("approved_image_status") == "Approved":
-            return {"id": ex_id, "name": ex.get("exercise_name"),
-                    "skipped": True, "reason": "already approved"}
-        if await is_budget_paused():
-            return {"id": ex_id, "name": ex.get("exercise_name"),
-                    "skipped": True, "reason": "budget_paused"}
-
-        wrote: list[str] = []
-        errors: list[str] = []
-        for kind in _CONTENT_KINDS_BULK:
-            if not toggles.get(kind, True):
-                continue
-            field = _kind_to_field(kind)
-            existing = full.get(field)
-            if (isinstance(existing, list) and existing) or (
-                isinstance(existing, str) and existing.strip()
-            ):
-                continue
-            try:
-                async with sem:
-                    await _auto_generate_content(ex_id, kind, coach.get("id") or _AUTO_USER_ID)
-                # Verify the write actually landed.
-                verify = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0, field: 1})
-                v = (verify or {}).get(field)
-                if (isinstance(v, list) and v) or (isinstance(v, str) and v.strip()):
-                    wrote.append(kind)
-                else:
-                    errors.append(f"{kind}:empty_after_run")
-            except Exception as e:
-                errors.append(f"{kind}:{str(e)[:80]}")
-                logger.warning(
-                    "auto_media_gen.backfill: %s kind=%s failed: %s",
-                    ex_id, kind, e,
-                )
-
-        # Images — only if the caller didn't opt-out AND the kinds are on.
-        if not skip_images:
-            try:
-                async with sem:
-                    img_res = await auto_enqueue_media_for_exercise(
-                        ex_id, triggered_by=coach.get("id"),
-                    )
-                if img_res.get("queued_images"):
-                    wrote += [f"image_{s}" for s in img_res["queued_images"]]
-            except Exception as e:
-                errors.append(f"images:{str(e)[:80]}")
-
+    # ---- Single-flight lock check -------------------------------------
+    if _BACKFILL_LOCK.locked():
+        # Find the in-flight job so the UI can attach.
+        in_flight = await db.backfill_jobs.find_one(
+            {"status": "running"}, sort=[("started_at", -1)],
+        )
+        if response is not None:
+            response.status_code = 409
         return {
-            "id": ex_id, "name": ex.get("exercise_name"),
-            "wrote": wrote, "errors": errors,
-            "skipped": not wrote and not errors,
+            "status": "already_running",
+            "reason": "single_flight",
+            "job_id": (in_flight or {}).get("_id"),
+            "detail": "A sweep is already in flight — attach to it via "
+                      "`GET /coach/auto-media-gen/backfill-status/{job_id}`.",
         }
 
-    # Bounded gather — keeps concurrency at semaphore=6 across all
-    # exercises. Never bubbles exceptions out of the gather itself.
-    per_ex = await asyncio.gather(
-        *(_process(ex) for ex in scannable),
-        return_exceptions=True,
-    )
-    for r in per_ex:
-        if isinstance(r, Exception):
-            results.append({"error": str(r)[:200]})
-            continue
-        results.append(r)
-        if r.get("wrote"):
-            queued += 1
-
-    # Aggregate error stats so the coach can see rate-limit / budget
-    # hits without scrolling every row.
-    error_summary: dict[str, int] = {}
-    for r in results:
-        if isinstance(r, dict):
-            for err in (r.get("errors") or []):
-                key = err.split(":", 1)[0]
-                error_summary[key] = error_summary.get(key, 0) + 1
-
-    return {
-        "dry_run": False,
-        "total_needs_review_scanned": len(exs),
-        "processed_count": len(results),
-        # `queued_count` retained for FE back-compat — now means "at
-        # least one field was written". Detailed per-exercise `wrote`
-        # array in `results`.
-        "queued_count": queued,
-        # If we hit the limit, there's very likely more waiting — the
-        # frontend uses this to loop until fully drained.
-        "has_more": len(exs) >= limit,
-        "budget_paused": await is_budget_paused(),
+    # ---- Spawn background worker --------------------------------------
+    from server import new_id
+    job_id = new_id()
+    await _record_job(job_id, {
+        "status": "queued",
+        "coach_id": coach.get("id"),
         "skip_images": skip_images,
-        "error_summary": error_summary,
-        "results": results,
+    })
+    _spawn_bg(_backfill_worker(job_id, coach_id=coach.get("id"), skip_images=skip_images))
+    if response is not None:
+        response.status_code = 202
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        "poll_url": f"/api/coach/auto-media-gen/backfill-status/{job_id}",
     }
+
+
+@api.get("/coach/auto-media-gen/backfill-status/{job_id}")
+async def auto_media_gen_backfill_status(
+    job_id: str,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Poll the progress of a backfill job spawned by the endpoint above.
+    Safe to call as often as the UI wants — cheap single-doc read."""
+    doc = await db.backfill_jobs.find_one({"_id": job_id})
+    if not doc:
+        return {"status": "unknown", "job_id": job_id}
+    # Strip mongo _id key from the response for clean JSON.
+    doc["job_id"] = doc.pop("_id")
+    return doc
+
+
+logger.info(
+    "feature_auto_media_gen: MANUAL_MODE=%s EXERCISE_BACKFILL_DISABLED=%s",
+    manual_mode_active(), exercise_backfill_disabled(),
+)
 

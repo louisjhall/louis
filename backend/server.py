@@ -12010,6 +12010,29 @@ async def seed():
 @app.on_event("startup")
 async def _startup():
     await seed()
+
+    # Iter181c — ensure unique partial index on canonical_name_key +
+    # supporting index on exercise_duplicate_candidates. Idempotent.
+    try:
+        from feature_exercise_dedup import ensure_indexes as _dedup_ensure_indexes
+        await _dedup_ensure_indexes()
+    except Exception:
+        logger.exception("feature_exercise_dedup: ensure_indexes failed at startup")
+
+    # Zombie backfill_jobs — any 'running' job left over from a previous
+    # process is dead now. Mark them 'failed' so the UI stops polling.
+    try:
+        await db.backfill_jobs.update_many(
+            {"status": {"$in": ["queued", "running"]}},
+            {"$set": {
+                "status": "failed",
+                "finished_at": now_iso(),
+                "error": "server restart — worker did not survive",
+            }},
+        )
+    except Exception:
+        logger.exception("backfill_jobs zombie cleanup failed")
+
     # Iter 128 — one-shot: backfill persona field on legacy exercise images
     # so the new Flight Support media resolver can pick louis/female/pilot
     # correctly. Idempotent — no-op after the first run.

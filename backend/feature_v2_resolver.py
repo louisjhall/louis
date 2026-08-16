@@ -659,7 +659,26 @@ async def create_exercise_request_if_missing(
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    await db.exercises_v2.insert_one(doc)
+    # Iter181c — route the insert through the shared upsert helper so
+    # the unique canonical_name_key index catches concurrent races and
+    # returns the winner rather than throwing. No behavioural change
+    # in the happy path.
+    try:
+        from feature_exercise_dedup import safe_upsert_exercise
+        r = await safe_upsert_exercise(doc)
+        if not r.get("inserted"):
+            # Concurrent worker beat us — return the winner's id.
+            winner = r.get("existing") or {}
+            logger.info(
+                "resolver.create_exercise_request_if_missing: race lost, "
+                "returning winner id=%s for proposed=%r",
+                winner.get("id"), requested_name,
+            )
+            return winner.get("id") or doc["id"]
+    except Exception:
+        # Fallback to raw insert if the dedup module is unavailable.
+        logger.exception("resolver: safe_upsert failed, using raw insert")
+        await db.exercises_v2.insert_one(doc)
 
     # Auto-media generation — coach preference: whenever a new draft
     # exercise lands in the library, kick off the standard image slots

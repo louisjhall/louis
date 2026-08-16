@@ -167,6 +167,11 @@ class ExerciseCreate(BaseModel):
     alternatives: Optional[list[str]] = None
     regressions: Optional[list[str]] = None
     progressions: Optional[list[str]] = None
+    # Iter181c — override the similarity-guard 409 when the coach is
+    # deliberately creating a variant that the fuzzy matcher would
+    # otherwise flag (e.g. "Kettlebell Deadlift" vs "Barbell Deadlift"
+    # when the equipment disqualifier fails for some odd token set).
+    force: Optional[bool] = False
 
 
 class ExercisePatch(BaseModel):
@@ -452,34 +457,118 @@ def _default_status_flags() -> dict:
 
 
 @api.post("/exercise-content")
-async def ex_create(body: ExerciseCreate, admin: dict = Depends(require_admin())):
+async def ex_create(
+    body: ExerciseCreate,
+    admin: dict = Depends(require_admin()),
+    response: Response = None,
+):
+    """Manual coach add. Duplicate-guarded: if a similar exercise already
+    exists (canonical-key exact, or token-Jaccard ≥ 0.85, or char-level
+    SequenceMatcher ≥ 0.80), we DO NOT create a new row — we return HTTP
+    409 with the matched exercise so the coach can decide whether to link,
+    rename, or override with `?force=true`.
+    """
     ex_id = new_id()
     now = now_iso()
     payload = body.model_dump()
     flags = _default_status_flags()
-    # Auto-flip content_status flags based on body content at creation time
-    cs = dict(flags["content_status"])
     if payload.get("coaching_points"):
-        cs["coaching_points"] = True
+        flags["content_status"] = {**flags["content_status"], "coaching_points": True}
     if payload.get("primary_video_url"):
-        cs["video"] = True
-    flags["content_status"] = cs
+        flags["content_status"] = {**flags["content_status"], "video": True}
+
+    # ---- Similarity guard (Iter181c) ----------------------------------
+    # Manual coach add — HTTP 409 with match details so the coach can
+    # choose. Frontend passes `?force=true` (as query param OR body flag)
+    # to override.
+    try:
+        from feature_exercise_dedup import (
+            check_duplicate_candidate,
+            record_duplicate_flag,
+            canonical_key as _ck,
+            safe_upsert_exercise,
+        )
+    except Exception:
+        check_duplicate_candidate = None  # type: ignore
+        safe_upsert_exercise = None       # type: ignore
+        _ck = None                        # type: ignore
+    force = bool(getattr(body, "force", False)) or bool(payload.pop("force", False))
+    match = None
+    if check_duplicate_candidate and not force:
+        try:
+            match = await check_duplicate_candidate(
+                body.exercise_name,
+                movement_pattern=payload.get("movement_pattern"),
+                equipment_type=payload.get("equipment_type") or [],
+            )
+        except Exception:
+            logger.exception("ex_create: similarity check failed — allowing insert")
+            match = None
+    if match:
+        # Audit-trail the near-collision so a coach can review it later.
+        try:
+            await record_duplicate_flag(
+                proposed_name=body.exercise_name,
+                matched_id=match["id"],
+                matched_name=match.get("exercise_name") or "",
+                score=match.get("score", 0.0),
+                gate=match.get("gate", "unknown"),
+                source="manual",
+                triggered_by=admin.get("id"),
+            )
+        except Exception:
+            pass
+        if response is not None:
+            response.status_code = 409
+        return {
+            "status": "conflict",
+            "reason": "similar_exists",
+            "match": {
+                "id": match["id"],
+                "exercise_name": match.get("exercise_name"),
+                "score": match.get("score"),
+                "gate": match.get("gate"),
+            },
+            "detail": (
+                f"An exercise named {match.get('exercise_name')!r} already exists "
+                f"({match.get('gate')}, score {match.get('score')}). Send "
+                f"`force: true` to create anyway, or link workouts to the existing "
+                f"exercise instead."
+            ),
+        }
+
     doc = {
         "id": ex_id,
         **payload,
         **flags,
+        "canonical_name_key": _ck(body.exercise_name) if _ck else None,
         "created_by": admin["id"],
         "reviewed_by": None,
         "reviewed_at": None,
         "created_at": now,
         "updated_at": now,
     }
-    await db.exercises_v2.insert_one(doc)
+    # ---- Upsert-on-conflict via unique-index safety net ---------------
+    if safe_upsert_exercise:
+        r = await safe_upsert_exercise(doc)
+        if not r.get("inserted"):
+            # A concurrent request won the race — return the winner.
+            existing = r.get("existing") or {}
+            if response is not None:
+                response.status_code = 409
+            return {
+                "status": "conflict",
+                "reason": "race_lost",
+                "match": {"id": existing.get("id"), "exercise_name": existing.get("exercise_name")},
+            }
+    else:
+        await db.exercises_v2.insert_one(doc)
     await _log(ex_id, admin["id"], "created", f"Created '{body.exercise_name}'")
 
     # Auto-media generation — kick off standard image slots + coaching
     # points as soon as the exercise is created. Non-blocking; coach
-    # still has to approve. Silent no-op if AUTO_MEDIA_GEN is disabled.
+    # still has to approve. Silent no-op if AUTO_MEDIA_GEN is disabled
+    # OR if MANUAL_MODE is on (the auto-enqueue guard short-circuits).
     try:
         from feature_auto_media_gen import auto_enqueue_media_for_exercise
         await auto_enqueue_media_for_exercise(ex_id, triggered_by=admin["id"])
@@ -1001,23 +1090,54 @@ async def _bump_usage_counts() -> None:
                         # Auto-create a draft stub so this alt shows up in
                         # the media queue as "needs_review". Non-destructive:
                         # if a proper library entry is added later, the coach
-                        # can archive this stub.
-                        aid = new_id()
+                        # can archive this stub. Iter181c — routes through
+                        # the shared similarity gate; if a fuzzy match is
+                        # found we silently REUSE it rather than creating
+                        # another dupe row. Also uses the upsert-on-conflict
+                        # helper so concurrent workers can't race-insert.
                         try:
-                            await db.exercises_v2.insert_one({
-                                "id": aid,
-                                "exercise_name": an,
-                                "status": "Draft",
-                                "approval_status": "needs_review",
-                                "auto_created_from": "subs_allowed",
-                                "auto_created_at": now_iso(),
-                                "auto_created_for_exposure_id": p.get("exposure_id"),
-                                "content_status": {"images": False, "video": False, "coaching_points": False},
-                                "used_in_tomorrow_workouts_count": 0,
-                                "used_in_upcoming_workouts_count": 0,
-                                "first_scheduled_date": None,
-                            })
-                            name_to_id[an_lc] = aid
+                            from feature_exercise_dedup import (
+                                check_duplicate_candidate,
+                                record_duplicate_flag,
+                                canonical_key as _ck,
+                                safe_upsert_exercise,
+                            )
+                            match = await check_duplicate_candidate(an)
+                            if match:
+                                await record_duplicate_flag(
+                                    proposed_name=an,
+                                    matched_id=match["id"],
+                                    matched_name=match.get("exercise_name") or "",
+                                    score=match.get("score", 0.0),
+                                    gate=match.get("gate", "unknown"),
+                                    source="subs_allowed",
+                                )
+                                aid = match["id"]
+                                name_to_id[an_lc] = aid
+                                logger.info(
+                                    "subs_allowed: matched existing %r for proposed %r "
+                                    "(gate=%s score=%s)",
+                                    match.get("exercise_name"), an,
+                                    match.get("gate"), match.get("score"),
+                                )
+                            else:
+                                aid = new_id()
+                                r = await safe_upsert_exercise({
+                                    "id": aid,
+                                    "exercise_name": an,
+                                    "canonical_name_key": _ck(an),
+                                    "status": "Draft",
+                                    "approval_status": "needs_review",
+                                    "auto_created_from": "subs_allowed",
+                                    "auto_created_at": now_iso(),
+                                    "auto_created_for_exposure_id": p.get("exposure_id"),
+                                    "content_status": {"images": False, "video": False, "coaching_points": False},
+                                    "used_in_tomorrow_workouts_count": 0,
+                                    "used_in_upcoming_workouts_count": 0,
+                                    "first_scheduled_date": None,
+                                })
+                                aid = r["id"]
+                                name_to_id[an_lc] = aid
                         except Exception:
                             logger.exception("auto-create alt stub failed for %r", an)
                             continue

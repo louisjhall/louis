@@ -22,29 +22,32 @@ type Question = {
 
 export default function CheckinScreen() {
   const router = useRouter();
-  const [core, setCore] = useState<Question[]>([]);
-  const [dynamic, setDynamic] = useState<Question[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<any>(null);
   const [goalLabel, setGoalLabel] = useState<string>("");
-  const [tailored, setTailored] = useState<boolean>(false);
-
-  const [nutrQs, setNutrQs] = useState<Question[]>([]);
+  const [heading, setHeading] = useState<string>("WEEKLY CHECK-IN");
+  const [intro, setIntro] = useState<string>("");
+  const [checkinType, setCheckinType] = useState<"weekly" | "monthly">("weekly");
 
   const load = useCallback(async () => {
     try {
-      const [q, cur, nq] = await Promise.all([
+      // Iter181e — SINGLE source of truth for the question set is now the
+      // coach-editable LLM list served from /checkins/questions. Habit
+      // and nutrition appends were removed; total is capped server-side
+      // at 10 items.
+      const [q, cur] = await Promise.all([
         api<any>("/checkins/questions"),
         api<any>("/checkins/current"),
-        api<any>("/nutrition/checkin/questions").catch(() => ({ questions: [] })),
       ]);
-      setCore(q.core || []);
-      setDynamic(q.dynamic || []);
-      setGoalLabel(q.goal_label || "");
-      setTailored(Boolean(q.tailored));
-      setNutrQs((nq?.questions || []) as Question[]);
+      const qs: Question[] = q?.questions || q?.core || [];
+      setQuestions(qs.slice(0, 10));
+      setGoalLabel(q?.goal_label || "");
+      setHeading(String(q?.heading || "WEEKLY CHECK-IN"));
+      setIntro(String(q?.intro || ""));
+      setCheckinType((q?.type === "monthly" ? "monthly" : "weekly"));
       if (cur?.check_in) setSubmitted(cur.check_in);
     } catch (e: any) {
       Alert.alert("Could not load check-in", e?.message || "");
@@ -53,16 +56,7 @@ export default function CheckinScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Optional habit questions — always appended, never required
-  const habitQuestions: Question[] = useMemo(() => ([
-    { id: "habits_overall", label: "How did your habits feel this week?", type: "choice",
-      options: ["Easy to follow", "Mostly manageable", "Mixed", "Too much", "Not realistic this week"] },
-    { id: "habits_helped_most", label: "Which habit helped you most? (optional)", type: "text" },
-    { id: "habits_hardest", label: "Which habit was the hardest? (optional)", type: "text" },
-    { id: "habits_changes_needed", label: "Do any habits need changing? (optional)", type: "text" },
-  ]), []);
-
-  const all = useMemo(() => [...core, ...dynamic, ...nutrQs, ...habitQuestions], [core, dynamic, nutrQs, habitQuestions]);
+  const all = useMemo(() => questions, [questions]);
 
   const visible = (q: Question) => {
     if (!q.show_if) return true;
@@ -74,10 +68,19 @@ export default function CheckinScreen() {
 
   const setAnswer = (id: string, v: any) => setAnswers((a) => ({ ...a, [id]: v }));
 
+  // Iter181e — question set is now fully dynamic. Require every non-text
+  // question (scale + choice) to be answered before submit. Text fields
+  // remain optional. `show_if`-gated questions only count when visible.
   const canSubmit = useMemo(() => {
-    const required = ["overall", "energy", "sleep", "stress", "recovery", "pain", "nutrition"];
-    return required.every((k) => answers[k] !== undefined && answers[k] !== "");
-  }, [answers]);
+    for (const q of all) {
+      if (!visible(q)) continue;
+      if (q.type === "text") continue;
+      const v = answers[q.id];
+      if (v === undefined || v === null || v === "") return false;
+    }
+    return all.length > 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, answers]);
 
   const submit = async () => {
     if (!canSubmit || submitting) return;
@@ -104,7 +107,7 @@ export default function CheckinScreen() {
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
         <Pressable onPress={() => router.back()} hitSlop={12}><Ionicons name="close" size={26} color={theme.color.text} /></Pressable>
-        <Text style={styles.headerT}>WEEKLY CHECK-IN</Text>
+        <Text style={styles.headerT}>{heading}</Text>
         <View style={{ width: 26 }} />
       </View>
 
@@ -114,9 +117,9 @@ export default function CheckinScreen() {
         ) : (
           <>
             <View style={styles.introCard}>
-              <Text style={styles.introEyebrow}>ATLAS</Text>
+              <Text style={styles.introEyebrow}>{checkinType === "monthly" ? "MONTHLY REVIEW · ATLAS" : "ATLAS"}</Text>
               <Text style={styles.introT}>
-                Answer honestly. Louis reads every one of these before recording your weekly video.
+                {intro || "Answer honestly. Louis reads every one of these before recording your weekly video."}
               </Text>
               {goalLabel ? (
                 <View style={styles.goalPill} testID="checkin-goal-pill">
@@ -126,11 +129,11 @@ export default function CheckinScreen() {
                   </Text>
                 </View>
               ) : null}
-              <Text style={styles.introHint}>
-                {tailored
-                  ? "You'll see a few questions tuned to your goal below the standard ones."
-                  : "Flying today? You can complete this after your sector or when you're back at the hotel. No rush — do this when it's safe and practical."}
-              </Text>
+              {checkinType === "monthly" ? (
+                <Text style={styles.introHint}>
+                  This is a bigger-picture review — reflect on the whole month. Louis uses your answers to reshape next month{"’"}s plan.
+                </Text>
+              ) : null}
             </View>
 
             {all.filter(visible).map((q, i) => (
@@ -147,7 +150,7 @@ export default function CheckinScreen() {
               <Text style={styles.submitT}>{submitting ? "ATLAS IS REVIEWING…" : "SUBMIT CHECK-IN"}</Text>
             </Pressable>
             {!canSubmit && (
-              <Text style={styles.requiredHint}>Answer overall, all 4 scales, pain and nutrition to submit.</Text>
+              <Text style={styles.requiredHint}>Answer every question with options or a scale to submit. Text fields are optional.</Text>
             )}
           </>
         )}

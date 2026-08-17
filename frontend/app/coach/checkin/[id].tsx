@@ -140,6 +140,20 @@ export default function CoachCheckinReview() {
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        {/* Iter181e — quick link to edit the client's question set for
+            next week's check-in (LLM-generated, coach-editable). */}
+        {ci.user_id ? (
+          <Pressable
+            onPress={() => router.push(`/coach/checkin-questions/${ci.user_id}` as any)}
+            style={styles.editQBtn}
+            testID="edit-checkin-questions"
+          >
+            <Ionicons name="list" size={14} color={theme.color.brand} />
+            <Text style={styles.editQBtnT}>EDIT CHECK-IN QUESTIONS FOR NEXT WEEK</Text>
+            <Ionicons name="chevron-forward" size={14} color={theme.color.brand} />
+          </Pressable>
+        ) : null}
+
         {/* Atlas Coach Summary */}
         <View style={styles.block}>
           <Text style={styles.blockH}>ATLAS COACH SUMMARY</Text>
@@ -322,4 +336,13 @@ const styles = StyleSheet.create({
   sendBtn: { marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 16, borderRadius: 12, backgroundColor: theme.color.brand },
   sendBtnT: { color: "#fff", fontSize: 13, fontWeight: "900", letterSpacing: 2 },
   footHint: { color: theme.color.textMuted, fontSize: 11, textAlign: "center", marginTop: 10, fontStyle: "italic", lineHeight: 14 },
+  // Iter181e · Deep-link into the LLM-generated question editor.
+  editQBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    gap: 8, marginBottom: 14, padding: 12, borderRadius: 10,
+    backgroundColor: theme.color.surface2, borderWidth: 1,
+    borderColor: theme.color.brand,
+  },
+  editQBtnT: { color: theme.color.brand, fontSize: 11, fontWeight: "900",
+               letterSpacing: 1.4, flex: 1 },
 });

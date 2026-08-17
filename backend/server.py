@@ -818,6 +818,22 @@ def clean_doc(doc: dict) -> dict:
     doc.pop("_id", None)
     return doc
 
+
+# Iter181e · Fire-and-forget task tracking.
+# Python's `asyncio.create_task` keeps only a WEAK reference to the task —
+# under prod load / worker recycle the GC can silently drop it mid-run.
+# `_spawn_bg` stores each task in the module-level set and removes it on
+# completion. Use everywhere in server.py instead of bare `create_task`.
+_BG_TASKS: set = set()
+
+def _spawn_bg(coro):
+    """Fire-and-forget wrapper — strongly references the task so the GC
+    can't drop it mid-execution. Returns the created Task."""
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+    return t
+
 def _merge_variants(w: dict, prev: Optional[dict]) -> dict:
     """Pick the best traffic-light variants when persisting a workout.
     Priority: LLM-returned (green shape valid) > previously stored > stub."""
@@ -10037,11 +10053,12 @@ async def checkin_adaptive(body: CheckinAdaptiveBody, user: dict = Depends(curre
         await refresh_and_persist_live_state(db, user["id"])
     except Exception:
         logger.exception("adaptive-checkin live_state refresh failed")
-    # Fire-and-forget: generate weekly script for the coach
+    # Fire-and-forget: generate weekly script for the coach.
+    # Iter181e — routed through _spawn_bg so Python's weak-ref GC cannot
+    # drop it under prod load / worker recycle.
     if user.get("coach_id"):
         try:
-            import asyncio as _asyncio
-            _asyncio.create_task(_generate_script_for(user["id"], user["coach_id"]))
+            _spawn_bg(_generate_script_for(user["id"], user["coach_id"]))
         except Exception as e:
             logger.warning("script gen kickoff failed: %s", e)
     return clean_doc(doc)
@@ -12588,140 +12605,276 @@ async def checkin_current(user: dict = Depends(current_user)):
     }
 
 
-@api.get("/checkins/questions")
-async def sunday_checkin_questions(user: dict = Depends(current_user)):
-    """Return the check-in question set — core + dynamic based on Coaching DNA + profile.
+# ---------------------------------------------------------------------------
+# Iter181e · Check-in question generation — LLM-first, coach-editable.
+# ---------------------------------------------------------------------------
+# Storage: one doc per client per (week_start, type) in the new
+# `check_in_questions` collection:
+#   { user_id, week_start, type: "weekly"|"monthly",
+#     questions: [ {id, label, type, options?, min?, max?}, … ],
+#     generated_at, generated_by: "atlas"|"coach",
+#     coach_edited_at, coach_edited_by }
+#
+# Read semantics:
+#   * GET /checkins/questions returns the stored set if one exists for the
+#     current week — coach edits are the source of truth.
+#   * If no doc exists, we call the Atlas LLM to generate exactly 10
+#     questions tuned to the client's primary goal, upsert the doc, and
+#     return it. Never > 10 questions.
+#   * "monthly" mode kicks in on the LAST Sunday of the local month —
+#     switches to the zoom-out prompt and heading.
+#
+# Coach control surface:
+#   * GET  /coach/checkins/questions/{client_id}?type=weekly|monthly
+#   * PUT  /coach/checkins/questions/{client_id}         (replace list)
+#   * POST /coach/checkins/questions/{client_id}/regenerate
+# ---------------------------------------------------------------------------
 
-    Iter 83 — questions are now tightly tailored to the client's goal. The
-    goal is resolved by falling back through multiple signals so it works
-    even before DNA is complete:
-      1. `coaching_dna.primary_goals`  (post-DNA)
-      2. `profile.primary_goal_id` / `main_goal_key` / `event_type_pref` (post-signup)
-      3. `profile.main_goal` free-text (legacy)
-    """
+_MAX_CHECKIN_QUESTIONS = 10
+
+WEEKLY_QUESTIONS_SYSTEM = """You are Atlas — CrewFit's coaching AI. Given a client's profile, primary goal, event (if any) and latest roster snapshot, produce EXACTLY 10 questions for their WEEKLY check-in.
+
+Rules:
+ - EXACTLY 10 questions. Not 9. Not 11.
+ - Questions must be relevant to the client's PRIMARY GOAL first, then their aviation duty context second.
+ - Marathoner → cover long run, pacing, niggles, legs-ready. Fat-loss → hunger, adherence, protein, weight trend. Muscle/strength → lifts, PRs, appetite. Ironman → swim/bike/run split. Pilot/cabin crew → jet-lag, layover access.
+ - Include at LEAST ONE 1-5 scale question for RECOVERY.
+ - Mix formats: ~4 scale (1-5), ~3 choice, ~3 text.
+ - Choice options: 3-5 items, short, mutually exclusive.
+ - British spelling. Warm, direct, human. No motivational-poster language.
+ - IDs must be snake_case. Labels are the actual question the client reads.
+
+Return STRICT JSON only:
+{"questions":[
+  {"id":"snake_case_id","label":"…","type":"scale|choice|text","min":1,"max":5,"options":["…"]}
+]}"""
+
+MONTHLY_QUESTIONS_SYSTEM = """You are Atlas — CrewFit's coaching AI. Given a client's profile, primary goal, event and last four weeks' training/roster context, produce EXACTLY 10 questions for their MONTHLY REVIEW check-in.
+
+This is a ZOOM-OUT review — bigger picture than the weekly. Cover:
+ - What worked this month (training patterns, sessions they enjoyed, nutrition wins).
+ - What did NOT work (missed sessions, energy dips, roster clashes, habits that fell off).
+ - What they want MORE of / LESS of next month.
+ - Concrete progress against their PRIMARY GOAL (numbers, PRs, weight, adherence, subjective feel).
+ - One forward-looking question about the next month's biggest challenge or event.
+
+Rules:
+ - EXACTLY 10 questions.
+ - Include at LEAST ONE 1-5 scale for overall-month progress-toward-goal.
+ - Mix formats: ~3 scale, ~3 choice, ~4 text (reflective).
+ - British spelling. Reflective, honest, non-judgemental tone. No motivational-poster language.
+ - IDs must be snake_case.
+
+Return STRICT JSON only:
+{"questions":[
+  {"id":"snake_case_id","label":"…","type":"scale|choice|text","min":1,"max":5,"options":["…"]}
+]}"""
+
+
+def _is_last_sunday_of_month(local_d: _dt.date) -> bool:
+    """True iff `local_d` is a Sunday AND no later Sunday exists in the
+    same month. Works because Sundays are 7 days apart — if adding 7 days
+    lands us in a different month, this Sunday is the last."""
+    if local_d.weekday() != 6:
+        return False
+    return (local_d + _dt.timedelta(days=7)).month != local_d.month
+
+
+def _resolve_primary_goal(user: dict) -> tuple[str, list[str]]:
+    """Return (human-readable goal label, list of raw goal signals) for prompt
+    injection. Consolidates the same fallback chain used elsewhere so LLM
+    prompts and coach display are consistent."""
     dna = user.get("coaching_dna") or {}
     profile = user.get("profile") or {}
-    # Collect ALL goal signals — makes matching resilient to whichever field is populated.
-    goal_bits: list[str] = []
-    goal_bits += [str(g).lower() for g in (dna.get("primary_goals") or [])]
-    for k in ("primary_goal_id", "main_goal_key", "main_goal", "event_type_pref", "secondary_goal_ids"):
+    bits: list[str] = []
+    bits += [str(g).lower() for g in (dna.get("primary_goals") or [])]
+    for k in ("primary_goal_id", "main_goal_key", "main_goal",
+              "event_type_pref", "secondary_goal_ids"):
         v = profile.get(k)
-        if isinstance(v, str):
-            goal_bits.append(v.lower())
-        elif isinstance(v, list):
-            goal_bits += [str(x).lower() for x in v]
-    goals_blob = " ".join(goal_bits)
-    role_hint = (dna.get("crew_role") or profile.get("role") or profile.get("job_title") or "").lower()
+        if isinstance(v, str): bits.append(v.lower())
+        elif isinstance(v, list): bits += [str(x).lower() for x in v]
+    blob = " ".join(bits)
 
-    # Match helpers
-    def has(*keys: str) -> bool:
-        return any(k in goals_blob for k in keys)
+    def has(*ks: str) -> bool: return any(k in blob for k in ks)
+    labels: list[str] = []
+    if has("marathon", "half_marathon", "10k", "5k", "run", "running"): labels.append("Marathon / running")
+    if has("fat", "lose_fat", "cut", "weight_loss", "leaner"):          labels.append("Fat loss")
+    if has("muscle", "gain", "hypertrophy", "strength", "size"):        labels.append("Muscle / strength")
+    if has("iron", "tri", "triathlon"):                                  labels.append("Triathlon")
+    if has("health", "wellbeing", "longevity", "energy", "stress"):     labels.append("Health / wellbeing")
+    return (" · ".join(labels) or "General fitness"), bits
 
-    is_marathon   = has("marathon", "half_marathon", "half-marathon", "10k", "5k", "run", "running")
-    is_fat_loss   = has("fat", "lose_fat", "cut", "loss", "leaner", "weight_loss")
-    is_muscle     = has("muscle", "gain", "hypertrophy", "strength", "size", "build")
-    is_tri        = has("iron", "tri", "triathlon")
-    is_health     = has("health", "wellbeing", "longevity", "energy", "stress")
-    is_pilot_crew = ("pilot" in role_hint) or ("cabin" in role_hint) or ("crew" in role_hint)
 
-    dynamic: list[dict] = []
-    if is_marathon:
-        dynamic += [
-            {"id": "run_long_done", "label": "Did you complete your long run this week?",
-             "type": "choice", "options": ["Yes — full distance", "Partial", "No"]},
-            {"id": "run_mileage_feel", "label": "How did the total weekly mileage feel?",
-             "type": "choice", "options": ["Comfortable", "About right", "A stretch", "Too much"]},
-            {"id": "run_pacing", "label": "How did pacing feel on your key runs?",
-             "type": "choice", "options": ["On target", "Faster than plan", "Slower than plan", "Inconsistent"]},
-            {"id": "legs_ready", "label": "Do your legs feel ready for next week's key session?",
-             "type": "choice", "options": ["Yes — fresh", "Mostly", "Some fatigue", "No — sore/heavy"]},
-            {"id": "run_niggles", "label": "Any running niggles (calves, shins, knees, hips)?", "type": "text"},
-            {"id": "shoe_check", "label": "How's the mileage on your current running shoes?",
-             "type": "choice", "options": ["Fresh (< 200km)", "Broken-in (200-500km)", "Nearing rotation (500-700km)", "Overdue (> 700km)"]},
-        ]
-    if is_fat_loss:
-        dynamic += [
-            {"id": "weight_trend", "label": "How is your body-weight trending this week?",
-             "type": "choice", "options": ["Down", "Stable", "Up", "Not tracked"]},
-            {"id": "hunger", "label": "How was hunger this week?",
-             "type": "choice", "options": ["Manageable", "Occasional cravings", "High", "Very high"]},
-            {"id": "protein", "label": "How consistent was protein intake?",
-             "type": "choice", "options": ["Very consistent", "Mostly", "Mixed", "Poor"]},
-            {"id": "food_env", "label": "Any difficult food environments (layovers, hotels, family)?", "type": "text"},
-            {"id": "adjust_cals", "label": "Do calories need adjusting for next week?",
-             "type": "choice", "options": ["No", "Slightly lower", "Slightly higher", "Louis to review"]},
-        ]
-    if is_muscle:
-        dynamic += [
-            {"id": "strength_trend", "label": "Did the main lifts feel stable, up or down?",
-             "type": "choice", "options": ["Up (added load/reps)", "Stable (matched last week)", "Down (dropped)"]},
-            {"id": "prs_hit", "label": "Any PRs, top sets, or breakthrough moments?", "type": "text"},
-            {"id": "exercise_difficulty", "label": "Any exercises that felt too easy or too hard?", "type": "text"},
-            {"id": "appetite", "label": "Appetite this week?",
-             "type": "choice", "options": ["High", "Normal", "Low"]},
-            {"id": "protein_hit", "label": "Hit your daily protein target?",
-             "type": "choice", "options": ["Every day", "Most days", "Half the week", "Rarely"]},
-        ]
-    if is_tri:
-        dynamic += [
-            {"id": "swim_consistency", "label": "Swim consistency this week",
-             "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
-            {"id": "bike_consistency", "label": "Bike consistency this week",
-             "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
-            {"id": "run_consistency", "label": "Run consistency this week",
-             "type": "choice", "options": ["Excellent", "Good", "Mixed", "Missed"]},
-            {"id": "biggest_limiter", "label": "Biggest limiter this week (time, energy, one discipline)?", "type": "text"},
-        ]
-    if is_health and not (is_marathon or is_muscle or is_fat_loss or is_tri):
-        dynamic += [
-            {"id": "activity_days", "label": "How many days were you active this week?",
-             "type": "choice", "options": ["0-1", "2-3", "4-5", "6-7"]},
-            {"id": "movement_notes", "label": "Anything that felt particularly good — or bad — this week?", "type": "text"},
-        ]
-    if is_pilot_crew:
-        dynamic += [
-            {"id": "flying_impact", "label": "How much did flying affect training this week?",
-             "type": "choice", "options": ["Not much", "Somewhat", "A lot"]},
-            {"id": "jetlag", "label": "Any jet-lag issues?",
-             "type": "choice", "options": ["No", "Mild", "Significant"]},
-            {"id": "post_duty_sleep", "label": "Sleep quality after duties this week?",
-             "type": "choice", "options": ["Good", "Some rough nights", "Bad"]},
-            {"id": "layover_gym", "label": "Any layover or hotel gym issues to flag?", "type": "text"},
-        ]
+async def _generate_checkin_questions_via_llm(user: dict, *, mode: str) -> list[dict]:
+    """Call Atlas → return exactly `_MAX_CHECKIN_QUESTIONS` question dicts.
+    Falls back to a safe hardcoded 10-item core set if the LLM fails."""
+    dna = user.get("coaching_dna") or {}
+    profile = user.get("profile") or {}
+    goal_label, _bits = _resolve_primary_goal(user)
+    role_hint = (dna.get("crew_role") or profile.get("role") or
+                 profile.get("job_title") or "").lower()
+    ev = None
+    try:
+        ev = await db.events.find_one({"user_id": user["id"], "is_active": True},
+                                      {"_id": 0}, sort=[("created_at", -1)])
+    except Exception:
+        pass
+    roster = None
+    try:
+        roster = await db.rosters.find_one({"user_id": user["id"], "is_active": True},
+                                           {"_id": 0}, sort=[("created_at", -1)])
+    except Exception:
+        pass
+    roster_snap = None
+    if roster:
+        roster_snap = {
+            "start_date": roster.get("start_date"),
+            "end_date": roster.get("end_date"),
+            "types": list({d.get("day_type") for d in (roster.get("days", []) or []) if d.get("day_type")}),
+        }
 
-    # Core — always asked. Kept short (7 items) so total form + goal-specific
-    # section is manageable in ~90 seconds.
-    core = [
-        {"id": "overall", "label": "How was your overall training week?", "type": "choice",
-         "options": ["Excellent", "Good", "Okay", "Difficult", "Poor"]},
-        {"id": "energy", "label": "Energy this week", "type": "scale", "min": 1, "max": 5},
-        {"id": "sleep", "label": "Sleep quality this week", "type": "scale", "min": 1, "max": 5},
-        {"id": "stress", "label": "Stress level this week", "type": "scale", "min": 1, "max": 5},
-        {"id": "recovery", "label": "Recovery / soreness this week", "type": "scale", "min": 1, "max": 5},
-        {"id": "pain", "label": "Any pain, injury or discomfort?", "type": "choice",
-         "options": ["No", "Yes, minor", "Yes, moderate", "Yes, severe"]},
-        {"id": "pain_where", "label": "Where is the pain?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
-        {"id": "pain_worse", "label": "What makes it worse?", "type": "text", "show_if": {"pain": ["Yes, minor", "Yes, moderate", "Yes, severe"]}},
-        {"id": "nutrition", "label": "Nutrition consistency this week", "type": "choice",
-         "options": ["Very consistent", "Mostly consistent", "Mixed", "Poor", "Not focused on nutrition"]},
-        {"id": "biggest_win", "label": "Biggest win this week", "type": "text"},
-        {"id": "biggest_challenge", "label": "Biggest challenge this week", "type": "text"},
-        {"id": "for_louis", "label": "Anything else Louis needs to know?", "type": "text"},
-    ]
-    # Build a short human-readable header the frontend can show at the top of
-    # the form so the client knows why the questions look this way.
-    goal_label_parts: list[str] = []
-    if is_marathon:   goal_label_parts.append("Marathon / running")
-    if is_fat_loss:   goal_label_parts.append("Fat loss")
-    if is_muscle:     goal_label_parts.append("Muscle / strength")
-    if is_tri:        goal_label_parts.append("Triathlon")
-    if is_health:     goal_label_parts.append("Health / wellbeing")
-    goal_label = " · ".join(goal_label_parts) or "General fitness"
+    ctx = {
+        "primary_goal_label": goal_label,
+        "crew_role": role_hint,
+        "profile_snippet": {k: profile.get(k) for k in
+                            ("primary_goal_id", "main_goal_key", "main_goal",
+                             "event_type_pref", "airline", "position")},
+        "coaching_dna_snippet": {k: dna.get(k) for k in
+                                 ("primary_goals", "crew_role", "training_days_per_week")},
+        "active_event": ev,
+        "roster": roster_snap,
+    }
+    system = WEEKLY_QUESTIONS_SYSTEM if mode == "weekly" else MONTHLY_QUESTIONS_SYSTEM
+    prompt = f"Client context:\n{json.dumps(ctx, default=str)[:2500]}\n\nGenerate the questions now."
+    qs: list[dict] = []
+    try:
+        raw = await call_claude(system, prompt, max_out=2000)
+        parsed = parse_json_from_text(raw)
+        if isinstance(parsed, dict):
+            qs = [q for q in (parsed.get("questions") or []) if isinstance(q, dict)]
+    except Exception:
+        logger.exception("check-in LLM question generation failed — falling back")
+
+    # Safety-net: normalise + cap + backfill on failure.
+    cleaned: list[dict] = []
+    for q in qs[: _MAX_CHECKIN_QUESTIONS]:
+        qid = str(q.get("id") or "").strip().lower().replace(" ", "_")
+        label = str(q.get("label") or "").strip()
+        qtype = q.get("type") or "text"
+        if qtype not in ("scale", "choice", "text"):
+            qtype = "text"
+        if not qid or not label:
+            continue
+        row = {"id": qid, "label": label, "type": qtype}
+        if qtype == "scale":
+            row["min"] = int(q.get("min") or 1)
+            row["max"] = int(q.get("max") or 5)
+        elif qtype == "choice":
+            opts = q.get("options") or []
+            row["options"] = [str(o) for o in opts if str(o).strip()][:5]
+            if len(row["options"]) < 2:
+                # Bad choice question — coerce to text so client can still answer.
+                row["type"] = "text"; row.pop("options", None)
+        cleaned.append(row)
+
+    if len(cleaned) < _MAX_CHECKIN_QUESTIONS:
+        fallback = [
+            {"id": "overall",           "label": "How was your overall training week?", "type": "choice",
+             "options": ["Excellent", "Good", "Okay", "Difficult", "Poor"]},
+            {"id": "energy",            "label": "Energy this week",            "type": "scale", "min": 1, "max": 5},
+            {"id": "sleep",             "label": "Sleep quality this week",     "type": "scale", "min": 1, "max": 5},
+            {"id": "stress",            "label": "Stress level this week",      "type": "scale", "min": 1, "max": 5},
+            {"id": "recovery",          "label": "Recovery / soreness this week", "type": "scale", "min": 1, "max": 5},
+            {"id": "pain",              "label": "Any pain, injury or discomfort?", "type": "choice",
+             "options": ["No", "Yes, minor", "Yes, moderate", "Yes, severe"]},
+            {"id": "nutrition",         "label": "Nutrition consistency this week", "type": "choice",
+             "options": ["Very consistent", "Mostly consistent", "Mixed", "Poor", "Not focused on nutrition"]},
+            {"id": "biggest_win",       "label": "Biggest win this week",       "type": "text"},
+            {"id": "biggest_challenge", "label": "Biggest challenge this week", "type": "text"},
+            {"id": "for_louis",         "label": "Anything else Louis needs to know?", "type": "text"},
+        ]
+        used = {q["id"] for q in cleaned}
+        for f in fallback:
+            if len(cleaned) >= _MAX_CHECKIN_QUESTIONS:
+                break
+            if f["id"] not in used:
+                cleaned.append(f)
+    return cleaned[: _MAX_CHECKIN_QUESTIONS]
+
+
+async def _get_or_generate_checkin_questions(
+    user: dict, *, week_start: str, mode: str,
+) -> dict:
+    """Return `check_in_questions` doc for this (user, week_start, mode) —
+    generating + persisting via LLM if none exists.  Coach edits are
+    preserved: if `coach_edited_at` is set, we NEVER regenerate over
+    them unless the coach explicitly calls the regenerate endpoint."""
+    existing = await db.check_in_questions.find_one(
+        {"user_id": user["id"], "week_start": week_start, "type": mode},
+        {"_id": 0},
+    )
+    if existing and existing.get("questions"):
+        return existing
+
+    qs = await _generate_checkin_questions_via_llm(user, mode=mode)
+    doc = {
+        "id": new_id(),
+        "user_id": user["id"],
+        "week_start": week_start,
+        "type": mode,
+        "questions": qs,
+        "generated_at": now_iso(),
+        "generated_by": "atlas",
+        "coach_edited_at": None,
+        "coach_edited_by": None,
+    }
+    await db.check_in_questions.update_one(
+        {"user_id": user["id"], "week_start": week_start, "type": mode},
+        {"$set": doc}, upsert=True,
+    )
+    return doc
+
+
+@api.get("/checkins/questions")
+async def sunday_checkin_questions(user: dict = Depends(current_user)):
+    """Return the check-in question set for this client + week.
+
+    Iter181e — always LLM-generated, coach-editable, capped at 10 questions.
+    On the LAST Sunday of the client's local month, the set switches to
+    the "monthly review" zoom-out prompt. The UI renders a different
+    heading + intro when `type == "monthly"`.
+    """
+    ws, _we = _current_week_bounds(user)
+    tz = _user_tz(user)
+    local_today = _dt.datetime.now(tz).date()
+    mode = "monthly" if _is_last_sunday_of_month(local_today) else "weekly"
+    goal_label, _ = _resolve_primary_goal(user)
+    doc = await _get_or_generate_checkin_questions(user, week_start=ws, mode=mode)
+
+    intro = (
+        "This is your monthly zoom-out. Answer honestly — Louis uses these "
+        "to reshape next month's plan around what actually worked for you."
+        if mode == "monthly"
+        else "Answer honestly. Louis reads every one of these before recording your weekly video."
+    )
+    heading = "MONTHLY REVIEW" if mode == "monthly" else "WEEKLY CHECK-IN"
+
     return {
-        "core": core,
-        "dynamic": dynamic,
+        # Legacy shape — checkin.tsx used to consume `core` + `dynamic`
+        # separately.  We now return a single list under `questions`;
+        # `core` is populated with the same list to preserve rendering
+        # for older client builds.  `dynamic` is deliberately empty so
+        # nothing gets appended twice.
+        "core": doc.get("questions", []),
+        "dynamic": [],
+        "questions": doc.get("questions", []),
+        "type": doc.get("type") or mode,
+        "heading": heading,
+        "intro": intro,
         "goal_label": goal_label,
-        "tailored": bool(dynamic),
+        "tailored": True,
+        "coach_edited": bool(doc.get("coach_edited_at")),
+        "generated_at": doc.get("generated_at"),
     }
 
 
@@ -12970,9 +13123,11 @@ async def checkin_submit(body: CheckinSubmitBody, user: dict = Depends(current_u
                                  priority="urgent",
                                  check_in_id=doc["id"])
 
-    # Trigger the Atlas habit review in background so the check-in can return quickly
+    # Trigger the Atlas habit review in background so the check-in can return quickly.
+    # Iter181e — _spawn_bg keeps a strong reference so the task can't be
+    # GC-dropped mid-run.
     try:
-        asyncio.create_task(_run_habit_review_after_checkin(user["id"], doc["id"], ws, we))
+        _spawn_bg(_run_habit_review_after_checkin(user["id"], doc["id"], ws, we))
     except Exception:
         logger.exception("habit review trigger failed")
 
@@ -13116,6 +13271,130 @@ async def coach_reset_summary(checkin_id: str, coach: dict = Depends(require_rol
     }})
     ci = await db.check_ins.find_one({"id": checkin_id}, {"_id": 0})
     return {"check_in": ci}
+
+
+# ---------------------------------------------------------------------------
+# Iter181e · Coach management of the LLM-generated check-in question set.
+# ---------------------------------------------------------------------------
+# The coach sees the same list the client will see, and can add/remove
+# questions from either the WEEKLY or MONTHLY set BEFORE the client submits.
+# Any edit stamps the doc as coach_edited and never gets overwritten by
+# subsequent LLM regeneration unless the coach explicitly asks for one.
+# ---------------------------------------------------------------------------
+
+class CheckinQuestionsPatchBody(BaseModel):
+    type: Optional[str] = "weekly"        # "weekly" | "monthly"
+    questions: list[dict]                 # full replacement list, ≤ 10
+
+
+@api.get("/coach/checkins/questions/{client_id}")
+async def coach_checkin_questions_get(
+    client_id: str,
+    type: str = "weekly",
+    coach: dict = Depends(require_role("coach")),
+):
+    if type not in ("weekly", "monthly"):
+        raise HTTPException(400, "type must be 'weekly' or 'monthly'")
+    client_user = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    if not client_user:
+        raise HTTPException(404, "client not found")
+    ws, _we = _current_week_bounds(client_user)
+    doc = await _get_or_generate_checkin_questions(
+        client_user, week_start=ws, mode=type,
+    )
+    doc.pop("_id", None)
+    return {"check_in_questions": doc}
+
+
+@api.put("/coach/checkins/questions/{client_id}")
+async def coach_checkin_questions_put(
+    client_id: str,
+    body: CheckinQuestionsPatchBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Replace the client's question list. Coach can add / remove items
+    freely — server enforces the 10-item cap and validates shape."""
+    if body.type not in ("weekly", "monthly"):
+        raise HTTPException(400, "type must be 'weekly' or 'monthly'")
+    client_user = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    if not client_user:
+        raise HTTPException(404, "client not found")
+    ws, _we = _current_week_bounds(client_user)
+
+    cleaned: list[dict] = []
+    seen_ids: set[str] = set()
+    for q in (body.questions or [])[: _MAX_CHECKIN_QUESTIONS]:
+        qid = str((q or {}).get("id") or "").strip().lower().replace(" ", "_")
+        label = str((q or {}).get("label") or "").strip()
+        qtype = (q or {}).get("type") or "text"
+        if qtype not in ("scale", "choice", "text"):
+            qtype = "text"
+        if not qid or not label or qid in seen_ids:
+            continue
+        seen_ids.add(qid)
+        row: dict = {"id": qid, "label": label, "type": qtype}
+        if qtype == "scale":
+            row["min"] = int((q or {}).get("min") or 1)
+            row["max"] = int((q or {}).get("max") or 5)
+        elif qtype == "choice":
+            opts = [str(o) for o in ((q or {}).get("options") or []) if str(o).strip()]
+            if len(opts) < 2:
+                row["type"] = "text"
+            else:
+                row["options"] = opts[:5]
+        cleaned.append(row)
+    if not cleaned:
+        raise HTTPException(400, "At least one valid question is required")
+    if len(cleaned) > _MAX_CHECKIN_QUESTIONS:
+        cleaned = cleaned[: _MAX_CHECKIN_QUESTIONS]
+
+    await db.check_in_questions.update_one(
+        {"user_id": client_id, "week_start": ws, "type": body.type},
+        {"$set": {
+            "user_id": client_id, "week_start": ws, "type": body.type,
+            "questions": cleaned,
+            "coach_edited_at": now_iso(),
+            "coach_edited_by": coach["id"],
+            "generated_by": "coach",
+        }},
+        upsert=True,
+    )
+    doc = await db.check_in_questions.find_one(
+        {"user_id": client_id, "week_start": ws, "type": body.type},
+        {"_id": 0},
+    )
+    return {"check_in_questions": doc}
+
+
+@api.post("/coach/checkins/questions/{client_id}/regenerate")
+async def coach_checkin_questions_regenerate(
+    client_id: str,
+    type: str = "weekly",
+    coach: dict = Depends(require_role("coach")),
+):
+    """Force-regenerate the LLM question set (discards coach edits for
+    this week). Coach opt-in — the regular GET never overwrites edits."""
+    if type not in ("weekly", "monthly"):
+        raise HTTPException(400, "type must be 'weekly' or 'monthly'")
+    client_user = await db.users.find_one({"id": client_id}, {"_id": 0, "password_hash": 0})
+    if not client_user:
+        raise HTTPException(404, "client not found")
+    ws, _we = _current_week_bounds(client_user)
+    qs = await _generate_checkin_questions_via_llm(client_user, mode=type)
+    doc = {
+        "id": new_id(),
+        "user_id": client_id, "week_start": ws, "type": type,
+        "questions": qs,
+        "generated_at": now_iso(),
+        "generated_by": "atlas",
+        "coach_edited_at": None,
+        "coach_edited_by": None,
+    }
+    await db.check_in_questions.update_one(
+        {"user_id": client_id, "week_start": ws, "type": type},
+        {"$set": doc}, upsert=True,
+    )
+    return {"check_in_questions": doc}
 
 
 # Iter 162 · Welcome Video script generator ------------------------------
@@ -13590,12 +13869,8 @@ async def video_watched(video_id: str, user: dict = Depends(current_user)):
 
 
 # ---- Reminder Scheduler Worker --------------------------------------------
-REMINDER_SLOTS = [
-    ("weekly_check_in_available", 6, 9, 0),   # (kind, weekday 0=Mon..6=Sun, hour, minute)
-    ("reminder_1", 6, 17, 0),
-    ("reminder_2", 0, 9, 0),
-    ("reminder_last", 0, 18, 0),
-]
+REMINDER_SLOTS: list = []  # Iter181e — killed; retained only as an empty
+# placeholder in case any external import still references the symbol.
 
 
 def _in_quiet_hours(local_dt: _dt.datetime, quiet_start: str, quiet_end: str) -> bool:
@@ -13611,49 +13886,13 @@ def _in_quiet_hours(local_dt: _dt.datetime, quiet_start: str, quiet_end: str) ->
     return qs <= cur < qe
 
 
+# Iter181e · Tick A killed. All weekly-check-in reminders now come from
+# `feature_notifications._tick_roster_and_workout_reminders` (Tick B),
+# which is the single source of truth. `_tick_reminders` below is kept
+# as a NO-OP so any legacy call site importing the symbol still works,
+# but it never touches the DB.
 async def _tick_reminders() -> None:
-    users = await db.users.find({"role": "client"}, {"_id": 0, "password_hash": 0}).to_list(2000)
-    now_utc = _dt.datetime.now(_dt.timezone.utc)
-    for u in users:
-        tz_name = u.get("current_time_zone") or u.get("home_time_zone") or "Europe/London"
-        try: tz = ZoneInfo(tz_name)
-        except Exception: continue
-        local_now = now_utc.astimezone(tz)
-        if _in_quiet_hours(local_now, u.get("quiet_hours_start", "21:00"), u.get("quiet_hours_end", "07:00")):
-            continue
-        ws, _ = _current_week_bounds(u)
-        if await db.check_ins.find_one({"user_id": u["id"], "week_start": ws}, {"id": 1}):
-            continue
-        for kind, weekday, hh, mm in REMINDER_SLOTS:
-            if local_now.weekday() != weekday: continue
-            if local_now.hour != hh: continue
-            if not (mm <= local_now.minute < mm + 10): continue
-            if await db.scheduled_messages.find_one(
-                {"user_id": u["id"], "message_type": kind, "week_start": ws}, {"id": 1}
-            ): continue
-            body_map = {
-                "weekly_check_in_available": "Your CrewFit weekly check-in is ready.",
-                "reminder_1": "Quick reminder: complete your weekly check-in when you're off duty or settled.",
-                "reminder_2": "Your check-in is still open. Completing it helps Louis review your week properly.",
-                "reminder_last": "Last reminder for this week's check-in.",
-            }
-            await db.scheduled_messages.insert_one({
-                "id": new_id(),
-                "user_id": u["id"],
-                "message_type": kind,
-                "week_start": ws,
-                "title": "Weekly check-in",
-                "body": body_map.get(kind, "Weekly check-in reminder"),
-                "scheduled_time_zone": tz_name,
-                "scheduled_local_datetime": local_now.isoformat(),
-                "scheduled_utc_datetime": now_utc.isoformat(),
-                "status": "ready",
-                "quiet_hours_checked": True,
-                "created_at": now_iso(),
-                "sent_at": None,
-                "cancelled_at": None,
-                "delivery_attempts": 0,
-            })
+    return None
 
 
 async def _reminder_scheduler_loop() -> None:

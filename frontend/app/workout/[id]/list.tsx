@@ -26,6 +26,7 @@ import { hapticSuccess } from "@/src/lib/haptics";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 import { formatPrescription, inferPrescription } from "@/src/lib/formatPrescription";
 import { isCardioExercise as _sharedIsCardio } from "@/src/lib/workoutMode";
+import { bucketWorkout } from "@/src/lib/workoutSections";
 
 /* -------------------------------------------------------------------------- */
 /*  Types & helpers                                                            */
@@ -364,20 +365,11 @@ export default function ManualListSession() {
 
   /* --- Bucketed rows: warmup / main / cooldown ---
    *
-   * We prefer explicit sections if the workout doc provides `warmup` /
-   * `cooldown` arrays; otherwise everything is "main".
+   * Iter182 · Delegated to the shared helper so the preview screen
+   * (`workout/[id]/index.tsx`) and this player never drift on which
+   * items land in which section.
    */
-  const groups = useMemo(() => {
-    if (!w) return { warmup: [], main: [], cooldown: [] };
-    const warm = (w.warmup || []) as ExRow[];
-    const cool = (w.cooldown || []) as ExRow[];
-    const main = ((w.exercises || []) as ExRow[]).filter(
-      // Ignore exercises that are actually cool-down items already merged
-      // into `exercises[]` by the importer (`section === "cooldown"`).
-      (e) => (e?.section || "main") !== "cooldown",
-    );
-    return { warmup: warm, main, cooldown: cool };
-  }, [w]);
+  const groups = useMemo(() => bucketWorkout(w), [w]);
 
   /* --- Seed inputs whenever exercises change --- */
   useEffect(() => {

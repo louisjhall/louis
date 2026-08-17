@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { isCardioExercise } from "@/src/lib/workoutMode";
+import { bucketWorkout, formatCardioMeta, formatWarmupMeta } from "@/src/lib/workoutSections";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { clearVideoCache } from "@/src/components/ExerciseVideoPlayer";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
@@ -76,11 +77,22 @@ export default function WorkoutDetail() {
       duration_min: vv.duration_min ?? w.duration_min,
       focus: vv.focus ?? w.focus,
       warmup: vv.warmup ?? w.warmup,
+      // Iter182 · include cooldown in the variant overlay so the
+      // preview screen renders the correct cool-down for the selected
+      // traffic-light variant (previously the base workout's cool-down
+      // would leak through for amber / red).
+      cooldown: vv.cooldown ?? w.cooldown,
       exercises: vv.exercises ?? w.exercises,
       rationale: vv.rationale ?? w.rationale,
       _variant_intensity_note: vv.intensity_note || null,
     };
   }, [w, variants, variant, isCoach]);
+
+  // Iter182 · Section bucketing goes through the shared helper so this
+  // preview and the workout player (`list.tsx`) agree exactly on which
+  // rows go in warm-up / main / cool-down. Coach-edit mode always uses
+  // `w` directly (unbucketed) so edits touch the raw `exercises[]`.
+  const groups = useMemo(() => bucketWorkout(view), [view]);
 
   // Fire-and-forget: log the selected variant for coach dashboards.
   const pickVariant = useCallback((next: VariantKey) => {
@@ -520,15 +532,21 @@ export default function WorkoutDetail() {
           </Pressable>
         )}
 
-        {view.warmup?.length > 0 && (
+        {groups.warmup?.length > 0 && (
           <>
             <Text style={styles.sect}>WARM-UP</Text>
-            {view.warmup.map((wu: any, i: number) => (
-              <View key={i} style={styles.warmupRow}>
-                <Text style={styles.warmupName}>{wu.name}</Text>
-                <Text style={styles.warmupTime}>{wu.duration_sec || 30}s</Text>
-              </View>
-            ))}
+            {groups.warmup.map((wu: any, i: number) => {
+              // Iter182 · Show real prescription (duration OR sets × reps)
+              // via the shared helper, not the old hardcoded "30s"
+              // fallback which was often wrong for mobility drills.
+              const meta = formatWarmupMeta(wu) || "30s";
+              return (
+                <View key={i} style={styles.warmupRow}>
+                  <Text style={styles.warmupName}>{wu.name}</Text>
+                  <Text style={styles.warmupTime}>{meta}</Text>
+                </View>
+              );
+            })}
           </>
         )}
 
@@ -620,10 +638,14 @@ export default function WorkoutDetail() {
           </>
         )}
 
-        {((editing ? w.exercises : view.exercises) || []).length > 0 && (
+        {/* Iter182 · Main exercises now come from the shared bucketing
+            helper so cool-down items tagged inside `exercises[]` don't
+            double-list here. Coach edit mode still edits the raw
+            `w.exercises[]` array below (bucketing is view-only). */}
+        {(editing ? (w.exercises || []) : groups.main).length > 0 && (
           <Text style={styles.sect}>EXERCISES</Text>
         )}
-        {((editing ? w.exercises : view.exercises) || []).map((ex: any, idx: number) => (
+        {(editing ? (w.exercises || []) : groups.main).map((ex: any, idx: number) => (
           <View key={idx} style={styles.exCard} testID={`ex-${idx}`}>
             {editing ? (
               <>
@@ -644,18 +666,14 @@ export default function WorkoutDetail() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.exName} numberOfLines={2}>{ex.name}</Text>
                   <Text style={styles.exMeta}>
-                    {/* Iter167 · Cardio exercises never have sets × reps.
-                        Render duration + distance instead so the preview
-                        no longer prints "  ×    · rest  s". */}
+                    {/* Iter182 · Cardio meta now delegates to the shared
+                        `formatCardioMeta` which falls back to the coach's
+                        raw `load_prescription` string when duration and
+                        distance are absent — so a "Zone 2 · 45 min" free-
+                        text prescription still renders instead of an
+                        RPE-only line. */}
                     {isCardioExercise(ex)
-                      ? [
-                          ex.duration_sec ? `${Math.round(ex.duration_sec / 60)} min` : null,
-                          ex.duration && !ex.duration_sec ? String(ex.duration) : null,
-                          ex.distance_m ? `${(ex.distance_m / 1000).toFixed(1)} km` : null,
-                          ex.rpe ? `RPE ${ex.rpe}` : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")
+                      ? (formatCardioMeta(ex) || (ex.rpe ? `RPE ${ex.rpe}` : "—"))
                       : `${ex.sets ?? "—"} × ${ex.reps ?? "—"} · rest ${ex.rest_sec ?? 60}s${ex.rpe ? ` · RPE ${ex.rpe}` : ""}`}
                   </Text>
                   {ex.notes ? <Text style={styles.exNotes} numberOfLines={2}>{ex.notes}</Text> : null}
@@ -675,6 +693,27 @@ export default function WorkoutDetail() {
             <Ionicons name="add" size={18} color={theme.color.brand} />
             <Text style={{ color: theme.color.brand, marginLeft: 6, fontWeight: "700" }}>ADD EXERCISE</Text>
           </Pressable>
+        )}
+
+        {/* Iter182 · Cool-down section — same shape as WARM-UP but with a
+            per-row meta line built from either sets × reps or duration.
+            Hidden entirely in edit mode because cool-down items are
+            currently edited via the raw `exercises[]` list. */}
+        {!editing && groups.cooldown.length > 0 && (
+          <>
+            <Text style={styles.sect}>COOL-DOWN</Text>
+            {groups.cooldown.map((cd: any, i: number) => {
+              const meta =
+                formatWarmupMeta(cd) ||
+                (isCardioExercise(cd) ? formatCardioMeta(cd) : "");
+              return (
+                <View key={`cd-${i}`} style={styles.warmupRow} testID={`cd-${i}`}>
+                  <Text style={styles.warmupName}>{cd.name}</Text>
+                  {meta ? <Text style={styles.warmupTime}>{meta}</Text> : null}
+                </View>
+              );
+            })}
+          </>
         )}
 
         {w.alternatives && (

@@ -11922,28 +11922,37 @@ async def seed():
             marker = None
         should_reset = env_flag or (marker is None)
         if should_reset:
-            forced_pw = os.environ.get("ADMIN_STARTUP_PASSWORD", "Louis123!")
-            await db.users.update_one(
-                {"email": louis_email},
-                {"$set": {
-                    "password_hash": hash_pw(forced_pw),
-                    "password_reset_by": "startup_env_reset",
-                    "password_changed_at": now_iso(),
-                }},
-            )
-            try:
-                await db.system_bootstrap.update_one(
-                    {"_id": "admin_password_unlock_iter130a"},
-                    {"$set": {"ran_at": now_iso(), "trigger": "env" if env_flag else "one_shot"}},
-                    upsert=True,
+            # Iter182b · deployment health-check — no source-known default.
+            # If `ADMIN_STARTUP_PASSWORD` isn't set, this branch is a no-op
+            # so we never reset the coach to a leaked / recoverable value.
+            forced_pw = os.environ.get("ADMIN_STARTUP_PASSWORD")
+            if not forced_pw:
+                logger.info(
+                    "seed: admin startup password reset skipped — "
+                    "ADMIN_STARTUP_PASSWORD is not set.",
                 )
-            except Exception:
-                pass
-            logger.warning(
-                "seed: admin password force-reset (trigger=%s) — REMOVE the "
-                "RESET_ADMIN_ON_STARTUP env once you've regained access.",
-                "env" if env_flag else "one_shot",
-            )
+            else:
+                await db.users.update_one(
+                    {"email": louis_email},
+                    {"$set": {
+                        "password_hash": hash_pw(forced_pw),
+                        "password_reset_by": "startup_env_reset",
+                        "password_changed_at": now_iso(),
+                    }},
+                )
+                try:
+                    await db.system_bootstrap.update_one(
+                        {"_id": "admin_password_unlock_iter130a"},
+                        {"$set": {"ran_at": now_iso(), "trigger": "env" if env_flag else "one_shot"}},
+                        upsert=True,
+                    )
+                except Exception:
+                    pass
+                logger.warning(
+                    "seed: admin password force-reset (trigger=%s) — REMOVE the "
+                    "RESET_ADMIN_ON_STARTUP env once you've regained access.",
+                    "env" if env_flag else "one_shot",
+                )
     except Exception:
         logger.exception("seed: admin startup password reset failed")
 
@@ -14070,16 +14079,24 @@ async def _tick_reminders_all() -> None:
         await feature_social_studio._tick_daily_social()
     except Exception:
         logger.exception("daily social tick failed")
-    # GDPR purge: cheap (bounded to 100 users per run) and idempotent.
-    try:
-        await feature_gdpr.gdpr_purge_expired()
-    except Exception:
-        logger.exception("gdpr purge tick failed")
-    # Preview throwaway purge: removes new-client preview accounts past 24h.
-    try:
-        await feature_preview.preview_purge_throwaways()
-    except Exception:
-        logger.exception("preview purge tick failed")
+    # Iter182b · deployment health-check — auto-destructive scheduler
+    # paths (GDPR expired-user hard-delete and preview throwaway hard-
+    # delete) are now GATED behind explicit env flags. Both default to
+    # OFF so the scheduler never destructively touches user data unless
+    # an operator has consciously enabled the flag on that environment.
+    # Flip on via .env when you actually want the purge to run.
+    if os.environ.get("GDPR_AUTO_PURGE", "false").strip().lower() in ("1","true","yes","on"):
+        try:
+            # GDPR purge: bounded to 100 users per run and idempotent.
+            await feature_gdpr.gdpr_purge_expired()
+        except Exception:
+            logger.exception("gdpr purge tick failed")
+    if os.environ.get("PREVIEW_AUTO_PURGE", "false").strip().lower() in ("1","true","yes","on"):
+        try:
+            # Preview throwaway purge: removes new-client preview accounts past 24h.
+            await feature_preview.preview_purge_throwaways()
+        except Exception:
+            logger.exception("preview purge tick failed")
     # Iter 127 — Flight Support duty-aware push scheduler.
     try:
         from feature_flight_support_notifier import flight_support_scheduler_tick

@@ -80,9 +80,11 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
-.env
-.env.*
-*.env
+# NOTE (Iter182b · deployment health-check): the deploy pipeline
+# REQUIRES `.env*` files to survive so it can preserve / inject
+# runtime configuration. Do NOT re-add broad `.env*` ignore rules
+# here. Individual sensitive keys should be protected with a
+# targeted ignore (e.g. `credentials.json`, `*.key`) instead.
 credentials.json
 *.key
 .credentials

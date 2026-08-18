@@ -6,7 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
-import { isCardioExercise } from "@/src/lib/workoutMode";
+import { isCardioExercise, getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
 import { bucketWorkout, formatCardioMeta, formatWarmupMeta } from "@/src/lib/workoutSections";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { clearVideoCache } from "@/src/components/ExerciseVideoPlayer";
@@ -17,7 +17,6 @@ import { ModePickerModal } from "@/src/components/ModePickerModal";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { WhatsAppSupportButton } from "@/src/components/WhatsAppSupportButton";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
-import { getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
 
 const PREFERRED_CHANNELS = [
   "Jeff Nippard", "Squat University", "Renaissance Periodization",

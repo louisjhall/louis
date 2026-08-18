@@ -472,8 +472,10 @@ export default function ExerciseContentScreen() {
       {/* Iter182 · Bulk primary-image generation for DRAFT_REQUESTED /
           MISSING exercises. One Gemini call at a time server-side so we
           never hammer the API. Disabled while another `busy` action is
-          in flight so the coach can't kick off two sweeps. */}
-      <View style={{ paddingHorizontal: 14, paddingTop: 8 }}>
+          in flight so the coach can't kick off two sweeps. Rendered as
+          a filled brand-red button (Iter182c) so it's visually distinct
+          from the filter chips below and impossible to miss. */}
+      <View style={{ paddingHorizontal: 14, paddingTop: 8, paddingBottom: 4 }}>
         <Pressable
           onPress={bulkGenPrimaryImages}
           disabled={busy === "bulk-primary" || !!busy}
@@ -484,9 +486,9 @@ export default function ExerciseContentScreen() {
           testID="bulk-gen-primary-images"
         >
           {busy === "bulk-primary" ? (
-            <ActivityIndicator color={theme.color.brand} size="small" />
+            <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <Ionicons name="images" size={16} color={theme.color.brand} />
+            <Ionicons name="images" size={16} color="#fff" />
           )}
           <Text style={styles.bulkBtnT}>
             GENERATE MISSING PRIMARY IMAGES · DRAFT / MISSING
@@ -1075,16 +1077,17 @@ const styles = StyleSheet.create({
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   topT: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.display },
   search: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.color.onRed, fontSize: 13 },
-  // Iter182 · Bulk primary-image generation trigger. Ghost style so it
-  // doesn't compete with the primary FILTER pills below.
+  // Iter182c · Bulk primary-image generation trigger. Filled brand-red
+  // so it visually reads as a primary CTA and can't be mistaken for a
+  // filter pill. Previously ghost-outlined which was too subtle.
   bulkBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
-    gap: 8, paddingVertical: 10, borderRadius: 8,
+    gap: 8, paddingVertical: 12, borderRadius: 8,
     borderWidth: 1, borderColor: theme.color.brand,
-    backgroundColor: "transparent",
+    backgroundColor: theme.color.brand,
   },
   bulkBtnT: {
-    color: theme.color.brand, fontSize: 11, fontWeight: "900",
+    color: "#fff", fontSize: 12, fontWeight: "900",
     letterSpacing: 1.2,
   },
   filter: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignSelf: "center" },

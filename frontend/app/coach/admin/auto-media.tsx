@@ -505,6 +505,36 @@ export default function AutoMediaSettingsScreen() {
 // ---------------------------------------------------------------------------
 function BulkPrimaryImageSection({ toast }: { toast: (m: string, k?: any) => void }) {
   const [busy, setBusy] = React.useState(false);
+  const [dryOnly, setDryOnly] = React.useState(false);
+  const [breakdown, setBreakdown] = React.useState<null | {
+    would: number;
+    raw: number;
+    archived: number;
+    deleted: number;
+    aliases: number;
+  }>(null);
+
+  // Iter185 · Preview-only: fetch dry-run breakdown so coach can see
+  // why the count is what it is before spending Gemini credits.
+  const previewCounts = async () => {
+    if (busy || dryOnly) return;
+    setDryOnly(true);
+    try {
+      const dry = await api<any>("/coach/auto-media-gen/bulk-primary-images", {
+        method: "POST", body: { dry_run: true },
+      });
+      const b = dry?.breakdown || {};
+      setBreakdown({
+        would: Number(dry?.would_queue_count || 0),
+        raw: Number(b.raw_missing_primary_image || 0),
+        archived: Number(b.excluded_archived_or_retired || 0),
+        deleted: Number(b.excluded_soft_deleted || 0),
+        aliases: Number(b.excluded_alias_duplicates || 0),
+      });
+    } catch (e: any) {
+      toast(e?.message || "Preview failed", "error");
+    } finally { setDryOnly(false); }
+  };
 
   const run = async () => {
     if (busy) return;
@@ -514,6 +544,14 @@ function BulkPrimaryImageSection({ toast }: { toast: (m: string, k?: any) => voi
         method: "POST", body: { dry_run: true },
       });
       const would = Number(dry?.would_queue_count || 0);
+      const b = dry?.breakdown || {};
+      setBreakdown({
+        would,
+        raw: Number(b.raw_missing_primary_image || 0),
+        archived: Number(b.excluded_archived_or_retired || 0),
+        deleted: Number(b.excluded_soft_deleted || 0),
+        aliases: Number(b.excluded_alias_duplicates || 0),
+      });
       if (!would) {
         toast("No DRAFT_REQUESTED / MISSING exercises need a primary image.", "info");
         return;
@@ -566,16 +604,53 @@ function BulkPrimaryImageSection({ toast }: { toast: (m: string, k?: any) => voi
         generate the primary frame. Sequential server-side (one image
         per exercise, ~10-15 s each). All results land in Needs Review.
       </Text>
-      <Pressable onPress={run} disabled={busy}
-        style={[styles.ytBulk, busy && { opacity: 0.5 }]}
-        testID="bulk-primary-image-run">
-        {busy
-          ? <ActivityIndicator color="#fff" size="small" />
-          : <Ionicons name="images" size={16} color="#fff" />}
-        <Text style={styles.ytBulkT}>
-          {busy ? "GENERATING…" : "GENERATE MISSING PRIMARY IMAGES"}
-        </Text>
-      </Pressable>
+      <Text style={styles.ytHint}>
+        Excludes archived / retired / deprecated / soft-deleted rows and
+        alias duplicates. Tap PREVIEW COUNTS to see the breakdown
+        before spending credits.
+      </Text>
+
+      {breakdown && (
+        <View style={styles.bdBox} testID="bulk-primary-image-breakdown">
+          <Text style={styles.bdT}>QUERY BREAKDOWN</Text>
+          <BdRow label="Raw missing primary image" value={breakdown.raw} />
+          <BdRow label="− Archived / retired / deprecated" value={breakdown.archived} tone="dim" />
+          <BdRow label="− Soft-deleted" value={breakdown.deleted} tone="dim" />
+          <BdRow label="− Alias duplicates" value={breakdown.aliases} tone="dim" />
+          <BdRow label="= Eligible to generate" value={breakdown.would} tone="brand" />
+        </View>
+      )}
+
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <Pressable onPress={previewCounts} disabled={busy || dryOnly}
+          style={[styles.ytPreview, (busy || dryOnly) && { opacity: 0.5 }]}
+          testID="bulk-primary-image-preview">
+          {dryOnly
+            ? <ActivityIndicator color={theme.color.brand} size="small" />
+            : <Ionicons name="eye-outline" size={16} color={theme.color.brand} />}
+          <Text style={styles.ytPreviewT}>PREVIEW COUNTS</Text>
+        </Pressable>
+        <Pressable onPress={run} disabled={busy}
+          style={[styles.ytBulk, { flex: 1 }, busy && { opacity: 0.5 }]}
+          testID="bulk-primary-image-run">
+          {busy
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Ionicons name="images" size={16} color="#fff" />}
+          <Text style={styles.ytBulkT}>
+            {busy ? "GENERATING…" : "GENERATE MISSING PRIMARY IMAGES"}
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function BdRow({ label, value, tone }: { label: string; value: number; tone?: "dim" | "brand" }) {
+  const color = tone === "brand" ? theme.color.brand : tone === "dim" ? theme.color.textDim : theme.color.text;
+  return (
+    <View style={styles.bdRow}>
+      <Text style={[styles.bdL, { color }]}>{label}</Text>
+      <Text style={[styles.bdV, { color }]}>{value}</Text>
     </View>
   );
 }
@@ -715,6 +790,18 @@ const styles = StyleSheet.create({
             gap: 8, paddingVertical: 12, borderRadius: 8,
             backgroundColor: theme.color.brand },
   ytBulkT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
+  // Iter185 · Bulk-primary-image preview + breakdown UI
+  ytPreview: { flexDirection: "row", alignItems: "center", justifyContent: "center",
+               gap: 6, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 8,
+               borderWidth: 1, borderColor: theme.color.brand,
+               backgroundColor: theme.color.surface2 },
+  ytPreviewT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
+  bdBox: { padding: 12, borderRadius: 8, borderWidth: 1,
+           borderColor: theme.color.border, backgroundColor: theme.color.surface2, gap: 6 },
+  bdT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, marginBottom: 2 },
+  bdRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  bdL: { fontSize: 12, fontWeight: "700" },
+  bdV: { fontSize: 13, fontWeight: "900", fontVariant: ["tabular-nums"] },
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",

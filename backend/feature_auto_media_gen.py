@@ -1456,6 +1456,63 @@ logger.info(
 _BULK_IMAGE_LOCK: asyncio.Lock = asyncio.Lock()
 
 
+def _bulk_primary_image_query() -> dict:
+    """Shared query for the primary-image bulk sweep.
+
+    Iter185 · Previously the bulk count reported 427 while the Library's
+    "Needs Review" tab only surfaced ~65 — a 6× overshoot. Root causes:
+      1. `content_status.images: False` legacy catch-all matched every
+         Approved row whose flag hadn't been backfilled, ballooning the
+         set beyond what the coach expected to review.
+      2. No exclusion for archived / retired / deprecated / merged /
+         rejected / soft-deleted rows (production DB has `Archived` and
+         friends in the mix; preview only has 0 today).
+      3. Case-sensitive `$in` on `status` missed lower-case `draft`
+         entries and let mixed-case `Archived` slip past future filters.
+      4. Alias rows (canonical_id != own id) were correctly skipped, but
+         we now spell that out with an explicit invariant.
+
+    This helper is used by BOTH the dry-run count endpoint and the
+    worker query so the two can NEVER drift again. Both branches read
+    the same rows; no duplicates, no archived leftovers, no soft-deleted
+    ghosts.
+    """
+    return {
+        "$and": [
+            # ─── Alive: not soft-deleted ─────────────────────────────────
+            {"is_deleted": {"$ne": True}},
+            # ─── Alive: not archived / retired / deprecated / merged /
+            #             rejected (case-insensitive via $toLower) ────────
+            {"$expr": {"$not": {"$in": [
+                {"$toLower": {"$ifNull": ["$status", ""]}},
+                ["archived", "retired", "deprecated", "merged", "rejected"],
+            ]}}},
+            # ─── Actually missing a primary image ────────────────────────
+            {"$or": [
+                {"primary_image_id": None},
+                {"primary_image_id": {"$exists": False}},
+                {"primary_image_id": ""},
+            ]},
+            # ─── Match: DRAFT status OR explicit MISSING marker ──────────
+            #     (case-insensitive on `status`; explicit list on
+            #      `approved_image_status` for Approved-but-imageless rows)
+            {"$or": [
+                {"$expr": {"$in": [
+                    {"$toLower": {"$ifNull": ["$status", ""]}},
+                    ["draft_requested", "draft", "coach_review_needed"],
+                ]}},
+                {"approved_image_status": {"$in": ["Missing", "missing"]}},
+            ]},
+            # ─── Canonical only (skip aliases / duplicates) ──────────────
+            {"$or": [
+                {"canonical_id": None},
+                {"canonical_id": {"$exists": False}},
+                {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+            ]},
+        ],
+    }
+
+
 async def _bulk_primary_image_worker(
     job_id: str, *, coach_id: Optional[str], persona: Optional[str] = None,
 ) -> None:
@@ -1475,31 +1532,11 @@ async def _bulk_primary_image_worker(
                 "errors": {}, "results_sample": [],
             })
 
-            # Query mirrors the Library's DRAFT_REQUESTED + MISSING tabs.
-            query = {
-                "$and": [
-                    {"$or": [
-                        # DRAFT_REQUESTED
-                        {"status": {"$in": ["draft_requested", "Draft"]}},
-                        # MISSING (image side)
-                        {"approved_image_status": {"$in": ["Missing", "missing"]}},
-                        # Legacy fallback — content_status.images == false
-                        {"content_status.images": False},
-                    ]},
-                    # Only consider exercises WITHOUT a primary image yet.
-                    {"$or": [
-                        {"primary_image_id": None},
-                        {"primary_image_id": {"$exists": False}},
-                        {"primary_image_id": ""},
-                    ]},
-                    # Skip aliases — they inherit the canonical's image.
-                    {"$or": [
-                        {"canonical_id": None},
-                        {"canonical_id": {"$exists": False}},
-                        {"$expr": {"$eq": ["$canonical_id", "$id"]}},
-                    ]},
-                ],
-            }
+            # Iter185 · Shared with the dry-run endpoint so the count
+            # the coach saw before pressing GENERATE == the set the
+            # worker actually processes. Filters out archived / deleted /
+            # merged rows and alias duplicates.
+            query = _bulk_primary_image_query()
             projection = {"_id": 0, "id": 1, "exercise_name": 1,
                           "primary_image_id": 1, "status": 1,
                           "approved_image_status": 1, "canonical_id": 1}
@@ -1614,38 +1651,61 @@ async def auto_media_gen_bulk_primary_images(
     if persona is not None and persona not in ("male", "female"):
         raise HTTPException(400, "persona must be 'male' or 'female'")
 
-    # Kill-switches — same semantics as the Needs-Review backfill.
-    if manual_mode_active():
-        if response is not None:
-            response.status_code = 403
-        return {"status": "blocked", "reason": "MANUAL_MODE"}
-    if exercise_backfill_disabled():
-        if response is not None:
-            response.status_code = 403
-        return {"status": "blocked", "reason": "EXERCISE_BACKFILL_DISABLED"}
+    # Iter185 · Shared helper query — same filter the worker uses.
+    # dry_run is READ-ONLY (just a count) and MUST NOT be blocked by
+    # MANUAL_MODE / EXERCISE_BACKFILL_DISABLED — coaches need visibility
+    # into what the sweep *would* touch even when manual mode is on.
+    query = _bulk_primary_image_query()
 
-    query = {
-        "$and": [
-            {"$or": [
-                {"status": {"$in": ["draft_requested", "Draft"]}},
-                {"approved_image_status": {"$in": ["Missing", "missing"]}},
-                {"content_status.images": False},
-            ]},
-            {"$or": [
+    # Kill-switches — same semantics as the Needs-Review backfill.
+    # Only enforced for the actual work path, not the dry-run count.
+    if not dry_run:
+        if manual_mode_active():
+            if response is not None:
+                response.status_code = 403
+            return {"status": "blocked", "reason": "MANUAL_MODE"}
+        if exercise_backfill_disabled():
+            if response is not None:
+                response.status_code = 403
+            return {"status": "blocked", "reason": "EXERCISE_BACKFILL_DISABLED"}
+
+    if dry_run:
+        n = await db.exercises_v2.count_documents(query)
+        # Iter185 · Transparency breakdown — coach can see which
+        # exclusion rules cut the raw count down to `would_queue_count`.
+        # All counts are read-only $count aggregates → cheap.
+        raw_missing_primary = await db.exercises_v2.count_documents({
+            "$or": [
                 {"primary_image_id": None},
                 {"primary_image_id": {"$exists": False}},
                 {"primary_image_id": ""},
+            ],
+        })
+        excluded_archived = await db.exercises_v2.count_documents({
+            "$expr": {"$in": [
+                {"$toLower": {"$ifNull": ["$status", ""]}},
+                ["archived", "retired", "deprecated", "merged", "rejected"],
             ]},
-            {"$or": [
-                {"canonical_id": None},
-                {"canonical_id": {"$exists": False}},
-                {"$expr": {"$eq": ["$canonical_id", "$id"]}},
-            ]},
-        ],
-    }
-    if dry_run:
-        n = await db.exercises_v2.count_documents(query)
-        return {"dry_run": True, "would_queue_count": n}
+        })
+        excluded_deleted = await db.exercises_v2.count_documents({"is_deleted": True})
+        excluded_aliases = await db.exercises_v2.count_documents({
+            "$and": [
+                {"canonical_id": {"$ne": None}},
+                {"canonical_id": {"$exists": True}},
+                {"$expr": {"$ne": ["$canonical_id", "$id"]}},
+            ],
+        })
+        return {
+            "dry_run": True,
+            "would_queue_count": n,
+            "breakdown": {
+                "raw_missing_primary_image": raw_missing_primary,
+                "excluded_archived_or_retired": excluded_archived,
+                "excluded_soft_deleted": excluded_deleted,
+                "excluded_alias_duplicates": excluded_aliases,
+                "eligible_after_filters": n,
+            },
+        }
 
     # Single-flight lock — one primary-image sweep at a time.
     if _BULK_IMAGE_LOCK.locked():

@@ -173,6 +173,104 @@ export default function ExerciseContentScreen() {
     finally { setBusy(null); }
   };
 
+  // Iter182 · Sequential bulk-generation of primary frame images for
+  // every exercise in DRAFT_REQUESTED / MISSING state. The backend
+  // handles the actual work — we kick off (202), then poll status every
+  // 2 s so the button can never time out even if the sweep runs for
+  // 20+ minutes over ~200 exercises. One image at a time server-side
+  // so we never hammer Gemini in parallel.
+  const bulkGenPrimaryImages = async () => {
+    if (busy) return;
+    setBusy("bulk-primary");
+    try {
+      const dry = await api<any>("/coach/auto-media-gen/bulk-primary-images", {
+        method: "POST", body: { dry_run: true },
+      });
+      const would = Number(dry?.would_queue_count || 0);
+      if (!would) {
+        toast("No DRAFT_REQUESTED / MISSING exercises are missing a primary image.", "info");
+        return;
+      }
+      const confirmed = await confirm({
+        title: `Generate ${would} primary images?`,
+        message:
+          `${would} exercise${would === 1 ? "" : "s"} in DRAFT_REQUESTED / ` +
+          "MISSING state have no primary image. Gemini will be called " +
+          "once per exercise — this may take several minutes and will " +
+          "spend credits from the auto-media budget.",
+        confirmLabel: "GENERATE",
+        cancelLabel: "CANCEL",
+      });
+      if (!confirmed) return;
+
+      let kickoff: any;
+      try {
+        kickoff = await api<any>("/coach/auto-media-gen/bulk-primary-images", {
+          method: "POST", body: {},
+        });
+      } catch (e: any) {
+        const inflightJobId = e?.response?.job_id;
+        if (inflightJobId) {
+          kickoff = { job_id: inflightJobId, status: "already_running" };
+          toast("Attaching to sweep already in progress…", "info");
+        } else {
+          toast(e?.response?.detail || e?.message || "Kickoff failed.", "error");
+          return;
+        }
+      }
+      const jobId: string = kickoff?.job_id;
+      if (!jobId) {
+        toast("Server did not return a job id.", "error");
+        return;
+      }
+
+      // Poll every 2s, cap 30 min (900 polls).
+      let lastWrote = 0;
+      for (let i = 0; i < 900; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let s: any;
+        try { s = await api<any>(`/coach/auto-media-gen/backfill-status/${jobId}`); }
+        catch { continue; }
+        const wrote = Number(s?.wrote || 0);
+        const processed = Number(s?.processed || 0);
+        const total = Number(s?.total_in_scope || would);
+        if (wrote !== lastWrote) {
+          toast(`… generating · ${wrote}/${total} images done`, "info");
+          lastWrote = wrote;
+        }
+        if (s?.status === "complete") {
+          const errs = Object.values(s?.errors || {}).reduce(
+            (a: number, b: any) => a + Number(b || 0), 0,
+          );
+          if (s.budget_paused) {
+            toast(
+              `Budget paused mid-run — ${wrote}/${processed} done. Top up + resume + re-tap.`,
+              "error",
+            );
+          } else if (errs) {
+            toast(
+              `Generated ${wrote}/${processed} primary images (${errs} errors — see logs).`,
+              "info",
+            );
+          } else {
+            toast(`Generated ${wrote}/${processed} primary images.`, "success");
+          }
+          await load();
+          return;
+        }
+        if (s?.status === "failed") {
+          toast(`Bulk generation failed: ${s?.error || "unknown"}.`, "error");
+          return;
+        }
+      }
+      toast("Bulk generation still running after 30 min — check status manually.", "info");
+    } catch (e: any) {
+      toast(e?.message || "Bulk generation failed.", "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const genImage = async (slot: "primary" | "start" | "end" | "mid" | "top" | "bottom" | "apex" | "stretch" | "loaded" | "finish") => {
     if (!detail) return;
     // Fetch the prompt preview so Louis sees the branded prompt + estimated
@@ -369,6 +467,31 @@ export default function ExerciseContentScreen() {
           placeholderTextColor={theme.color.textDim} style={styles.search}
           returnKeyType="search" onSubmitEditing={load}
         />
+      </View>
+
+      {/* Iter182 · Bulk primary-image generation for DRAFT_REQUESTED /
+          MISSING exercises. One Gemini call at a time server-side so we
+          never hammer the API. Disabled while another `busy` action is
+          in flight so the coach can't kick off two sweeps. */}
+      <View style={{ paddingHorizontal: 14, paddingTop: 8 }}>
+        <Pressable
+          onPress={bulkGenPrimaryImages}
+          disabled={busy === "bulk-primary" || !!busy}
+          style={[
+            styles.bulkBtn,
+            (busy === "bulk-primary" || !!busy) && { opacity: 0.5 },
+          ]}
+          testID="bulk-gen-primary-images"
+        >
+          {busy === "bulk-primary" ? (
+            <ActivityIndicator color={theme.color.brand} size="small" />
+          ) : (
+            <Ionicons name="images" size={16} color={theme.color.brand} />
+          )}
+          <Text style={styles.bulkBtnT}>
+            GENERATE MISSING PRIMARY IMAGES · DRAFT / MISSING
+          </Text>
+        </Pressable>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContent}>
@@ -952,6 +1075,18 @@ const styles = StyleSheet.create({
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderBottomWidth: 1, borderBottomColor: theme.color.divider },
   topT: { color: theme.color.text, fontSize: 14, letterSpacing: 2, fontWeight: "900", fontFamily: theme.font.display },
   search: { backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, color: theme.color.onRed, fontSize: 13 },
+  // Iter182 · Bulk primary-image generation trigger. Ghost style so it
+  // doesn't compete with the primary FILTER pills below.
+  bulkBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, paddingVertical: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  bulkBtnT: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900",
+    letterSpacing: 1.2,
+  },
   filter: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border, alignSelf: "center" },
   filterScroll: { flexGrow: 0, maxHeight: 46 },
   filterContent: { paddingHorizontal: 14, paddingVertical: 10, gap: 6, alignItems: "center" },

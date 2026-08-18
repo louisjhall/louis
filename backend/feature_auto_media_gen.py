@@ -1140,7 +1140,7 @@ logger.info(
 # audit trail (job stays `running` until either finished or manually
 # marked `failed`).
 # ---------------------------------------------------------------------------
-from fastapi import Response  # noqa: E402
+from fastapi import Response, HTTPException  # noqa: E402
 from feature_exercise_dedup import (  # noqa: E402
     exercise_backfill_disabled,
     manual_mode_active,
@@ -1432,4 +1432,251 @@ logger.info(
     "feature_auto_media_gen: MANUAL_MODE=%s EXERCISE_BACKFILL_DISABLED=%s",
     manual_mode_active(), exercise_backfill_disabled(),
 )
+
+
+# ---------------------------------------------------------------------------
+# Iter182 · Sequential PRIMARY-IMAGE bulk generator.
+# ---------------------------------------------------------------------------
+# Coach taps "GENERATE MISSING PRIMARY IMAGES" on the Exercise Library →
+# spawns a background worker that iterates every exercise whose primary
+# image status is DRAFT_REQUESTED (status == "draft_requested") or
+# MISSING (approved_image_status ∈ {Missing, missing}) and generates
+# ONE primary-frame image per exercise.
+#
+# Distinct from the Needs-Review backfill:
+#   · Images only — never touches text kinds.
+#   · Only the `primary` slot — start / end frames stay untouched.
+#   · SEQUENTIAL — one Gemini call at a time (no Semaphore, no gather)
+#     so we don't hammer the API with parallel image requests.
+#
+# Same job pattern as the other backfill: 202 + `job_id`, progress in
+# `backfill_jobs`, single-flight lock, MANUAL_MODE / kill-switch aware.
+# ---------------------------------------------------------------------------
+
+_BULK_IMAGE_LOCK: asyncio.Lock = asyncio.Lock()
+
+
+async def _bulk_primary_image_worker(
+    job_id: str, *, coach_id: Optional[str], persona: Optional[str] = None,
+) -> None:
+    """Sequentially generate ONE primary image per matching exercise.
+    Persists progress to `backfill_jobs` after every exercise so the
+    polling UI can render a live counter."""
+    from datetime import datetime, timezone
+    started = datetime.now(timezone.utc).isoformat()
+    try:
+        async with _BULK_IMAGE_LOCK:
+            await _record_job(job_id, {
+                "status": "running",
+                "kind": "bulk_primary_images",
+                "started_at": started,
+                "coach_id": coach_id,
+                "processed": 0, "wrote": 0,
+                "errors": {}, "results_sample": [],
+            })
+
+            # Query mirrors the Library's DRAFT_REQUESTED + MISSING tabs.
+            query = {
+                "$and": [
+                    {"$or": [
+                        # DRAFT_REQUESTED
+                        {"status": {"$in": ["draft_requested", "Draft"]}},
+                        # MISSING (image side)
+                        {"approved_image_status": {"$in": ["Missing", "missing"]}},
+                        # Legacy fallback — content_status.images == false
+                        {"content_status.images": False},
+                    ]},
+                    # Only consider exercises WITHOUT a primary image yet.
+                    {"$or": [
+                        {"primary_image_id": None},
+                        {"primary_image_id": {"$exists": False}},
+                        {"primary_image_id": ""},
+                    ]},
+                    # Skip aliases — they inherit the canonical's image.
+                    {"$or": [
+                        {"canonical_id": None},
+                        {"canonical_id": {"$exists": False}},
+                        {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+                    ]},
+                ],
+            }
+            projection = {"_id": 0, "id": 1, "exercise_name": 1,
+                          "primary_image_id": 1, "status": 1,
+                          "approved_image_status": 1, "canonical_id": 1}
+            exs = await db.exercises_v2.find(query, projection).to_list(length=1000)
+
+            processed = 0
+            wrote = 0
+            errors: dict[str, int] = {}
+            sample: list[dict] = []
+
+            for ex in exs:
+                ex_id = ex["id"]
+                processed += 1
+                # Budget guard — respected per iteration so a mid-run
+                # pause stops the sweep cleanly.
+                if await is_budget_paused():
+                    errors["budget_paused"] = errors.get("budget_paused", 0) + 1
+                    await _record_job(job_id, {
+                        "processed": processed, "wrote": wrote,
+                        "errors": errors, "results_sample": sample,
+                        "total_in_scope": len(exs),
+                        "budget_paused": True,
+                    })
+                    break
+
+                try:
+                    # Route through the standard enqueue so persona
+                    # alternation + content_status.images + audit log all
+                    # stay consistent with per-exercise regen. We suppress
+                    # `start` + `end` slots + all text kinds so this run
+                    # only spends credits on the primary frame.
+                    res = await auto_enqueue_media_for_exercise(
+                        ex_id, triggered_by=coach_id,
+                        suppress_kinds=("image_start", "image_end",
+                                        "coaching_points", "common_mistakes",
+                                        "alternatives", "instructions"),
+                        persona=persona,
+                    )
+                    if res.get("queued_images"):
+                        wrote += 1
+                        if len(sample) < 20:
+                            sample.append({
+                                "id": ex_id, "name": ex.get("exercise_name"),
+                                "wrote": res["queued_images"],
+                            })
+                    elif res.get("skipped"):
+                        # E.g. MANUAL_MODE or already has image (race).
+                        r = str(res.get("reason") or "skipped")
+                        errors[r] = errors.get(r, 0) + 1
+                except Exception as e:
+                    errors["exception"] = errors.get("exception", 0) + 1
+                    logger.warning(
+                        "bulk_primary_images: %s failed: %s", ex_id, e,
+                    )
+
+                # Small breather between requests — belt-and-braces so we
+                # never fire back-to-back Gemini calls even when the
+                # underlying image job returns instantly from the queue.
+                await asyncio.sleep(0.4)
+
+                # Flush progress every 5 exercises so the polling UI
+                # doesn't stall (DB write cost is negligible).
+                if processed % 5 == 0:
+                    await _record_job(job_id, {
+                        "processed": processed, "wrote": wrote,
+                        "errors": errors, "results_sample": sample,
+                        "total_in_scope": len(exs),
+                        "budget_paused": await is_budget_paused(),
+                    })
+
+            await _record_job(job_id, {
+                "status": "complete",
+                "processed": processed, "wrote": wrote,
+                "errors": errors, "results_sample": sample,
+                "total_in_scope": len(exs),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "budget_paused": await is_budget_paused(),
+            })
+    except Exception as e:
+        logger.exception("bulk_primary_images worker crashed job=%s", job_id)
+        try:
+            from datetime import datetime, timezone
+            await _record_job(job_id, {
+                "status": "failed",
+                "error": str(e)[:200],
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+
+
+@api.post("/coach/auto-media-gen/bulk-primary-images")
+async def auto_media_gen_bulk_primary_images(
+    body: Optional[dict] = None,
+    coach: dict = Depends(require_role("coach")),
+    response: Response = None,
+):
+    """Sequentially generate the primary image for every exercise whose
+    status is DRAFT_REQUESTED or MISSING.
+
+    Body (all optional):
+        dry_run: bool     → return count only, no work.
+        persona: str      → force "male"/"female" for every exercise
+                            (defaults: alternate via persona counter).
+
+    Response 202 + `{job_id}`; poll `/backfill-status/{job_id}` (shared
+    with the Needs-Review backfill) every 2 s.
+    """
+    body = body or {}
+    dry_run = bool(body.get("dry_run"))
+    persona = body.get("persona")
+    if persona is not None and persona not in ("male", "female"):
+        raise HTTPException(400, "persona must be 'male' or 'female'")
+
+    # Kill-switches — same semantics as the Needs-Review backfill.
+    if manual_mode_active():
+        if response is not None:
+            response.status_code = 403
+        return {"status": "blocked", "reason": "MANUAL_MODE"}
+    if exercise_backfill_disabled():
+        if response is not None:
+            response.status_code = 403
+        return {"status": "blocked", "reason": "EXERCISE_BACKFILL_DISABLED"}
+
+    query = {
+        "$and": [
+            {"$or": [
+                {"status": {"$in": ["draft_requested", "Draft"]}},
+                {"approved_image_status": {"$in": ["Missing", "missing"]}},
+                {"content_status.images": False},
+            ]},
+            {"$or": [
+                {"primary_image_id": None},
+                {"primary_image_id": {"$exists": False}},
+                {"primary_image_id": ""},
+            ]},
+            {"$or": [
+                {"canonical_id": None},
+                {"canonical_id": {"$exists": False}},
+                {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+            ]},
+        ],
+    }
+    if dry_run:
+        n = await db.exercises_v2.count_documents(query)
+        return {"dry_run": True, "would_queue_count": n}
+
+    # Single-flight lock — one primary-image sweep at a time.
+    if _BULK_IMAGE_LOCK.locked():
+        in_flight = await db.backfill_jobs.find_one(
+            {"kind": "bulk_primary_images", "status": "running"},
+            sort=[("started_at", -1)],
+        )
+        if response is not None:
+            response.status_code = 409
+        return {
+            "status": "already_running",
+            "reason": "single_flight",
+            "job_id": (in_flight or {}).get("_id"),
+        }
+
+    from server import new_id
+    job_id = new_id()
+    await _record_job(job_id, {
+        "status": "queued",
+        "kind": "bulk_primary_images",
+        "coach_id": coach.get("id"),
+    })
+    _spawn_bg(_bulk_primary_image_worker(
+        job_id, coach_id=coach.get("id"), persona=persona,
+    ))
+    if response is not None:
+        response.status_code = 202
+    return {
+        "status": "queued",
+        "job_id": job_id,
+        # Poll via the SHARED backfill-status endpoint — same collection.
+        "poll_url": f"/api/coach/auto-media-gen/backfill-status/{job_id}",
+    }
 

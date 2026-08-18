@@ -14046,6 +14046,7 @@ import feature_dual_session               # noqa: E402,F401  Iter 95a: Short-hau
 import feature_equipment_guard            # noqa: E402,F401  Iter 95h: Prevents equipment-mismatch workouts (client owns gear, gets bodyweight)
 import feature_client_summary             # noqa: E402,F401  Detailed Client Summary (renamed from Goals tab) + cached LLM coach briefing
 import feature_auto_media_gen             # noqa: E402,F401  Auto-generate exercise media (Nano Banana + coaching points) on creation. Coach still approves.
+import feature_youtube_video_finder       # noqa: E402,F401  Iter183 · YouTube ≤60s exercise-demo finder + bulk sweep.
 
 # Rebind feature-module functions into the server namespace so pre-existing
 # call sites in server.py (which look these up at runtime) continue to work.

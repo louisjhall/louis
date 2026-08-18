@@ -18,6 +18,12 @@ const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?:
   { path: "/(coach)/clients",   label: "Clients",          icon: "people-outline",       testId: "desktop-nav-clients" },
   { path: "/(coach)/calendar",  label: "Calendar",         icon: "calendar-outline",     testId: "desktop-nav-calendar" },
   { path: "/(coach)/library",   label: "Library",          icon: "barbell-outline",      testId: "desktop-nav-library" },
+  // Iter184 · Auto-Media pinned in primary sidebar — surfaces the Bulk
+  // Primary-Image + YouTube Video Finder actions from any coach screen
+  // without requiring the coach to first navigate into Library. Fixes the
+  // long-standing "the button is missing on Desktop" complaint by making
+  // the tools reachable from every route.
+  { path: "/coach/admin/auto-media", label: "Auto-Media", icon: "sparkles-outline", testId: "desktop-nav-auto-media" },
   { path: "/(coach)/messages",  label: "Messages",         icon: "chatbubble-ellipses-outline", testId: "desktop-nav-messages" },
   { path: "/(coach)/crew-base", label: "Crew Base",        icon: "people-circle-outline", testId: "desktop-nav-crew-base" },
   { path: "/(coach)/analytics", label: "Analytics",        icon: "bar-chart-outline",    testId: "desktop-nav-analytics" },
@@ -27,10 +33,16 @@ const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?:
 ];
 
 function isActive(pathname: string, target: string): boolean {
-  // target looks like "/(coach)/clients" — match on the segment after ")/"
-  const seg = target.split(")/")[1] || target;
-  if (!seg) return false;
-  return pathname.endsWith("/" + seg) || pathname === "/" + seg;
+  // Iter184 · Two target shapes now:
+  //   1) grouped:      "/(coach)/library"      → match segment "library"
+  //   2) non-grouped:  "/coach/admin/auto-media" → match full literal
+  if (target.includes(")/")) {
+    const seg = target.split(")/")[1] || target;
+    if (!seg) return false;
+    return pathname.endsWith("/" + seg) || pathname === "/" + seg;
+  }
+  // Non-grouped literal path — exact match or prefix (for nested subroutes).
+  return pathname === target || pathname.startsWith(target + "/");
 }
 
 export function DesktopShell({ children }: { children: React.ReactNode }) {
@@ -55,7 +67,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           <CrewFitLogo size={44} style={{ marginRight: 4 }} />
           <View style={{ flex: 1 }}>
             <Text style={styles.brand}>CREWFIT</Text>
-            <Text style={styles.tagline}>COACH DESKTOP</Text>
+            <Text style={styles.tagline}>COACH DESKTOP · v1.0.24</Text>
           </View>
         </View>
 

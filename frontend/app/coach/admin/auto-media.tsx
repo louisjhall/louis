@@ -479,13 +479,242 @@ export default function AutoMediaSettingsScreen() {
             All auto-generation goes to “Needs Review” — you still approve
             everything before it lands in a client workout.
           </Text>
+
+          {/* Iter184 · Bulk PRIMARY IMAGE finder — consolidated onto this
+              admin page (was previously only reachable from Library on
+              desktop, which coaches missed). Same server endpoint as the
+              Library CTA; kept identical UX pattern to YouTube below. */}
+          <BulkPrimaryImageSection toast={toast} />
+
+          {/* Iter183 · YouTube Video finder — separate section so it can't
+              be accidentally toggled with the LLM-media kinds above.
+              Enable → toggle; Bulk run → sequential worker, ~1s per call. */}
+          <YoutubeFinderSection toast={toast} />
         </ScrollView>
       )}
     </SafeAreaView>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Iter184 · Bulk PRIMARY IMAGE Section — mirror of the button on
+// /(coach)/library so coaches on desktop can find it here too. Same
+// server endpoint (/api/coach/auto-media-gen/bulk-primary-images);
+// kicks off (202) then polls /backfill-status/{jobId}. Sequential
+// server-side to stay under Gemini rate limits.
+// ---------------------------------------------------------------------------
+function BulkPrimaryImageSection({ toast }: { toast: (m: string, k?: any) => void }) {
+  const [busy, setBusy] = React.useState(false);
+
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const dry = await api<any>("/coach/auto-media-gen/bulk-primary-images", {
+        method: "POST", body: { dry_run: true },
+      });
+      const would = Number(dry?.would_queue_count || 0);
+      if (!would) {
+        toast("No DRAFT_REQUESTED / MISSING exercises need a primary image.", "info");
+        return;
+      }
+      let kickoff: any;
+      try {
+        kickoff = await api<any>("/coach/auto-media-gen/bulk-primary-images", { method: "POST", body: {} });
+      } catch (e: any) {
+        const jid = e?.response?.job_id;
+        if (jid) { kickoff = { job_id: jid }; toast("Attaching to sweep already in flight…", "info"); }
+        else { toast(e?.response?.detail || e?.message || "Kickoff failed", "error"); return; }
+      }
+      const jobId: string = kickoff?.job_id;
+      if (!jobId) { toast("Server did not return a job id.", "error"); return; }
+
+      let lastWrote = 0;
+      for (let i = 0; i < 900; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let s: any;
+        try { s = await api<any>(`/coach/auto-media-gen/backfill-status/${jobId}`); } catch { continue; }
+        const wrote = Number(s?.wrote || 0);
+        const total = Number(s?.total_in_scope || would);
+        if (wrote !== lastWrote) {
+          toast(`… generating · ${wrote}/${total} images done`, "info");
+          lastWrote = wrote;
+        }
+        if (s?.status === "complete" || s?.status === "failed") {
+          const errs = Object.values(s?.errors || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
+          if (s.budget_paused) {
+            toast(`Budget paused — ${wrote}/${s.processed} done. Top up + resume + re-tap.`, "error");
+          } else if (s.status === "failed") {
+            toast(`Bulk run failed: ${s?.error || "unknown"}`, "error");
+          } else {
+            toast(`Generated ${wrote}/${s.processed} primary images${errs ? ` (${errs} errors)` : ""}.`, "success");
+          }
+          return;
+        }
+      }
+      toast("Bulk run still going after 30 min — check status manually.", "info");
+    } catch (e: any) {
+      toast(e?.message || "Bulk run failed", "error");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <View style={styles.ytBlock} testID="bulk-primary-image-section">
+      <Text style={styles.ytH}>PRIMARY IMAGES</Text>
+      <Text style={styles.ytHint}>
+        Sweeps every DRAFT / MISSING exercise through Nano-Banana to
+        generate the primary frame. Sequential server-side (one image
+        per exercise, ~10-15 s each). All results land in Needs Review.
+      </Text>
+      <Pressable onPress={run} disabled={busy}
+        style={[styles.ytBulk, busy && { opacity: 0.5 }]}
+        testID="bulk-primary-image-run">
+        {busy
+          ? <ActivityIndicator color="#fff" size="small" />
+          : <Ionicons name="images" size={16} color="#fff" />}
+        <Text style={styles.ytBulkT}>
+          {busy ? "GENERATING…" : "GENERATE MISSING PRIMARY IMAGES"}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Iter183 · YouTube Video Finder section (enable toggle + bulk sweep).
+// ---------------------------------------------------------------------------
+function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }) {
+  const [ytEnabled, setYtEnabled] = React.useState(false);
+  const [ytKeyOk, setYtKeyOk] = React.useState(true);
+  const [ytBusy, setYtBusy] = React.useState<"toggle" | "bulk" | null>(null);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const r = await api<any>("/coach/youtube-finder/settings");
+        setYtEnabled(!!r?.enabled);
+        setYtKeyOk(!!r?.api_key_configured);
+      } catch { /* non-fatal */ }
+    })();
+  }, []);
+
+  const toggle = async () => {
+    if (ytBusy) return;
+    setYtBusy("toggle");
+    try {
+      const next = !ytEnabled;
+      await api<any>("/coach/youtube-finder/settings", {
+        method: "PUT", body: { enabled: next },
+      });
+      setYtEnabled(next);
+      toast(next ? "YouTube finder ON" : "YouTube finder OFF", "success");
+    } catch (e: any) {
+      toast(e?.message || "Toggle failed", "error");
+    } finally { setYtBusy(null); }
+  };
+
+  const bulkRun = async () => {
+    if (ytBusy) return;
+    setYtBusy("bulk");
+    try {
+      const dry = await api<any>("/coach/youtube-finder/bulk-run", {
+        method: "POST", body: { dry_run: true },
+      });
+      const would = Number(dry?.would_queue_count || 0);
+      if (!would) {
+        toast("No exercises missing a primary video — nothing to search.", "info");
+        return;
+      }
+      let kickoff: any;
+      try {
+        kickoff = await api<any>("/coach/youtube-finder/bulk-run", { method: "POST", body: {} });
+      } catch (e: any) {
+        const jid = e?.response?.job_id;
+        if (jid) { kickoff = { job_id: jid }; toast("Attaching to sweep already in flight…", "info"); }
+        else { toast(e?.response?.reason || e?.message || "Kickoff failed", "error"); return; }
+      }
+      const jobId: string = kickoff?.job_id;
+      if (!jobId) { toast("No job id returned", "error"); return; }
+
+      let lastWrote = 0;
+      // Sequential ~1s per exercise → 30 min cap = 1800 polls @2s = 900 iters.
+      for (let i = 0; i < 900; i += 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let s: any;
+        try { s = await api<any>(`/coach/auto-media-gen/backfill-status/${jobId}`); } catch { continue; }
+        const wrote = Number(s?.wrote || 0);
+        const total = Number(s?.total_in_scope || would);
+        if (wrote !== lastWrote) {
+          toast(`… searching · ${wrote}/${total} videos found`, "info");
+          lastWrote = wrote;
+        }
+        if (s?.status === "complete" || s?.status === "paused_quota" || s?.status === "failed") {
+          const errs = Object.values(s?.errors || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
+          if (s.status === "paused_quota") {
+            toast(`YouTube quota exhausted — ${wrote}/${s.processed} found. Resume tomorrow.`, "error");
+          } else if (s.status === "failed") {
+            toast(`Bulk run failed: ${s?.error || "unknown"}`, "error");
+          } else {
+            toast(`Found ${wrote}/${s.processed} videos${errs ? ` (${errs} errors)` : ""}. All flagged Needs Review.`, "success");
+          }
+          return;
+        }
+      }
+      toast("Bulk run still going after 30 min — check status manually.", "info");
+    } catch (e: any) { toast(e?.message || "Bulk run failed", "error"); }
+    finally { setYtBusy(null); }
+  };
+
+  return (
+    <View style={styles.ytBlock}>
+      <Text style={styles.ytH}>YOUTUBE VIDEO</Text>
+      <Text style={styles.ytHint}>
+        Auto-finds a ≤ 60 s YouTube demo video for each exercise missing one.
+        Filters by known-good channels, view count, and like ratio. Excludes
+        podcast/talk/interview channels. All results go to Needs Review.
+      </Text>
+      {!ytKeyOk ? (
+        <Text style={styles.ytWarn}>⚠ YOUTUBE_API_KEY not configured on the backend.</Text>
+      ) : null}
+      <Pressable onPress={toggle} disabled={!!ytBusy || !ytKeyOk}
+        style={[styles.ytToggle, ytEnabled && styles.ytToggleOn,
+                (!!ytBusy || !ytKeyOk) && { opacity: 0.5 }]}
+        testID="yt-finder-toggle">
+        <Ionicons name={ytEnabled ? "checkmark-circle" : "ellipse-outline"} size={16}
+          color={ytEnabled ? "#fff" : theme.color.text} />
+        <Text style={[styles.ytToggleT, ytEnabled && { color: "#fff" }]}>
+          {ytEnabled ? "ENABLED" : "DISABLED"}
+        </Text>
+      </Pressable>
+      <Pressable onPress={bulkRun} disabled={!!ytBusy || !ytEnabled}
+        style={[styles.ytBulk, (!!ytBusy || !ytEnabled) && { opacity: 0.5 }]}
+        testID="yt-finder-bulk-run">
+        {ytBusy === "bulk"
+          ? <ActivityIndicator color="#fff" size="small" />
+          : <Ionicons name="logo-youtube" size={16} color="#fff" />}
+        <Text style={styles.ytBulkT}>FIND VIDEOS FOR ALL MISSING</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  ytBlock: { marginTop: 24, padding: 16, borderRadius: 10,
+             borderWidth: 1, borderColor: theme.color.border,
+             backgroundColor: theme.color.card, gap: 10 },
+  ytH: { color: theme.color.text, fontSize: 12, fontWeight: "900", letterSpacing: 1.4 },
+  ytHint: { color: theme.color.textDim, fontSize: 12, lineHeight: 17 },
+  ytWarn: { color: "#e5a337", fontSize: 12, fontWeight: "700" },
+  ytToggle: { flexDirection: "row", alignItems: "center", gap: 8,
+              alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 8,
+              borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
+              backgroundColor: theme.color.surface2 },
+  ytToggleOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  ytToggleT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1.2 },
+  ytBulk: { flexDirection: "row", alignItems: "center", justifyContent: "center",
+            gap: 8, paddingVertical: 12, borderRadius: 8,
+            backgroundColor: theme.color.brand },
+  ytBulkT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
   root: { flex: 1, backgroundColor: theme.color.surface },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",

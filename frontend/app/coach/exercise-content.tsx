@@ -427,7 +427,7 @@ export default function ExerciseContentScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12}>
           <Ionicons name="chevron-back" size={24} color={theme.color.text} />
         </Pressable>
-        <Text style={styles.topT}>EXERCISE CONTENT · v1.0.22</Text>
+        <Text style={styles.topT}>EXERCISE CONTENT · v1.0.24</Text>
         <View style={{ flexDirection: "row", gap: 14, alignItems: "center" }}>
           <Pressable
             testID="auto-media-settings-btn"

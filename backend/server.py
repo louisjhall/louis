@@ -13869,12 +13869,30 @@ async def videos_get_one(video_id: str, user: dict = Depends(current_user)):
     the mark-viewed request in the background while the player still
     needs to fetch the video). The list endpoints filter by status; this
     endpoint does not, so the player is always resilient.
+
+    Iter186 · Self-healing summary — if this is a WELCOME video that
+    was created *before* the summary generator was deployed (or the
+    background stamp failed), spawn it lazily on the very next fetch.
+    Fire-and-forget so the request stays snappy; the client falls back
+    to the "Summary generating…" placeholder and gets the bullets on
+    the next open. Prevents the "no bullets" regression that hits the
+    first cohort of videos post-deploy.
     """
     row = await db.weekly_videos.find_one(
         {"id": video_id, "user_id": user["id"]}, {"_id": 0}
     )
     if not row:
         raise HTTPException(404, "video not found")
+    try:
+        if (
+            (row.get("video_kind") or "").lower() == "welcome"
+            and not row.get("script_summary")
+            and (row.get("script") or "").strip()
+        ):
+            from feature_welcome_video_summary import stamp_welcome_summary
+            _spawn_bg(stamp_welcome_summary(db, video_id, row.get("script") or ""))
+    except Exception:
+        logger.exception("lazy welcome-summary spawn failed for %s", video_id)
     return {"video": row}
 
 

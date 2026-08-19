@@ -47,6 +47,77 @@ export function isCardioExercise(ex: any): boolean {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  Iter188 · Time-based exercise detection — shared between guided.tsx and    */
+/*  play.tsx so both flows agree that side plank, farmer's carry, dead-hang    */
+/*  and cardio blocks show a live TIMER, never kg/reps.                        */
+/*                                                                             */
+/*  Priority order:                                                            */
+/*    1. Any cardio exercise → time-based by definition (bike, treadmill, …)   */
+/*    2. `logging_type` = "timer" | "hold" | "time" → explicit signal          */
+/*    3. Explicit `work_sec` / `duration_sec` field on the row                 */
+/*    4. `reps` string mentions seconds / minutes / mm:ss / "hold"             */
+/*    5. Name regex — canonical hold-and-carry moves                           */
+/* -------------------------------------------------------------------------- */
+
+export function isTimeBased(ex: any): boolean {
+  if (!ex) return false;
+
+  // Priority 1: cardio is always time-based.
+  if (isCardioExercise(ex)) return true;
+
+  // Priority 2: explicit logging_type from the coach / library.
+  const lt = (ex.logging_type || "").toString().toLowerCase().trim();
+  if (lt === "timer" || lt === "hold" || lt === "time" || lt === "duration") return true;
+
+  // Priority 3: explicit duration seconds field.
+  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+  if (explicit > 0) return true;
+
+  // Priority 4: reps string looks like a time.
+  const reps = String(ex?.reps || "").toLowerCase();
+  if (/\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes)\b/.test(reps)) return true;
+  if (/^\d+:\d{2}$/.test(reps.trim())) return true;
+  if (/\b(hold|for time|until failure|max time|steady|steady state|steady ride)\b/.test(reps)) return true;
+
+  // Priority 5: canonical hold-and-carry name regex.
+  const name = String(ex?.name || "").toLowerCase();
+  return /\b(side plank|front plank|plank|hollow hold|wall sit|dead ?hang|l[- ]?sit|farmer'?s? (walk|carry)|suitcase carry|overhead carry|superman hold|bridge hold|forearm plank|hollow rock|dish hold|bear crawl hold|hanging (l[- ]?sit|leg hold)|copenhagen (hold|plank)|couch stretch|pigeon (hold|stretch)|isometric)\b/.test(name);
+}
+
+/**
+ * Extract the target duration in seconds for a time-based exercise.
+ * Falls back to 30 s when the exercise is timed but no explicit target
+ * is parseable. Iter188 — moved to shared lib so play.tsx and guided.tsx
+ * never disagree on what "60 seconds" means.
+ */
+export function extractTargetSeconds(ex: any): number {
+  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+  if (explicit > 0) return Math.max(5, Math.min(3600, explicit));
+  const reps = String(ex?.reps || "").trim();
+  const mmss = /^(\d+):(\d{2})$/.exec(reps);
+  if (mmss) return parseInt(mmss[1], 10) * 60 + parseInt(mmss[2], 10);
+  const minMatch = /(\d+)\s*(?:min|mins|minute|minutes)/i.exec(reps);
+  if (minMatch) return parseInt(minMatch[1], 10) * 60;
+  const secMatch = /(\d+)\s*(?:s|sec|secs|second|seconds)/i.exec(reps);
+  if (secMatch) return Math.max(5, parseInt(secMatch[1], 10));
+  const plainNum = /^(\d+)/.exec(reps);
+  if (plainNum) {
+    const n = parseInt(plainNum[1], 10);
+    if (n >= 5 && n <= 3600) return n;
+  }
+  // Cardio without a stated duration defaults to 20 min (steady ride,
+  // steady run, etc.). Non-cardio holds default to 30 s.
+  return isCardioExercise(ex) ? 20 * 60 : 30;
+}
+
+export function formatMMSS(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+/* -------------------------------------------------------------------------- */
 
 const MODE_KEY = "crewfit.workout.mode";
 const REMEMBER_KEY = "crewfit.workout.mode.remember";

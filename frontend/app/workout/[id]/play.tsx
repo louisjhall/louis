@@ -15,7 +15,7 @@ import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 import { RestTimer } from "@/src/components/RestTimer";
-import { getAutoRest, isCardioExercise } from "@/src/lib/workoutMode";
+import { getAutoRest, isCardioExercise, isTimeBased, extractTargetSeconds } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete } from "@/src/lib/sounds";
 import { toast } from "@/src/lib/ux";
@@ -324,6 +324,19 @@ export default function AtlasPlayer() {
               workoutId={String(id)}
               existing={currentSets}
               onLogged={(s: any) => { setSets((all) => [...all, s]); }}
+            />
+          ) : isTimeBased(currentEx) ? (
+            /* Iter188 · Time-based non-cardio holds (side plank, wall
+                sit, farmer's carry, dead hang, hollow hold, etc.) get
+                a live hold-timer instead of REPS/WEIGHT fields. This
+                was the "Why does side plank show kg and reps?" bug —
+                play.tsx had no time-based branch at all. */
+            <TileLogHold
+              ex={currentEx}
+              idx={idx}
+              workoutId={String(id)}
+              existing={currentSets}
+              onLogged={(s: any) => { setSets((all) => [...all, s]); startRest(currentEx?.rest_sec || 60); }}
             />
           ) : (
             <TileLog
@@ -718,6 +731,52 @@ function TileLogCardio({ ex, idx, workoutId, existing, onLogged }: {
   const [saving, setSaving] = useState(false);
   const nextInterval = existing.length + 1;
 
+  // Iter188 · Live stopwatch — no more manually typing "30:00" on the
+  // stationary bike. START → count-up → STOP → mm:ss is auto-populated
+  // in the TIME field. Client can still overwrite it if they want.
+  const cardioTargetSec = extractTargetSeconds(ex);
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const buzzed = useRef(false);
+  const tick = useRef<any>(null);
+
+  useEffect(() => {
+    if (!running) return;
+    tick.current = setInterval(() => {
+      setElapsed((s) => {
+        const next = s + 1;
+        if (next === cardioTargetSec && !buzzed.current) {
+          buzzed.current = true;
+          try { Vibration.vibrate([0, 250, 100, 250]); } catch { /* web */ }
+        }
+        return next;
+      });
+    }, 1000);
+    return () => { if (tick.current) clearInterval(tick.current); };
+  }, [running, cardioTargetSec]);
+
+  const toggleTimer = () => {
+    if (!running) {
+      // Fresh start — clear elapsed unless the user is resuming.
+      if (elapsed === 0) buzzed.current = false;
+      setRunning(true);
+      return;
+    }
+    // Stopping — commit elapsed into the TIME field so the log submit
+    // can send it in one tap.
+    setRunning(false);
+    if (elapsed > 0) {
+      setRow((r) => ({ ...r, time: fmtMMSS(elapsed) }));
+    }
+  };
+
+  const resetTimer = () => {
+    if (tick.current) clearInterval(tick.current);
+    setRunning(false);
+    setElapsed(0);
+    buzzed.current = false;
+  };
+
   const submit = async () => {
     if (saving || nextInterval > targetIntervals) return;
     const timeSec = parseMMSS(row.time);
@@ -746,10 +805,14 @@ function TileLogCardio({ ex, idx, workoutId, existing, onLogged }: {
       });
       onLogged(r.set);
       setRow({ time: "", distance: "", hrAvg: "", rpe: "" });
+      resetTimer();
     } catch (e: any) {
       Alert.alert("Log failed", e?.message || "Please try again");
     } finally { setSaving(false); }
   };
+
+  const pct = Math.min(100, Math.round((elapsed / Math.max(1, cardioTargetSec)) * 100));
+  const buttonLabel = running ? "STOP" : (elapsed > 0 ? "RESUME" : "START TIMER");
 
   return (
     <View>
@@ -780,6 +843,41 @@ function TileLogCardio({ ex, idx, workoutId, existing, onLogged }: {
               {String(targetLabel).toUpperCase()}
             </Text>
           </View>
+
+          {/* Iter188 · Live cardio stopwatch — start on the pedal, stop
+              at the end. Elapsed auto-fills the TIME (mm:ss) field so
+              the client can then just add distance + RPE and log. */}
+          <View style={styles.holdTimerCard} testID="cardio-timer-card">
+            <Text style={[styles.holdTimerBig, running && { color: theme.color.brand }]}>
+              {fmtMMSS(elapsed)}
+            </Text>
+            <View style={styles.holdTimerBarTrack}>
+              <View style={[styles.holdTimerBarFill, { width: `${pct}%` }]} />
+            </View>
+            <View style={styles.holdTimerBtnRow}>
+              <Pressable
+                onPress={resetTimer}
+                disabled={elapsed === 0 && !running}
+                style={[styles.holdResetBtn, (elapsed === 0 && !running) && { opacity: 0.4 }]}
+                testID="cardio-timer-reset"
+              >
+                <Ionicons name="refresh" size={14} color={theme.color.text} />
+                <Text style={styles.holdResetT}>RESET</Text>
+              </Pressable>
+              <Pressable
+                onPress={toggleTimer}
+                style={[styles.holdStartBtn, running && styles.holdStopBtn]}
+                testID={running ? "cardio-timer-stop" : "cardio-timer-start"}
+              >
+                <Ionicons name={running ? "stop" : "play"} size={18} color="#fff" />
+                <Text style={styles.holdStartT}>{buttonLabel}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.holdTimerHint}>
+              Buzz at target {fmtMMSS(cardioTargetSec)}. Stop the timer and TIME auto-fills.
+            </Text>
+          </View>
+
           <View style={styles.logRow}>
             <LogField label="TIME (mm:ss)" value={row.time} onChange={(v) => setRow({ ...row, time: v })} placeholder="30:00" testID="log-time" />
             <LogField label="DIST (km)" value={row.distance} onChange={(v) => setRow({ ...row, distance: v })} placeholder="5.0" testID="log-distance" />
@@ -805,6 +903,186 @@ function TileLogCardio({ ex, idx, workoutId, existing, onLogged }: {
         <View style={styles.allDone}>
           <Ionicons name="trophy" size={30} color={theme.color.brand} />
           <Text style={styles.allDoneT}>ALL INTERVALS COMPLETE</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Iter188 · TileLogHold — Manual-mode hold timer                            */
+/*                                                                             */
+/*  Fixes the "side plank shows kg + reps" bug. Any exercise where             */
+/*  `isTimeBased(ex) && !isCardioExercise(ex)` (planks, wall sit, farmer's     */
+/*  carry, dead hang, hollow hold, isometric holds, carries) now renders       */
+/*  this tile — a live START/STOP hold timer + compact WEIGHT (optional)       */
+/*  + RPE row. The elapsed seconds become the `actual_reps` field so the       */
+/*  set history reads "45s" for the client and coach.                          */
+/* -------------------------------------------------------------------------- */
+
+function TileLogHold({ ex, idx, workoutId, existing, onLogged }: {
+  ex: any; idx: number; workoutId: string; existing: any[]; onLogged: (s: any) => void;
+}) {
+  const targetSets = Math.max(1, parseInt(String(ex?.sets || 1), 10));
+  const targetSec = extractTargetSeconds(ex);
+  const [weight, setWeight] = useState("");
+  const [rpe, setRpe] = useState("");
+  const [running, setRunning] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const tick = useRef<any>(null);
+  const buzzed = useRef(false);
+  const nextSet = existing.length + 1;
+
+  useEffect(() => {
+    if (!running) return;
+    tick.current = setInterval(() => {
+      setElapsed((s) => {
+        const next = s + 1;
+        if (next === targetSec && !buzzed.current) {
+          buzzed.current = true;
+          try { Vibration.vibrate([0, 250, 100, 250]); } catch { /* web */ }
+        }
+        return next;
+      });
+    }, 1000);
+    return () => { if (tick.current) clearInterval(tick.current); };
+  }, [running, targetSec]);
+
+  const toggle = () => {
+    if (!running) {
+      setElapsed(0);
+      buzzed.current = false;
+      setRunning(true);
+      return;
+    }
+    setRunning(false);
+  };
+
+  const reset = () => {
+    if (tick.current) clearInterval(tick.current);
+    setRunning(false);
+    setElapsed(0);
+    buzzed.current = false;
+  };
+
+  const submit = async () => {
+    if (saving || nextSet > targetSets) return;
+    if (elapsed <= 0) {
+      Alert.alert("Start the timer first", "Tap START HOLD, hold the position, then tap STOP.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await api<any>(`/workouts/${workoutId}/sets`, {
+        method: "POST",
+        body: {
+          workout_id: workoutId,
+          exercise_index: idx,
+          exercise_name: ex.name,
+          set_number: nextSet,
+          // Iter188 · Hold time lives in duration_sec so history renders
+          // "45s hold" instead of a nonsensical "45 reps". `actual_reps`
+          // is intentionally left blank for time-based moves.
+          target_reps: String(ex?.reps || `${targetSec}s`),
+          logging_type: "timer",
+          duration_sec: elapsed,
+          weight: parseFloat(weight) || null,
+          rpe: parseFloat(rpe) || null,
+        },
+      });
+      onLogged(r.set);
+      setElapsed(0);
+      setWeight("");
+      setRpe("");
+      buzzed.current = false;
+      try { hapticSuccess(); } catch { /* ignore */ }
+    } catch (e: any) {
+      Alert.alert("Log failed", e?.message || "Please try again");
+    } finally { setSaving(false); }
+  };
+
+  const pct = Math.min(100, Math.round((elapsed / Math.max(1, targetSec)) * 100));
+  const buttonLabel = running ? "STOP" : (elapsed > 0 ? "RESUME" : "START HOLD");
+
+  return (
+    <View>
+      {/* Existing hold-sets */}
+      {existing.map((s) => {
+        const t = s.duration_sec ? fmtMMSS(s.duration_sec) : (s.actual_reps ? `${s.actual_reps}s` : "—");
+        const w = s.actual_weight ? ` · ${s.actual_weight}kg` : "";
+        return (
+          <View key={s.id} style={styles.setRowDone}>
+            <View style={styles.setNum}><Text style={styles.setNumT}>{s.set_number}</Text></View>
+            <Text style={styles.setDoneT} numberOfLines={1}>
+              {t}{w}{s.rpe ? ` · RPE ${s.rpe}` : ""}
+            </Text>
+            <Ionicons name="checkmark-circle" size={18} color={theme.color.green} />
+          </View>
+        );
+      })}
+
+      {nextSet <= targetSets ? (
+        <View style={styles.setActive}>
+          <View style={styles.setActiveHead}>
+            <View style={[styles.setNum, styles.setNumActive]}><Text style={[styles.setNumT, { color: "#fff" }]}>{nextSet}</Text></View>
+            <Text style={styles.setActiveT}>
+              SET {nextSet} of {targetSets} · TARGET {fmtMMSS(targetSec)} HOLD
+            </Text>
+          </View>
+
+          {/* Big timer + progress bar */}
+          <View style={styles.holdTimerCard} testID="hold-timer-card">
+            <Text style={[styles.holdTimerBig, running && { color: theme.color.brand }]}>
+              {fmtMMSS(elapsed)}
+            </Text>
+            <View style={styles.holdTimerBarTrack}>
+              <View style={[styles.holdTimerBarFill, { width: `${pct}%` }]} />
+            </View>
+            <View style={styles.holdTimerBtnRow}>
+              <Pressable
+                onPress={reset}
+                disabled={elapsed === 0 && !running}
+                style={[styles.holdResetBtn, (elapsed === 0 && !running) && { opacity: 0.4 }]}
+                testID="hold-timer-reset"
+              >
+                <Ionicons name="refresh" size={14} color={theme.color.text} />
+                <Text style={styles.holdResetT}>RESET</Text>
+              </Pressable>
+              <Pressable
+                onPress={toggle}
+                style={[styles.holdStartBtn, running && styles.holdStopBtn]}
+                testID={running ? "hold-timer-stop" : "hold-timer-start"}
+              >
+                <Ionicons name={running ? "stop" : "play"} size={18} color="#fff" />
+                <Text style={styles.holdStartT}>{buttonLabel}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.holdTimerHint}>
+              Elapsed time is your set. Buzz at {fmtMMSS(targetSec)} — keep going if you can.
+            </Text>
+          </View>
+
+          {/* Optional weight for loaded holds (farmer's carry, weighted plank) */}
+          <View style={styles.logRow}>
+            <LogField label="WEIGHT (kg)" value={weight} onChange={setWeight} placeholder="0" testID="log-hold-weight" />
+            <LogField label="RPE" value={rpe} onChange={setRpe} placeholder="1-10" testID="log-hold-rpe" />
+          </View>
+
+          <Pressable
+            onPress={submit}
+            disabled={saving || elapsed === 0 || running}
+            style={[styles.completeBtn, (saving || elapsed === 0 || running) && { opacity: 0.35 }]}
+            testID="log-complete-hold"
+          >
+            {saving ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="checkmark" size={16} color="#fff" />}
+            <Text style={styles.completeBtnT}>{saving ? "LOGGING..." : "LOG HOLD"}</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.allDone}>
+          <Ionicons name="trophy" size={30} color={theme.color.brand} />
+          <Text style={styles.allDoneT}>ALL SETS COMPLETE</Text>
         </View>
       )}
     </View>
@@ -1255,4 +1533,88 @@ const styles = StyleSheet.create({
   wuVideoSheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 16 },
   wuVideoHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 12 },
   wuVideoTitle: { color: theme.color.text, fontSize: 15, fontWeight: "800", flex: 1 },
+
+  // Iter188 · Hold / cardio live timer styles — shared by TileLogHold and
+  // the cardio stopwatch inside TileLogCardio. Big centred count-up
+  // display, brand-coloured progress bar, and a two-button row.
+  holdTimerCard: {
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    alignItems: "center",
+    gap: 8,
+  },
+  holdTimerBig: {
+    color: theme.color.text,
+    fontSize: 46,
+    fontWeight: "900",
+    letterSpacing: 1,
+    fontVariant: ["tabular-nums"],
+  },
+  holdTimerBarTrack: {
+    width: "100%",
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.color.divider,
+    overflow: "hidden",
+  },
+  holdTimerBarFill: {
+    height: "100%",
+    backgroundColor: theme.color.brand,
+  },
+  holdTimerBtnRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 6,
+    width: "100%",
+    justifyContent: "center",
+  },
+  holdResetBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+  },
+  holdResetT: {
+    color: theme.color.text,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+  },
+  holdStartBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 22,
+    borderRadius: 10,
+    backgroundColor: theme.color.brand,
+    flex: 1,
+    maxWidth: 240,
+  },
+  holdStopBtn: {
+    backgroundColor: theme.color.red,
+  },
+  holdStartT: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+  },
+  holdTimerHint: {
+    color: theme.color.textMuted,
+    fontSize: 11,
+    fontStyle: "italic",
+    textAlign: "center",
+    marginTop: 4,
+  },
 });

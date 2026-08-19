@@ -22,7 +22,7 @@ import { RestTimer } from "@/src/components/RestTimer";
 import {
   getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue,
   getAutoRest, getVoiceOn, setVoiceOn as saveVoiceOn,
-  isCardioExercise,
+  isCardioExercise, isTimeBased, extractTargetSeconds,
 } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete, playCountdownTick, warmupSoundEngine } from "@/src/lib/sounds";
@@ -65,48 +65,12 @@ function isMobilityLike(ex: any): boolean {
 }
 
 /**
- * Iter186 · Detect exercises whose "reps" field is actually a DURATION
- * (side plank / hollow hold / wall sit / dead hang / farmer's walk / etc.)
- * — either via explicit `work_sec` / `duration_sec` fields, via a `reps`
- * string that mentions seconds/minutes, or via a name match on canonical
- * hold-and-carry moves. Non-cardio only — cardio has its own timer path.
+ * Iter188 · `isTimeBased` and `extractTargetSeconds` moved to
+ * `src/lib/workoutMode.ts` so play.tsx (Manual mode) and guided.tsx
+ * (Guided mode) share ONE definition of "this exercise is a timer".
+ * Previously play.tsx had no time-based check at all — side plank / wall
+ * sit / farmer's carry all showed kg + reps fields. Fixed in Iter188.
  */
-function isTimeBased(ex: any): boolean {
-  if (!ex) return false;
-  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
-  if (explicit > 0) return true;
-  const reps = String(ex?.reps || "").toLowerCase();
-  if (/\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes)\b/.test(reps)) return true;
-  if (/^\d+:\d{2}$/.test(reps.trim())) return true;
-  if (/\b(hold|for time|until failure|max time)\b/.test(reps)) return true;
-  const name = String(ex?.name || "").toLowerCase();
-  return /\b(side plank|front plank|plank|hollow hold|wall sit|dead ?hang|l[- ]?sit|farmer'?s? (walk|carry)|suitcase carry|overhead carry|superman hold|bridge hold|forearm plank|hollow rock|dish hold)\b/.test(name);
-}
-
-/**
- * Iter186 · Extract the target duration in seconds from a time-based
- * exercise. Falls back to 30 s when we can only detect that it's timed
- * but can't parse a number.
- */
-function extractTargetSeconds(ex: any): number {
-  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
-  if (explicit > 0) return Math.max(5, Math.min(600, explicit));
-  const reps = String(ex?.reps || "").trim();
-  const mmss = /^(\d+):(\d{2})$/.exec(reps);
-  if (mmss) return parseInt(mmss[1], 10) * 60 + parseInt(mmss[2], 10);
-  const minMatch = /(\d+)\s*(?:min|mins|minute|minutes)/i.exec(reps);
-  if (minMatch) return parseInt(minMatch[1], 10) * 60;
-  const secMatch = /(\d+)\s*(?:s|sec|secs|second|seconds)/i.exec(reps);
-  if (secMatch) return Math.max(5, parseInt(secMatch[1], 10));
-  const plainNum = /^(\d+)/.exec(reps);
-  if (plainNum) {
-    const n = parseInt(plainNum[1], 10);
-    // Heuristic: if reps is JUST a number and the exercise is a known
-    // timed move, treat that number as seconds not reps.
-    if (n >= 5 && n <= 600) return n;
-  }
-  return 30;   // sensible default
-}
 
 function parseTargetReps(ex: any): number {
   const r = String(ex?.reps || "").trim();

@@ -287,7 +287,14 @@ export default function RosterConfirm() {
       if (nextId) {
         router.replace({ pathname: "/roster/confirm/[id]" as any, params: { id: nextId } } as any);
       } else {
-        router.replace({ pathname: "/roster-upload" as any, params: { resume: res.job_id } } as any);
+        // Iter188 · Route directly to the dedicated full-screen success
+        // page. This bypasses the /roster-upload progress bar entirely
+        // so the client sees the "Roster Received" message immediately
+        // — matches product requirement 2026-06.
+        // `res.job_id` is now unused here, but the backend still creates
+        // the confirm_build job for MANUAL_MODE bookkeeping.
+        void res;
+        router.replace("/roster/received");
       }
     } catch (e: any) {
       // Iter 84 (Task 1.4) — profile_incomplete 409 → route to /training-setup.

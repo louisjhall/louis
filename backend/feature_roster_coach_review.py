@@ -162,19 +162,61 @@ async def compute_submission_state(db, user: dict) -> dict:
 
     # 4. Backward-compat: legacy rosters that pre-date this feature (i.e.
     #    were confirmed BEFORE we started stamping `coach_review_state`).
-    #    Treat any active roster with `is_active=True` as `coach_approved`.
+    #
+    #    Iter186 fix · The very first cohort of rosters that confirmed
+    #    *between* the frontend Publish and the backend redeploy will
+    #    have `is_active=True` but no `coach_review_state`. If we naively
+    #    treat every legacy roster as `coach_approved` we'd never show
+    #    the lock card for those clients, which is the exact bug the
+    #    coach reported after the first roll-out. Fix: bucket recent
+    #    (< 24 h) legacy confirmations as `awaiting_coach_review` so the
+    #    UX matches what the client experienced (they *just* confirmed),
+    #    and stamp them so the coach inbox picks them up too.
     try:
         legacy = await db.rosters.find_one(
             {"user_id": user_id, "is_active": True},
-            sort=[("created_at", -1)],
+            sort=[("confirmed_at", -1), ("created_at", -1)],
         )
     except Exception:
         legacy = None
     if legacy:
+        confirmed_at = legacy.get("confirmed_at") or legacy.get("created_at") or ""
+        recent = False
+        try:
+            if confirmed_at:
+                ts = _dt.datetime.fromisoformat(str(confirmed_at).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=_dt.timezone.utc)
+                recent = (_now_utc() - ts) < _dt.timedelta(hours=AUTO_APPROVE_HOURS)
+        except Exception:
+            recent = False
+
+        if recent:
+            # Best-effort stamp so the coach inbox picks this up on the
+            # very next refresh. Ignored if it fails — the state we
+            # return below is what the client screen keys off.
+            try:
+                await db.rosters.update_one(
+                    {"id": legacy["id"], "coach_review_state": {"$exists": False}},
+                    {"$set": {
+                        "coach_review_state": "awaiting_review",
+                        "awaiting_review_since": confirmed_at or _iso(_now_utc()),
+                    }},
+                )
+            except Exception:
+                logger.exception("legacy-stamp failed for %s", legacy.get("id"))
+            return {
+                "state": "awaiting_coach_review",
+                "roster_id": legacy.get("id"),
+                "submitted_at": confirmed_at,
+                "awaiting_review_since": confirmed_at,
+                "legacy_backfill": True,
+            }
+
         return {
             "state": "coach_approved",
             "roster_id": legacy.get("id"),
-            "submitted_at": legacy.get("confirmed_at") or legacy.get("created_at"),
+            "submitted_at": confirmed_at,
             "legacy_backfill": True,
         }
 

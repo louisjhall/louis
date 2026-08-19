@@ -494,7 +494,16 @@ export default function RosterUpload() {
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} testID="ru-back"><Ionicons name="chevron-back" size={22} color={theme.color.text} /></Pressable>
-        <Text style={styles.title}>UPLOAD ROSTER</Text>
+        <View style={{ alignItems: "center" }}>
+          <Text style={styles.title}>UPLOAD ROSTER</Text>
+          {/* Iter188 · OTA build marker — matches the video screen's
+              `b188` tag. If this shows on production, you're on the new
+              bundle. */}
+          <Text style={{
+            color: theme.color.textMuted, fontSize: 9, fontWeight: "700",
+            letterSpacing: 1.2, marginTop: 2, opacity: 0.55,
+          }} testID="ru-build-tag">b188</Text>
+        </View>
         <View style={{ width: 22 }} />
       </View>
 

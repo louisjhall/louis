@@ -40,6 +40,9 @@ type Exercise = {
   primary_image_id?: string | null;
   demo_start_image_id?: string | null;
   demo_end_image_id?: string | null;
+  // Iter188 · Coach-forced logging_type override — wins over the
+  // client-side classifier when set. null = classifier decides.
+  logging_type_override?: "timer" | "cardio" | "reps" | null;
   // Movement-aware image slots — supports bottom / top / apex / etc.
   demo_slots?: Record<string, string | null>;
   demo_slots_female?: Record<string, string | null>;
@@ -557,6 +560,32 @@ export default function ExerciseContentScreen() {
                 ) : null}
               </View>
 
+              {/* Iter188 · Logging-type override — coach escape hatch for
+                  any exercise the workout player's automatic classifier
+                  puts in the wrong bucket. Default is AUTO (classifier
+                  decides via name + reps + category). Force TIMER for a
+                  hold that doesn't match the regex, CARDIO for a piece
+                  of cardio kit misnamed, or REPS to disable the timer. */}
+              <Text style={styles.sect}>WORKOUT PLAYER LOGGING</Text>
+              <LoggingTypeOverrideRow
+                current={detail.logging_type_override ?? null}
+                onChange={async (next) => {
+                  const prev = detail.logging_type_override ?? null;
+                  setDetail({ ...detail, logging_type_override: next });
+                  try {
+                    await api(`/coach/library/exercise/${detail.id}/logging-type`, {
+                      method: "PATCH",
+                      body: { logging_type: next },
+                    });
+                    const { reloadOverrides } = await import("@/src/lib/loggingTypeOverrides");
+                    await reloadOverrides();
+                  } catch (e: any) {
+                    setDetail({ ...detail, logging_type_override: prev });
+                    Alert.alert("Couldn't save override", e?.message || "Please try again.");
+                  }
+                }}
+              />
+
               {/* Images */}
               <Text style={styles.sect}>DEMO IMAGES</Text>
               <View style={styles.genderRow}>
@@ -1071,6 +1100,87 @@ function videoBadgeStyle(s?: string): any {
   };
   return m[s || "Missing"] || m.Missing;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Iter188 · Logging-type override segment control                            */
+/* -------------------------------------------------------------------------- */
+function LoggingTypeOverrideRow({
+  current, onChange,
+}: {
+  current: "timer" | "cardio" | "reps" | null;
+  onChange: (next: "timer" | "cardio" | "reps" | null) => void;
+}) {
+  const opts: { value: "timer" | "cardio" | "reps" | null; label: string; icon: any; hint: string }[] = [
+    { value: null,     label: "AUTO",   icon: "flash",       hint: "Classifier decides (default)" },
+    { value: "timer",  label: "TIMER",  icon: "hourglass",   hint: "Force hold timer" },
+    { value: "cardio", label: "CARDIO", icon: "bicycle",     hint: "Force cardio stopwatch" },
+    { value: "reps",   label: "REPS",   icon: "barbell",     hint: "Force reps + weight" },
+  ];
+  const activeHint = opts.find((o) => o.value === current)?.hint || opts[0].hint;
+  return (
+    <View style={ltoStyles.wrap} testID="logging-type-override">
+      <View style={ltoStyles.row}>
+        {opts.map((o) => {
+          const active = current === o.value;
+          return (
+            <Pressable
+              key={String(o.value)}
+              onPress={() => onChange(o.value)}
+              style={[ltoStyles.opt, active && ltoStyles.optActive]}
+              testID={`lto-${o.label.toLowerCase()}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Ionicons
+                name={o.icon}
+                size={13}
+                color={active ? "#fff" : theme.color.textMuted}
+              />
+              <Text style={[ltoStyles.optT, active && { color: "#fff" }]}>{o.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={ltoStyles.hint}>{activeHint}</Text>
+    </View>
+  );
+}
+
+const ltoStyles = StyleSheet.create({
+  wrap: { marginTop: 4, marginBottom: 12 },
+  row: {
+    flexDirection: "row",
+    gap: 6,
+    backgroundColor: theme.color.surface2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    padding: 4,
+  },
+  opt: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  optActive: { backgroundColor: theme.color.brand },
+  optT: {
+    color: theme.color.textMuted,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.2,
+  },
+  hint: {
+    color: theme.color.textMuted,
+    fontSize: 10.5,
+    fontStyle: "italic",
+    marginTop: 6,
+    paddingHorizontal: 4,
+  },
+});
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },

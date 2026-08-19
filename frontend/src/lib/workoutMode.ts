@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getLoggingOverride } from "@/src/lib/loggingTypeOverrides";
 
 export type WorkoutMode = "manual" | "guided";
 
@@ -28,6 +29,12 @@ export type WorkoutMode = "manual" | "guided";
  */
 export function isCardioExercise(ex: any): boolean {
   if (!ex) return false;
+
+  // Iter188 · Coach override wins over every other signal.
+  const override = getLoggingOverride(ex);
+  if (override === "cardio") return true;
+  if (override === "timer" || override === "reps") return false;
+
   const lt = (ex.logging_type || "").toString().toLowerCase().trim();
   if (lt === "cardio" || lt === "timer") return true;
   if (lt) return false;
@@ -61,6 +68,11 @@ export function isCardioExercise(ex: any): boolean {
 
 export function isTimeBased(ex: any): boolean {
   if (!ex) return false;
+
+  // Iter188 · Coach override wins over every other signal.
+  const override = getLoggingOverride(ex);
+  if (override === "timer" || override === "cardio") return true;
+  if (override === "reps") return false;
 
   // Priority 1: cardio is always time-based.
   if (isCardioExercise(ex)) return true;

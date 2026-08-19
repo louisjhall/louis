@@ -14238,6 +14238,15 @@ try:
 except Exception:
     logger.exception("feature_flight_support_media failed to register")
 
+# Iter188 — Coach-facing logging-type override for the workout player
+# (timer vs reps vs cardio). Long-tail escape hatch for any exercise the
+# client-side classifier miscategorises.
+try:
+    from feature_logging_type_override import register as _logtype_register
+    _logtype_register(api, db, require_role)
+except Exception:
+    logger.exception("feature_logging_type_override failed to register")
+
 app.include_router(api)
 
 

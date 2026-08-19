@@ -13822,6 +13822,12 @@ async def videos_for_me(user: dict = Depends(current_user)):
       * All `status: "sent"` (unwatched) videos.
       * Recently-viewed videos still inside a 24-hour grace period so the
         client can re-open the card if they closed it before finishing.
+
+    Iter188 · Lazy self-heal for ANY row that has a script but no
+    `script_summary` (previously the heal only fired on the direct
+    `/videos/{id}` lookup, but the frontend hits this list endpoint
+    FIRST, so the heal never got a chance to run for videos surfaced
+    through the client home banner).
     """
     grace_cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
     rows = await db.weekly_videos.find(
@@ -13834,6 +13840,13 @@ async def videos_for_me(user: dict = Depends(current_user)):
         },
         {"_id": 0},
     ).sort("sent_at", -1).to_list(20)
+    try:
+        from feature_welcome_video_summary import stamp_welcome_summary
+        for r in rows:
+            if not r.get("script_summary") and (r.get("script") or "").strip():
+                _spawn_bg(stamp_welcome_summary(db, r["id"], r.get("script") or ""))
+    except Exception:
+        logger.exception("lazy video-summary spawn (for-me) failed")
     return {"videos": rows}
 
 
@@ -13847,6 +13860,10 @@ async def videos_welcome_for_me(user: dict = Depends(current_user)):
         who accidentally closed it can find it again.
       * After the grace period expires the endpoint returns `video: null`
         and the banner disappears permanently.
+
+    Iter188 · Same lazy self-heal as the list endpoint — welcome videos
+    created before the summary generator got backfilled will now spawn
+    their bullets on first open.
     """
     grace_cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
     row = await db.weekly_videos.find_one(
@@ -13861,6 +13878,12 @@ async def videos_welcome_for_me(user: dict = Depends(current_user)):
         {"_id": 0},
         sort=[("sent_at", -1)],
     )
+    try:
+        if row and not row.get("script_summary") and (row.get("script") or "").strip():
+            from feature_welcome_video_summary import stamp_welcome_summary
+            _spawn_bg(stamp_welcome_summary(db, row["id"], row.get("script") or ""))
+    except Exception:
+        logger.exception("lazy video-summary spawn (welcome-for-me) failed")
     return {"video": row}
 
 

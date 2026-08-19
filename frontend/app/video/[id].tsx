@@ -93,13 +93,23 @@ export default function ClientVideo() {
   const header = isWelcome ? "WELCOME FROM YOUR COACH" : "VIDEO FROM LOUIS";
   const scriptEyebrow = isWelcome ? "WHAT LOUIS WANTED TO SAY" : "YOUR WEEKLY REVIEW";
 
+  // Iter188 · Visible OTA build marker — tiny tag next to the header so
+  // we can instantly tell in production whether the latest bundle has
+  // rolled out. Only changes when the JS bundle changes; safe to keep
+  // in-place long term. Update `BUILD_TAG` below in future fixes to
+  // help debug any future "I still see the old version" reports.
+  const BUILD_TAG = "b188";
+
   return (
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
       <View style={styles.topBar}>
         <Pressable onPress={() => router.back()} hitSlop={12} testID="video-close">
           <Ionicons name="close" size={26} color={theme.color.text} />
         </Pressable>
-        <Text style={styles.header}>{header}</Text>
+        <View style={styles.headerWrap}>
+          <Text style={styles.header}>{header}</Text>
+          <Text style={styles.buildTag} testID="video-build-tag">{BUILD_TAG}</Text>
+        </View>
         <View style={{ width: 26 }} />
       </View>
 
@@ -195,6 +205,12 @@ const styles = StyleSheet.create({
     padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   header: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  headerWrap: { alignItems: "center", justifyContent: "center" },
+  buildTag: {
+    color: theme.color.textMuted,
+    fontSize: 9, fontWeight: "700", letterSpacing: 1.2,
+    marginTop: 2, opacity: 0.55,
+  },
   // Iter187 · ScrollView body — generous bottom padding guarantees the
   // Message-Your-Coach CTA never sits behind the home-indicator / gesture
   // bar on iOS and Android navigation gestures.

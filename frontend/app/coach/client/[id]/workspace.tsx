@@ -193,11 +193,20 @@ export default function CoachWorkspaceScreen() {
   // "SENT · dd Mon" pill next to the WELCOME VIDEO button so the coach
   // knows whether their recording actually landed with the client.
   const [welcomeVideo, setWelcomeVideo] = useState<{
+    id?: string;
     status?: string;
     sent_at?: string | null;
     watched_at?: string | null;
     created_at?: string | null;
   } | null>(null);
+  // Iter186 · When the coach forgot to tick "MARK AS WELCOME VIDEO"
+  // before sending, the recording lands on the client's weekly card
+  // instead of the welcome banner (no bullets, no message button).
+  // Detect a *recent* (< 24 h) weekly video that isn't linked to a
+  // check-in — highly suggestive that it was MEANT to be a welcome
+  // — and offer a one-tap CONVERT TO WELCOME action.
+  const [pendingConvert, setPendingConvert] = useState<{ id: string; created_at?: string } | null>(null);
+  const [converting, setConverting] = useState(false);
   const reloadWelcomeVideo = useCallback(async () => {
     try {
       const r = await api<any>(`/coach/videos/welcome/${clientId}`);
@@ -205,16 +214,49 @@ export default function CoachWorkspaceScreen() {
     } catch {
       setWelcomeVideo(null);
     }
+    // Fetch any *recent* non-welcome video without a check-in — that's
+    // the classic "coach forgot the toggle" scenario. Endpoint reuses
+    // `/coach/videos` filtered by user_id (already exists as a
+    // Mongo-backed list; we filter client-side to keep the change
+    // minimal).
+    try {
+      const list = await api<any>(`/coach/videos?user_id=${clientId}`);
+      const rows: any[] = Array.isArray(list) ? list : (list?.videos || []);
+      const now = Date.now();
+      const orphan = rows.find((v: any) => {
+        if ((v?.video_kind || "").toLowerCase() === "welcome") return false;
+        if (v?.check_in_id) return false;   // linked to real check-in
+        const ts = Date.parse(v?.sent_at || v?.created_at || "");
+        return ts && (now - ts) < 24 * 60 * 60 * 1000;
+      });
+      setPendingConvert(orphan ? { id: orphan.id, created_at: orphan.sent_at || orphan.created_at } : null);
+    } catch {
+      setPendingConvert(null);
+    }
   }, [clientId]);
   useEffect(() => { reloadWelcomeVideo(); }, [reloadWelcomeVideo]);
-  // Refresh when the coach returns from the teleprompter (they may
-  // have just sent one) — expo-router's focus hook is already imported
-  // elsewhere in this file; we piggyback on a plain interval to be
-  // resilient without adding another import.
   useEffect(() => {
     const t = setInterval(reloadWelcomeVideo, 30_000);
     return () => clearInterval(t);
   }, [reloadWelcomeVideo]);
+
+  const convertToWelcome = useCallback(async () => {
+    if (!pendingConvert || converting) return;
+    setConverting(true);
+    try {
+      await api(`/coach/videos/${pendingConvert.id}/convert-to-welcome`, { method: "POST" });
+      setPendingConvert(null);
+      await reloadWelcomeVideo();
+    } catch (e: any) {
+      // Alert on failure so coach knows to retry.
+      // eslint-disable-next-line no-alert
+      if (typeof window !== "undefined" && window?.alert) {
+        window.alert(`Couldn't convert: ${e?.message || "please retry"}`);
+      }
+    } finally {
+      setConverting(false);
+    }
+  }, [pendingConvert, converting, reloadWelcomeVideo]);
 
   // Phase 1 Manual Workout Builder — state
   const [dayMenuDate, setDayMenuDate] = useState<string | null>(null);
@@ -555,6 +597,28 @@ export default function CoachWorkspaceScreen() {
             </View>
           ) : null}
         </Pressable>
+        {/* Iter186 · Repair CTA — when a recent WEEKLY video exists
+            for this client but no welcome was sent, offer a one-tap
+            conversion. Common recovery path for "I forgot to tick
+            the welcome toggle". */}
+        {pendingConvert && !welcomeVideo && (
+          <Pressable
+            onPress={convertToWelcome}
+            disabled={converting}
+            style={[styles.convertBtn, converting && { opacity: 0.6 }]}
+            testID="workspace-convert-to-welcome"
+            accessibilityLabel="Convert last video to welcome"
+          >
+            {converting ? (
+              <ActivityIndicator size="small" color={theme.color.brand} />
+            ) : (
+              <Ionicons name="swap-horizontal" size={14} color={theme.color.brand} />
+            )}
+            <Text style={styles.convertBtnT}>
+              {converting ? "CONVERTING…" : "CONVERT LAST → WELCOME"}
+            </Text>
+          </Pressable>
+        )}
         <Pressable
           onPress={() => setAdminDrawerOpen(true)}
           style={styles.adminBtn}
@@ -1576,6 +1640,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 1.2,
     fontWeight: "800",
+  },
+  // Iter186 · One-tap "Convert Last Weekly → Welcome" repair CTA
+  convertBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6,
+    borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+    marginRight: 6,
+  },
+  convertBtnT: {
+    color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1,
   },
   clientName: { color: theme.color.textHi, fontSize: 17, fontWeight: "800" },
   subRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginTop: 2, gap: 8 },

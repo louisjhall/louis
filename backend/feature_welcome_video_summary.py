@@ -202,4 +202,41 @@ def make_router(db, require_role) -> APIRouter:
         )
         return {"ok": True, "bullets": bullets}
 
+    @r.post("/coach/videos/{video_id}/convert-to-welcome")
+    async def coach_convert_to_welcome(
+        video_id: str,
+        coach: dict = Depends(require_role("coach")),
+    ):
+        """Iter186 · Repair endpoint — flips a video that was saved as
+        a weekly-review into a welcome video. Triggers summary
+        generation immediately so bullets appear on the next fetch.
+
+        Common failure mode this heals: coach forgot to tick the
+        "MARK AS WELCOME VIDEO" toggle before hitting SEND, so the
+        video landed on the client's weekly-review card instead of
+        the welcome banner + no bullets + no "Message Your Coach"
+        button. This endpoint retro-fits the correct state without
+        the coach having to re-record.
+        """
+        v = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0})
+        if not v:
+            raise HTTPException(404, "video not found")
+        await db.weekly_videos.update_one(
+            {"id": video_id},
+            {"$set": {"video_kind": "welcome"},
+             "$unset": {"check_in_id": ""}},
+        )
+        # Kick off summary generation inline so the bullets are ready
+        # by the time the client re-opens the video.
+        try:
+            bullets = await generate_welcome_summary(v.get("script") or "")
+            if bullets:
+                await db.weekly_videos.update_one(
+                    {"id": video_id}, {"$set": {"script_summary": bullets}},
+                )
+        except Exception:
+            logger.exception("convert-to-welcome summary failed for %s", video_id)
+        fresh = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0})
+        return {"ok": True, "video": fresh}
+
     return r

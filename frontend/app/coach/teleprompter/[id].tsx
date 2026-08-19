@@ -413,12 +413,22 @@ export default function Teleprompter() {
           preview / sending to prevent mid-flight kind changes. */}
       <View style={styles.welcomeRow}>
         <Pressable
-          onPress={() => phase === "idle" && setIsWelcome((v) => !v)}
-          disabled={phase !== "idle"}
+          onPress={() => {
+            // Iter186 · When we entered via the welcome route the
+            // toggle is LOCKED ON — coach can't accidentally save a
+            // welcome recording as a weekly review. Regression fix:
+            // videos were landing on the client's weekly card + no
+            // bullets + no "Message Your Coach" button because the
+            // toggle was silently off after a script edit or re-mount.
+            if (isWelcomeMode) return;
+            if (phase !== "idle") return;
+            setIsWelcome((v) => !v);
+          }}
+          disabled={phase !== "idle" || isWelcomeMode}
           style={[
             styles.welcomeChip,
             isWelcome && styles.welcomeChipOn,
-            phase !== "idle" && { opacity: 0.5 },
+            phase !== "idle" && { opacity: 0.7 },
           ]}
           testID="welcome-toggle"
         >
@@ -428,12 +438,17 @@ export default function Teleprompter() {
             color={isWelcome ? theme.color.brand : theme.color.textMuted}
           />
           <Text style={[styles.welcomeChipT, isWelcome && { color: theme.color.brand }]}>
-            MARK AS WELCOME VIDEO
+            {isWelcomeMode ? "WELCOME VIDEO · LOCKED ON" : "MARK AS WELCOME VIDEO"}
           </Text>
+          {isWelcomeMode ? (
+            <Ionicons name="lock-closed" size={12} color={theme.color.brand} style={{ marginLeft: 4 }} />
+          ) : null}
         </Pressable>
         {isWelcome && (
           <Text style={styles.welcomeHint}>
-            Sent as a one-shot welcome — not attached to this check-in.
+            {isWelcomeMode
+              ? "This recording is saved as a WELCOME video — sends with bullet summary + Message Coach button."
+              : "Sent as a one-shot welcome — not attached to this check-in."}
           </Text>
         )}
       </View>

@@ -24,6 +24,12 @@ export const DARK_PALETTE = {
   text: "#FFFFFF",
   textHi: "#FFFFFF",
   bg: "#0B0B0D",
+  // Iter186 · Alias — some legacy screens reference `theme.color.background`
+  // instead of `.bg`. Without this alias, styles set to undefined which
+  // renders TRANSPARENT on Android → user sees the OS window (BLACK) during
+  // route transitions (signup → training-setup → assessment). Point the
+  // alias at `bg` so those styles paint correctly with zero migration risk.
+  background: "#0B0B0D",
   bgGradientTop: "#000000",
   bgGradientBottom: "#0B0B0D",
   // Iter178 · PURE RULE — no grey text. All muted tokens collapse to
@@ -73,6 +79,8 @@ export const LIGHT_PALETTE = {
   text: "#000000",
   textHi: "#000000",
   bg: "#FFFFFF",
+  // Iter186 · Alias mirror in Light Mode (see DARK_PALETTE above).
+  background: "#FFFFFF",
   bgGradientTop: "#FFFFFF",
   bgGradientBottom: "#F4F4F9",
   // Iter178 · PURE RULE — no grey text in Light Mode either.

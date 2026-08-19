@@ -132,6 +132,10 @@ export default function TrainingSetupScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Iter186 · Persistent full-screen overlay from the moment we know
+  // the setup is complete until the destination screen paints.
+  // Prevents black flash on Android during `router.replace("/")`.
+  const [transitioning, setTransitioning] = useState(false);
   const [status, setStatus] = useState<SetupStatus>({ complete: false, missing_fields: [] });
   const [pageIdx, setPageIdx] = useState(0);
 
@@ -173,6 +177,8 @@ export default function TrainingSetupScreen() {
         setFlyingType(String(prof.flying_type));
       }
       if (r.complete) {
+        // Iter186 · Keep overlay visible through router.replace.
+        setTransitioning(true);
         // Nothing to do — bounce to home.
         router.replace("/");
         return;
@@ -275,6 +281,9 @@ export default function TrainingSetupScreen() {
       const r = await api<SetupStatus>("/profile/training-setup", { method: "POST", body });
       setStatus(r);
       if (r.complete) {
+        // Iter186 · Persistent overlay through the route change so
+        // Android never flashes black between training-setup and home.
+        setTransitioning(true);
         router.replace("/");
         return;
       }
@@ -283,6 +292,7 @@ export default function TrainingSetupScreen() {
         PAGE_FIELDS[pid].some((f) => r.missing_fields.includes(f))
       );
       if (nextPages.length === 0) {
+        setTransitioning(true);
         router.replace("/");
       } else {
         setPageIdx(0);   // recalc active pages from scratch
@@ -299,6 +309,20 @@ export default function TrainingSetupScreen() {
       <SafeAreaView style={s.wrap}>
         <View style={s.centered}>
           <ActivityIndicator color={theme.color.brand} />
+          <Text style={s.transitionT}>LOADING YOUR SETUP…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Iter186 · Post-completion overlay — visible from the moment we
+  // know we're navigating to `/` until the destination paints.
+  if (transitioning) {
+    return (
+      <SafeAreaView style={s.wrap}>
+        <View style={s.centered} testID="training-setup-transition">
+          <ActivityIndicator size="large" color={theme.color.brand} />
+          <Text style={s.transitionT}>BUILDING YOUR DASHBOARD…</Text>
         </View>
       </SafeAreaView>
     );
@@ -586,8 +610,18 @@ export default function TrainingSetupScreen() {
 }
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: theme.color.background },
-  centered: { flex: 1, alignItems: "center", justifyContent: "center" },
+  // Iter186 · Was `theme.color.background` which does NOT exist on the
+  // theme (only `bg` / `surface` are defined). That resolved to
+  // undefined → transparent background → black Android flash between
+  // signup and this screen. Fixed to `theme.color.bg`.
+  wrap: { flex: 1, backgroundColor: theme.color.bg },
+  centered: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14 },
+  transitionT: {
+    color: theme.color.brand,
+    letterSpacing: 2,
+    fontSize: 11,
+    fontWeight: "900",
+  },
   header: { paddingHorizontal: theme.space.lg, paddingTop: theme.space.md, paddingBottom: theme.space.sm },
   eyebrow: { color: theme.color.brand, fontSize: 11, letterSpacing: 2, fontWeight: "800" },
   title: { color: theme.color.text, fontSize: 22, fontWeight: "900", marginTop: 6 },
@@ -642,7 +676,9 @@ const s = StyleSheet.create({
   noneChipT: { color: theme.color.brand, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
   footer: {
     padding: theme.space.lg, borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.color.border, backgroundColor: theme.color.background,
+    // Iter186 · Was `theme.color.background` (undefined) → transparent
+    // → Android showed the OS window through the footer. Now uses `bg`.
+    borderTopColor: theme.color.border, backgroundColor: theme.color.bg,
   },
   cta: {
     backgroundColor: theme.color.brand,

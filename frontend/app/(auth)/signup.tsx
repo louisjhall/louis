@@ -70,6 +70,11 @@ export default function Signup() {
 
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Iter186 · Persistent full-screen overlay from the moment signup
+  // succeeds until the destination screen paints. Prevents the black
+  // flash on Android during `router.replace(...)` (auth stack tears
+  // down before the root stack renders training-setup/home).
+  const [transitioning, setTransitioning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const canSubmit =
@@ -144,18 +149,40 @@ export default function Signup() {
         photo_base64: photoBase64 || undefined,
         photo_mime: photoBase64 ? photoMime : undefined,
       });
+      // Iter186 · Keep the full-screen loading overlay VISIBLE while
+      // router.replace() unmounts (auth) and mounts /training-setup or
+      // /(coach)/v2-home. Do NOT flip loading→false in the success path
+      // — Android otherwise flashes the OS window (black) between the
+      // (auth) stack tear-down and the destination screen's first frame.
+      // The component will unmount when the route changes.
+      setTransitioning(true);
       // All new signups are clients — head straight to the DNA assessment.
       if (u.role === "coach") router.replace("/(coach)/v2-home" as any);
       else router.replace("/training-setup" as any);   // Iter 84 (Task 1.3): setup first, then assessment
     } catch (e: any) {
       setErr(e.message);
-    } finally {
       setLoading(false);
     }
+    // No `finally { setLoading(false) }` — see comment above.
   };
 
   return (
     <SafeAreaView style={styles.root}>
+      {/* Iter186 · Full-screen transition overlay — visible from the
+          moment signup succeeds until this screen unmounts. Sits above
+          the ScrollView (zIndex/elevation) so tapping is disabled during
+          the router.replace fade. Uses `styles.root` bg so it never
+          flashes black on Android. */}
+      {transitioning && (
+        <View
+          testID="signup-transition-overlay"
+          pointerEvents="auto"
+          style={styles.transitionOverlay}
+        >
+          <ActivityIndicator size="large" color={theme.color.brand} />
+          <Text style={styles.transitionT}>PREPARING YOUR ACCOUNT…</Text>
+        </View>
+      )}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
           <Pressable onPress={() => router.back()} testID="signup-back">
@@ -418,6 +445,25 @@ export default function Signup() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: theme.color.surface },
+  // Iter186 · Transition overlay — sits on top of the ScrollView while
+  // router.replace fires. Elevation/zIndex ensures Android renders it
+  // above KeyboardAvoidingView. Explicit backgroundColor (not
+  // transparent!) prevents the black-flash Android bug.
+  transitionOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: theme.color.bg,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+    zIndex: 100,
+    elevation: 100,
+  },
+  transitionT: {
+    color: theme.color.brand,
+    letterSpacing: 2,
+    fontSize: 11,
+    fontWeight: "900",
+  },
   title: { color: theme.color.text, fontSize: 28, fontWeight: "900", marginTop: theme.space.lg, letterSpacing: 2 },
   sub: { color: theme.color.textMuted, marginTop: 6, marginBottom: theme.space.lg, fontSize: 13, lineHeight: 18 },
   section: {

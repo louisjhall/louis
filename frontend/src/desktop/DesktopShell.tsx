@@ -67,7 +67,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           <CrewFitLogo size={44} style={{ marginRight: 4 }} />
           <View style={{ flex: 1 }}>
             <Text style={styles.brand}>CREWFIT</Text>
-            <Text style={styles.tagline}>COACH DESKTOP · v1.0.25</Text>
+            <Text style={styles.tagline}>COACH DESKTOP · v1.0.26</Text>
           </View>
         </View>
 

@@ -136,6 +136,193 @@ export function V2ClientTabs({ clientId, tab }: { clientId: string; tab: V2Tab }
 
 /* -------------------------------------------------------------- CHECK-INS */
 
+// Iter186 · Questions preview card — pinned above the check-ins list so
+// the coach can view / edit the LLM-generated question set BEFORE the
+// client submits anything. Previously coaches saw "No check-ins yet"
+// with no path to the question editor, forcing them to memorise deep
+// links. Now they see the current 10-question set at a glance + one tap
+// to open the full editor.
+function CheckinQuestionsCard({ clientId }: { clientId: string }) {
+  const router = useRouter();
+  const [mode, setMode] = useState<"weekly" | "monthly">("weekly");
+  const [loading, setLoading] = useState(true);
+  const [questions, setQuestions] = useState<{ id: string; label: string; type: string }[]>([]);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setErr(null);
+      try {
+        const r = await api<any>(`/coach/checkins/questions/${clientId}?type=${mode}`);
+        if (cancelled) return;
+        const doc = r?.check_in_questions || {};
+        setQuestions((doc.questions || []) as any);
+        setUpdatedAt(doc.updated_at || doc.created_at || null);
+      } catch (e: any) {
+        if (!cancelled) setErr(e?.message || String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clientId, mode]);
+
+  const openEditor = () => {
+    router.push({
+      pathname: "/coach/checkin-questions/[clientId]" as any,
+      params: { clientId, type: mode },
+    } as any);
+  };
+
+  return (
+    <View style={qStyles.card} testID={`v2-checkin-questions-card-${mode}`}>
+      <View style={qStyles.head}>
+        <View style={{ flex: 1 }}>
+          <Text style={qStyles.eyebrow}>CHECK-IN QUESTIONS</Text>
+          <Text style={qStyles.title}>
+            {questions.length}/10 · {mode === "weekly" ? "Weekly" : "Monthly"}
+          </Text>
+          {updatedAt ? (
+            <Text style={qStyles.meta}>
+              Last updated {new Date(updatedAt).toLocaleDateString(undefined, {
+                day: "numeric", month: "short", year: "numeric",
+              })}
+            </Text>
+          ) : questions.length > 0 ? (
+            <Text style={qStyles.meta}>Generated · edit anytime.</Text>
+          ) : (
+            <Text style={qStyles.meta}>Not yet generated for this client.</Text>
+          )}
+        </View>
+        <View style={qStyles.modeToggle}>
+          <Pressable
+            style={[qStyles.modeBtn, mode === "weekly" && qStyles.modeBtnOn]}
+            onPress={() => setMode("weekly")}
+            testID="v2-checkin-questions-mode-weekly"
+          >
+            <Text style={[qStyles.modeT, mode === "weekly" && qStyles.modeTOn]}>WEEKLY</Text>
+          </Pressable>
+          <Pressable
+            style={[qStyles.modeBtn, mode === "monthly" && qStyles.modeBtnOn]}
+            onPress={() => setMode("monthly")}
+            testID="v2-checkin-questions-mode-monthly"
+          >
+            <Text style={[qStyles.modeT, mode === "monthly" && qStyles.modeTOn]}>MONTHLY</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {loading ? (
+        <View style={{ paddingVertical: 20, alignItems: "center" }}>
+          <ActivityIndicator size="small" color={theme.color.brand} />
+        </View>
+      ) : err ? (
+        <View style={qStyles.errBox}>
+          <Ionicons name="alert-circle" size={14} color={theme.color.red} />
+          <Text style={qStyles.errT}>Couldn&apos;t load: {err}</Text>
+        </View>
+      ) : questions.length === 0 ? (
+        <View style={qStyles.emptyBox}>
+          <Ionicons name="sparkles-outline" size={18} color={theme.color.brand} />
+          <Text style={qStyles.emptyT}>
+            No {mode} questions generated yet. Tap EDIT QUESTIONS to auto-generate
+            a personalised set (LLM-tailored to this client&apos;s goals & DNA).
+          </Text>
+        </View>
+      ) : (
+        <View style={qStyles.list}>
+          {questions.slice(0, 3).map((q, i) => (
+            <View key={q.id || i} style={qStyles.row}>
+              <Text style={qStyles.rowIdx}>{String(i + 1).padStart(2, "0")}</Text>
+              <Text style={qStyles.rowLabel} numberOfLines={2}>{q.label}</Text>
+              <View style={qStyles.typeChip}>
+                <Text style={qStyles.typeChipT}>{q.type.toUpperCase()}</Text>
+              </View>
+            </View>
+          ))}
+          {questions.length > 3 ? (
+            <Text style={qStyles.moreT}>
+              + {questions.length - 3} more question{questions.length - 3 === 1 ? "" : "s"}
+            </Text>
+          ) : null}
+        </View>
+      )}
+
+      <Pressable
+        onPress={openEditor}
+        style={({ pressed }) => [qStyles.cta, pressed && { opacity: 0.85 }]}
+        testID="v2-checkin-questions-edit"
+      >
+        <Ionicons name={questions.length === 0 ? "sparkles" : "create-outline"} size={14} color="#fff" />
+        <Text style={qStyles.ctaT}>
+          {questions.length === 0 ? "GENERATE & EDIT QUESTIONS" : "EDIT QUESTIONS"}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const qStyles = StyleSheet.create({
+  card: {
+    margin: 16, marginBottom: 12,
+    padding: 14, borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+    gap: 10,
+  },
+  head: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  eyebrow: { color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  title:   { color: theme.color.text, fontSize: 15, fontWeight: "900", marginTop: 3 },
+  meta:    { color: theme.color.textMuted, fontSize: 11, marginTop: 2 },
+  modeToggle: {
+    flexDirection: "row",
+    borderRadius: 8, borderWidth: 1, borderColor: theme.color.border,
+    overflow: "hidden",
+  },
+  modeBtn: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "transparent" },
+  modeBtnOn: { backgroundColor: theme.color.brand },
+  modeT: { color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  modeTOn: { color: "#fff" },
+  list: { gap: 8 },
+  row: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 6,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.color.border,
+  },
+  rowIdx: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900",
+    minWidth: 24, textAlign: "center",
+  },
+  rowLabel: { color: theme.color.text, fontSize: 13, flex: 1, lineHeight: 18 },
+  typeChip: {
+    paddingHorizontal: 6, paddingVertical: 3, borderRadius: 4,
+    backgroundColor: theme.color.surface3,
+  },
+  typeChipT: { color: theme.color.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
+  moreT: {
+    color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
+    marginTop: 2, textAlign: "center",
+  },
+  emptyBox: {
+    flexDirection: "row", alignItems: "flex-start", gap: 8,
+    paddingVertical: 8,
+  },
+  emptyT: { color: theme.color.textMuted, fontSize: 12, lineHeight: 17, flex: 1 },
+  errBox: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingVertical: 8,
+  },
+  errT: { color: theme.color.red, fontSize: 12 },
+  cta: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingVertical: 10, borderRadius: 8,
+    backgroundColor: theme.color.brand,
+  },
+  ctaT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.4 },
+});
+
 function CheckinsPanel({ clientId }: { clientId: string }) {
   const router = useRouter();
   const [rows, setRows] = useState<any[]>([]);
@@ -155,15 +342,28 @@ function CheckinsPanel({ clientId }: { clientId: string }) {
   if (loading) return <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>;
   if (err)     return <View style={styles.center}><Text style={styles.err}>{err}</Text></View>;
   if (!rows.length) return (
-    <View style={styles.center}>
-      <Ionicons name="heart-outline" size={32} color={theme.color.textDim} />
-      <Text style={styles.emptyTitle}>No check-ins yet</Text>
-      <Text style={styles.emptyBody}>{"The client hasn't submitted a wellness check-in. They'll appear here as they land."}</Text>
-    </View>
+    // Iter186 · Even with zero submitted check-ins the coach can now
+    // view / edit the LLM-generated question set. Card sits above the
+    // empty state so the workflow "generate → edit → notify client"
+    // is discoverable from the very first visit.
+    <ScrollView contentContainerStyle={styles.body} testID="v2-checkins-panel">
+      <CheckinQuestionsCard clientId={clientId} />
+      <View style={[styles.center, { paddingTop: 30 }]}>
+        <Ionicons name="heart-outline" size={32} color={theme.color.textDim} />
+        <Text style={styles.emptyTitle}>No check-ins yet</Text>
+        <Text style={styles.emptyBody}>
+          {"The client hasn't submitted a wellness check-in yet. Their answers will appear here as they land."}
+        </Text>
+      </View>
+    </ScrollView>
   );
 
   return (
     <ScrollView contentContainerStyle={styles.body} testID="v2-checkins-panel">
+      {/* Iter186 · Also pinned above the check-in list when there ARE
+          submissions — coaches often want to tweak the questions after
+          seeing the first responses. */}
+      <CheckinQuestionsCard clientId={clientId} />
       <Text style={styles.sectionTitle}>WEEKLY CHECK-INS · {rows.length}</Text>
       {rows.map((c, i) => {
         // Iter170 · Pull scores with layered fallbacks (top-level weekly

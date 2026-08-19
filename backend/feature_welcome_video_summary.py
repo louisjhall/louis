@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 EMERGENT_LLM_KEY = os.getenv("EMERGENT_LLM_KEY") or os.getenv("EMERGENT_LLM_UNIVERSAL_KEY") or ""
 
-_SUMMARY_SYSTEM_PROMPT = """You are helping a fitness coach's mobile app render a friendly
+_SUMMARY_SYSTEM_PROMPT_WELCOME = """You are helping a fitness coach's mobile app render a friendly
 summary of the coach's welcome video for a new client. You will receive the
 full script the coach recorded (spoken monologue, first-person voice).
 
@@ -55,6 +55,31 @@ Example output shape:
              "You can message me anytime", "Your first plan drops after your check-in"]}
 """
 
+_SUMMARY_SYSTEM_PROMPT_WEEKLY = """You are helping a fitness coach's mobile app render a summary of
+the coach's WEEKLY REVIEW video for an existing client. You will receive
+the full script the coach recorded (spoken monologue, first-person voice,
+reflecting on the past week and priming the next).
+
+Return ONLY a JSON object with a single key "bullets" whose value is an
+array of 3–5 SHORT strings. Each bullet MUST:
+- Be a first-person paraphrase from the coach's perspective ("great job
+  on…", "this week we're focusing on…", "let's push harder on…") — NOT a
+  third-person description.
+- Be 60 characters max.
+- Capture one distinct point (a callout, a next step, an intensity note,
+  a form cue, a check-in question). No fluff, no repeated ideas.
+- Feel warm, direct, human. No jargon, no "AI-generated" phrasing.
+
+Return NOTHING outside the JSON. No preamble, no code fences.
+Example output shape:
+{"bullets": ["Strong deadlift session — new PR ready", "Cardio bumps to 4x this week",
+             "Watch your knee on split squats", "How's sleep holding up?"]}
+"""
+
+
+# Backward-compat alias (some external code may reference this name).
+_SUMMARY_SYSTEM_PROMPT = _SUMMARY_SYSTEM_PROMPT_WELCOME
+
 
 def _fallback_bullets(script: str) -> list[str]:
     """Last-resort splitter when the LLM is unreachable — turns the
@@ -71,9 +96,14 @@ def _fallback_bullets(script: str) -> list[str]:
     return [p[:80] + ("…" if len(p) > 80 else "") for p in picks]
 
 
-async def generate_welcome_summary(script: str) -> list[str]:
-    """Best-effort LLM summary. Falls back to sentence splitting on any
-    error so the client never sees an empty state after this call."""
+async def generate_welcome_summary(script: str, video_kind: str = "welcome") -> list[str]:
+    """Best-effort LLM summary for a coach video. Falls back to sentence
+    splitting on any error so the client never sees an empty state.
+
+    Iter186+ · `video_kind` picks the right system prompt:
+      - "welcome" → warm-intro voice (I'll, we're going to, you can expect)
+      - anything else → weekly-review voice (great job on, this week, watch)
+    """
     script = (script or "").strip()
     if not script:
         return []
@@ -87,17 +117,22 @@ async def generate_welcome_summary(script: str) -> list[str]:
         logger.exception("emergentintegrations import failed — using fallback.")
         return _fallback_bullets(script)
 
+    system_prompt = (
+        _SUMMARY_SYSTEM_PROMPT_WELCOME
+        if (video_kind or "").lower() == "welcome"
+        else _SUMMARY_SYSTEM_PROMPT_WEEKLY
+    )
+
     try:
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
-            session_id=f"welcome-summary-{abs(hash(script)) % 10_000_000}",
-            system_message=_SUMMARY_SYSTEM_PROMPT,
+            session_id=f"video-summary-{abs(hash(script)) % 10_000_000}",
+            system_message=system_prompt,
         )
         chat.with_model("anthropic", "claude-sonnet-4-5-20250929")
         raw = await chat.send_message(UserMessage(text=script))
         if not isinstance(raw, str):
             raw = str(raw)
-        # Strip potential code fences.
         raw = raw.strip()
         raw = re.sub(r"^```(?:json)?", "", raw).strip()
         raw = re.sub(r"```$", "", raw).strip()
@@ -107,33 +142,34 @@ async def generate_welcome_summary(script: str) -> list[str]:
         parsed = json.loads(m.group(0))
         bullets = parsed.get("bullets") or []
         out = [str(b).strip() for b in bullets if str(b).strip()]
-        # Clip to the 3-5 contract even if the LLM overshoots.
         if len(out) < 3:
             return _fallback_bullets(script)
         return out[:5]
     except Exception:
-        logger.exception("welcome-summary LLM call failed — fallback.")
+        logger.exception("video-summary LLM call failed — fallback.")
         return _fallback_bullets(script)
 
 
 async def stamp_welcome_summary(db, video_id: str, script: str) -> None:
     """Background helper — computes the summary and writes it back to
     ``weekly_videos.script_summary``. Idempotent: skips if already set.
-    Safe to call from ``_spawn_bg`` — never raises to the caller."""
+    Safe to call from ``_spawn_bg`` — never raises to the caller.
+
+    Iter186+ · Extended to ALL videos (welcome + weekly). The video_kind
+    field on the doc drives the LLM voice; if unset we default to
+    "weekly" since that's the majority path.
+    """
     try:
         doc = await db.weekly_videos.find_one(
-            {"id": video_id}, {"_id": 0, "script_summary": 1, "video_kind": 1, "script": 1},
+            {"id": video_id},
+            {"_id": 0, "script_summary": 1, "video_kind": 1, "script": 1},
         )
         if not doc:
             return
-        # Skip if already stamped (idempotency).
         if doc.get("script_summary"):
             return
-        # Only run for welcome videos — weekly videos already have their
-        # own coach note format; no need to duplicate.
-        if (doc.get("video_kind") or "").lower() != "welcome":
-            return
-        bullets = await generate_welcome_summary(script or doc.get("script") or "")
+        kind = (doc.get("video_kind") or "weekly").lower()
+        bullets = await generate_welcome_summary(script or doc.get("script") or "", video_kind=kind)
         if not bullets:
             return
         await db.weekly_videos.update_one(
@@ -142,6 +178,51 @@ async def stamp_welcome_summary(db, video_id: str, script: str) -> None:
         )
     except Exception:
         logger.exception("stamp_welcome_summary failed for %s", video_id)
+
+
+async def backfill_all_video_summaries(db, batch_size: int = 25) -> dict:
+    """Iter186+ · One-shot backfill for existing videos that have a
+    ``script`` but no ``script_summary``. Runs sequentially with a
+    short delay to respect the Universal Key rate ceiling.
+
+    Returns ``{"scanned": N, "stamped": M, "skipped": K}`` — safe to
+    call repeatedly, idempotent per row.
+    """
+    import asyncio
+    scanned = stamped = skipped = 0
+    try:
+        cur = db.weekly_videos.find(
+            {
+                "script": {"$exists": True, "$nin": [None, ""]},
+                "$or": [
+                    {"script_summary": {"$exists": False}},
+                    {"script_summary": None},
+                    {"script_summary": []},
+                ],
+            },
+            {"_id": 0, "id": 1, "video_kind": 1, "script": 1},
+        )
+        async for row in cur:
+            scanned += 1
+            if scanned > 500:   # hard cap so a runaway can't blow the LLM budget
+                break
+            script = (row.get("script") or "").strip()
+            if not script or len(script) < 30:
+                skipped += 1
+                continue
+            kind = (row.get("video_kind") or "weekly").lower()
+            bullets = await generate_welcome_summary(script, video_kind=kind)
+            if not bullets:
+                skipped += 1
+                continue
+            await db.weekly_videos.update_one(
+                {"id": row["id"]}, {"$set": {"script_summary": bullets}},
+            )
+            stamped += 1
+            await asyncio.sleep(0.4)  # gentle pacing
+    except Exception:
+        logger.exception("backfill_all_video_summaries crashed at scanned=%d", scanned)
+    return {"scanned": scanned, "stamped": stamped, "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +282,17 @@ def make_router(db, require_role) -> APIRouter:
             {"id": video_id}, {"$set": {"script_summary": bullets}},
         )
         return {"ok": True, "bullets": bullets}
+
+    @r.post("/coach/videos/backfill-summaries")
+    async def coach_backfill_video_summaries(
+        coach: dict = Depends(require_role("coach")),
+    ):
+        """Iter186+ · One-shot backfill for existing videos that have a
+        ``script`` but no ``script_summary``. Runs sequentially with a
+        short delay to respect the Universal Key rate ceiling. Coach-only.
+        Safe to re-run — idempotent per row.
+        """
+        return await backfill_all_video_summaries(db)
 
     @r.post("/coach/videos/{video_id}/convert-to-welcome")
     async def coach_convert_to_welcome(

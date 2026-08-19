@@ -13670,16 +13670,16 @@ async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(r
         "watched_at": None,
     }
     await db.weekly_videos.insert_one(doc)
-    # Iter186 · Kick off the LLM welcome-video summary in the background
-    # so upload latency isn't affected. `_spawn_bg` holds a strong ref
-    # so Python's GC can't drop the task under load. The stamp helper is
-    # idempotent and no-ops on non-welcome / already-stamped rows.
-    if video_kind == "welcome" and body.script:
+    # Iter186+ · Generate a 3-5 bullet summary for EVERY video (welcome
+    # + weekly) — client screen renders these under the player. Fires
+    # in the background so upload latency isn't affected. `_spawn_bg`
+    # holds a strong ref so Python's GC can't drop the task under load.
+    if body.script:
         try:
             from feature_welcome_video_summary import stamp_welcome_summary
             _spawn_bg(stamp_welcome_summary(db, video_id, body.script))
         except Exception:
-            logger.exception("welcome-summary bg spawn failed for %s", video_id)
+            logger.exception("video-summary bg spawn failed for %s", video_id)
     # Iter 145 — prevent orphan uploads: only attach to a check_in that
     # doesn't already have a SENT video. If the check_in already has a
     # different sent video, this becomes a new draft attached but the
@@ -13885,14 +13885,19 @@ async def videos_get_one(video_id: str, user: dict = Depends(current_user)):
         raise HTTPException(404, "video not found")
     try:
         if (
-            (row.get("video_kind") or "").lower() == "welcome"
-            and not row.get("script_summary")
+            not row.get("script_summary")
             and (row.get("script") or "").strip()
         ):
+            # Iter186+ · Lazy self-heal for ANY video (welcome + weekly)
+            # that has a script but no summary. Fire-and-forget so the
+            # request stays snappy; the client falls back to the
+            # "Summary generating…" placeholder and gets the bullets on
+            # the next open. Covers the backfill gap + any race where
+            # the create-time hook missed.
             from feature_welcome_video_summary import stamp_welcome_summary
             _spawn_bg(stamp_welcome_summary(db, video_id, row.get("script") or ""))
     except Exception:
-        logger.exception("lazy welcome-summary spawn failed for %s", video_id)
+        logger.exception("lazy video-summary spawn failed for %s", video_id)
     return {"video": row}
 
 

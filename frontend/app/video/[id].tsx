@@ -103,7 +103,10 @@ export default function ClientVideo() {
         <View style={{ width: 26 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
+      <ScrollView
+        contentContainerStyle={styles.scrollBody}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.playerBox}>
           {playerUri ? (
             <VideoView
@@ -126,64 +129,59 @@ export default function ClientVideo() {
           )}
         </View>
 
-        {isWelcome ? (
+        {/* Iter186+ · All videos (welcome + weekly) now render a 3-5
+            bullet summary in place of the raw transcript. Falls back
+            to a "Summary generating…" placeholder + truncated script
+            during the ~10 s LLM window between coach send and
+            background summary completion. */}
+        {(Array.isArray(video.script_summary) && video.script_summary.length > 0) ? (
           <View style={styles.scriptCard}>
             <Text style={styles.scriptEyebrow}>{scriptEyebrow}</Text>
-            {/* Iter186 · Prefer the LLM-generated 3-5 bullet summary over
-                the raw teleprompter transcript. Falls back to the full
-                script if the summary hasn't been generated yet (very
-                small window between coach upload and background LLM
-                completion — usually < 15 s). */}
-            {Array.isArray(video.script_summary) && video.script_summary.length > 0 ? (
-              <View style={styles.bulletList} testID="welcome-summary-bullets">
-                {video.script_summary.map((b: string, i: number) => (
-                  <View key={i} style={styles.bulletRow}>
-                    <View style={styles.bulletDot} />
-                    <Text style={styles.bulletT}>{b}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : video.script ? (
-              <View>
-                <View style={styles.bulletList} testID="welcome-summary-pending">
-                  <View style={styles.bulletRow}>
-                    <ActivityIndicator size="small" color={theme.color.brand} />
-                    <Text style={[styles.bulletT, { fontStyle: "italic" }]}>
-                      Summary generating… tap back in a moment for the highlights.
-                    </Text>
-                  </View>
+            <View style={styles.bulletList} testID="video-summary-bullets">
+              {video.script_summary.map((b: string, i: number) => (
+                <View key={i} style={styles.bulletRow}>
+                  <View style={styles.bulletDot} />
+                  <Text style={styles.bulletT}>{b}</Text>
                 </View>
-                <Text style={styles.scriptFallback} numberOfLines={4}>
-                  {video.script}
+              ))}
+            </View>
+          </View>
+        ) : video.script ? (
+          <View style={styles.scriptCard}>
+            <Text style={styles.scriptEyebrow}>{scriptEyebrow}</Text>
+            <View style={styles.bulletList} testID="video-summary-pending">
+              <View style={styles.bulletRow}>
+                <ActivityIndicator size="small" color={theme.color.brand} />
+                <Text style={[styles.bulletT, { fontStyle: "italic" }]}>
+                  Summary generating… tap back in a moment for the highlights.
                 </Text>
               </View>
-            ) : null}
-          </View>
-        ) : (
-          !!video.script && (
-            <View style={styles.scriptCard}>
-              <Text style={styles.scriptEyebrow}>{scriptEyebrow}</Text>
-              <Text style={styles.scriptBody}>{video.script}</Text>
             </View>
-          )
-        )}
+            <Text style={styles.scriptFallback} numberOfLines={4}>
+              {video.script}
+            </Text>
+          </View>
+        ) : null}
 
-        {/* Iter186 · Message Your Coach CTA — keeps the client on the
-            welcome screen for one more beat and gives them a natural
-            first-message entry point right after watching. Routes to
-            the same coach-thread page as the tab-bar Messages icon. */}
-        {isWelcome && (
-          <Pressable
-            onPress={() => router.push("/(client)/messages" as any)}
-            style={({ pressed }) => [styles.msgCta, pressed && { opacity: 0.85 }]}
-            testID="welcome-message-coach"
-            accessibilityRole="button"
-            accessibilityLabel="Message your coach"
-          >
-            <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
-            <Text style={styles.msgCtaT}>MESSAGE YOUR COACH</Text>
-          </Pressable>
-        )}
+        {/* Iter186 · Message Your Coach CTA — shown for BOTH welcome and
+            weekly videos so clients always have a natural entry point to
+            reply to their coach right after watching. Routes to the same
+            coach-thread page as the tab-bar Messages icon.
+
+            Iter187 · Removed the `isWelcome` gate; now consistently
+            available across every coach video (previously the button was
+            also hidden below the fold because the player used a 9:16
+            portrait aspect — now 16:9 landscape). */}
+        <Pressable
+          onPress={() => router.push("/(client)/messages" as any)}
+          style={({ pressed }) => [styles.msgCta, pressed && { opacity: 0.85 }]}
+          testID="welcome-message-coach"
+          accessibilityRole="button"
+          accessibilityLabel="Message your coach"
+        >
+          <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
+          <Text style={styles.msgCtaT}>MESSAGE YOUR COACH</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -197,11 +195,19 @@ const styles = StyleSheet.create({
     padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider,
   },
   header: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  // Iter187 · ScrollView body — generous bottom padding guarantees the
+  // Message-Your-Coach CTA never sits behind the home-indicator / gesture
+  // bar on iOS and Android navigation gestures.
+  scrollBody: { padding: 20, paddingBottom: 48 },
   playerBox: {
     borderRadius: 14, backgroundColor: "#000",
     borderWidth: 1, borderColor: theme.color.border, overflow: "hidden",
-    aspectRatio: 9 / 16,
-    maxHeight: 500,
+    // Iter187 · Landscape 16:9 orientation — coach videos are recorded
+    // and stored horizontally (screen-recorder teleprompter + phone
+    // horizontal capture), so a 16:9 container fills the width without
+    // black side-bars and keeps the CTA above the fold on mobile.
+    aspectRatio: 16 / 9,
+    width: "100%",
     alignItems: "center", justifyContent: "center",
   },
   player: { width: "100%", height: "100%", backgroundColor: "#000" },

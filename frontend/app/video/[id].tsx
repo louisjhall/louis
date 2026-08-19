@@ -126,11 +126,63 @@ export default function ClientVideo() {
           )}
         </View>
 
-        {!!video.script && (
+        {isWelcome ? (
           <View style={styles.scriptCard}>
             <Text style={styles.scriptEyebrow}>{scriptEyebrow}</Text>
-            <Text style={styles.scriptBody}>{video.script}</Text>
+            {/* Iter186 · Prefer the LLM-generated 3-5 bullet summary over
+                the raw teleprompter transcript. Falls back to the full
+                script if the summary hasn't been generated yet (very
+                small window between coach upload and background LLM
+                completion — usually < 15 s). */}
+            {Array.isArray(video.script_summary) && video.script_summary.length > 0 ? (
+              <View style={styles.bulletList} testID="welcome-summary-bullets">
+                {video.script_summary.map((b: string, i: number) => (
+                  <View key={i} style={styles.bulletRow}>
+                    <View style={styles.bulletDot} />
+                    <Text style={styles.bulletT}>{b}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : video.script ? (
+              <View>
+                <View style={styles.bulletList} testID="welcome-summary-pending">
+                  <View style={styles.bulletRow}>
+                    <ActivityIndicator size="small" color={theme.color.brand} />
+                    <Text style={[styles.bulletT, { fontStyle: "italic" }]}>
+                      Summary generating… tap back in a moment for the highlights.
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.scriptFallback} numberOfLines={4}>
+                  {video.script}
+                </Text>
+              </View>
+            ) : null}
           </View>
+        ) : (
+          !!video.script && (
+            <View style={styles.scriptCard}>
+              <Text style={styles.scriptEyebrow}>{scriptEyebrow}</Text>
+              <Text style={styles.scriptBody}>{video.script}</Text>
+            </View>
+          )
+        )}
+
+        {/* Iter186 · Message Your Coach CTA — keeps the client on the
+            welcome screen for one more beat and gives them a natural
+            first-message entry point right after watching. Routes to
+            the same coach-thread page as the tab-bar Messages icon. */}
+        {isWelcome && (
+          <Pressable
+            onPress={() => router.push("/(client)/messages" as any)}
+            style={({ pressed }) => [styles.msgCta, pressed && { opacity: 0.85 }]}
+            testID="welcome-message-coach"
+            accessibilityRole="button"
+            accessibilityLabel="Message your coach"
+          >
+            <Ionicons name="chatbubble-ellipses" size={16} color="#fff" />
+            <Text style={styles.msgCtaT}>MESSAGE YOUR COACH</Text>
+          </Pressable>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -166,4 +218,28 @@ const styles = StyleSheet.create({
   },
   scriptEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   scriptBody: { color: theme.color.text, fontSize: 14, lineHeight: 22, marginTop: 10 },
+  // Iter186 · Bullet-summary list styles
+  bulletList: { marginTop: 12, gap: 10 },
+  bulletRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  bulletDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: theme.color.brand,
+    marginTop: 8,
+  },
+  bulletT: {
+    color: theme.color.text, fontSize: 14, lineHeight: 20,
+    flex: 1, fontWeight: "600",
+  },
+  scriptFallback: {
+    color: theme.color.textMuted, fontSize: 12, lineHeight: 17,
+    marginTop: 10, fontStyle: "italic",
+  },
+  // Iter186 · Message-your-coach CTA
+  msgCta: {
+    marginTop: 16,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    paddingVertical: 14, borderRadius: 12,
+    backgroundColor: theme.color.brand,
+  },
+  msgCtaT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.6 },
 });

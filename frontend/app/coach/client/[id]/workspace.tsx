@@ -189,6 +189,33 @@ export default function CoachWorkspaceScreen() {
   const [commandBarOpen, setCommandBarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<V2Tab>("plan");
 
+  // Iter186 · Welcome-video sent status for this client — powers the
+  // "SENT · dd Mon" pill next to the WELCOME VIDEO button so the coach
+  // knows whether their recording actually landed with the client.
+  const [welcomeVideo, setWelcomeVideo] = useState<{
+    status?: string;
+    sent_at?: string | null;
+    watched_at?: string | null;
+    created_at?: string | null;
+  } | null>(null);
+  const reloadWelcomeVideo = useCallback(async () => {
+    try {
+      const r = await api<any>(`/coach/videos/welcome/${clientId}`);
+      setWelcomeVideo(r?.video ? { ...r.video, status: r.status } : null);
+    } catch {
+      setWelcomeVideo(null);
+    }
+  }, [clientId]);
+  useEffect(() => { reloadWelcomeVideo(); }, [reloadWelcomeVideo]);
+  // Refresh when the coach returns from the teleprompter (they may
+  // have just sent one) — expo-router's focus hook is already imported
+  // elsewhere in this file; we piggyback on a plain interval to be
+  // resilient without adding another import.
+  useEffect(() => {
+    const t = setInterval(reloadWelcomeVideo, 30_000);
+    return () => clearInterval(t);
+  }, [reloadWelcomeVideo]);
+
   // Phase 1 Manual Workout Builder — state
   const [dayMenuDate, setDayMenuDate] = useState<string | null>(null);
   const [manualBuilder, setManualBuilder] = useState<null | {
@@ -493,15 +520,40 @@ export default function CoachWorkspaceScreen() {
         {/* Iter 162 · Record Welcome Video — jumps straight into the
             teleprompter in welcome-only mode. Works even before the client
             has submitted their first check-in. */}
+        {/* Iter186 · WELCOME VIDEO button now surfaces a "SENT · dd Mon"
+            pill (with an optional "WATCHED" tick) when a welcome video
+            has already been delivered to this client. Coach at-a-glance
+            knows whether they need to record one, and if so whether the
+            client has actually opened it. */}
         <Pressable
           onPress={() => router.push(`/coach/teleprompter/welcome-${clientId}?welcome=1&clientName=${encodeURIComponent(data?.client?.name || "")}` as any)}
-          style={styles.welcomeBtn}
+          style={[
+            styles.welcomeBtn,
+            welcomeVideo?.status === "sent" && styles.welcomeBtnSent,
+          ]}
           testID="workspace-record-welcome-btn"
-          accessibilityLabel="Record welcome video"
+          accessibilityLabel={
+            welcomeVideo?.status === "sent"
+              ? "Welcome video sent — tap to record a new one"
+              : "Record welcome video"
+          }
           hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
         >
-          <Ionicons name="videocam" size={14} color={theme.color.text} />
-          <Text style={styles.welcomeBtnText}>WELCOME VIDEO</Text>
+          <Ionicons
+            name={welcomeVideo?.status === "sent" ? "checkmark-circle" : "videocam"}
+            size={14}
+            color={welcomeVideo?.status === "sent" ? theme.color.green : theme.color.text}
+          />
+          <Text style={styles.welcomeBtnText}>
+            {welcomeVideo?.status === "sent"
+              ? `WELCOME · ${new Date(welcomeVideo.sent_at || welcomeVideo.created_at || Date.now()).toLocaleDateString(undefined, { day: "numeric", month: "short" }).toUpperCase()}`
+              : "WELCOME VIDEO"}
+          </Text>
+          {welcomeVideo?.status === "sent" && welcomeVideo.watched_at ? (
+            <View style={styles.welcomeWatchedDot} testID="welcome-watched-dot">
+              <Ionicons name="eye" size={10} color="#fff" />
+            </View>
+          ) : null}
         </Pressable>
         <Pressable
           onPress={() => setAdminDrawerOpen(true)}
@@ -1506,6 +1558,18 @@ const styles = StyleSheet.create({
     borderColor: theme.color.brand,
     backgroundColor: theme.color.brandTint,
     marginRight: 6,
+  },
+  // Iter186 · Sent variant — subtly greener border + tint so the coach's
+  // eye can lock onto the "done" state without a full colour swap.
+  welcomeBtnSent: {
+    borderColor: theme.color.green,
+    backgroundColor: "rgba(52,199,89,0.10)",
+  },
+  welcomeWatchedDot: {
+    marginLeft: 4,
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: theme.color.green,
+    alignItems: "center", justifyContent: "center",
   },
   welcomeBtnText: {
     color: theme.color.text,

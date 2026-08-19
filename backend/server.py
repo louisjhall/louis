@@ -13670,6 +13670,16 @@ async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(r
         "watched_at": None,
     }
     await db.weekly_videos.insert_one(doc)
+    # Iter186 · Kick off the LLM welcome-video summary in the background
+    # so upload latency isn't affected. `_spawn_bg` holds a strong ref
+    # so Python's GC can't drop the task under load. The stamp helper is
+    # idempotent and no-ops on non-welcome / already-stamped rows.
+    if video_kind == "welcome" and body.script:
+        try:
+            from feature_welcome_video_summary import stamp_welcome_summary
+            _spawn_bg(stamp_welcome_summary(db, video_id, body.script))
+        except Exception:
+            logger.exception("welcome-summary bg spawn failed for %s", video_id)
     # Iter 145 — prevent orphan uploads: only attach to a check_in that
     # doesn't already have a SENT video. If the check_in already has a
     # different sent video, this becomes a new draft attached but the
@@ -14161,6 +14171,14 @@ try:
     logger.info("feature_roster_coach_review: submission-state + coach review registered")
 except Exception:
     logger.exception("feature_roster_coach_review failed to register")
+
+# Iter186 — mount welcome-video summary + coach welcome-lookup endpoints.
+try:
+    from feature_welcome_video_summary import make_router as _wvs_make_router
+    api.include_router(_wvs_make_router(db, require_role))
+    logger.info("feature_welcome_video_summary: welcome summary + coach lookup registered")
+except Exception:
+    logger.exception("feature_welcome_video_summary failed to register")
 
 # Iter 128 — Flight Support media resolver (3-stage carousel + Pilot persona)
 try:

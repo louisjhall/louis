@@ -15,7 +15,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { api } from "@/src/lib/api";
+import { api, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
 type Phase = "idle" | "countdown" | "recording" | "preview" | "sending";
@@ -27,6 +27,21 @@ const SPEED_MIN = 5;
 const SPEED_MAX = 60;
 const SPEED_STEP = 5;
 const SPEED_STORAGE_KEY = "crewfit.teleprompter.speed";
+
+// Iter186 · Font-size control (script reading area). Coach can bump the
+// script text between 18 and 56 px to suit their eyesight / distance.
+// Persisted per-coach so the setting sticks across sessions.
+const FONT_SIZE_DEFAULT = 32;
+const FONT_SIZE_MIN = 18;
+const FONT_SIZE_MAX = 56;
+const FONT_SIZE_STEP = 4;
+const FONT_SIZE_STORAGE_KEY = "crewfit.teleprompter.fontsize";
+
+// Iter186 · Video upload — 10-minute hard timeout on the POST /coach/videos
+// request. Previously fetch() had no AbortController → if the K8s ingress
+// silently dropped an in-flight large upload, the sendVideo() call hung
+// forever and the UI stayed on "Uploading…" with no error path.
+const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
 export default function Teleprompter() {
   // Iter 162 · The teleprompter now handles two entry paths:
@@ -57,6 +72,15 @@ export default function Teleprompter() {
   const [countdown, setCountdown] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [scrollSpeed, setScrollSpeed] = useState(SPEED_DEFAULT);
+  // Iter186 · Font size for the script (persisted per-coach)
+  const [scriptFontSize, setScriptFontSize] = useState<number>(FONT_SIZE_DEFAULT);
+  // Iter186 · Upload progress + error state — replaces the frozen "Uploading…"
+  // spinner. `uploadPct` is 0-100. `uploadError` holds any failure message
+  // so the UI can render a red banner with a RETRY button instead of a
+  // permanent grey spinner. Both reset on retake().
+  const [uploadPct, setUploadPct] = useState<number>(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadBytes, setUploadBytes] = useState<number>(0);
   const [paused, setPaused] = useState(false);
   const [recordingBlob, setRecordingBlob] = useState<Blob | string | null>(null);
   const [permissionOk, setPermissionOk] = useState(false);
@@ -115,6 +139,14 @@ export default function Teleprompter() {
             if (n >= SPEED_MIN && n <= SPEED_MAX) setScrollSpeed(n);
           }
         } catch { /* ignore */ }
+        // Iter186 · Restore last-used font size
+        try {
+          const stored = await AsyncStorage.getItem(FONT_SIZE_STORAGE_KEY);
+          if (stored) {
+            const n = parseInt(stored, 10);
+            if (n >= FONT_SIZE_MIN && n <= FONT_SIZE_MAX) setScriptFontSize(n);
+          }
+        } catch { /* ignore */ }
         return;
       }
       try {
@@ -132,6 +164,14 @@ export default function Teleprompter() {
           if (n >= SPEED_MIN && n <= SPEED_MAX) setScrollSpeed(n);
         }
       } catch { /* ignore */ }
+      // Iter186 · Restore last-used font size (weekly path)
+      try {
+        const stored = await AsyncStorage.getItem(FONT_SIZE_STORAGE_KEY);
+        if (stored) {
+          const n = parseInt(stored, 10);
+          if (n >= FONT_SIZE_MIN && n <= FONT_SIZE_MAX) setScriptFontSize(n);
+        }
+      } catch { /* ignore */ }
     })();
   }, [id, isWelcomeMode, welcomeClientId, qClientName]);
 
@@ -139,6 +179,11 @@ export default function Teleprompter() {
   useEffect(() => {
     AsyncStorage.setItem(SPEED_STORAGE_KEY, String(scrollSpeed)).catch(() => {});
   }, [scrollSpeed]);
+
+  // Iter186 · Persist font size similarly
+  useEffect(() => {
+    AsyncStorage.setItem(FONT_SIZE_STORAGE_KEY, String(scriptFontSize)).catch(() => {});
+  }, [scriptFontSize]);
 
   // Save script edits back to the check-in row (Iter 145)
   const saveScriptEdit = useCallback(async () => {
@@ -261,6 +306,10 @@ export default function Teleprompter() {
     currentOffset.current = 0;
     setPaused(false);
     scriptScroll.current?.scrollTo?.({ y: 0, animated: false });
+    // Iter186 · Also clear upload progress + error state on retake.
+    setUploadPct(0);
+    setUploadError(null);
+    setUploadBytes(0);
     setPhase("idle");
   };
 
@@ -273,21 +322,30 @@ export default function Teleprompter() {
 
   const sendVideo = async () => {
     if (!recordingBlob || !(recordingBlob instanceof Blob)) return;
+    // Iter186 · Reset progress state before we begin.
+    setUploadError(null);
+    setUploadPct(0);
+    setUploadBytes(recordingBlob.size || 0);
     setPhase("sending");
+
+    // Timeout guard so the UI can never sit on "Uploading…" indefinitely.
+    // If the K8s ingress silently drops an in-flight large upload the
+    // fetch/XHR would otherwise hang forever.
+    let didTimeout = false;
+    const timeoutHandle = setTimeout(() => {
+      didTimeout = true;
+    }, UPLOAD_TIMEOUT_MS);
+
     try {
-      // Convert blob to base64
+      // Convert blob to base64 (data URL — server strips the prefix).
       const reader = new FileReader();
       const b64: string = await new Promise((resolve, reject) => {
         reader.onload = () => resolve(String(reader.result));
-        reader.onerror = reject;
+        reader.onerror = () => reject(new Error("Could not read the recording — please retake."));
         reader.readAsDataURL(recordingBlob);
       });
+
       // Iter 156 — Welcome Video Phase 2.
-      // When "Mark as Welcome Video" is ON we DROP the check_in_id and
-      // tag the doc as video_kind="welcome" so it lands on the client
-      // dashboard banner instead of the weekly review card. The user
-      // being sent-to is still the check-in owner, because welcome
-      // recordings today are always initiated from a client's row.
       const body: Record<string, any> = {
         user_id: ci.user_id,
         script,
@@ -298,13 +356,24 @@ export default function Teleprompter() {
       if (isWelcome) {
         body.video_kind = "welcome";
       } else if (!isWelcomeMode) {
-        // Iter 162 · Only attach the check_in_id when we actually loaded
-        // one — welcome-only entry has `id="welcome-{clientId}"` which is
-        // NOT a real check-in id.
         body.check_in_id = id;
       }
-      const v = await api<any>("/coach/videos", { method: "POST", body });
+
+      // Iter186 · Web path uses XMLHttpRequest for real upload-progress
+      // events + explicit timeout. Native falls back to fetch (base64 is
+      // already in memory; native builds are the rare path today).
+      const v = await postVideoWithProgress(body, {
+        onProgress: (pct: number) => setUploadPct(pct),
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+      });
+
+      if (didTimeout) throw new Error("Upload timed out — please retry.");
+
+      // Second call — announce the send to the client. Small payload,
+      // no progress needed; falls under the same timeout guard.
       await api<any>(`/coach/videos/${v.video.id}/send`, { method: "POST", body: {} });
+
+      clearTimeout(timeoutHandle);
       Alert.alert(
         "Sent!",
         isWelcome
@@ -313,7 +382,19 @@ export default function Teleprompter() {
       );
       router.back();
     } catch (e: any) {
-      Alert.alert("Send failed", e?.message || "");
+      clearTimeout(timeoutHandle);
+      // Iter186 · Never leave the UI on a permanent spinner. Land back
+      // in the "preview" phase with a visible red banner + a Retry CTA.
+      const rawMessage = e?.message || String(e) || "Upload failed.";
+      const friendlyMessage = /timed out|timeout/i.test(rawMessage)
+        ? `Upload timed out after ${UPLOAD_TIMEOUT_MS / 60_000} min — check your connection and tap RETRY.`
+        : /network|failed to fetch|load failed/i.test(rawMessage)
+          ? "Network error — the connection dropped mid-upload. Tap RETRY."
+          : /413|too large|payload/i.test(rawMessage)
+            ? "Video is too large — please retake with a shorter recording."
+            : rawMessage;
+      setUploadError(friendlyMessage);
+      setUploadPct(0);
       setPhase("preview");
     }
   };
@@ -377,7 +458,7 @@ export default function Teleprompter() {
       {/* Teleprompter script — Iter 145: editable inline before recording */}
       <View style={styles.promptWrap}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingRight: 12 }}>
-          <Text style={styles.promptEyebrow}>SCRIPT · SPEED {scrollSpeed}px/s{paused ? " · PAUSED" : ""}</Text>
+          <Text style={styles.promptEyebrow}>SCRIPT · {scrollSpeed}px/s · {scriptFontSize}px{paused ? " · PAUSED" : ""}</Text>
           {phase === "idle" && !editingScript && (
             <Pressable onPress={() => { setScriptDraft(script); setEditingScript(true); }} testID="edit-script-inline" hitSlop={8}>
               <Text style={styles.editT}>EDIT</Text>
@@ -410,18 +491,23 @@ export default function Teleprompter() {
           <ScrollView
             ref={scriptScroll}
             style={styles.promptScroll}
+            contentContainerStyle={{ paddingBottom: 200 }}
             showsVerticalScrollIndicator={paused}
             scrollEnabled={paused || phase === "idle"}
             onScroll={paused ? (e) => { currentOffset.current = e.nativeEvent.contentOffset.y; } : undefined}
             scrollEventThrottle={16}
           >
-            <Text style={styles.promptText}>{script}</Text>
-            <View style={{ height: 200 }} />
+            {/* Iter186 · Font size is now driven by state (persisted per-coach)
+                so a scan-and-read coach can bump the text up without editing
+                the stylesheet. lineHeight tracks fontSize * 1.4 for airy copy. */}
+            <Text style={[styles.promptText, { fontSize: scriptFontSize, lineHeight: Math.round(scriptFontSize * 1.4) }]}>
+              {script}
+            </Text>
           </ScrollView>
         )}
       </View>
 
-      {/* Controls — Iter 145: slower/faster/pause/resume/restart */}
+      {/* Controls — Iter 145: speed. Iter186: font-size row added. */}
       <View style={styles.controls}>
         <Pressable
           onPress={() => setScrollSpeed((s) => Math.max(SPEED_MIN, s - SPEED_STEP))}
@@ -454,8 +540,41 @@ export default function Teleprompter() {
           <Text style={styles.speedT}>FASTER</Text>
         </Pressable>
       </View>
+      {/* Iter186 · Font-size controls — sits on the same visual row as
+          speed. `A-` shrinks 4px, `A+` grows 4px, clamped to MIN/MAX. */}
+      <View style={styles.controlsFont}>
+        <Text style={styles.controlsFontLabel}>TEXT SIZE</Text>
+        <Pressable
+          onPress={() => setScriptFontSize((s) => Math.max(FONT_SIZE_MIN, s - FONT_SIZE_STEP))}
+          style={styles.speedBtn}
+          disabled={scriptFontSize <= FONT_SIZE_MIN}
+          testID="font-smaller"
+        >
+          <Text style={[styles.speedT, { fontSize: 11 }]}>A-</Text>
+        </Pressable>
+        <View style={styles.fontValuePill}>
+          <Text style={styles.fontValueT}>{scriptFontSize}</Text>
+        </View>
+        <Pressable
+          onPress={() => setScriptFontSize((s) => Math.min(FONT_SIZE_MAX, s + FONT_SIZE_STEP))}
+          style={styles.speedBtn}
+          disabled={scriptFontSize >= FONT_SIZE_MAX}
+          testID="font-larger"
+        >
+          <Text style={[styles.speedT, { fontSize: 15, fontWeight: "900" }]}>A+</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.mainAction}>
+        {/* Iter186 · Persistent upload-error banner shown above the CTAs
+            in the `preview` phase so the coach never has to guess why
+            an earlier send didn't complete. Clears on retake. */}
+        {phase === "preview" && uploadError && (
+          <View style={styles.uploadErrCard} testID="upload-error-banner">
+            <Ionicons name="alert-circle" size={18} color={theme.color.red} />
+            <Text style={styles.uploadErrT}>{uploadError}</Text>
+          </View>
+        )}
         {phase === "idle" && (
           <Pressable onPress={startCountdown} style={styles.recordBtn} testID="record-start">
             <View style={styles.recordCircle} />
@@ -476,12 +595,29 @@ export default function Teleprompter() {
             </Pressable>
             <Pressable onPress={sendVideo} style={styles.sendBtn} testID="send-recorded">
               <Ionicons name="send" size={16} color="#fff" />
-              <Text style={styles.sendT}>SEND TO CLIENT</Text>
+              <Text style={styles.sendT}>{uploadError ? "RETRY SEND" : "SEND TO CLIENT"}</Text>
             </Pressable>
           </View>
         )}
         {phase === "sending" && (
-          <View style={styles.sending}><ActivityIndicator color={theme.color.brand} /><Text style={{ color: theme.color.textMuted, marginLeft: 10 }}>Uploading…</Text></View>
+          /* Iter186 · Real progress bar + percentage replaces the
+              indefinite spinner. Also shows a Cancel option so the
+              coach can bail out and retake if it's clearly stuck. */
+          <View style={styles.sendingCard} testID="upload-progress">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <ActivityIndicator color={theme.color.brand} />
+              <Text style={styles.sendingH}>
+                Uploading… {uploadPct}%
+                {uploadBytes ? `  ·  ${(uploadBytes / (1024 * 1024)).toFixed(1)} MB` : ""}
+              </Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${uploadPct}%` }]} />
+            </View>
+            <Text style={styles.sendingHint}>
+              Larger recordings can take a minute or two on a mobile connection. If nothing changes for 10 minutes you&apos;ll see an error and can retry.
+            </Text>
+          </View>
         )}
       </View>
     </SafeAreaView>
@@ -489,6 +625,90 @@ export default function Teleprompter() {
 }
 
 function fmt(sec: number): string { const m = Math.floor(sec / 60); const s = sec % 60; return `${m}:${String(s).padStart(2, "0")}`; }
+
+// Iter186 · Upload helper with real progress + timeout. Uses XHR on web
+// (fetch has no upload-progress API), falls back to fetch elsewhere.
+// Kept inside this file because it's only used by the teleprompter and
+// mirrors the /coach/videos POST semantics exactly.
+async function postVideoWithProgress(
+  body: Record<string, any>,
+  { onProgress, timeoutMs }: { onProgress: (pct: number) => void; timeoutMs: number },
+): Promise<any> {
+  // Resolve auth + base URL from the shared api helper.
+  const token = await getToken();
+  const API_BASE_URL = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/$/, "") + "/api";
+  const url = `${API_BASE_URL}/coach/videos`;
+
+  if (Platform.OS === "web") {
+    return await new Promise((resolve, reject) => {
+      try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url, true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        xhr.timeout = timeoutMs;
+        xhr.upload.onprogress = (evt: ProgressEvent) => {
+          if (evt.lengthComputable && evt.total > 0) {
+            const pct = Math.min(99, Math.round((evt.loaded / evt.total) * 100));
+            onProgress(pct);
+          }
+        };
+        xhr.onload = () => {
+          try {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              onProgress(100);
+              const j = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+              resolve(j);
+            } else {
+              let detail = `HTTP ${xhr.status}`;
+              try {
+                const j = JSON.parse(xhr.responseText || "{}");
+                detail = j?.detail || detail;
+              } catch { /* ignore */ }
+              reject(new Error(String(detail)));
+            }
+          } catch (e: any) {
+            reject(e);
+          }
+        };
+        xhr.onerror = () => reject(new Error("Network error — please retry."));
+        xhr.ontimeout = () => reject(new Error(`Upload timed out after ${Math.round(timeoutMs / 60_000)} min.`));
+        xhr.onabort  = () => reject(new Error("Upload aborted."));
+        xhr.send(JSON.stringify(body));
+      } catch (e: any) {
+        reject(e);
+      }
+    });
+  }
+
+  // Native fallback — fetch + AbortController. No upload progress but
+  // still gets the same timeout guarantee.
+  const controller = new AbortController();
+  const abortHandle = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(abortHandle);
+    onProgress(100);
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const j = await res.json(); msg = j?.detail || msg; } catch { /* ignore */ }
+      throw new Error(String(msg));
+    }
+    return await res.json();
+  } catch (e: any) {
+    clearTimeout(abortHandle);
+    if (e?.name === "AbortError") throw new Error(`Upload timed out after ${Math.round(timeoutMs / 60_000)} min.`);
+    throw e;
+  }
+}
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
@@ -515,7 +735,12 @@ const styles = StyleSheet.create({
   welcomeHint: {
     color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
   },
-  camWrap: { height: 240, backgroundColor: "#111", position: "relative" },
+  // Iter186 · Was 240px which squeezed the script to only 2 lines on
+  // shorter viewports (mobile portrait, iPad split-view). Coach's core
+  // job on this screen is READING, not admiring the camera preview, so
+  // we halve the fixed height. The script's ScrollView gets the extra
+  // vertical space via flex: 1.
+  camWrap: { height: 160, backgroundColor: "#111", position: "relative" },
   camFallback: { flex: 1, alignItems: "center", justifyContent: "center", gap: 8 },
   camFallbackT: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1 },
   overlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" },
@@ -523,18 +748,43 @@ const styles = StyleSheet.create({
   recDot: { position: "absolute", top: 12, left: 12, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#c94a4a" },
   recT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
-  promptWrap: { flex: 1, backgroundColor: theme.color.surface },
+  // Iter186 · promptWrap now claims flex: 2 so the script area is the
+  // dominant surface on the screen (was flex: 1 with a large camera).
+  promptWrap: { flex: 2, backgroundColor: theme.color.surface, minHeight: 240 },
   promptEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, padding: 12 },
   promptScroll: { flex: 1, paddingHorizontal: 20 },
-  promptText: { color: theme.color.text, fontSize: 28, lineHeight: 40, fontWeight: "700", letterSpacing: 0.3 },
+  // Iter186 · fontSize/lineHeight are now driven inline from state so
+  // this rule only carries colour + weight + tracking.
+  promptText: { color: theme.color.text, fontWeight: "700", letterSpacing: 0.3 },
   editT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5, paddingHorizontal: 8, paddingVertical: 4 },
   scriptEdit: { flex: 1, marginHorizontal: 12, marginBottom: 8, padding: 12, borderRadius: 8, backgroundColor: theme.color.surface3, borderWidth: 1, borderColor: theme.color.border, color: theme.color.text, fontSize: 18, lineHeight: 26, textAlignVertical: "top" },
   controls: { flexDirection: "row", gap: 8, padding: 12, justifyContent: "center", backgroundColor: theme.color.surface2 },
+  // Iter186 · Font-size row — same visual language as `controls` but
+  // narrower and with a label so coach knows what it does.
+  controlsFont: {
+    flexDirection: "row", gap: 8,
+    paddingHorizontal: 12, paddingBottom: 10,
+    justifyContent: "center", alignItems: "center",
+    backgroundColor: theme.color.surface2,
+  },
+  controlsFontLabel: {
+    color: theme.color.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 1.5,
+    marginRight: 4,
+  },
+  fontValuePill: {
+    minWidth: 44,
+    paddingHorizontal: 10, paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1, borderColor: theme.color.border,
+    alignItems: "center", justifyContent: "center",
+  },
+  fontValueT: { color: theme.color.brand, fontSize: 12, fontWeight: "900" },
   speedBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.color.border },
   speedBtnOn: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   speedT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   speedTOn: { color: "#fff" },
-  mainAction: { padding: 20, alignItems: "center", backgroundColor: theme.color.surface },
+  mainAction: { padding: 20, alignItems: "center", backgroundColor: theme.color.surface, gap: 10 },
   recordBtn: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "#c94a4a", paddingHorizontal: 24, paddingVertical: 14, borderRadius: 30 },
   recordCircle: { width: 16, height: 16, borderRadius: 8, backgroundColor: "#fff" },
   recordT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
@@ -543,5 +793,27 @@ const styles = StyleSheet.create({
   retakeT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
   sendBtn: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 10, backgroundColor: theme.color.brand },
   sendT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
-  sending: { flexDirection: "row", alignItems: "center" },
+  // Iter186 · Upload-progress + error styles
+  sendingCard: {
+    alignSelf: "stretch",
+    padding: 14, borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.brand,
+    gap: 10,
+  },
+  sendingH: { color: theme.color.text, fontSize: 13, fontWeight: "900", letterSpacing: 1 },
+  sendingHint: { color: theme.color.textMuted, fontSize: 11, lineHeight: 15, fontStyle: "italic" },
+  progressTrack: {
+    height: 6, borderRadius: 3, overflow: "hidden",
+    backgroundColor: theme.color.border,
+  },
+  progressFill: { height: "100%", backgroundColor: theme.color.brand },
+  uploadErrCard: {
+    alignSelf: "stretch",
+    flexDirection: "row", alignItems: "flex-start", gap: 10,
+    padding: 12, borderRadius: 10,
+    backgroundColor: "rgba(239,68,68,0.12)",
+    borderLeftWidth: 3, borderLeftColor: theme.color.red,
+  },
+  uploadErrT: { color: theme.color.text, fontSize: 12, lineHeight: 17, flex: 1 },
 });

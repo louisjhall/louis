@@ -173,6 +173,9 @@ export default function Home() {
   const [activityRefreshKey, setActivityRefreshKey] = useState(0);
   const [setupDay, setSetupDay] = useState<{ is_setup_day: boolean; first_workout_date?: string | null; reason?: string | null } | null>(null);
   const [rosterJob, setRosterJob] = useState<{ id: string; status?: string; stage?: string; progress?: number; message?: string; error?: string } | null>(null);
+  // Iter186 · Server-computed roster submission state — used to hide
+  // the RosterNeededHeroCard while a submission is under coach review.
+  const [rosterSubmission, setRosterSubmission] = useState<{ state?: string } | null>(null);
   // Plan C2 — Programme Overview card data (goal, phase, week, target, focus, next key session)
   const [programme, setProgramme] = useState<any>(null);
   // Iter 84 (Task 1.5) — Programme focus banner (event + primary goal reconciliation)
@@ -207,7 +210,7 @@ export default function Home() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live, acts, today] = await Promise.all([
+      const [ws, r, ev, evAll, pr, sb, sd, rj, prog, focus, live, acts, today, rsub] = await Promise.all([
         api<any[]>("/workouts/week"),
         api<any>("/roster/current"),
         api<any>("/events/current"),
@@ -221,6 +224,10 @@ export default function Home() {
         api<any>("/profile/live-state").catch(() => null),
         api<any>("/personal-activities").catch(() => ({ activities: [] })),
         api<any>("/client/today").catch(() => null),
+        // Iter186 · Roster submission-state — drives the RosterNeededHeroCard
+        // hide/show decision. Defaults to `{state:"none"}` on error so a
+        // temporarily-unreachable endpoint never blocks the home dashboard.
+        api<any>("/roster/submission-state").catch(() => ({ state: "none" })),
       ]);
       setWorkouts(ws || []);
       setRoster(r && r.id ? r : null);
@@ -240,6 +247,9 @@ export default function Home() {
       // Kept separate from training so a re-render doesn't affect programme
       // state.
       setTodaySnapshot(today || null);
+      // Iter186 · Store submission-state so the RosterNeededHeroCard
+      // can be hidden while a roster is awaiting coach review.
+      setRosterSubmission(rsub || { state: "none" });
       // Iter 94j — after a fresh load, if this brand-new client hasn't yet
       // answered the first-day-choice question, route them to the choice
       // screen. Only fires on Day 1 (needs_choice comes from the backend
@@ -524,6 +534,7 @@ export default function Home() {
                     rosterJob.status === "processing" ||
                     rosterJob.status === "awaiting_confirmation")
                 }
+                submissionState={rosterSubmission?.state}
               />
             );
           })()}

@@ -8,6 +8,11 @@
  *     doesn't see conflicting CTAs ("Import now" vs "Processing…").
  *   - Hides the moment `/roster/current` returns a doc with `days.length > 0`.
  *
+ * Iter186 · New `submissionState` prop overrides all of the above — if
+ * the client is `awaiting_coach_review` or `coach_approved`, the CTA
+ * must NOT be shown regardless of what /roster/current says. Only
+ * `none` and `coach_rejected` re-enable the CTA.
+ *
  * The parent (home.tsx) owns the data fetch — this component is a pure
  * presentational shell. It renders `null` when the parent tells it to.
  */
@@ -23,12 +28,27 @@ type Props = {
   /** Truthy if a roster job is currently uploading / parsing.
    *  Prevents dual-CTA confusion. */
   jobInFlight: boolean;
+  /** Iter186 · Server-computed submission state — only `none` and
+   *  `coach_rejected` allow the CTA to render. Any other value hides
+   *  the card (the roster-upload page will show the lock card instead). */
+  submissionState?: string;
 };
 
-export function RosterNeededHeroCard({ needsRoster, jobInFlight }: Props) {
+export function RosterNeededHeroCard({ needsRoster, jobInFlight, submissionState }: Props) {
   const router = useRouter();
   if (!needsRoster || jobInFlight) return null;
+  // Iter186 · Hard-gate against the coach-review states so a client
+  // whose roster is under review never sees an "IMPORT ROSTER NOW" CTA
+  // on their home dashboard — it would break the mental model.
+  if (
+    submissionState &&
+    submissionState !== "none" &&
+    submissionState !== "coach_rejected"
+  ) {
+    return null;
+  }
 
+  const rejected = submissionState === "coach_rejected";
   const onImport = () => {
     router.push("/roster-upload");
   };
@@ -36,17 +56,20 @@ export function RosterNeededHeroCard({ needsRoster, jobInFlight }: Props) {
   return (
     <View style={styles.card} testID="roster-needed-hero">
       <View style={styles.iconWrap}>
-        <Ionicons name="calendar" size={26} color="#fff" />
+        <Ionicons name={rejected ? "refresh" : "calendar"} size={26} color="#fff" />
         <View style={styles.badge}>
           <Ionicons name="alert" size={11} color="#fff" />
         </View>
       </View>
 
-      <Text style={styles.eyebrow}>ACTION REQUIRED</Text>
-      <Text style={styles.title}>Your roster builds your plan</Text>
+      <Text style={styles.eyebrow}>{rejected ? "COACH ASKED FOR A NEW UPLOAD" : "ACTION REQUIRED"}</Text>
+      <Text style={styles.title}>
+        {rejected ? "Please re-upload your roster" : "Your roster builds your plan"}
+      </Text>
       <Text style={styles.body}>
-        Upload your latest roster so CrewFit can schedule workouts around your flights,
-        layovers and rest days. Your training plan can&apos;t start without it.
+        {rejected
+          ? "Your coach couldn't work with the last version — often a photo that's cut off or a duty code that didn't parse. Upload a fresh copy and we'll rerun it."
+          : "Upload your latest roster so CrewFit can schedule workouts around your flights, layovers and rest days. Your training plan can't start without it."}
       </Text>
 
       <Pressable
@@ -54,10 +77,10 @@ export function RosterNeededHeroCard({ needsRoster, jobInFlight }: Props) {
         style={({ pressed }) => [styles.cta, pressed && { opacity: 0.85 }]}
         testID="roster-needed-import-cta"
         accessibilityRole="button"
-        accessibilityLabel="Import roster now"
+        accessibilityLabel={rejected ? "Re-upload roster" : "Import roster now"}
       >
         <Ionicons name="cloud-upload" size={18} color="#fff" />
-        <Text style={styles.ctaT}>IMPORT ROSTER NOW</Text>
+        <Text style={styles.ctaT}>{rejected ? "RE-UPLOAD ROSTER" : "IMPORT ROSTER NOW"}</Text>
       </Pressable>
 
       <View style={styles.trustRow}>

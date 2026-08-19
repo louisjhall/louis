@@ -27,6 +27,10 @@ import { theme } from "@/src/lib/theme";
 import { ProfileAvatar } from "@/src/components/ProfileAvatar";
 import { AddClientSheet } from "@/src/components/AddClientSheet";
 import { PreviewClientButton } from "@/src/components/PreviewLauncher";
+// Iter186 · Roster-review inbox — pinned at the top so coaches see any
+// clients whose roster is awaiting their approve/reject decision before
+// they dive into the normal client list.
+import { CoachRosterReviewInbox } from "@/src/components/CoachRosterReviewInbox";
 import { useAuth } from "@/src/lib/auth";
 
 type FilterKind = "active" | "needs_attention" | "archived";
@@ -177,6 +181,10 @@ export default function ClientsScreen() {
             <Text style={styles.addBtnText}>Add Client</Text>
           </Pressable>
         </View>
+
+        {/* Iter186 · Roster-review inbox — pinned above the client list.
+            Renders null when the queue is empty so it never adds noise. */}
+        <CoachRosterReviewInbox />
 
         {/* Filter tabs + search */}
         <View style={styles.toolbar}>

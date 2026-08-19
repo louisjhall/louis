@@ -96,8 +96,43 @@ export default function RosterUpload() {
   const pollRef = useRef<any>(null);
   const lastMoveRef = useRef<{ progress: number; at: number }>({ progress: 0, at: Date.now() });
 
+  // Iter186 · Client-facing lock state — computed server-side by the new
+  // /roster/submission-state endpoint. Any state other than
+  // `none | coach_rejected` renders the SubmittedLockCard instead of
+  // the upload buttons so the client can't reset their own submission
+  // between the moment they confirm duties and the moment the coach
+  // approves (or the 24-h auto-approve tick fires).
+  const [submission, setSubmission] = useState<{
+    state: string;
+    submitted_at?: string;
+    coach_review_at?: string;
+    coach_review_actor?: string;
+    roster_id?: string;
+    pending_roster_id?: string;
+    job_id?: string;
+    legacy_backfill?: boolean;
+  } | null>(null);
+  const [subLoading, setSubLoading] = useState(true);
+
+  const reloadSubmission = async () => {
+    try {
+      const s = await api<any>("/roster/submission-state");
+      setSubmission(s);
+    } catch {
+      // Silently swallow — if the endpoint is temporarily unreachable
+      // we default to the upload UI (matches pre-Iter186 behaviour).
+      setSubmission({ state: "none" });
+    } finally {
+      setSubLoading(false);
+    }
+  };
+
   useEffect(() => {
     (async () => {
+      // Iter186 · Submission-state gate MUST run before the legacy job
+      // check — if a roster is awaiting coach review, we short-circuit
+      // the entire upload UI and render the lock card.
+      await reloadSubmission();
       try {
         const j = await api<any>(`/roster/jobs/active`);
         if (j && j.id) { setJob(j); startPolling(j.id); }
@@ -126,18 +161,19 @@ export default function RosterUpload() {
         }
         if (j.status === "awaiting_confirmation" && j.pending_roster_id) {
           clearInterval(pollRef.current);
-          // Small delay to let the "Roster ready to review" message land visually.
-          setTimeout(() => router.replace({
-            pathname: "/roster/confirm/[id]" as any,
-            params: { id: j.pending_roster_id },
-          } as any), 500);
+          // Iter186 · Refresh submission-state so the lock screen owns
+          // the flow — it will now offer a "REVIEW DUTIES" primary CTA
+          // rather than us silently auto-navigating, which was the root
+          // cause of the bounce-loop when clients pressed Back.
+          await reloadSubmission();
+          return;
         }
         if (j.status === "complete") {
           clearInterval(pollRef.current);
-          // Iter 152 — Do NOT auto-navigate. Show the success state and
-          // let the client tap "OPEN CALENDAR" or "UPLOAD ANOTHER"
-          // deliberately. Prevents the screen from disappearing before
-          // the user has processed that the upload actually worked.
+          // Iter186 · Refresh submission-state — most likely the roster
+          // is now `awaiting_coach_review` and we should render the
+          // lock success card instead of the "UPLOAD ANOTHER" CTA row.
+          await reloadSubmission();
         }
         if (j.status === "failed" || j.status === "partial" || j.status === "needs_review") {
           clearInterval(pollRef.current);
@@ -394,6 +430,48 @@ export default function RosterUpload() {
   const done = job && job.status === "complete";
   const currentStageIdx = STAGES.findIndex((s) => s.key === job?.stage);
   const progress = Math.max(0, Math.min(100, job?.progress || 0));
+
+  // Iter186 · Compute lock — anything other than `none | coach_rejected`
+  // means the client has already submitted and is either mid-processing
+  // or waiting for the coach. Show the lock card, NOT the upload UI.
+  const lockedStates = new Set([
+    "awaiting_client_confirmation",
+    "awaiting_coach_review",
+    "coach_approved",
+  ]);
+  const isLocked = !!submission && lockedStates.has(submission.state);
+
+  // While the state is loading (very first paint) show a plain spinner
+  // so the upload buttons don't flash before the lock card takes over.
+  if (subLoading) {
+    return (
+      <SafeAreaView style={styles.root} edges={["top"]}>
+        <View style={styles.header}>
+          <Text style={styles.title}>UPLOAD ROSTER</Text>
+        </View>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={theme.color.brand} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isLocked && submission) {
+    return (
+      <RosterSubmittedLockScreen
+        submission={submission}
+        onBackHome={() => router.replace("/(client)/home")}
+        onOpenConfirm={
+          submission.state === "awaiting_client_confirmation" && submission.pending_roster_id
+            ? () => router.replace({
+                pathname: "/roster/confirm/[id]" as any,
+                params: { id: submission.pending_roster_id! },
+              } as any)
+            : undefined
+        }
+      />
+    );
+  }
 
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
@@ -851,4 +929,213 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 1.4,
   },
+  // Iter186 · Lock screen (post-submission success card)
+  lockRoot: { flex: 1, backgroundColor: theme.color.surface },
+  lockScroll: { padding: 20, paddingBottom: 40, gap: 18 },
+  lockHero: {
+    padding: 22,
+    borderRadius: 18,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+    alignItems: "center",
+    gap: 12,
+  },
+  lockIconWrap: {
+    width: 68, height: 68, borderRadius: 34,
+    backgroundColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+  },
+  lockEyebrow: {
+    color: theme.color.brand,
+    fontSize: 11, fontWeight: "900", letterSpacing: 2.2, marginTop: 4,
+  },
+  lockTitle: {
+    color: theme.color.text,
+    fontSize: 22, fontWeight: "900", textAlign: "center", letterSpacing: 0.3,
+  },
+  lockBody: {
+    color: theme.color.textMuted,
+    fontSize: 13, lineHeight: 20, textAlign: "center", paddingHorizontal: 6,
+  },
+  lockMeta: {
+    marginTop: 6, flexDirection: "row", gap: 6, alignItems: "center",
+  },
+  lockMetaT: {
+    color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
+  },
+  lockCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 15,
+    borderRadius: 12,
+    backgroundColor: theme.color.brand,
+  },
+  lockCtaT: {
+    color: "#fff", fontSize: 13, fontWeight: "900", letterSpacing: 1.6,
+  },
+  lockGhost: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  lockGhostT: {
+    color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 1.4,
+  },
+  lockChecklist: {
+    padding: 16, borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border, gap: 10,
+  },
+  lockChecklistH: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2,
+  },
+  lockChecklistRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: 10,
+  },
+  lockChecklistT: {
+    color: theme.color.text, fontSize: 12, lineHeight: 18, flex: 1,
+  },
 });
+
+/* --------------------------------------------------------------------- */
+/*  Iter186 · Submitted-lock success screen                              */
+/*                                                                       */
+/*  Replaces the upload buttons entirely when the client has already      */
+/*  submitted. Copy sets expectations ("up to 24 hours") so the client    */
+/*  doesn't fear their submission was lost + can't accidentally re-upload */
+/*  before the coach reviews. Three variants keyed off `state`:            */
+/*     awaiting_client_confirmation → "please confirm your duties"        */
+/*     awaiting_coach_review        → "coach is building your programme"  */
+/*     coach_approved               → "your programme is live"            */
+/* --------------------------------------------------------------------- */
+function RosterSubmittedLockScreen({
+  submission,
+  onBackHome,
+  onOpenConfirm,
+}: {
+  submission: {
+    state: string;
+    submitted_at?: string;
+    coach_review_at?: string;
+    coach_review_actor?: string;
+    legacy_backfill?: boolean;
+  };
+  onBackHome: () => void;
+  onOpenConfirm?: () => void;
+}) {
+  const router = useRouter();
+  const state = submission.state;
+
+  const copy = (() => {
+    if (state === "awaiting_client_confirmation") {
+      return {
+        icon: "hand-right" as const,
+        eyebrow: "ONE MORE STEP",
+        title: "Review your duty pattern",
+        body: "We've parsed your roster — please open the duty confirmation screen and check we've read your flights correctly. Louis can't build your programme until you confirm.",
+        primary: { label: "REVIEW DUTIES", action: onOpenConfirm ?? onBackHome, icon: "arrow-forward" as const },
+      };
+    }
+    if (state === "coach_approved") {
+      return {
+        icon: "checkmark-done" as const,
+        eyebrow: "PROGRAMME LIVE",
+        title: "Your programme is live",
+        body:
+          submission.coach_review_actor === "auto_24h"
+            ? "Your coach has been busy — we've released your programme automatically so you can get started. Louis will drop any tweaks in the chat over the coming days."
+            : "Your coach has reviewed your roster and released your personalised programme. Head to your calendar to see what's on today.",
+        primary: { label: "OPEN CALENDAR", action: () => router.replace("/(client)/calendar"), icon: "calendar" as const },
+      };
+    }
+    // Default: awaiting_coach_review
+    return {
+      icon: "checkmark-circle" as const,
+      eyebrow: "ROSTER RECEIVED",
+      title: "Your coach is on it",
+      body: "Your coach is building your personalised programme. This can take up to 24 hours. We'll notify you when it's ready.",
+      primary: { label: "GO TO HOME", action: onBackHome, icon: "home" as const },
+    };
+  })();
+
+  const submittedDate = submission.submitted_at
+    ? new Date(submission.submitted_at).toLocaleDateString(undefined, {
+        weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+      })
+    : null;
+
+  return (
+    <SafeAreaView style={styles.lockRoot} edges={["top"]} testID="ru-lock-screen">
+      <View style={styles.header}>
+        <Pressable onPress={onBackHome} testID="ru-lock-back">
+          <Ionicons name="chevron-back" size={22} color={theme.color.text} />
+        </Pressable>
+        <Text style={styles.title}>UPLOAD ROSTER</Text>
+        <View style={{ width: 22 }} />
+      </View>
+
+      <ScrollView contentContainerStyle={styles.lockScroll}>
+        <View style={styles.lockHero}>
+          <View style={styles.lockIconWrap}>
+            <Ionicons name={copy.icon} size={32} color="#fff" />
+          </View>
+          <Text style={styles.lockEyebrow}>{copy.eyebrow}</Text>
+          <Text style={styles.lockTitle}>{copy.title}</Text>
+          <Text style={styles.lockBody}>{copy.body}</Text>
+          {submittedDate && state !== "awaiting_client_confirmation" ? (
+            <View style={styles.lockMeta}>
+              <Ionicons name="time-outline" size={11} color={theme.color.textMuted} />
+              <Text style={styles.lockMetaT}>Submitted {submittedDate}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <Pressable
+          onPress={copy.primary.action}
+          style={styles.lockCta}
+          testID="ru-lock-primary-cta"
+        >
+          <Ionicons name={copy.primary.icon} size={16} color="#fff" />
+          <Text style={styles.lockCtaT}>{copy.primary.label}</Text>
+        </Pressable>
+
+        {state === "awaiting_coach_review" ? (
+          <View style={styles.lockChecklist}>
+            <Text style={styles.lockChecklistH}>WHAT&apos;S HAPPENING NEXT</Text>
+            <View style={styles.lockChecklistRow}>
+              <Ionicons name="checkmark-circle" size={16} color={theme.color.green} />
+              <Text style={styles.lockChecklistT}>Roster parsed and saved.</Text>
+            </View>
+            <View style={styles.lockChecklistRow}>
+              <ActivityIndicator size="small" color={theme.color.brand} />
+              <Text style={styles.lockChecklistT}>Louis is reviewing your week and building your personalised programme.</Text>
+            </View>
+            <View style={styles.lockChecklistRow}>
+              <Ionicons name="ellipse-outline" size={16} color={theme.color.textDim} />
+              <Text style={styles.lockChecklistT}>You&apos;ll get a notification (and a chat message) the moment it&apos;s live — usually within 24 hours.</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {state !== "awaiting_client_confirmation" ? (
+          <Pressable
+            onPress={onBackHome}
+            style={styles.lockGhost}
+            testID="ru-lock-home"
+          >
+            <Ionicons name="home-outline" size={14} color={theme.color.brand} />
+            <Text style={styles.lockGhostT}>BACK TO HOME</Text>
+          </Pressable>
+        ) : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}

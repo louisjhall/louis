@@ -14076,6 +14076,14 @@ async def _tick_reminders_all() -> None:
         await feature_roster_lifecycle._tick_roster_no_replacement_warning()
     except Exception:
         logger.exception("roster no-replacement tick failed")
+    # Iter186 · Auto-approve any roster stuck in `awaiting_review` for
+    # more than 24 h. Safety net so clients are never permanently locked
+    # out of re-uploading if the coach never opens the app.
+    try:
+        import feature_roster_coach_review as _rcr
+        await _rcr._tick_auto_approve_stale_reviews(db)
+    except Exception:
+        logger.exception("roster coach-review auto-approve tick failed")
     try:
         await feature_social_studio._tick_daily_social()
     except Exception:
@@ -14144,6 +14152,15 @@ try:
     logger.info("feature_roster_review_delay: /roster/status registered")
 except Exception:
     logger.exception("feature_roster_review_delay failed to register")
+
+# Iter186 — mount roster coach-review state machine (submission-state
+# for the client lock card + coach approve/reject + auto-approve tick).
+try:
+    from feature_roster_coach_review import make_router as _rcr_make_router
+    api.include_router(_rcr_make_router(db, current_user, require_role))
+    logger.info("feature_roster_coach_review: submission-state + coach review registered")
+except Exception:
+    logger.exception("feature_roster_coach_review failed to register")
 
 # Iter 128 — Flight Support media resolver (3-stage carousel + Pilot persona)
 try:

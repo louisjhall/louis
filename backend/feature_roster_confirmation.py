@@ -1290,6 +1290,20 @@ async def roster_pending_confirm(
     )
     roster = await db.rosters.find_one({"id": rid}, {"_id": 0})
 
+    # Iter186 · Stamp the roster as awaiting coach review. Idempotent —
+    # if the coach acted on-behalf-of the client (coach_actor_id set),
+    # we still queue for review because the "review" here means the
+    # HEAD coach's approval flow, not the same-coach confirming duties.
+    # Runs BEFORE the superseded-purge below so the state exists even
+    # if that block later errors.
+    try:
+        from feature_roster_coach_review import mark_awaiting_coach_review
+        await mark_awaiting_coach_review(db, roster)
+        # Refresh so downstream reads see the new coach_review_state.
+        roster = await db.rosters.find_one({"id": rid}, {"_id": 0}) or roster
+    except Exception:
+        logger.exception("mark_awaiting_coach_review failed for %s", rid)
+
     # Purge V2 schedule_days from any roster that was just superseded so
     # the workspace doesn't show ghost days from the previous version.
     try:

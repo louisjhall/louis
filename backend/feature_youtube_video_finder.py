@@ -146,6 +146,51 @@ async def _record_yt_job(job_id: str, patch: dict) -> None:
     await db.backfill_jobs.update_one({"_id": job_id}, {"$set": patch}, upsert=True)
 
 
+def _bulk_yt_query() -> dict:
+    """Shared query for the YouTube video-finder bulk sweep.
+
+    Iter188 · Mirrors the hardening we applied to the primary-image
+    sweep in `feature_auto_media_gen._bulk_primary_image_query`. Previous
+    version fed the sweep every one of the ~667 rows in `exercises_v2`,
+    including archived, retired, deprecated, merged, rejected, soft-
+    deleted, and alias-duplicate rows — burning YouTube quota on rows
+    the library never surfaces. This helper is used by BOTH the dry-run
+    count and the worker so the two can NEVER drift.
+
+    Filters applied (all must pass):
+      * `is_deleted != True`             — not soft-deleted
+      * `status` (case-insensitive) NOT in {archived, retired, deprecated,
+        merged, rejected}
+      * missing / empty `primary_video_url`
+      * canonical-only (skip aliases — either `canonical_id` unset OR
+        equal to the row's own `id`)
+    """
+    return {
+        "$and": [
+            # ─── Alive: not soft-deleted ─────────────────────────────────
+            {"is_deleted": {"$ne": True}},
+            # ─── Alive: not archived / retired / deprecated / merged /
+            #             rejected (case-insensitive via $toLower) ────────
+            {"$expr": {"$not": {"$in": [
+                {"$toLower": {"$ifNull": ["$status", ""]}},
+                ["archived", "retired", "deprecated", "merged", "rejected"],
+            ]}}},
+            # ─── Actually missing a primary video URL ────────────────────
+            {"$or": [
+                {"primary_video_url": None},
+                {"primary_video_url": {"$exists": False}},
+                {"primary_video_url": ""},
+            ]},
+            # ─── Canonical only (skip aliases / duplicates) ──────────────
+            {"$or": [
+                {"canonical_id": None},
+                {"canonical_id": {"$exists": False}},
+                {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+            ]},
+        ],
+    }
+
+
 async def _bulk_yt_worker(job_id: str, coach_id: Optional[str]) -> None:
     from datetime import datetime, timezone
     from feature_auto_media_gen import _spawn_bg  # noqa: F401 — shared bg-task set
@@ -158,20 +203,9 @@ async def _bulk_yt_worker(job_id: str, coach_id: Optional[str]) -> None:
                 "processed": 0, "wrote": 0, "errors": {}, "results_sample": [],
             })
 
-            query = {
-                "$and": [
-                    {"$or": [
-                        {"primary_video_url": None},
-                        {"primary_video_url": {"$exists": False}},
-                        {"primary_video_url": ""},
-                    ]},
-                    {"$or": [
-                        {"canonical_id": None},
-                        {"canonical_id": {"$exists": False}},
-                        {"$expr": {"$eq": ["$canonical_id", "$id"]}},
-                    ]},
-                ],
-            }
+            # Iter188 · Shared hardened query — active, non-archived,
+            # non-alias exercises only. Matches the primary-image sweep.
+            query = _bulk_yt_query()
             exs = await db.exercises_v2.find(
                 query, {"_id": 0, "id": 1, "exercise_name": 1},
             ).to_list(length=1000)
@@ -282,23 +316,48 @@ async def yt_finder_bulk_run(
             response.status_code = 403
         return {"status": "blocked", "reason": "youtube_finder_disabled"}
 
-    query = {
-        "$and": [
-            {"$or": [
+    # Iter188 · Shared hardened query — see `_bulk_yt_query` docstring.
+    # Excludes archived / retired / deprecated / merged / rejected /
+    # soft-deleted / alias-duplicate rows so the sweep only targets the
+    # active library.
+    query = _bulk_yt_query()
+    if dry_run:
+        n = await db.exercises_v2.count_documents(query)
+        # Iter188 · Transparency breakdown — coach can see which
+        # exclusion rules cut the raw count down to `would_queue_count`.
+        # All counts are read-only $count aggregates → cheap.
+        raw_missing_primary_video = await db.exercises_v2.count_documents({
+            "$or": [
                 {"primary_video_url": None},
                 {"primary_video_url": {"$exists": False}},
                 {"primary_video_url": ""},
+            ],
+        })
+        excluded_archived = await db.exercises_v2.count_documents({
+            "$expr": {"$in": [
+                {"$toLower": {"$ifNull": ["$status", ""]}},
+                ["archived", "retired", "deprecated", "merged", "rejected"],
             ]},
-            {"$or": [
-                {"canonical_id": None},
-                {"canonical_id": {"$exists": False}},
-                {"$expr": {"$eq": ["$canonical_id", "$id"]}},
-            ]},
-        ],
-    }
-    if dry_run:
-        n = await db.exercises_v2.count_documents(query)
-        return {"dry_run": True, "would_queue_count": n}
+        })
+        excluded_deleted = await db.exercises_v2.count_documents({"is_deleted": True})
+        excluded_aliases = await db.exercises_v2.count_documents({
+            "$and": [
+                {"canonical_id": {"$ne": None}},
+                {"canonical_id": {"$exists": True}},
+                {"$expr": {"$ne": ["$canonical_id", "$id"]}},
+            ],
+        })
+        return {
+            "dry_run": True,
+            "would_queue_count": n,
+            "breakdown": {
+                "raw_missing_primary_video": raw_missing_primary_video,
+                "excluded_archived_or_retired": excluded_archived,
+                "excluded_soft_deleted": excluded_deleted,
+                "excluded_alias_duplicates": excluded_aliases,
+                "eligible_after_filters": n,
+            },
+        }
 
     if _YT_BULK_LOCK.locked():
         in_flight = await db.backfill_jobs.find_one(

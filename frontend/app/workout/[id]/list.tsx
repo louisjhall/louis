@@ -974,13 +974,29 @@ function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () =>
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.detailRoot} edges={["top"]}>
         <View style={styles.detailHead}>
-          <Pressable onPress={onClose} hitSlop={12} testID="list-detail-close">
-            <Ionicons name="close" size={24} color={theme.color.text} />
+          <Pressable
+            onPress={onClose}
+            hitSlop={12}
+            testID="list-detail-close"
+            style={styles.detailBackBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Back to workout"
+          >
+            <Ionicons name="chevron-back" size={20} color={theme.color.brand} />
+            <Text style={styles.detailBackT}>WORKOUT</Text>
           </Pressable>
           <Text style={styles.detailTitle} numberOfLines={2}>{ex?.name || ""}</Text>
-          <View style={{ width: 24 }} />
+          <Pressable
+            onPress={onClose}
+            hitSlop={12}
+            testID="list-detail-close-x"
+            style={styles.detailCloseX}
+            accessibilityLabel="Close"
+          >
+            <Ionicons name="close" size={22} color={theme.color.text} />
+          </Pressable>
         </View>
-        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
           {imgUrl ? (
             <Image source={{ uri: imgUrl }} style={styles.hero} resizeMode="contain" />
           ) : (
@@ -1025,6 +1041,22 @@ function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () =>
             </View>
           )}
         </ScrollView>
+        {/* Iter186 · Sticky footer with a large, unmissable back button.
+            The original close-X still exists in the header for muscle
+            memory, but the client can never end up stuck on this screen
+            without a visible way out. */}
+        <View style={styles.detailFooter}>
+          <Pressable
+            onPress={onClose}
+            style={styles.detailFooterBtn}
+            testID="list-detail-back-to-workout"
+            accessibilityRole="button"
+            accessibilityLabel="Back to workout"
+          >
+            <Ionicons name="arrow-back" size={16} color="#fff" />
+            <Text style={styles.detailFooterT}>BACK TO WORKOUT</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     </Modal>
   );
@@ -1150,6 +1182,37 @@ const styles = StyleSheet.create({
 
   // Detail sheet
   detailRoot: { flex: 1, backgroundColor: theme.color.surface },
+  // Iter186 · Explicit back button (chevron + "WORKOUT" label) so the
+  // client always has a visible exit path from the exercise detail
+  // sheet. Was previously a tiny close-X that clients missed.
+  detailBackBtn: {
+    flexDirection: "row", alignItems: "center", gap: 2,
+    paddingHorizontal: 8, paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  detailBackT: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.4,
+  },
+  detailCloseX: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: theme.color.surface2,
+    alignItems: "center", justifyContent: "center",
+  },
+  detailFooter: {
+    padding: 16,
+    borderTopWidth: 1, borderTopColor: theme.color.divider,
+    backgroundColor: theme.color.surface,
+  },
+  detailFooterBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
+    paddingVertical: 14, borderRadius: 12,
+    backgroundColor: theme.color.brand,
+  },
+  detailFooterT: {
+    color: "#fff", fontSize: 13, fontWeight: "900", letterSpacing: 1.6,
+  },
   detailHead: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 12,

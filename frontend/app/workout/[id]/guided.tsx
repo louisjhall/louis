@@ -5,7 +5,7 @@
  * Flow: warm-up → exercise 1 (set 1 → rest → set 2 → rest → set 3) → next exercise → complete.
  * Every set is logged to /workouts/{id}/sets, same as Manual Mode.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   ActivityIndicator, Image, Modal, Vibration, Dimensions, Alert,
@@ -62,6 +62,50 @@ function isMobilityLike(ex: any): boolean {
   if (!ex) return false;
   const hay = `${ex.name || ""} ${ex.category || ""} ${ex.section || ""}`.toLowerCase();
   return /\b(mobility|stretch|flow|breath|activation|cool.?down|warm.?up|rock|rotation|open.?book|hip.?flex|thoracic|foam|glute.?bridge|cat.?cow)\b/.test(hay);
+}
+
+/**
+ * Iter186 · Detect exercises whose "reps" field is actually a DURATION
+ * (side plank / hollow hold / wall sit / dead hang / farmer's walk / etc.)
+ * — either via explicit `work_sec` / `duration_sec` fields, via a `reps`
+ * string that mentions seconds/minutes, or via a name match on canonical
+ * hold-and-carry moves. Non-cardio only — cardio has its own timer path.
+ */
+function isTimeBased(ex: any): boolean {
+  if (!ex) return false;
+  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+  if (explicit > 0) return true;
+  const reps = String(ex?.reps || "").toLowerCase();
+  if (/\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes)\b/.test(reps)) return true;
+  if (/^\d+:\d{2}$/.test(reps.trim())) return true;
+  if (/\b(hold|for time|until failure|max time)\b/.test(reps)) return true;
+  const name = String(ex?.name || "").toLowerCase();
+  return /\b(side plank|front plank|plank|hollow hold|wall sit|dead ?hang|l[- ]?sit|farmer'?s? (walk|carry)|suitcase carry|overhead carry|superman hold|bridge hold|forearm plank|hollow rock|dish hold)\b/.test(name);
+}
+
+/**
+ * Iter186 · Extract the target duration in seconds from a time-based
+ * exercise. Falls back to 30 s when we can only detect that it's timed
+ * but can't parse a number.
+ */
+function extractTargetSeconds(ex: any): number {
+  const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+  if (explicit > 0) return Math.max(5, Math.min(600, explicit));
+  const reps = String(ex?.reps || "").trim();
+  const mmss = /^(\d+):(\d{2})$/.exec(reps);
+  if (mmss) return parseInt(mmss[1], 10) * 60 + parseInt(mmss[2], 10);
+  const minMatch = /(\d+)\s*(?:min|mins|minute|minutes)/i.exec(reps);
+  if (minMatch) return parseInt(minMatch[1], 10) * 60;
+  const secMatch = /(\d+)\s*(?:s|sec|secs|second|seconds)/i.exec(reps);
+  if (secMatch) return Math.max(5, parseInt(secMatch[1], 10));
+  const plainNum = /^(\d+)/.exec(reps);
+  if (plainNum) {
+    const n = parseInt(plainNum[1], 10);
+    // Heuristic: if reps is JUST a number and the exercise is a known
+    // timed move, treat that number as seconds not reps.
+    if (n >= 5 && n <= 600) return n;
+  }
+  return 30;   // sensible default
 }
 
 function parseTargetReps(ex: any): number {
@@ -933,6 +977,22 @@ function WorkPanel({
               <LogInput label="DIST (km)" value={logReps} onChangeText={setLogReps} placeholder="5.0" />
               <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
             </View>
+          ) : isTimeBased(ex) ? (
+            /* Iter186 · Time-based exercises (side plank, wall sit, dead
+               hang, farmer's carry, hollow hold, etc.) get an in-line
+               HOLD TIMER instead of a reps input. On stop the elapsed
+               seconds are written into `logReps` and the coach can see
+               "45s" in history. The client STILL fills weight (if any)
+               + RPE + notes exactly as before. */
+            <HoldTimerLog
+              targetSeconds={extractTargetSeconds(ex)}
+              onLogged={(sec) => setLogReps(String(sec))}
+              currentValue={logReps}
+              logWeight={logWeight}
+              setLogWeight={setLogWeight}
+              logRpe={logRpe}
+              setLogRpe={setLogRpe}
+            />
           ) : (
             <View style={styles.logGrid}>
               <LogInput label="WEIGHT (kg)" value={logWeight} onChangeText={setLogWeight} placeholder={suggested ? String(suggested) : "0"} />
@@ -992,6 +1052,104 @@ function LogInput({ label, value, onChangeText, placeholder }: any) {
   );
 }
 
+// Iter186 · Hold-timer used by ExerciseBlock for time-based moves in
+// LOG MODE. Presents a big countdown, START / STOP buttons, and once
+// the client stops (or the target is reached) it stamps the elapsed
+// seconds into the parent's `logReps` state so the "COMPLETE SET"
+// button records the exact hold time in workout history.
+//
+// Rendered alongside a compact WEIGHT + RPE row so weighted variants
+// (loaded farmer's carry, dumbbell suitcase carry, etc.) can still
+// record the load. Weight column collapses gracefully when unused.
+function HoldTimerLog({
+  targetSeconds, onLogged, currentValue, logWeight, setLogWeight, logRpe, setLogRpe,
+}: {
+  targetSeconds: number;
+  onLogged: (elapsedSec: number) => void;
+  currentValue: string;
+  logWeight: string;
+  setLogWeight: (v: string) => void;
+  logRpe: string;
+  setLogRpe: (v: string) => void;
+}) {
+  const [running, setRunning] = React.useState(false);
+  const [elapsed, setElapsed] = React.useState(0);
+  const tick = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    if (!running) return;
+    tick.current = setInterval(() => {
+      setElapsed((s) => {
+        const next = s + 1;
+        // Buzz once when target reached — client can keep going or stop.
+        if (next === targetSeconds) {
+          try { Vibration.vibrate([0, 200, 100, 200]); } catch { /* web */ }
+        }
+        return next;
+      });
+    }, 1000);
+    return () => { if (tick.current) clearInterval(tick.current); };
+  }, [running, targetSeconds]);
+
+  const toggle = () => {
+    if (!running) {
+      setElapsed(0);
+      setRunning(true);
+      return;
+    }
+    // stopping — commit elapsed seconds into the parent form
+    setRunning(false);
+    if (elapsed > 0) onLogged(elapsed);
+  };
+
+  const reset = () => {
+    if (tick.current) clearInterval(tick.current);
+    setRunning(false);
+    setElapsed(0);
+    onLogged(0);
+  };
+
+  const pct = Math.min(100, Math.round((elapsed / Math.max(1, targetSeconds)) * 100));
+  const displayValue = running ? elapsed : (parseInt(currentValue, 10) || elapsed);
+
+  return (
+    <View style={styles.holdBox} testID="hold-timer-box">
+      <Text style={styles.holdEyebrow}>
+        HOLD TIMER · TARGET {fmtMMSS(targetSeconds)}
+      </Text>
+      <Text style={[styles.timerBig, running && { color: theme.color.brand }]}>
+        {fmtMMSS(displayValue)}
+      </Text>
+      <View style={styles.timerBarTrack}>
+        <View style={[styles.timerBarFill, { width: `${pct}%` }]} />
+      </View>
+      <View style={styles.holdBtnRow}>
+        <Pressable onPress={reset} style={styles.holdResetBtn} testID="hold-timer-reset">
+          <Ionicons name="refresh" size={14} color={theme.color.text} />
+          <Text style={styles.holdResetT}>RESET</Text>
+        </Pressable>
+        <Pressable
+          onPress={toggle}
+          style={[styles.holdStartBtn, running && styles.holdStopBtn]}
+          testID={running ? "hold-timer-stop" : "hold-timer-start"}
+        >
+          <Ionicons name={running ? "stop" : "play"} size={16} color="#fff" />
+          <Text style={styles.holdStartT}>{running ? "STOP" : (elapsed > 0 ? "RESUME" : "START HOLD")}</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.holdHint}>
+        Elapsed {fmtMMSS(displayValue)} will be logged as your set time.
+      </Text>
+      {/* Compact weight + RPE row so weighted holds (farmer's carry,
+          weighted planks, etc.) still record load. */}
+      <View style={[styles.logGrid, { marginTop: 6 }]}>
+        <LogInput label="WEIGHT (kg)" value={logWeight} onChangeText={setLogWeight} placeholder="0" />
+        <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
+      </View>
+    </View>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  How-To Bottom Sheet                                                        */
 /* -------------------------------------------------------------------------- */
@@ -1011,6 +1169,21 @@ function HowToSheet({
       <View style={sheetStyles.root}>
         <Pressable style={sheetStyles.backdrop} onPress={onClose} />
         <View style={sheetStyles.sheet}>
+          {/* Iter186 · Prominent back-to-workout chip pinned above the
+              header text so the client can't miss the exit path. Plus
+              the original close-X remains at the top-right + the footer
+              RESUME WORKOUT button below. Three exit paths total. */}
+          <Pressable
+            onPress={onClose}
+            style={sheetStyles.backChip}
+            testID="gf-howto-back"
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Back to workout"
+          >
+            <Ionicons name="chevron-back" size={16} color={theme.color.brand} />
+            <Text style={sheetStyles.backChipT}>BACK TO WORKOUT</Text>
+          </Pressable>
           <View style={sheetStyles.head}>
             <View style={{ flex: 1 }}>
               <Text style={sheetStyles.eyebrow}>PAUSED · LEARN THIS EXERCISE</Text>
@@ -1018,7 +1191,15 @@ function HowToSheet({
                 Your workout is paused. Tap RESUME when you&apos;re ready.
               </Text>
             </View>
-            <Pressable onPress={onClose} hitSlop={12} testID="gf-howto-close"><Ionicons name="close" size={22} color={theme.color.text} /></Pressable>
+            <Pressable
+              onPress={onClose}
+              hitSlop={12}
+              testID="gf-howto-close"
+              style={sheetStyles.closeXBtn}
+              accessibilityLabel="Close explanation"
+            >
+              <Ionicons name="close" size={22} color={theme.color.text} />
+            </Pressable>
           </View>
           <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
             <Text style={sheetStyles.title}>{exercise?.name}</Text>
@@ -1419,6 +1600,39 @@ const styles = StyleSheet.create({
   timerBig: { color: theme.color.brand, fontSize: 56, fontWeight: "900", fontVariant: ["tabular-nums"] },
   timerBarTrack: { width: "100%", height: 6, borderRadius: 3, backgroundColor: theme.color.surface3, overflow: "hidden", marginTop: 8 },
   timerBarFill: { height: 6, backgroundColor: theme.color.brand },
+  // Iter186 · Hold-timer container styles (in-log-mode time-based moves)
+  holdBox: {
+    marginTop: 12, padding: 16, borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.brand,
+    alignItems: "center",
+    gap: 6,
+  },
+  holdEyebrow: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2,
+    marginBottom: 2,
+  },
+  holdBtnRow: {
+    flexDirection: "row", gap: 10, marginTop: 10, alignSelf: "stretch",
+  },
+  holdResetBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    paddingHorizontal: 14, paddingVertical: 12, borderRadius: 10,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  holdResetT: { color: theme.color.text, fontSize: 11, fontWeight: "900", letterSpacing: 1 },
+  holdStartBtn: {
+    flex: 1,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 12, borderRadius: 10,
+    backgroundColor: theme.color.brand,
+  },
+  holdStopBtn: { backgroundColor: "#c94a4a" },
+  holdStartT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.4 },
+  holdHint: {
+    color: theme.color.textMuted, fontSize: 11, fontStyle: "italic",
+    marginTop: 4, textAlign: "center",
+  },
 
   restBig: { color: theme.color.brand, fontSize: 96, fontWeight: "900", fontVariant: ["tabular-nums"], textAlign: "center", marginTop: 20 },
   restHint: { color: theme.color.textMuted, fontSize: 12, textAlign: "center", marginTop: 8, letterSpacing: 1 },
@@ -1490,6 +1704,25 @@ const sheetStyles = StyleSheet.create({
   root: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
   sheet: { backgroundColor: theme.color.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: "88%" },
+  // Iter186 · Pinned "BACK TO WORKOUT" chip — sits above the header so
+  // the client always has a visible exit path from the how-to sheet.
+  backChip: {
+    alignSelf: "flex-start",
+    flexDirection: "row", alignItems: "center", gap: 4,
+    marginTop: 12, marginLeft: 12,
+    paddingLeft: 6, paddingRight: 12, paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  backChipT: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.4,
+  },
+  closeXBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: theme.color.surface2,
+    alignItems: "center", justifyContent: "center",
+  },
   head: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     padding: 16, borderBottomWidth: 1, borderBottomColor: theme.color.divider,

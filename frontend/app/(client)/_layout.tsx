@@ -3,6 +3,7 @@ import { View } from "react-native";
 import { PremiumTabBar } from "@/src/components/PremiumTabBar";
 import { CoachChatBubble } from "@/src/components/CoachChatBubble";
 import { QuickActionFab } from "@/src/components/QuickActionFab";
+import { RosterReviewGate } from "@/src/components/RosterReviewGate";
 
 /**
  * Client tab layout — uses the bespoke <PremiumTabBar />.
@@ -26,23 +27,25 @@ import { QuickActionFab } from "@/src/components/QuickActionFab";
  */
 export default function ClientLayout() {
   return (
-    <View style={{ flex: 1 }}>
-      <Tabs
-        tabBar={(props) => <PremiumTabBar {...props} />}
-        screenOptions={{ headerShown: false }}
-      >
-        <Tabs.Screen name="home"      options={{ title: "Today" }} />
-        <Tabs.Screen name="calendar"  options={{ title: "Calendar" }} />
-        <Tabs.Screen name="nutrition" options={{ title: "Nutrition" }} />
-        <Tabs.Screen name="base"      options={{ title: "Base" }} />
-        <Tabs.Screen name="profile"   options={{ title: "Profile" }} />
-        {/* Messages route still exists — hidden from the bar, opened via CoachChatBubble */}
-        <Tabs.Screen name="messages"  options={{ title: "Messages", href: null }} />
-        {/* Crew Base settings — hidden from the bar; opened from the Base header gear */}
-        <Tabs.Screen name="crew-base-settings" options={{ href: null }} />
-      </Tabs>
-      <QuickActionFab />
-      <CoachChatBubble />
-    </View>
+    <RosterReviewGate>
+      <View style={{ flex: 1 }}>
+        <Tabs
+          tabBar={(props) => <PremiumTabBar {...props} />}
+          screenOptions={{ headerShown: false }}
+        >
+          <Tabs.Screen name="home"      options={{ title: "Today" }} />
+          <Tabs.Screen name="calendar"  options={{ title: "Calendar" }} />
+          <Tabs.Screen name="nutrition" options={{ title: "Nutrition" }} />
+          <Tabs.Screen name="base"      options={{ title: "Base" }} />
+          <Tabs.Screen name="profile"   options={{ title: "Profile" }} />
+          {/* Messages route still exists — hidden from the bar, opened via CoachChatBubble */}
+          <Tabs.Screen name="messages"  options={{ title: "Messages", href: null }} />
+          {/* Crew Base settings — hidden from the bar; opened from the Base header gear */}
+          <Tabs.Screen name="crew-base-settings" options={{ href: null }} />
+        </Tabs>
+        <QuickActionFab />
+        <CoachChatBubble />
+      </View>
+    </RosterReviewGate>
   );
 }

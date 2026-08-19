@@ -13721,9 +13721,13 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
             {"check_in_id": v["check_in_id"], "task_type": "record_weekly_video"},
             {"$set": {"status": "sent", "completed_at": now, "video_id": video_id}},
         )
-    # Notify the client (push + in-app)
+    # Notify the client (push + in-app). Iter187 · Pass video_kind so the
+    # welcome video sends the "Welcome Video from Your Coach" copy
+    # instead of the legacy "Weekly Coaching Review" title.
     try:
-        await notify_weekly_video_ready(v["user_id"], video_id)
+        await notify_weekly_video_ready(
+            v["user_id"], video_id, video_kind=str(v.get("video_kind") or "weekly"),
+        )
     except Exception:
         logger.exception("weekly video notify failed")
     # Create client-facing message record
@@ -14089,6 +14093,7 @@ _bg_generate_message_draft = feature_coach_v1._bg_generate_message_draft
 notify_coach_message = feature_notifications.notify_coach_message
 notify_coach_draft_ready = feature_notifications.notify_coach_draft_ready
 notify_weekly_video_ready = feature_notifications.notify_weekly_video_ready
+notify_roster_approved = feature_notifications.notify_roster_approved
 notify_programme_updated = feature_notifications.notify_programme_updated
 enqueue_notification = feature_notifications.enqueue_notification
 

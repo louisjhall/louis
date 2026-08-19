@@ -467,14 +467,51 @@ async def notify_coach_message(from_user_id: str, to_user_id: str, text: str, so
     )
 
 
-async def notify_weekly_video_ready(user_id: str, video_id: Optional[str] = None) -> None:
+async def notify_weekly_video_ready(
+    user_id: str,
+    video_id: Optional[str] = None,
+    video_kind: str = "weekly",
+) -> None:
+    """Push + in-app when a coach sends a video to a client.
+
+    Iter187 · Now branches on ``video_kind`` so a welcome recording gets
+    'Welcome Video from Your Coach' instead of the weekly-review copy.
+    Falls back to weekly for any unknown / legacy kind so existing call
+    sites remain safe.
+    """
+    kind = (video_kind or "weekly").strip().lower()
+    if kind == "welcome":
+        title = "Welcome Video from Your Coach"
+        body = "Your coach recorded a welcome video for you — tap to watch."
+    else:
+        title = "Weekly review from Louis"
+        body = "Your weekly coaching review from Louis is ready."
     await enqueue_notification(
         user_id, "weekly_video_ready",
-        "Weekly review from Louis",
-        "Your weekly coaching review from Louis is ready.",
+        title,
+        body,
         action_url="/(client)/videos" if not video_id else f"/(client)/videos?v={video_id}",
         related_id=video_id,
         dedupe_key=f"weekly_video::{video_id or ''}",
+    )
+
+
+async def notify_roster_approved(user_id: str, roster_id: Optional[str] = None) -> None:
+    """Iter187 · Push + in-app when a coach approves a client's roster.
+
+    Fires from `_do_approve` in feature_roster_coach_review. Uses the
+    `programme_updated` category so it respects the same client toggle
+    as other programme-life events (approvals ARE a programme-life event
+    from the client's POV — "your plan is now live").
+    """
+    await enqueue_notification(
+        user_id,
+        "programme_updated",
+        "Your programme is live",
+        "Your programme is live — let's get to work.",
+        action_url="/(client)/calendar",
+        related_id=roster_id,
+        dedupe_key=f"roster_approved::{roster_id or ''}",
     )
 
 

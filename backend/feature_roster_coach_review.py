@@ -306,6 +306,18 @@ async def _do_approve(db, roster: dict, *, actor: str, reviewer_id: Optional[str
     if res.modified_count == 0:
         return  # someone else already acted
 
+    # Iter187 · Push + in-app notification the moment a roster flips to
+    # `approved`. Fires for BOTH explicit coach approval and the 24-h
+    # auto-approve tick — clients care about the outcome, not the actor.
+    # Lazy import to avoid a circular dependency with feature_notifications
+    # which itself imports from `server`.
+    if user_id:
+        try:
+            from feature_notifications import notify_roster_approved
+            await notify_roster_approved(user_id, roster_id=rid)
+        except Exception:
+            logger.exception("roster-approved notify failed for %s", rid)
+
     # Louis chat message — only for the auto-approve path so we don't
     # spam when the coach explicitly clicked (the coach usually messages
     # anyway right after). Feature-flag via caller if we want to change.

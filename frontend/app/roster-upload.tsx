@@ -170,9 +170,26 @@ export default function RosterUpload() {
         }
         if (j.status === "complete") {
           clearInterval(pollRef.current);
-          // Iter186 · Refresh submission-state — most likely the roster
-          // is now `awaiting_coach_review` and we should render the
-          // lock success card instead of the "UPLOAD ANOTHER" CTA row.
+          // Iter188 · The completion of the confirm_build job does NOT
+          // mean the plan is ready — in MANUAL_MODE the roster is now
+          // sitting in the coach's approval inbox (`awaiting_review`).
+          // The old success card ("YOUR NEW PLAN IS READY") was flat-out
+          // wrong here. Redirect straight to the dedicated
+          // `/roster/received` screen so the client sees the correct
+          // "Coach is reviewing your programme" message.
+          //
+          // We check submission state first so a legacy non-manual-mode
+          // path (where the plan really IS ready) still lands on the
+          // calendar via `reloadSubmission` → RosterSubmittedLockScreen.
+          try {
+            const s = await api<any>("/roster/submission-state");
+            if (s?.state === "awaiting_coach_review" || s?.state === "coach_approved") {
+              router.replace("/roster/received");
+              return;
+            }
+          } catch { /* fall through to legacy behaviour */ }
+          // Legacy behaviour — refresh submission-state so the lock
+          // screen owns the flow.
           await reloadSubmission();
         }
         if (j.status === "failed" || j.status === "partial" || j.status === "needs_review") {
@@ -646,7 +663,12 @@ export default function RosterUpload() {
               <View style={styles.progressHeader}>
                 <ActivityIndicator size="large" color={theme.color.brand} animating={active} />
                 <Text style={styles.progressTitle} testID="ru-progress-message">
-                  {done ? "YOUR NEW PLAN IS READY"
+                  {/* Iter188 · Copy fix — the confirm_build job flipping
+                      to 100% does NOT mean the plan is ready; the coach
+                      still has to approve it in MANUAL_MODE. This card
+                      is now only a fallback — the polling handler
+                      normally redirects to /roster/received on complete. */}
+                  {done ? "ROSTER RECEIVED — COACH IS REVIEWING"
                     : failed ? "PROCESSING FAILED"
                     : needsReview ? "ROSTER SAVED — PLAN NEEDS REVIEW"
                     : partial ? "ROSTER SAVED — PLAN NEEDS RETRY"
@@ -746,11 +768,23 @@ export default function RosterUpload() {
               )}
               {done && (
                 <View style={{ flexDirection: "row", gap: 10 }}>
-                  <Pressable testID="ru-upload-another" onPress={startFresh} style={[styles.actBtn, { backgroundColor: theme.color.brand }]}>
-                    <Text style={styles.actBtnText}>UPLOAD ANOTHER</Text>
+                  {/* Iter188 · The plan is NOT ready at this point in
+                      MANUAL_MODE — coach still has to approve. The
+                      primary action leads to the dedicated
+                      "Roster Received / coach is reviewing" screen. */}
+                  <Pressable
+                    testID="ru-see-status"
+                    onPress={() => router.replace("/roster/received")}
+                    style={[styles.actBtn, { backgroundColor: theme.color.brand }]}
+                  >
+                    <Text style={styles.actBtnText}>SEE STATUS</Text>
                   </Pressable>
-                  <Pressable testID="ru-open-calendar" onPress={() => router.replace("/(client)/calendar")} style={[styles.actBtn, styles.actBtnGhost]}>
-                    <Text style={styles.actBtnGhostText}>OPEN CALENDAR</Text>
+                  <Pressable
+                    testID="ru-go-home"
+                    onPress={() => router.replace("/(client)/home")}
+                    style={[styles.actBtn, styles.actBtnGhost]}
+                  >
+                    <Text style={styles.actBtnGhostText}>GO TO HOME</Text>
                   </Pressable>
                 </View>
               )}

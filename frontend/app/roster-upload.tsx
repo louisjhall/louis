@@ -459,7 +459,11 @@ export default function RosterUpload() {
     "awaiting_client_confirmation",
     "awaiting_coach_review",
   ]);
-  const isLocked = !!submission && lockedStates.has(submission.state);
+  // Iter188 · Local override to bypass the lock screen when the client
+  // explicitly taps "UPLOAD NEW ROSTER" — even if their state technically
+  // maps to a lock (e.g. legacy `coach_approved` on a stale build).
+  const [forceShowUpload, setForceShowUpload] = useState(false);
+  const isLocked = !!submission && lockedStates.has(submission.state) && !forceShowUpload;
 
   // While the state is loading (very first paint) show a plain spinner
   // so the upload buttons don't flash before the lock card takes over.
@@ -489,6 +493,14 @@ export default function RosterUpload() {
               } as any)
             : undefined
         }
+        onUploadNew={() => {
+          // Iter188 · Force-show the upload UI. When the client picks
+          // a file and completes the flow, `mark_awaiting_coach_review`
+          // fires on the backend and the new roster overrides the
+          // previous approval — coach gets notified for a fresh review.
+          setForceShowUpload(true);
+          setJob(null);
+        }}
       />
     );
   }
@@ -1115,6 +1127,26 @@ const styles = StyleSheet.create({
   ctxBannerBody: {
     color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4,
   },
+
+  // Iter188 · Secondary "UPLOAD NEW ROSTER" CTA under the lock-screen
+  // primary CTA. Ghost variant (brand-bordered, brand text) so it clearly
+  // reads as an alternative action.
+  lockCtaSecondary: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  lockCtaSecondaryT: {
+    color: theme.color.brand,
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+  },
 });
 
 /* --------------------------------------------------------------------- */
@@ -1132,6 +1164,7 @@ function RosterSubmittedLockScreen({
   submission,
   onBackHome,
   onOpenConfirm,
+  onUploadNew,
 }: {
   submission: {
     state: string;
@@ -1142,6 +1175,12 @@ function RosterSubmittedLockScreen({
   };
   onBackHome: () => void;
   onOpenConfirm?: () => void;
+  /** Iter188 · Show an "UPLOAD NEW ROSTER" secondary CTA on the
+   * post-approval screen so clients can replace an approved roster
+   * (e.g. submit next month's) without having to hunt for another
+   * entry point. Also a defensive escape hatch if the state is briefly
+   * stale. */
+  onUploadNew?: () => void;
 }) {
   const router = useRouter();
   const state = submission.state;
@@ -1218,6 +1257,23 @@ function RosterSubmittedLockScreen({
           <Ionicons name={copy.primary.icon} size={16} color="#fff" />
           <Text style={styles.lockCtaT}>{copy.primary.label}</Text>
         </Pressable>
+
+        {/* Iter188 · Secondary UPLOAD NEW ROSTER button — visible even
+            after approval so clients can submit next month's roster
+            (or replace the current one for any reason) without leaving
+            this screen. Tapping this reveals the file-picker upload UI,
+            which on submit resets approval to `awaiting_review` and
+            notifies the coach for re-review. */}
+        {state === "coach_approved" || state === "coach_unapproved" || state === "coach_rejected" ? (
+          <Pressable
+            onPress={onUploadNew ?? onBackHome}
+            style={styles.lockCtaSecondary}
+            testID="ru-lock-upload-new"
+          >
+            <Ionicons name="cloud-upload-outline" size={16} color={theme.color.brand} />
+            <Text style={styles.lockCtaSecondaryT}>UPLOAD NEW ROSTER</Text>
+          </Pressable>
+        ) : null}
 
         {state === "awaiting_coach_review" ? (
           <View style={styles.lockChecklist}>

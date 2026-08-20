@@ -16,11 +16,30 @@
  *     row here without a hard reload.
  */
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+
+/**
+ * Iter188 · Cross-platform confirm dialog.
+ * `Alert.alert` on RN Web silently no-ops the button callbacks (well-known
+ * limitation), which meant tapping UNAPPROVE on the coach's web dashboard
+ * did literally nothing. Fall back to `window.confirm` on web where the
+ * native browser dialog gives us a synchronous yes/no.
+ */
+async function confirmDialog(title: string, message: string, confirmLabel = "Confirm"): Promise<boolean> {
+  if (Platform.OS === "web") {
+    return typeof window !== "undefined" && window.confirm(`${title}\n\n${message}`);
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+      { text: confirmLabel, style: "destructive", onPress: () => resolve(true) },
+    ]);
+  });
+}
 
 type PendingRow = {
   id: string;                 // roster id
@@ -94,18 +113,12 @@ export function CoachRosterReviewInbox() {
 
   const unapprove = async (rid: string, name: string) => {
     if (busyId) return;
-    // Native + web confirm dialog — dead-simple guard so a coach
-    // doesn't unapprove by accident.
-    const proceed = await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        `Unapprove ${name}'s roster?`,
-        "The client will be prompted to upload a fresh roster and receive a notification.",
-        [
-          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-          { text: "Unapprove", style: "destructive", onPress: () => resolve(true) },
-        ],
-      );
-    });
+    // Iter188 · Cross-platform confirm — Alert.alert on RN Web no-ops.
+    const proceed = await confirmDialog(
+      `Unapprove ${name}'s roster?`,
+      "The client will be prompted to upload a fresh roster and receive a notification.",
+      "Unapprove",
+    );
     if (!proceed) return;
     setBusyId(rid);
     try {
@@ -115,7 +128,11 @@ export function CoachRosterReviewInbox() {
       });
       setApproved((prev) => prev.filter((r) => r.id !== rid));
     } catch (e: any) {
-      Alert.alert("Couldn't unapprove", e?.message || "Please try again.");
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.alert(`Couldn't unapprove: ${e?.message || "Please try again."}`);
+      } else {
+        Alert.alert("Couldn't unapprove", e?.message || "Please try again.");
+      }
       await load();
     } finally {
       setBusyId(null);

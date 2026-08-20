@@ -191,91 +191,154 @@ def _bulk_yt_query() -> dict:
     }
 
 
-async def _bulk_yt_worker(job_id: str, coach_id: Optional[str]) -> None:
+async def _bulk_yt_worker(
+    job_id: str,
+    coach_id: Optional[str],
+    resume: bool = False,
+) -> None:
+    """Iter188 · Resumable, batched YouTube video-finder sweep.
+
+    Design goals (from product spec 2026-06):
+      * Process in small batches (default 10) so a pod recycle / request
+        timeout never wipes out an hour of work.
+      * Save progress AFTER every batch — the resume path skips any
+        exercise whose id is already in `processed_ids`.
+      * Filter archived / retired / soft-deleted / alias rows BEFORE the
+        first batch runs (via `_bulk_yt_query`).
+      * `processed` / `total_in_scope` on the job doc give the frontend
+        a clean "45 / 527" counter to display.
+    """
     from datetime import datetime, timezone
     from feature_auto_media_gen import _spawn_bg  # noqa: F401 — shared bg-task set
+
+    BATCH_SIZE = 10        # exercises per batch — matches product spec
+    SPACING_SEC = 1.0      # sequential spacing to stay under YouTube QPS
+
     started = datetime.now(timezone.utc).isoformat()
+
+    # ---- Resume support -------------------------------------------------
+    # Load any prior progress so we skip already-attempted exercises.
+    existing = await db.backfill_jobs.find_one({"_id": job_id}) or {}
+    processed_ids: set[str] = set(existing.get("processed_ids") or []) if resume else set()
+    processed = len(processed_ids)
+    wrote = int(existing.get("wrote") or 0) if resume else 0
+    errors: dict[str, int] = dict(existing.get("errors") or {}) if resume else {}
+    sample: list[dict] = list(existing.get("results_sample") or []) if resume else []
+
     try:
         async with _YT_BULK_LOCK:
             await _record_yt_job(job_id, {
                 "status": "running", "kind": "youtube_video_finder",
-                "started_at": started, "coach_id": coach_id,
-                "processed": 0, "wrote": 0, "errors": {}, "results_sample": [],
+                "started_at": existing.get("started_at") or started,
+                "resumed_at": started if resume else None,
+                "coach_id": coach_id,
+                "processed": processed, "wrote": wrote,
+                "errors": errors, "results_sample": sample,
+                "processed_ids": list(processed_ids),
             })
 
-            # Iter188 · Shared hardened query — active, non-archived,
-            # non-alias exercises only. Matches the primary-image sweep.
+            # Hardened query — active, non-archived, non-alias only.
             query = _bulk_yt_query()
-            exs = await db.exercises_v2.find(
+            all_exs = await db.exercises_v2.find(
                 query, {"_id": 0, "id": 1, "exercise_name": 1},
-            ).to_list(length=1000)
+            ).to_list(length=2000)
+            total_in_scope = len(all_exs)
 
-            processed = 0
-            wrote = 0
-            errors: dict[str, int] = {}
-            sample: list[dict] = []
-            for ex in exs:
-                processed += 1
-                try:
-                    v = await find_best_short(ex.get("exercise_name") or "")
-                    if v:
-                        await db.exercises_v2.update_one(
-                            {"id": ex["id"]},
-                            {"$set": {
-                                "primary_video_url": v["url"],
-                                "primary_video_source": "youtube_auto",
-                                "primary_video_meta": v,
-                                # Iter183 · Never auto-approve. Coach reviews.
-                                "approved_video_status": "Needs Review",
-                                "video_found_at": now_iso(),
-                            }},
-                        )
-                        wrote += 1
-                        if len(sample) < 20:
-                            sample.append({
-                                "id": ex["id"], "name": ex.get("exercise_name"),
-                                "video_url": v["url"], "channel": v.get("channel_name"),
-                                "duration": v.get("duration_seconds"),
+            # Skip anything we've already touched on a previous run.
+            remaining = [e for e in all_exs if e.get("id") not in processed_ids]
+
+            # Persist total up front so the poller can show "0 / 527".
+            await _record_yt_job(job_id, {
+                "total_in_scope": total_in_scope,
+                "batch_size": BATCH_SIZE,
+                "remaining": len(remaining),
+            })
+
+            # ---- Batched processing -----------------------------------
+            for batch_start in range(0, len(remaining), BATCH_SIZE):
+                batch = remaining[batch_start:batch_start + BATCH_SIZE]
+                batch_no = (processed // BATCH_SIZE) + 1
+
+                for ex in batch:
+                    ex_id = ex.get("id")
+                    processed += 1
+                    try:
+                        v = await find_best_short(ex.get("exercise_name") or "")
+                        if v:
+                            await db.exercises_v2.update_one(
+                                {"id": ex_id},
+                                {"$set": {
+                                    "primary_video_url": v["url"],
+                                    "primary_video_source": "youtube_auto",
+                                    "primary_video_meta": v,
+                                    # Iter183 · Never auto-approve. Coach reviews.
+                                    "approved_video_status": "Needs Review",
+                                    "video_found_at": now_iso(),
+                                }},
+                            )
+                            wrote += 1
+                            if len(sample) < 30:
+                                sample.append({
+                                    "id": ex_id, "name": ex.get("exercise_name"),
+                                    "video_url": v["url"], "channel": v.get("channel_name"),
+                                    "duration": v.get("duration_seconds"),
+                                })
+                        else:
+                            errors["no_match"] = errors.get("no_match", 0) + 1
+                    except HTTPException as e:
+                        if "quota" in (e.detail or "").lower():
+                            # Persist a "paused_quota" state so the coach can
+                            # resume tomorrow after the daily quota resets.
+                            errors["quota_exceeded"] = errors.get("quota_exceeded", 0) + 1
+                            if ex_id: processed_ids.add(ex_id)
+                            await _record_yt_job(job_id, {
+                                "status": "paused_quota",
+                                "processed": processed, "wrote": wrote,
+                                "errors": errors, "results_sample": sample,
+                                "processed_ids": list(processed_ids),
+                                "total_in_scope": total_in_scope,
+                                "paused_at": datetime.now(timezone.utc).isoformat(),
+                                "resumable": True,
                             })
-                    else:
-                        errors["no_match"] = errors.get("no_match", 0) + 1
-                except HTTPException as e:
-                    if "quota" in (e.detail or "").lower():
-                        errors["quota_exceeded"] = errors.get("quota_exceeded", 0) + 1
-                        await _record_yt_job(job_id, {
-                            "status": "paused_quota",
-                            "processed": processed, "wrote": wrote,
-                            "errors": errors, "results_sample": sample,
-                            "total_in_scope": len(exs),
-                        })
-                        return
-                    errors[e.detail or "http_error"] = errors.get(e.detail or "http_error", 0) + 1
-                except Exception as e:
-                    errors["exception"] = errors.get("exception", 0) + 1
-                    logger.warning("yt bulk %s failed: %s", ex.get("id"), e)
+                            return
+                        errors[e.detail or "http_error"] = errors.get(e.detail or "http_error", 0) + 1
+                    except Exception as e:
+                        errors["exception"] = errors.get("exception", 0) + 1
+                        logger.warning("yt bulk %s failed: %s", ex_id, e)
 
-                # Sequential — 1 s spacing so we never burst the API.
-                await asyncio.sleep(1.0)
+                    if ex_id:
+                        processed_ids.add(ex_id)
+                    await asyncio.sleep(SPACING_SEC)
 
-                if processed % 5 == 0:
-                    await _record_yt_job(job_id, {
-                        "processed": processed, "wrote": wrote,
-                        "errors": errors, "results_sample": sample,
-                        "total_in_scope": len(exs),
-                    })
+                # ---- Persist AFTER every batch --------------------
+                await _record_yt_job(job_id, {
+                    "status": "running",
+                    "processed": processed, "wrote": wrote,
+                    "errors": errors, "results_sample": sample,
+                    "processed_ids": list(processed_ids),
+                    "total_in_scope": total_in_scope,
+                    "last_batch_no": batch_no,
+                    "last_batch_at": datetime.now(timezone.utc).isoformat(),
+                })
 
             await _record_yt_job(job_id, {
                 "status": "complete",
                 "processed": processed, "wrote": wrote,
                 "errors": errors, "results_sample": sample,
-                "total_in_scope": len(exs),
+                "processed_ids": list(processed_ids),
+                "total_in_scope": total_in_scope,
                 "finished_at": datetime.now(timezone.utc).isoformat(),
+                "resumable": False,
             })
     except Exception as e:
         logger.exception("yt bulk worker crashed job=%s", job_id)
+        # Iter188 · A crash mid-batch leaves `processed_ids` intact from
+        # the last successful batch save, so the coach can hit Resume
+        # and pick up right where we left off.
         await _record_yt_job(job_id, {
             "status": "failed", "error": str(e)[:200],
             "finished_at": now_iso(),
+            "resumable": True,
         })
 
 
@@ -370,6 +433,35 @@ async def yt_finder_bulk_run(
                 "job_id": (in_flight or {}).get("_id")}
 
     from feature_auto_media_gen import _spawn_bg
+
+    # Iter188 · Auto-resume behaviour — if the coach's most recent job is
+    # resumable (paused_quota / failed / interrupted with processed_ids
+    # remaining), pick up where we left off unless the request explicitly
+    # asks for a fresh start (`body.fresh_start = true`).
+    fresh_start = bool(body.get("fresh_start"))
+    if not fresh_start:
+        resumable = await db.backfill_jobs.find_one(
+            {
+                "kind": "youtube_video_finder",
+                "status": {"$in": ["paused_quota", "failed"]},
+                "resumable": True,
+            },
+            sort=[("started_at", -1)],
+        )
+        if resumable and resumable.get("_id"):
+            _spawn_bg(_bulk_yt_worker(
+                resumable["_id"], coach_id=coach.get("id"), resume=True,
+            ))
+            if response is not None:
+                response.status_code = 202
+            return {
+                "status": "resumed",
+                "job_id": resumable["_id"],
+                "processed": resumable.get("processed", 0),
+                "total_in_scope": resumable.get("total_in_scope", 0),
+                "poll_url": f"/api/coach/auto-media-gen/backfill-status/{resumable['_id']}",
+            }
+
     job_id = new_id()
     await _record_yt_job(job_id, {"status": "queued",
                                   "kind": "youtube_video_finder",
@@ -379,6 +471,44 @@ async def yt_finder_bulk_run(
         response.status_code = 202
     return {"status": "queued", "job_id": job_id,
             "poll_url": f"/api/coach/auto-media-gen/backfill-status/{job_id}"}
+
+
+@api.post("/coach/youtube-finder/bulk-resume/{job_id}")
+async def yt_finder_bulk_resume(
+    job_id: str,
+    coach: dict = Depends(require_role("coach")),
+    response: Response = None,
+):
+    """Iter188 · Explicit resume of a specific job.
+
+    Used by the coach admin UI when they want to resume a paused / failed
+    job without kicking off a fresh sweep. Idempotent — a currently-running
+    job returns `already_running` and does NOT queue a duplicate.
+    """
+    if _YT_BULK_LOCK.locked():
+        if response is not None:
+            response.status_code = 409
+        return {"status": "already_running", "job_id": job_id}
+
+    doc = await db.backfill_jobs.find_one({"_id": job_id})
+    if not doc:
+        if response is not None:
+            response.status_code = 404
+        return {"status": "not_found"}
+    if doc.get("status") == "complete":
+        return {"status": "already_complete", "job_id": job_id}
+
+    from feature_auto_media_gen import _spawn_bg
+    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id"), resume=True))
+    if response is not None:
+        response.status_code = 202
+    return {
+        "status": "resumed",
+        "job_id": job_id,
+        "processed": doc.get("processed", 0),
+        "total_in_scope": doc.get("total_in_scope", 0),
+        "poll_url": f"/api/coach/auto-media-gen/backfill-status/{job_id}",
+    }
 
 
 logger.info(

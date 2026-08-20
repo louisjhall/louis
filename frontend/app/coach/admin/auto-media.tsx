@@ -700,6 +700,10 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         toast("No exercises missing a primary video — nothing to search.", "info");
         return;
       }
+
+      // Iter188 · Kickoff — the backend now auto-resumes any resumable
+      // job (paused_quota / failed with `resumable: true`), so we just
+      // POST and read back the returned status.
       let kickoff: any;
       try {
         kickoff = await api<any>("/coach/youtube-finder/bulk-run", { method: "POST", body: {} });
@@ -711,31 +715,44 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
       const jobId: string = kickoff?.job_id;
       if (!jobId) { toast("No job id returned", "error"); return; }
 
-      let lastWrote = 0;
-      // Sequential ~1s per exercise → 30 min cap = 1800 polls @2s = 900 iters.
-      for (let i = 0; i < 900; i += 1) {
+      if (kickoff?.status === "resumed") {
+        const pStart = Number(kickoff?.processed || 0);
+        const tot = Number(kickoff?.total_in_scope || would);
+        toast(`Resuming from ${pStart}/${tot}…`, "info");
+      } else if (kickoff?.status === "queued") {
+        toast(`Starting fresh sweep — ${would} exercises`, "info");
+      }
+
+      // Iter188 · Poll for up to 60 min. Each batch of 10 takes ~10s
+      // (1s spacing), so 527 items ≈ ~9 min. Give buffer for retries.
+      let lastProcessed = -1;
+      for (let i = 0; i < 1800; i += 1) {
         await new Promise((r) => setTimeout(r, 2000));
         let s: any;
         try { s = await api<any>(`/coach/auto-media-gen/backfill-status/${jobId}`); } catch { continue; }
         const wrote = Number(s?.wrote || 0);
+        const processedN = Number(s?.processed || 0);
         const total = Number(s?.total_in_scope || would);
-        if (wrote !== lastWrote) {
-          toast(`… searching · ${wrote}/${total} videos found`, "info");
-          lastWrote = wrote;
+        // Progress toast whenever `processed` (not just `wrote`) changes,
+        // so the coach sees "45 / 527" ticking even when videos aren't
+        // being found for a run of exercises.
+        if (processedN !== lastProcessed) {
+          toast(`${processedN} / ${total} scanned · ${wrote} found`, "info");
+          lastProcessed = processedN;
         }
         if (s?.status === "complete" || s?.status === "paused_quota" || s?.status === "failed") {
           const errs = Object.values(s?.errors || {}).reduce((a: number, b: any) => a + Number(b || 0), 0);
           if (s.status === "paused_quota") {
-            toast(`YouTube quota exhausted — ${wrote}/${s.processed} found. Resume tomorrow.`, "error");
+            toast(`YouTube quota exhausted — ${wrote}/${processedN} found. Tap 'Find Videos' again tomorrow to resume from where we stopped.`, "error");
           } else if (s.status === "failed") {
-            toast(`Bulk run failed: ${s?.error || "unknown"}`, "error");
+            toast(`Bulk run failed at ${processedN}/${total}: ${s?.error || "unknown"}. Tap 'Find Videos' to resume from ${processedN}.`, "error");
           } else {
-            toast(`Found ${wrote}/${s.processed} videos${errs ? ` (${errs} errors)` : ""}. All flagged Needs Review.`, "success");
+            toast(`Complete · Found ${wrote}/${processedN} videos${errs ? ` (${errs} errors)` : ""}. All flagged Needs Review.`, "success");
           }
           return;
         }
       }
-      toast("Bulk run still going after 30 min — check status manually.", "info");
+      toast("Bulk run still going after 60 min — check status manually.", "info");
     } catch (e: any) { toast(e?.message || "Bulk run failed", "error"); }
     finally { setYtBusy(null); }
   };

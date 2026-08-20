@@ -16,7 +16,7 @@
  *     row here without a hard reload.
  */
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
@@ -32,20 +32,40 @@ type PendingRow = {
   end_date?: string;
 };
 
+type ApprovedRow = {
+  id: string;
+  user_id: string;
+  client_first_name?: string;
+  client_last_name?: string;
+  coach_review_at?: string;
+  coach_review_actor?: string;
+  start_date?: string;
+  end_date?: string;
+};
+
 export function CoachRosterReviewInbox() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<PendingRow[]>([]);
+  const [approved, setApproved] = useState<ApprovedRow[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showApproved, setShowApproved] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ count: number; clients: PendingRow[] }>(
-        "/coach/rosters-awaiting-review"
-      );
-      setRows(r?.clients || []);
+      const [awaiting, recentlyApproved] = await Promise.all([
+        api<{ count: number; clients: PendingRow[] }>(
+          "/coach/rosters-awaiting-review",
+        ).catch(() => ({ count: 0, clients: [] } as any)),
+        api<{ count: number; clients: ApprovedRow[] }>(
+          "/coach/rosters-recently-approved",
+        ).catch(() => ({ count: 0, clients: [] } as any)),
+      ]);
+      setRows(awaiting?.clients || []);
+      setApproved(recentlyApproved?.clients || []);
     } catch {
       setRows([]);
+      setApproved([]);
     } finally {
       setLoading(false);
     }
@@ -61,10 +81,41 @@ export function CoachRosterReviewInbox() {
         method: "POST",
         body: { outcome },
       });
-      // Optimistically drop the row so the queue count drops immediately.
       setRows((prev) => prev.filter((r) => r.id !== rid));
+      // A freshly-approved roster should also show up in the approved
+      // list — refresh in background so it's there next expand.
+      load();
     } catch {
-      // On failure, reload so state matches server truth.
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const unapprove = async (rid: string, name: string) => {
+    if (busyId) return;
+    // Native + web confirm dialog — dead-simple guard so a coach
+    // doesn't unapprove by accident.
+    const proceed = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        `Unapprove ${name}'s roster?`,
+        "The client will be prompted to upload a fresh roster and receive a notification.",
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          { text: "Unapprove", style: "destructive", onPress: () => resolve(true) },
+        ],
+      );
+    });
+    if (!proceed) return;
+    setBusyId(rid);
+    try {
+      await api(`/coach/rosters/${rid}/unapprove`, {
+        method: "POST",
+        body: {},
+      });
+      setApproved((prev) => prev.filter((r) => r.id !== rid));
+    } catch (e: any) {
+      Alert.alert("Couldn't unapprove", e?.message || "Please try again.");
       await load();
     } finally {
       setBusyId(null);
@@ -72,75 +123,140 @@ export function CoachRosterReviewInbox() {
   };
 
   if (loading) return null;
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && approved.length === 0) return null;
 
   return (
     <View style={styles.wrap} testID="coach-roster-review-inbox">
-      <View style={styles.header}>
-        <View style={styles.badge}>
-          <Text style={styles.badgeT}>{rows.length}</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>ROSTERS AWAITING YOUR REVIEW</Text>
-          <Text style={styles.sub}>
-            {rows.length === 1
-              ? "1 client is waiting for you to approve their submitted roster."
-              : `${rows.length} clients are waiting for you to approve their submitted rosters.`}
-            {"  "}They can&apos;t re-upload until you act.
-          </Text>
-        </View>
-      </View>
-
-      {rows.map((row) => {
-        const fullName = [row.client_first_name, row.client_last_name].filter(Boolean).join(" ") || "Client";
-        const range = row.start_date && row.end_date
-          ? `${row.start_date} → ${row.end_date}`
-          : row.awaiting_review_since
-            ? `submitted ${new Date(row.awaiting_review_since).toLocaleDateString()}`
-            : "";
-        const isBusy = busyId === row.id;
-        return (
-          <View key={row.id} style={styles.row} testID={`coach-roster-review-row-${row.id}`}>
-            <Pressable
-              style={{ flex: 1 }}
-              onPress={() => router.push(`/coach/client/${row.user_id}/workspace` as any)}
-            >
-              <Text style={styles.rowName}>{fullName}</Text>
-              {range ? <Text style={styles.rowMeta}>{range}</Text> : null}
-            </Pressable>
-            <View style={styles.actions}>
-              <Pressable
-                testID={`coach-roster-review-reject-${row.id}`}
-                onPress={() => submit(row.id, "rejected")}
-                disabled={isBusy}
-                style={[styles.rejectBtn, isBusy && { opacity: 0.5 }]}
-              >
-                <Ionicons name="refresh" size={12} color={theme.color.brand} />
-                <Text style={styles.rejectBtnT}>REQUEST NEW</Text>
-              </Pressable>
-              <Pressable
-                testID={`coach-roster-review-approve-${row.id}`}
-                onPress={() => submit(row.id, "approved")}
-                disabled={isBusy}
-                style={[styles.approveBtn, isBusy && { opacity: 0.5 }]}
-              >
-                {isBusy ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark" size={13} color="#fff" />
-                    <Text style={styles.approveBtnT}>APPROVE</Text>
-                  </>
-                )}
-              </Pressable>
+      {rows.length > 0 ? (
+        <>
+          <View style={styles.header}>
+            <View style={styles.badge}>
+              <Text style={styles.badgeT}>{rows.length}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.title}>ROSTERS AWAITING YOUR REVIEW</Text>
+              <Text style={styles.sub}>
+                {rows.length === 1
+                  ? "1 client is waiting for you to approve their submitted roster."
+                  : `${rows.length} clients are waiting for you to approve their submitted rosters.`}
+                {"  "}They can&apos;t re-upload until you act.
+              </Text>
             </View>
           </View>
-        );
-      })}
 
-      <Text style={styles.autoHint}>
-        Rosters auto-approve after 24 h if you don&apos;t act — the client won&apos;t be left waiting.
-      </Text>
+          {rows.map((row) => {
+            const fullName = [row.client_first_name, row.client_last_name].filter(Boolean).join(" ") || "Client";
+            const range = row.start_date && row.end_date
+              ? `${row.start_date} → ${row.end_date}`
+              : row.awaiting_review_since
+                ? `submitted ${new Date(row.awaiting_review_since).toLocaleDateString()}`
+                : "";
+            const isBusy = busyId === row.id;
+            return (
+              <View key={row.id} style={styles.row} testID={`coach-roster-review-row-${row.id}`}>
+                <Pressable
+                  style={{ flex: 1 }}
+                  onPress={() => router.push(`/coach/client/${row.user_id}/workspace` as any)}
+                >
+                  <Text style={styles.rowName}>{fullName}</Text>
+                  {range ? <Text style={styles.rowMeta}>{range}</Text> : null}
+                </Pressable>
+                <View style={styles.actions}>
+                  <Pressable
+                    testID={`coach-roster-review-reject-${row.id}`}
+                    onPress={() => submit(row.id, "rejected")}
+                    disabled={isBusy}
+                    style={[styles.rejectBtn, isBusy && { opacity: 0.5 }]}
+                  >
+                    <Ionicons name="refresh" size={12} color={theme.color.brand} />
+                    <Text style={styles.rejectBtnT}>REQUEST NEW</Text>
+                  </Pressable>
+                  <Pressable
+                    testID={`coach-roster-review-approve-${row.id}`}
+                    onPress={() => submit(row.id, "approved")}
+                    disabled={isBusy}
+                    style={[styles.approveBtn, isBusy && { opacity: 0.5 }]}
+                  >
+                    {isBusy ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark" size={13} color="#fff" />
+                        <Text style={styles.approveBtnT}>APPROVE</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+
+          <Text style={styles.autoHint}>
+            Rosters auto-approve after 24 h if you don&apos;t act — the client won&apos;t be left waiting.
+          </Text>
+        </>
+      ) : null}
+
+      {/* Iter188 · Recently-approved rosters — collapsed by default. Coach
+          can unapprove any of these to reopen the client's upload slot. */}
+      {approved.length > 0 ? (
+        <View style={styles.approvedSection} testID="coach-roster-recently-approved">
+          <Pressable
+            onPress={() => setShowApproved((s) => !s)}
+            style={styles.approvedHeader}
+            testID="coach-roster-approved-toggle"
+          >
+            <Ionicons
+              name={showApproved ? "chevron-down" : "chevron-forward"}
+              size={14}
+              color={theme.color.textMuted}
+            />
+            <Text style={styles.approvedTitle}>
+              RECENTLY APPROVED · {approved.length}
+            </Text>
+            <Text style={styles.approvedSubtle}>
+              tap to {showApproved ? "hide" : "unapprove"}
+            </Text>
+          </Pressable>
+
+          {showApproved ? approved.map((row) => {
+            const fullName = [row.client_first_name, row.client_last_name].filter(Boolean).join(" ") || "Client";
+            const when = row.coach_review_at
+              ? new Date(row.coach_review_at).toLocaleDateString()
+              : "";
+            const actor = row.coach_review_actor === "auto_24h"
+              ? "auto-approved"
+              : "approved";
+            const isBusy = busyId === row.id;
+            return (
+              <View key={row.id} style={styles.row} testID={`coach-roster-approved-row-${row.id}`}>
+                <Pressable
+                  style={{ flex: 1 }}
+                  onPress={() => router.push(`/coach/client/${row.user_id}/workspace` as any)}
+                >
+                  <Text style={styles.rowName}>{fullName}</Text>
+                  <Text style={styles.rowMeta}>{actor}{when ? ` · ${when}` : ""}</Text>
+                </Pressable>
+                <Pressable
+                  testID={`coach-roster-unapprove-${row.id}`}
+                  onPress={() => unapprove(row.id, fullName)}
+                  disabled={isBusy}
+                  style={[styles.unapproveBtn, isBusy && { opacity: 0.5 }]}
+                >
+                  {isBusy ? (
+                    <ActivityIndicator color={theme.color.brand} size="small" />
+                  ) : (
+                    <>
+                      <Ionicons name="close" size={12} color={theme.color.brand} />
+                      <Text style={styles.unapproveBtnT}>UNAPPROVE</Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+            );
+          }) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -193,5 +309,49 @@ const styles = StyleSheet.create({
 
   autoHint: {
     color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", textAlign: "center",
+  },
+
+  // Iter188 · Recently-approved unapprove section
+  approvedSection: {
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: theme.color.divider,
+    paddingTop: 12,
+    gap: 8,
+  },
+  approvedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 4,
+  },
+  approvedTitle: {
+    color: theme.color.textMuted,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.6,
+  },
+  approvedSubtle: {
+    color: theme.color.textMuted,
+    fontSize: 10,
+    fontStyle: "italic",
+    marginLeft: "auto",
+  },
+  unapproveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  unapproveBtnT: {
+    color: theme.color.brand,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
   },
 });

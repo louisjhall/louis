@@ -448,13 +448,16 @@ export default function RosterUpload() {
   const currentStageIdx = STAGES.findIndex((s) => s.key === job?.stage);
   const progress = Math.max(0, Math.min(100, job?.progress || 0));
 
-  // Iter186 · Compute lock — anything other than `none | coach_rejected`
-  // means the client has already submitted and is either mid-processing
-  // or waiting for the coach. Show the lock card, NOT the upload UI.
+  // Iter188 · Lock only for STATES the client actively cannot recover
+  // from with an upload. Previously `coach_approved` was locked too,
+  // but the product intent is that clients can proactively upload
+  // next month's roster at any time to replace the current one. The
+  // approval status naturally resets to `awaiting_review` when a new
+  // roster is confirmed. `coach_unapproved` is intentionally NOT
+  // locked either — the coach has explicitly asked for a new upload.
   const lockedStates = new Set([
     "awaiting_client_confirmation",
     "awaiting_coach_review",
-    "coach_approved",
   ]);
   const isLocked = !!submission && lockedStates.has(submission.state);
 
@@ -510,6 +513,49 @@ export default function RosterUpload() {
       <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
         {!job ? (
           <>
+            {/* Iter188 · Contextual info banners for clients who ALREADY
+                have a roster on file — either approved (proactive
+                next-month upload) or coach-unapproved (fresh upload
+                requested). Neither locks the flow; both explain what
+                will happen. */}
+            {submission?.state === "coach_approved" ? (
+              <View style={styles.ctxBannerApproved} testID="ru-ctx-approved">
+                <Ionicons name="checkmark-circle" size={16} color={theme.color.green} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.ctxBannerTitle}>YOU HAVE AN APPROVED ROSTER</Text>
+                  <Text style={styles.ctxBannerBody}>
+                    Uploading a new one will replace the current programme.
+                    Perfect for submitting next month&apos;s roster.
+                  </Text>
+                </View>
+              </View>
+            ) : submission?.state === "coach_unapproved" ? (
+              <View style={styles.ctxBannerUnapproved} testID="ru-ctx-unapproved">
+                <Ionicons name="refresh-circle" size={16} color={theme.color.brand} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.ctxBannerTitle, { color: theme.color.brand }]}>
+                    YOUR COACH ASKED FOR A FRESH ROSTER
+                  </Text>
+                  <Text style={styles.ctxBannerBody}>
+                    Please upload your latest roster below — it&apos;ll go
+                    straight to your coach for review.
+                  </Text>
+                </View>
+              </View>
+            ) : submission?.state === "coach_rejected" ? (
+              <View style={styles.ctxBannerUnapproved} testID="ru-ctx-rejected">
+                <Ionicons name="refresh-circle" size={16} color={theme.color.brand} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.ctxBannerTitle, { color: theme.color.brand }]}>
+                    YOUR COACH REQUESTED A NEW UPLOAD
+                  </Text>
+                  <Text style={styles.ctxBannerBody}>
+                    Upload your latest roster below to try again.
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
             <Text style={styles.subtitle}>Upload roster and CrewFit does the rest.</Text>
             <Text style={styles.helper}>PDF or photo of your roster — Louis reads it and plans your training around your flights and layovers.</Text>
 
@@ -1045,6 +1091,29 @@ const styles = StyleSheet.create({
   },
   lockChecklistT: {
     color: theme.color.text, fontSize: 12, lineHeight: 18, flex: 1,
+  },
+
+  // Iter188 · Contextual banners above the upload form when the client
+  // already has a roster on file. Non-blocking — they can still upload.
+  ctxBannerApproved: {
+    flexDirection: "row", alignItems: "flex-start", gap: 10,
+    padding: 12, marginBottom: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(52,199,89,0.10)",
+    borderWidth: 1, borderColor: theme.color.green,
+  },
+  ctxBannerUnapproved: {
+    flexDirection: "row", alignItems: "flex-start", gap: 10,
+    padding: 12, marginBottom: 12,
+    borderRadius: 12,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  ctxBannerTitle: {
+    color: theme.color.green, fontSize: 11, fontWeight: "900", letterSpacing: 1.5,
+  },
+  ctxBannerBody: {
+    color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 4,
   },
 });
 

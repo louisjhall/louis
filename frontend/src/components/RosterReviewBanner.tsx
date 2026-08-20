@@ -38,7 +38,7 @@ type SubmissionState = {
 
 // Sentinel active-mode enum — computed AFTER both endpoints resolve so
 // we don't briefly flash the fast copy over a coach-review submission.
-type Mode = "none" | "reviewing" | "coach_review";
+type Mode = "none" | "reviewing" | "coach_review" | "coach_unapproved";
 
 export function RosterReviewBanner({ onReadyChanged }: { onReadyChanged?: () => void }) {
   const [mode, setMode] = useState<Mode>("none");
@@ -66,11 +66,12 @@ export function RosterReviewBanner({ onReadyChanged }: { onReadyChanged?: () => 
       }
       setStatus(effectiveStatus);
 
-      // Priority: coach_review > reviewing > none.
-      // Coach review outranks the fast 20-min window because it is the
-      // more truthful signal once we've entered the manual approval flow.
+      // Priority: coach_unapproved > coach_review > reviewing > none.
+      // Unapproved outranks everything else because it's actionable —
+      // the client must upload a fresh roster and we surface that ASAP.
       let next: Mode = "none";
-      if (sRaw.state === "awaiting_coach_review") next = "coach_review";
+      if (sRaw.state === "coach_unapproved") next = "coach_unapproved";
+      else if (sRaw.state === "awaiting_coach_review") next = "coach_review";
       else if (effectiveStatus.status === "reviewing") next = "reviewing";
       setMode(next);
 
@@ -94,6 +95,29 @@ export function RosterReviewBanner({ onReadyChanged }: { onReadyChanged?: () => 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   if (mode === "none") return null;
+
+  // -------------------------------------------------------------------
+  // Iter188 · Coach Unapproved — actionable, drives to /roster-upload
+  // -------------------------------------------------------------------
+  if (mode === "coach_unapproved") {
+    return (
+      <View style={[styles.card, styles.cardUnapproved]} testID="coach-unapproved-banner">
+        <View style={[styles.iconWrap, { backgroundColor: theme.color.brand, borderColor: theme.color.brand }]}>
+          <Ionicons name="refresh-circle" size={16} color="#fff" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.eyebrow}>FRESH ROSTER NEEDED</Text>
+          <Text style={styles.title}>
+            Your coach asked for a new roster upload.
+          </Text>
+          <Text style={styles.sub}>
+            Tap Upload Roster below to send the latest version — it&apos;ll go
+            straight back to your coach for review.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   // -------------------------------------------------------------------
   // Slow copy — Coach Review (Iter187, up to 24 h)
@@ -154,6 +178,10 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 14,
     marginBottom: 4,
+  },
+  cardUnapproved: {
+    // Slightly warmer background to signal action needed vs "just waiting".
+    backgroundColor: theme.color.brandTint,
   },
   iconWrap: {
     width: 32,

@@ -138,7 +138,7 @@ async def compute_submission_state(db, user: dict) -> dict:
         latest = await db.rosters.find_one(
             {
                 "user_id": user_id,
-                "coach_review_state": {"$in": ["awaiting_review", "approved", "rejected"]},
+                "coach_review_state": {"$in": ["awaiting_review", "approved", "rejected", "unapproved"]},
             },
             sort=[("awaiting_review_since", -1), ("created_at", -1)],
         )
@@ -149,6 +149,10 @@ async def compute_submission_state(db, user: dict) -> dict:
             "awaiting_review": "awaiting_coach_review",
             "approved": "coach_approved",
             "rejected": "coach_rejected",
+            # Iter188 · Coach explicitly withdrew a previous approval —
+            # client can upload a new roster proactively OR because the
+            # coach asked for a fresh one.
+            "unapproved": "coach_unapproved",
         }
         state = state_map.get(str(latest.get("coach_review_state") or ""), "none")
         return {
@@ -158,6 +162,8 @@ async def compute_submission_state(db, user: dict) -> dict:
             "awaiting_review_since": latest.get("awaiting_review_since"),
             "coach_review_at": latest.get("coach_review_at"),
             "coach_review_actor": latest.get("coach_review_actor"),
+            "unapproved_at": latest.get("unapproved_at"),
+            "unapproved_reason": latest.get("unapproved_reason"),
         }
 
     # 4. Backward-compat: legacy rosters that pre-date this feature (i.e.
@@ -364,11 +370,67 @@ async def _do_reject(db, roster: dict, *, reviewer_id: str) -> None:
     )
 
 
+async def _do_unapprove(
+    db, roster: dict, *, reviewer_id: str, reason: Optional[str] = None,
+) -> None:
+    """Iter188 · Coach withdraws a PREVIOUSLY-APPROVED roster.
+
+    Idempotent — only flips state if currently ``approved``. Also
+    deactivates the roster so any downstream calendar / programme
+    consumers stop reading from it. Fires a push + in-app notification
+    telling the client a fresh upload is needed.
+    """
+    if not roster or not roster.get("id"):
+        return
+    rid = roster["id"]
+    user_id = roster.get("user_id")
+    now = _iso(_now_utc())
+
+    res = await db.rosters.update_one(
+        {"id": rid, "coach_review_state": "approved"},
+        {"$set": {
+            "coach_review_state": "unapproved",
+            "unapproved_at": now,
+            "unapproved_by": reviewer_id,
+            "unapproved_reason": (reason or "").strip() or None,
+            # Deactivate — the previously-approved roster no longer
+            # drives the programme once the coach has revoked it.
+            "is_active": False,
+        }},
+    )
+    if res.modified_count == 0:
+        return
+
+    # Notify the client — same category as roster_approved so it obeys
+    # the client's programme_updates preferences.
+    if user_id:
+        try:
+            from feature_notifications import enqueue_notification
+            await enqueue_notification(
+                user_id,
+                "programme_updated",
+                "Fresh roster needed",
+                "Your coach has asked for a fresh roster upload — tap to upload now.",
+                action_url="/roster-upload",
+                related_id=rid,
+                dedupe_key=f"roster_unapproved::{rid}",
+            )
+        except Exception:
+            logger.exception("roster-unapprove notify failed for %s", rid)
+
+
 # ---------------------------------------------------------------------------
 # API — factory pattern so server.py can wire in the shared db + user deps.
 # ---------------------------------------------------------------------------
 class ReviewOutcomeBody(BaseModel):
     outcome: str  # "approved" | "rejected"
+
+
+class UnapproveBody(BaseModel):
+    """Iter188 · Optional free-text reason the coach types when
+    unapproving a roster. Persisted on the roster doc and shown in the
+    client's context banner + audit log."""
+    reason: Optional[str] = None
 
 
 def make_router(db, current_user, require_role) -> APIRouter:
@@ -426,6 +488,76 @@ def make_router(db, current_user, require_role) -> APIRouter:
             return {"count": len(enriched), "clients": enriched}
         except Exception:
             logger.exception("coach rosters-awaiting-review query failed")
+            return {"count": 0, "clients": []}
+
+    @r.post("/coach/rosters/{rid}/unapprove")
+    async def _coach_unapprove(
+        rid: str,
+        body: UnapproveBody,
+        coach: dict = Depends(require_role("coach")),
+    ):
+        """Iter188 · Withdraw a previously-approved roster.
+
+        The client's roster upload slot re-opens and they're notified that
+        a fresh upload is needed. Idempotent — subsequent calls on the
+        same roster are no-ops.
+        """
+        roster = await db.rosters.find_one({"id": rid}, {"_id": 0})
+        if not roster:
+            raise HTTPException(404, "Roster not found")
+        state = str(roster.get("coach_review_state") or "")
+        if state != "approved":
+            raise HTTPException(
+                400,
+                f"Only approved rosters can be unapproved (current state: {state or 'none'})",
+            )
+        await _do_unapprove(
+            db, roster, reviewer_id=coach["id"], reason=body.reason,
+        )
+        fresh = await db.rosters.find_one({"id": rid}, {"_id": 0})
+        return {"ok": True, "roster": fresh}
+
+    @r.get("/coach/rosters-recently-approved")
+    async def _coach_recently_approved(coach: dict = Depends(require_role("coach"))):
+        """Iter188 · Recently-approved rosters for THIS coach's clients so
+        the coach can unapprove one if they realise it needs another look.
+
+        Returns the last 30 days of approvals to keep the list tight.
+        """
+        try:
+            my_clients = await db.users.find(
+                {"role": "client", "assigned_coach_id": coach["id"]},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "email": 1},
+            ).to_list(500)
+            client_ids = [c["id"] for c in my_clients if c.get("id")]
+            if not client_ids:
+                return {"count": 0, "clients": []}
+
+            cutoff = _iso(_now_utc() - _dt.timedelta(days=30))
+            rows = await db.rosters.find(
+                {
+                    "user_id": {"$in": client_ids},
+                    "coach_review_state": "approved",
+                    "coach_review_at": {"$gte": cutoff},
+                },
+                {
+                    "_id": 0, "id": 1, "user_id": 1,
+                    "coach_review_at": 1, "coach_review_actor": 1,
+                    "start_date": 1, "end_date": 1,
+                },
+            ).sort("coach_review_at", -1).to_list(200)
+            client_map = {c["id"]: c for c in my_clients}
+            enriched = [
+                {
+                    **row,
+                    "client_first_name": client_map.get(row["user_id"], {}).get("first_name"),
+                    "client_last_name":  client_map.get(row["user_id"], {}).get("last_name"),
+                }
+                for row in rows
+            ]
+            return {"count": len(enriched), "clients": enriched}
+        except Exception:
+            logger.exception("coach rosters-recently-approved query failed")
             return {"count": 0, "clients": []}
 
     return r

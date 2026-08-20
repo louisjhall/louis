@@ -688,7 +688,7 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
     } finally { setYtBusy(null); }
   };
 
-  const bulkRun = async () => {
+  const bulkRun = async (loose: boolean = false) => {
     if (ytBusy) return;
     setYtBusy("bulk");
     try {
@@ -701,12 +701,9 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         return;
       }
 
-      // Iter188 · Kickoff — the backend now auto-resumes any resumable
-      // job (paused_quota / failed with `resumable: true`), so we just
-      // POST and read back the returned status.
       let kickoff: any;
       try {
-        kickoff = await api<any>("/coach/youtube-finder/bulk-run", { method: "POST", body: {} });
+        kickoff = await api<any>("/coach/youtube-finder/bulk-run", { method: "POST", body: { loose } });
       } catch (e: any) {
         const jid = e?.response?.job_id;
         if (jid) { kickoff = { job_id: jid }; toast("Attaching to sweep already in flight…", "info"); }
@@ -718,9 +715,9 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
       if (kickoff?.status === "resumed") {
         const pStart = Number(kickoff?.processed || 0);
         const tot = Number(kickoff?.total_in_scope || would);
-        toast(`Resuming from ${pStart}/${tot}…`, "info");
+        toast(`Resuming from ${pStart}/${tot}${loose ? " (loose)" : ""}…`, "info");
       } else if (kickoff?.status === "queued") {
-        toast(`Starting fresh sweep — ${would} exercises`, "info");
+        toast(`Starting ${loose ? "LOOSE " : ""}sweep — ${would} exercises`, "info");
       }
 
       // Iter188 · Poll for up to 60 min. Each batch of 10 takes ~10s
@@ -778,7 +775,7 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
           {ytEnabled ? "ENABLED" : "DISABLED"}
         </Text>
       </Pressable>
-      <Pressable onPress={bulkRun} disabled={!!ytBusy || !ytEnabled}
+      <Pressable onPress={() => bulkRun(false)} disabled={!!ytBusy || !ytEnabled}
         style={[styles.ytBulk, (!!ytBusy || !ytEnabled) && { opacity: 0.5 }]}
         testID="yt-finder-bulk-run">
         {ytBusy === "bulk"
@@ -786,6 +783,48 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
           : <Ionicons name="logo-youtube" size={16} color="#fff" />}
         <Text style={styles.ytBulkT}>FIND VIDEOS FOR ALL MISSING</Text>
       </Pressable>
+
+      {/* Iter188 · Diagnostic buttons — one-shot health check and a
+          loose-filter sweep for when the strict filters find nothing. */}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <Pressable
+          onPress={async () => {
+            setYtBusy("health");
+            try {
+              const r = await api<any>("/coach/youtube-finder/health?q=bench+press");
+              if (r?.ok) {
+                toast(`✅ API works — "${r.sample?.title?.slice(0, 40) || "found"}"`, "success");
+              } else {
+                toast(`❌ ${r?.advice || r?.reason || "unknown"}`, "error");
+              }
+            } catch (e: any) {
+              toast(e?.message || "Health check failed", "error");
+            } finally { setYtBusy(null); }
+          }}
+          disabled={!!ytBusy || !ytKeyOk}
+          style={[styles.ytDiag, (!!ytBusy || !ytKeyOk) && { opacity: 0.5 }]}
+          testID="yt-finder-health-check"
+        >
+          {ytBusy === "health"
+            ? <ActivityIndicator color={theme.color.brand} size="small" />
+            : <Ionicons name="pulse" size={14} color={theme.color.brand} />}
+          <Text style={styles.ytDiagT}>API HEALTH</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => bulkRun(true)}
+          disabled={!!ytBusy || !ytEnabled}
+          style={[styles.ytDiag, (!!ytBusy || !ytEnabled) && { opacity: 0.5 }]}
+          testID="yt-finder-bulk-run-loose"
+        >
+          <Ionicons name="filter-outline" size={14} color={theme.color.brand} />
+          <Text style={styles.ytDiagT}>LOOSE MODE</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.ytDiagHint}>
+        API HEALTH → 1-shot quota / connectivity check. LOOSE MODE → drops
+        the &quot;shorts&quot; suffix, allows up to 3 min videos, skips channel and
+        like-ratio filters — use when the strict sweep finds 0 videos.
+      </Text>
     </View>
   );
 }
@@ -807,6 +846,20 @@ const styles = StyleSheet.create({
             gap: 8, paddingVertical: 12, borderRadius: 8,
             backgroundColor: theme.color.brand },
   ytBulkT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.2 },
+  // Iter188 · Diagnostic pair — ghost buttons under the main sweep CTA.
+  ytDiag: {
+    flex: 1,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, paddingVertical: 10, borderRadius: 8,
+    borderWidth: 1, borderColor: theme.color.brand,
+    backgroundColor: "transparent",
+  },
+  ytDiagT: {
+    color: theme.color.brand, fontSize: 10, fontWeight: "900", letterSpacing: 1.2,
+  },
+  ytDiagHint: {
+    color: theme.color.textDim, fontSize: 10, fontStyle: "italic", lineHeight: 14,
+  },
   // Iter185 · Bulk-primary-image preview + breakdown UI
   ytPreview: { flexDirection: "row", alignItems: "center", justifyContent: "center",
                gap: 6, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 8,

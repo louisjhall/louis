@@ -64,29 +64,52 @@ async def _yt_get(http: httpx.AsyncClient, url: str, params: dict) -> dict:
     if resp.is_success:
         return resp.json()
     body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    reason = ((body.get("error") or {}).get("errors") or [{}])[0].get("reason", "unknown")
-    raise HTTPException(resp.status_code, f"youtube_{reason}")
+    err = body.get("error") or {}
+    errs = err.get("errors") or []
+    reason = (errs[0].get("reason") if errs else "") or ""
+    msg = err.get("message") or ""
+    # Iter188 · Robust quota detection — Google's 429 body sometimes
+    # omits `errors[].reason` and only carries `message`; also flag any
+    # 429 as a quota signal regardless of reason. Detail always contains
+    # the literal token "quota" so the worker can catch it upstream.
+    if resp.status_code == 429 or "quota" in msg.lower() or "quota" in reason.lower():
+        raise HTTPException(429, f"youtube_quota_exceeded reason={reason or 'rate_limit'} msg={msg[:120]}")
+    raise HTTPException(resp.status_code, f"youtube_{reason or 'error'} msg={msg[:120]}")
 
 
-async def find_best_short(exercise_name: str) -> Optional[dict]:
-    """Return the highest-quality ≤ 60 s embeddable video for `exercise_name`
-    or None. Enforces channel bad-word filter, known-good channel priority,
-    then like-ratio, then view count."""
+async def find_best_short(exercise_name: str, loose: bool = False) -> Optional[dict]:
+    """Return the highest-quality ≤ N s embeddable video for `exercise_name`
+    or None.
+
+    Iter188 · Added `loose` diagnostic mode:
+      * Query without the "shorts" suffix (broader results).
+      * Max duration bumped 60 s → 180 s.
+      * Skip like-ratio ranking; sort purely by (known_good, views).
+      * Skip the BAD_CHANNEL_WORDS filter — surface EVERYTHING so we
+        can see whether the API is returning zero results because of
+        our filters or because it's quota-exhausted.
+    """
     if not YOUTUBE_API_KEY:
         raise HTTPException(500, "YOUTUBE_API_KEY not configured")
     name = " ".join((exercise_name or "").split()).strip()
     if not name:
         return None
 
+    query = name if loose else f"{name} shorts"
+    max_dur = 180 if loose else 60
+
     async with httpx.AsyncClient(timeout=15) as http:
         try:
             search = await _yt_get(http, SEARCH_URL, {
-                "part": "snippet", "q": f"{name} shorts", "type": "video",
+                "part": "snippet", "q": query, "type": "video",
                 "videoDuration": "short", "videoEmbeddable": "true",
                 "order": "relevance", "maxResults": 10,
             })
         except HTTPException as e:
-            if "quotaExceeded" in e.detail or "dailyLimitExceeded" in e.detail:
+            # Iter188 · Bubble quota errors UP so the worker pauses the
+            # whole sweep instead of silently returning None for every
+            # subsequent exercise.
+            if "quota" in (e.detail or "").lower() or e.status_code == 429:
                 raise
             logger.warning("yt search failed for %r: %s", exercise_name, e.detail)
             return None
@@ -94,7 +117,7 @@ async def find_best_short(exercise_name: str) -> Optional[dict]:
         cands = [
             it for it in (search.get("items") or [])
             if (it.get("id") or {}).get("kind") == "youtube#video"
-            and _good_channel((it.get("snippet") or {}).get("channelTitle") or "")
+            and (loose or _good_channel((it.get("snippet") or {}).get("channelTitle") or ""))
         ]
         ids = [it["id"]["videoId"] for it in cands if (it.get("id") or {}).get("videoId")]
         if not ids:
@@ -108,7 +131,7 @@ async def find_best_short(exercise_name: str) -> Optional[dict]:
         eligible = []
         for it in (details.get("items") or []):
             dur = _iso_dur_seconds((it.get("contentDetails") or {}).get("duration") or "")
-            if dur > 60:
+            if dur > max_dur:
                 continue
             if not (it.get("status") or {}).get("embeddable"):
                 continue
@@ -128,11 +151,15 @@ async def find_best_short(exercise_name: str) -> Optional[dict]:
                 "url": f"https://www.youtube.com/watch?v={it['id']}",
                 "shorts_url": f"https://www.youtube.com/shorts/{it['id']}",
             })
+        if not eligible:
+            return None
+        if loose:
+            return max(eligible, key=lambda v: (_known_good_priority(v["channel_name"] or ""), v["view_count"]))
         return max(
-            eligible, default=None,
+            eligible,
             key=lambda v: (_known_good_priority(v["channel_name"] or ""),
                            v["like_ratio"], v["view_count"]),
-        ) if eligible else None
+        )
 
 
 async def _is_yt_enabled() -> bool:
@@ -195,6 +222,7 @@ async def _bulk_yt_worker(
     job_id: str,
     coach_id: Optional[str],
     resume: bool = False,
+    loose: bool = False,
 ) -> None:
     """Iter188 · Resumable, batched YouTube video-finder sweep.
 
@@ -263,7 +291,7 @@ async def _bulk_yt_worker(
                     ex_id = ex.get("id")
                     processed += 1
                     try:
-                        v = await find_best_short(ex.get("exercise_name") or "")
+                        v = await find_best_short(ex.get("exercise_name") or "", loose=loose)
                         if v:
                             await db.exercises_v2.update_one(
                                 {"id": ex_id},
@@ -465,12 +493,54 @@ async def yt_finder_bulk_run(
     job_id = new_id()
     await _record_yt_job(job_id, {"status": "queued",
                                   "kind": "youtube_video_finder",
-                                  "coach_id": coach.get("id")})
-    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id")))
+                                  "coach_id": coach.get("id"),
+                                  "loose": bool(body.get("loose"))})
+    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id"), loose=bool(body.get("loose"))))
     if response is not None:
         response.status_code = 202
     return {"status": "queued", "job_id": job_id,
             "poll_url": f"/api/coach/auto-media-gen/backfill-status/{job_id}"}
+
+
+@api.get("/coach/youtube-finder/health")
+async def yt_finder_health(
+    q: str = "bench press",
+    loose: bool = False,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Iter188 · One-shot diagnostic — checks that:
+      1. YOUTUBE_API_KEY is loaded.
+      2. The Search API returns SOMETHING for a simple query.
+      3. Quota isn't exhausted.
+
+    Returns raw counts + the first 3 titles so the coach can see with
+    their own eyes whether the API works. Costs 100 quota units.
+    """
+    if not YOUTUBE_API_KEY:
+        return {"ok": False, "reason": "no_api_key", "advice": "Set YOUTUBE_API_KEY in backend .env"}
+    try:
+        v = await find_best_short(q, loose=loose)
+        return {
+            "ok": bool(v),
+            "query": q,
+            "loose": loose,
+            "sample": v,
+            "advice": "Working" if v else "API responded but no eligible video (try loose=true)",
+        }
+    except HTTPException as e:
+        return {
+            "ok": False,
+            "query": q,
+            "loose": loose,
+            "reason": "http_error",
+            "status": e.status_code,
+            "detail": e.detail,
+            "advice": (
+                "Quota exhausted — wait until midnight PT for the daily reset."
+                if e.status_code == 429 or "quota" in str(e.detail).lower()
+                else str(e.detail)
+            ),
+        }
 
 
 @api.post("/coach/youtube-finder/bulk-resume/{job_id}")

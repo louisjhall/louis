@@ -1412,7 +1412,22 @@ async def ex_generate_content(
     task = {
         "coaching_points":  "Return 4–6 short concise coaching points (imperative, one line each). Focus on technique cues an aviation-crew client can execute in a hotel gym.",
         "common_mistakes":  "Return 3–5 common mistakes clients make with this exercise. Each item is one short sentence.",
-        "alternatives":     "Return 3–5 alternative exercises that train the same pattern, ordered by similarity. Only the exercise names, no explanation.",
+        # Iter189g · Purpose-tagged trio — exactly 3 alternatives, one
+        # per category. Each item MUST include `name`, `purpose`, and
+        # a one-line `why`. If no plausible option exists for a
+        # category, OMIT that item rather than inventing one.
+        "alternatives": (
+            "Return EXACTLY 3 alternative exercises, each serving a DIFFERENT purpose. "
+            "Purposes (use exactly these strings):\n"
+            "  1. \"equipment_swap\"          — same movement pattern, different equipment "
+            "(e.g., dumbbell → resistance band, barbell → kettlebell). Useful when the client is on the road.\n"
+            "  2. \"easier_regression\"        — same movement pattern, lower demand "
+            "(e.g., push-up → knee push-up, back squat → bodyweight squat). For fatigued or newer clients.\n"
+            "  3. \"injury_mobility_friendly\" — a safer variant that spares a common injury / mobility limit "
+            "(e.g., back squat → box squat for knee issues, overhead press → landmine press for shoulder issues).\n\n"
+            "If no plausible option exists for a category, OMIT that item — do NOT invent one, do NOT duplicate a category. "
+            "Prefer exercises that could realistically exist in a hotel gym or with basic equipment."
+        ),
         "instructions":     "Return 3–5 sentences of client-facing plain-English instructions for how to perform the exercise, written warmly (as if Louis is coaching the client through it).",
     }[kind]
 
@@ -1425,9 +1440,12 @@ async def ex_generate_content(
     prompt = (
         f"Exercise: {name}\nEquipment: {equipment}\nBody area: {body_area}\n"
         f"Difficulty: {difficulty}\n\n{task}\n\n"
-        "OUTPUT: strict JSON matching one of these shapes based on the task above. "
-        "For lists: {\"items\": [\"string\", ...]}. "
-        "For instructions: {\"text\": \"one paragraph\"}. "
+        "OUTPUT: strict JSON matching one of these shapes based on the task above.\n"
+        "For coaching_points / common_mistakes: {\"items\": [\"string\", ...]}.\n"
+        "For alternatives (Iter189g): {\"items\": [\n"
+        "  {\"name\": \"Exercise Name\", \"purpose\": \"equipment_swap|easier_regression|injury_mobility_friendly\", \"why\": \"one line\"}\n"
+        "]}. At most 3 items, one per purpose.\n"
+        "For instructions: {\"text\": \"one paragraph\"}.\n"
         "No prose outside the JSON."
     )
 
@@ -1462,19 +1480,53 @@ async def ex_generate_content(
         items = parsed.get("items") or []
         if not isinstance(items, list):
             items = []
-        # Fallback: try to split lines if JSON failed.
-        if not items and text:
-            items = [ln.lstrip("-• 0123456789.").strip() for ln in text.splitlines() if ln.strip()][:6]
-        items = [str(i).strip() for i in items if str(i).strip()][:6]
-        field_map = {
-            "coaching_points": "coaching_points",
-            "common_mistakes": "common_mistakes",
-            "alternatives":    "alternatives",
-        }
-        updates[field_map[kind]] = items
-        if kind == "coaching_points":
-            updates["content_status.coaching_points"] = bool(items)
-        result_payload["items"] = items
+        # Iter189g · For alternatives, `items` is a list of DICTS with
+        # `name`/`purpose`/`why`. For other kinds it's still a list of
+        # plain strings. Handle both shapes.
+        if kind == "alternatives":
+            valid_purposes = {"equipment_swap", "easier_regression", "injury_mobility_friendly"}
+            alt_meta: list[dict] = []
+            names_for_legacy: list[str] = []
+            seen_purposes: set[str] = set()
+            for entry in items:
+                if isinstance(entry, dict):
+                    n = str(entry.get("name") or "").strip()
+                    p = str(entry.get("purpose") or "").strip().lower()
+                    w = str(entry.get("why") or "").strip()
+                    if not n or p not in valid_purposes or p in seen_purposes:
+                        continue
+                    seen_purposes.add(p)
+                    alt_meta.append({"name": n, "purpose": p, "why": w})
+                    names_for_legacy.append(n)
+                elif isinstance(entry, str) and entry.strip():
+                    # Legacy shape — no purpose. Keep for the flat
+                    # `alternatives` field but skip `alternatives_meta`.
+                    names_for_legacy.append(entry.strip())
+                if len(alt_meta) >= 3:
+                    break
+            # Fallback: try to split lines if JSON failed.
+            if not names_for_legacy and text:
+                names_for_legacy = [
+                    ln.lstrip("-• 0123456789.").strip()
+                    for ln in text.splitlines() if ln.strip()
+                ][:3]
+            updates["alternatives"] = names_for_legacy[:3]
+            updates["alternatives_meta"] = alt_meta
+            result_payload["items"] = names_for_legacy[:3]
+            result_payload["alternatives_meta"] = alt_meta
+        else:
+            # Plain string-list kinds (coaching_points, common_mistakes).
+            if not items and text:
+                items = [ln.lstrip("-• 0123456789.").strip() for ln in text.splitlines() if ln.strip()][:6]
+            items = [str(i).strip() for i in items if str(i).strip()][:6]
+            field_map = {
+                "coaching_points": "coaching_points",
+                "common_mistakes": "common_mistakes",
+            }
+            updates[field_map[kind]] = items
+            if kind == "coaching_points":
+                updates["content_status.coaching_points"] = bool(items)
+            result_payload["items"] = items
 
     await db.exercises_v2.update_one({"id": ex_id}, {"$set": updates})
 

@@ -4385,10 +4385,15 @@ async def exercise_alternatives(
 ):
     """Return Atlas-recommended alternatives for an exercise given the user's context.
 
-    Manual-mode exercises store their curated alternatives directly on the
-    `exercises_v2` doc (`alternatives: list[str]`). We surface those first
-    so coach-authored substitutions are honoured, then fall back to the
-    hardcoded ALT_CATALOG for legacy content.
+    Iter189g · Coach spec — return AT MOST 3 alternatives, each with a
+    distinct `purpose`:
+      * "equipment_swap"            — same movement, different kit
+      * "easier_regression"         — same movement, lower demand
+      * "injury_mobility_friendly"  — safer variant for a niggling injury / mobility limit
+
+    Purpose-tagged alternatives come from `exercises_v2.alternatives_meta`
+    if present. Legacy flat `alternatives: [name, name]` lists are still
+    honoured for backward compat but capped at 3 items (no purpose label).
 
     Filter priority: equipment match > location fit > general fallback.
     """
@@ -4398,24 +4403,59 @@ async def exercise_alternatives(
     try:
         v2 = await db.exercises_v2.find_one(
             {"exercise_name": {"$regex": f"^{re.escape(wanted)}$", "$options": "i"}},
-            {"_id": 0, "alternatives": 1, "exercise_name": 1},
+            {"_id": 0, "alternatives": 1, "alternatives_meta": 1, "exercise_name": 1},
         )
-        if v2 and v2.get("alternatives"):
+        if v2:
             v2_alts: list[dict] = []
-            for a in v2["alternatives"]:
-                if isinstance(a, str) and a.strip():
-                    v2_alts.append({"name": a.strip(), "equipment": [], "why": "Coach-authored alternative."})
-                elif isinstance(a, dict) and a.get("name"):
+            # Prefer the new purpose-tagged shape.
+            meta = v2.get("alternatives_meta") or []
+            if isinstance(meta, list) and meta:
+                # Iter189g · Deduplicate by purpose so we never return
+                # two "equipment_swap" cards. Keep first occurrence.
+                seen_purposes: set[str] = set()
+                for entry in meta:
+                    if not isinstance(entry, dict):
+                        continue
+                    n = str(entry.get("name") or "").strip()
+                    p = str(entry.get("purpose") or "").strip().lower()
+                    if not n or p in seen_purposes:
+                        continue
+                    if p not in ("equipment_swap", "easier_regression", "injury_mobility_friendly"):
+                        continue
+                    seen_purposes.add(p)
                     v2_alts.append({
-                        "name": a["name"],
-                        "equipment": a.get("equipment") or [],
-                        "why": a.get("why") or a.get("reason") or "Coach-authored alternative.",
+                        "name": n,
+                        "equipment": entry.get("equipment") or [],
+                        "purpose": p,
+                        "purpose_label": {
+                            "equipment_swap": "Equipment swap",
+                            "easier_regression": "Easier regression",
+                            "injury_mobility_friendly": "Injury-friendly",
+                        }[p],
+                        "why": entry.get("why") or entry.get("reason") or "Coach-authored alternative.",
                     })
+            # Fallback to legacy flat list (no purpose label). Cap at 3.
+            elif v2.get("alternatives"):
+                for a in v2["alternatives"]:
+                    if isinstance(a, str) and a.strip():
+                        v2_alts.append({"name": a.strip(), "equipment": [],
+                                        "why": "Coach-authored alternative.",
+                                        "purpose": None, "purpose_label": None})
+                    elif isinstance(a, dict) and a.get("name"):
+                        v2_alts.append({
+                            "name": a["name"],
+                            "equipment": a.get("equipment") or [],
+                            "why": a.get("why") or a.get("reason") or "Coach-authored alternative.",
+                            "purpose": None, "purpose_label": None,
+                        })
+                    if len(v2_alts) >= 3:
+                        break
             if v2_alts:
+                # Iter189g · Hard cap at 3, no matter the source.
                 return {
                     "source": "v2_library",
                     "reason": "Louis has authored these alternatives for this exercise.",
-                    "alternatives": v2_alts,
+                    "alternatives": v2_alts[:3],
                 }
     except Exception as e:
         logger.warning(f"v2 alternatives lookup failed for {wanted}: {e}")
@@ -4441,20 +4481,26 @@ async def exercise_alternatives(
             return hits * 5 + (2 if location == "Hotel" and not req else 0)
 
         alts_scored = sorted(alts, key=_score, reverse=True)
+        # Iter189g · Cap at 3 with no purpose labels (legacy catalog
+        # doesn't carry them).
+        alts_scored = [
+            {**a, "purpose": None, "purpose_label": None}
+            for a in alts_scored[:3]
+        ]
         return {
             "source": "catalog",
             "reason": "Atlas alternatives keep the same training objective using the equipment you have available.",
             "alternatives": alts_scored,
         }
 
-    # Fallback: no key match
+    # Iter189g · No key match — return EMPTY list so the client can
+    # render the "No alternatives available" empty state cleanly. The
+    # previous generic bodyweight+dumbbell placeholders were confusing
+    # (they weren't real exercises and had no video/how-to).
     return {
-        "source": "generic",
-        "reason": "No exact match found. Try a similar movement pattern with bodyweight or dumbbell.",
-        "alternatives": [
-            {"name": "Bodyweight Alternative", "equipment": [], "why": "Same movement pattern, no equipment."},
-            {"name": "Dumbbell Alternative", "equipment": ["dumbbell"], "why": "Common substitute."},
-        ],
+        "source": "none",
+        "reason": "No alternatives configured for this exercise yet.",
+        "alternatives": [],
     }
 
 

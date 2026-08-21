@@ -296,16 +296,19 @@ export default function AtlasPlayer() {
           <TileSwap
             ex={currentEx}
             location={w.location}
+            onBack={() => setTile("IMAGE")}
             onPick={async (n: string, reason?: string) => {
               try {
                 const r = await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
                   method: "POST",
                   body: { exercise_index: idx, new_name: n, reason: reason || null },
                 });
-                // Refresh workout in place so all tiles now show the new exercise.
+                // Iter189g · Refresh workout in place so all tiles now
+                // show the new exercise, then send the client STRAIGHT
+                // back to the workout (Image tile — the default view).
                 if (r?.workout) setW(r.workout);
                 setTile("IMAGE");
-                toast(`Alternative selected: ${n}`, "success");
+                toast(`Swapped to ${n}`, "success");
               } catch (e: any) {
                 Alert.alert(
                   "Couldn't update exercise",
@@ -538,7 +541,7 @@ function TileVideo({ ex }: { ex: any }) {
 /* -------------------------------------------------------------------------- */
 /*  Tile 4 — Swap                                                              */
 /* -------------------------------------------------------------------------- */
-function TileSwap({ ex, location, onPick }: { ex: any; location?: string; onPick: (name: string, reason?: string) => void }) {
+function TileSwap({ ex, location, onPick, onBack }: { ex: any; location?: string; onPick: (name: string, reason?: string) => void; onBack?: () => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -550,6 +553,32 @@ function TileSwap({ ex, location, onPick }: { ex: any; location?: string; onPick
 
   if (loading) return <ActivityIndicator color={theme.color.brand} style={{ marginTop: 40 }} />;
   const alts = data?.alternatives || [];
+  // Iter189g · Purpose badge colours mirror the guided flow SwapSheet.
+  const purposeColor: Record<string, string> = {
+    equipment_swap: "#4a90e2",
+    easier_regression: "#7ac74f",
+    injury_mobility_friendly: "#d99a3f",
+  };
+
+  // Iter189g · Empty state — no alternatives configured for this exercise.
+  if (alts.length === 0) {
+    return (
+      <View style={styles.altEmpty} testID="swap-empty">
+        <Ionicons name="information-circle-outline" size={40} color={theme.color.textMuted} />
+        <Text style={styles.altEmptyT}>No alternatives available for this exercise</Text>
+        <Text style={styles.altEmptyM}>
+          Louis hasn't authored substitutes for this move yet. Skip it,
+          adjust the reps, or message your coach if you can't perform it today.
+        </Text>
+        {onBack && (
+          <Pressable onPress={onBack} style={styles.altEmptyBtn} testID="swap-back-to-workout">
+            <Ionicons name="arrow-back" size={16} color="#fff" />
+            <Text style={styles.altEmptyBtnT}>BACK TO WORKOUT</Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
 
   return (
     <View>
@@ -560,35 +589,45 @@ function TileSwap({ ex, location, onPick }: { ex: any; location?: string; onPick
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.atlasRecoLbl}>ATLAS ALTERNATIVE RECOMMENDATION</Text>
-            <Text style={styles.atlasRecoT}>I've identified {alts.length} equivalents that keep the same training objective.</Text>
+            <Text style={styles.atlasRecoT}>Up to 3 options — one equipment swap, one easier regression, one injury-friendly.</Text>
           </View>
         </View>
         <Text style={styles.atlasRecoReason}>{data?.reason}</Text>
       </View>
 
-      {alts.map((a: any, i: number) => (
-        <View key={i} style={styles.altCard}>
-          <View style={styles.altHead}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.altName}>{a.name}</Text>
-              <View style={styles.altEqRow}>
-                {(a.equipment || []).length === 0 ? (
-                  <View style={styles.eqChip}><Text style={styles.eqChipT}>BODYWEIGHT</Text></View>
-                ) : (
-                  (a.equipment || []).map((e: string, j: number) => (
-                    <View key={j} style={styles.eqChip}><Text style={styles.eqChipT}>{String(e).toUpperCase()}</Text></View>
-                  ))
+      {alts.map((a: any, i: number) => {
+        const purpose: string | null = a?.purpose || null;
+        const label: string | null = a?.purpose_label || null;
+        const badgeColor = (purpose && purposeColor[purpose]) || theme.color.brand;
+        return (
+          <View key={i} style={styles.altCard} testID={`swap-alt-${i}`}>
+            <View style={styles.altHead}>
+              <View style={{ flex: 1 }}>
+                {label && (
+                  <View style={[styles.altPurposeBadge, { backgroundColor: badgeColor + "22", borderColor: badgeColor }]}>
+                    <Text style={[styles.altPurposeBadgeT, { color: badgeColor }]}>{label.toUpperCase()}</Text>
+                  </View>
                 )}
+                <Text style={styles.altName}>{a.name}</Text>
+                <View style={styles.altEqRow}>
+                  {(a.equipment || []).length === 0 ? (
+                    <View style={styles.eqChip}><Text style={styles.eqChipT}>BODYWEIGHT</Text></View>
+                  ) : (
+                    (a.equipment || []).map((e: string, j: number) => (
+                      <View key={j} style={styles.eqChip}><Text style={styles.eqChipT}>{String(e).toUpperCase()}</Text></View>
+                    ))
+                  )}
+                </View>
               </View>
+              <Pressable onPress={() => onPick(a.name, a.why)} style={styles.altPick} testID={`swap-btn-${i}`} accessibilityLabel={`Swap to ${a.name}`}>
+                <Text style={styles.altPickT}>SWAP</Text>
+                <Ionicons name="swap-horizontal" size={13} color="#fff" />
+              </Pressable>
             </View>
-            <Pressable onPress={() => onPick(a.name, a.why)} style={styles.altPick} testID={`swap-pick-${i}`}>
-              <Text style={styles.altPickT}>USE THIS</Text>
-              <Ionicons name="arrow-forward" size={13} color="#fff" />
-            </Pressable>
+            {a.why && <Text style={styles.altWhy}>{a.why}</Text>}
           </View>
-          <Text style={styles.altWhy}>{a.why}</Text>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -1438,6 +1477,32 @@ const styles = StyleSheet.create({
   altPick: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 5, backgroundColor: theme.color.brand },
   altPickT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
   altWhy: { color: theme.color.textMuted, fontSize: 11, marginTop: 6, lineHeight: 16 },
+  // Iter189g · Purpose badge — small chip above alt name.
+  altPurposeBadge: {
+    alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 4, borderWidth: 1, marginBottom: 6,
+  },
+  altPurposeBadgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+  // Iter189g · Empty-state block for the SWAP tile.
+  altEmpty: {
+    alignItems: "center", padding: 32, marginTop: 20,
+    borderRadius: 12, backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border, borderStyle: "dashed",
+  },
+  altEmptyT: {
+    color: theme.color.text, fontSize: 14, fontWeight: "800",
+    marginTop: 10, textAlign: "center",
+  },
+  altEmptyM: {
+    color: theme.color.textMuted, fontSize: 12, lineHeight: 18,
+    marginTop: 8, textAlign: "center",
+  },
+  altEmptyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 18, paddingVertical: 12, borderRadius: 10,
+    backgroundColor: theme.color.brand, marginTop: 18,
+  },
+  altEmptyBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
 
   prevCard: { padding: 12, marginBottom: 12, borderRadius: 10, backgroundColor: theme.color.surface2, borderLeftWidth: 3, borderLeftColor: theme.color.brand },
   prevHead: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2, marginBottom: 6 },

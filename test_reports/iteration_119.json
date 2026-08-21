@@ -1,0 +1,32 @@
+{
+  "summary": "Iter189g Alternatives Redesign — backend regression: 6/6 tests PASSED. Verified GET /api/exercises/alternatives new purpose-tagged behaviour (dedup by purpose, invalid-purpose filter, hard cap at 3, legacy-list cap at 3, empty state for unknown name, ALT_CATALOG substring match cap at 3). Verified POST /api/exercise-content/{ex_id}/generate-content kind=alternatives writes BOTH `alternatives` (flat list) and `alternatives_meta` (dict list with name/purpose/why) to exercises_v2, backfills `alternative_exercise_ids`, and returns them in the response. Real Claude call succeeded on first attempt. Verified POST /api/workouts/{id}/swap-exercise still returns 200 and updates the exercise name in-session (V1 branch). All seeded TEST_ data cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189g_alternatives_redesign.py",
+    "/app/test_reports/pytest/iter189g_alternatives.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py `/exercises/alternatives`: purpose dedup and invalid-purpose filtering are implemented cleanly (lines 4413-4436). Hard cap at 3 is applied via `v2_alts[:3]` on the meta path AND via a `break` on the legacy path; both branches converge on the same contract.",
+    "feature_exercise_content.py alternatives parser (lines 1486-1516): correctly rejects entries whose purpose is not in the whitelist AND drops duplicate-purpose entries via `seen_purposes`. Persists both flat + meta shapes so legacy readers keep working.",
+    "Legacy flat-list branch in server.py (lines 4438-4452) does NOT deduplicate by name; if a coach seeded `alternatives: ['Push-Up','Push-Up','X']` the response would contain both duplicates. Not in scope for Iter189g but worth noting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189g_alternatives_redesign.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "seed_data_creation": "Temporarily wrote TEST_ alternatives_meta and TEST_ legacy alternatives onto one Approved exercises_v2 row and reverted after each test. Inserted one TEST_ workout doc for the swap smoke test and deleted it plus its audit rows in teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file `/app/backend/tests/test_iter189g_alternatives_redesign.py` is idempotent and safely restores db state (including missing-field restoration via $unset). Uses EXPO_PUBLIC_BACKEND_URL from frontend/.env implicitly via the constant. The alternatives-generate test costs ~1 Claude Sonnet call each run (a few cents) — skip or mark slow if repeated in CI.",
+  "rca_of_issue": "n/a — no bugs found. All Iter189g contracts (max 3 items, distinct purposes, purpose_label populated, invalid-purpose filtered, empty-list source=none, dual alternatives+alternatives_meta write, alternative_exercise_ids backfill, swap-exercise 200) are honoured by the current implementation."
+}

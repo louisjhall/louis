@@ -1255,6 +1255,13 @@ function SwapSheet({
   }, [visible, exercise?.name]);
 
   if (!visible) return null;
+  // Iter189g · Purpose badge colours — subtle brand tint per category
+  // so the coach's intent is instantly readable in the swap picker.
+  const purposeColor: Record<string, string> = {
+    equipment_swap: "#4a90e2",
+    easier_regression: "#7ac74f",
+    injury_mobility_friendly: "#d99a3f",
+  };
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <View style={sheetStyles.root}>
@@ -1262,32 +1269,59 @@ function SwapSheet({
         <View style={sheetStyles.sheet}>
           <View style={sheetStyles.head}>
             <Text style={sheetStyles.eyebrow}>SWAP EXERCISE</Text>
-            <Pressable onPress={onClose} hitSlop={12}><Ionicons name="close" size={22} color={theme.color.text} /></Pressable>
+            <Pressable onPress={onClose} hitSlop={12} testID="swap-close"><Ionicons name="close" size={22} color={theme.color.text} /></Pressable>
           </View>
           <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
             <Text style={sheetStyles.title}>{exercise?.name}</Text>
             <Text style={sheetStyles.subtle}>
-              Atlas suggests alternatives with the same movement pattern and muscle group.
+              Louis suggests up to three alternatives — one equipment swap, one easier regression,
+              one injury-friendly option. Choose one and we'll swap it in for this session only.
             </Text>
-            {loading && <ActivityIndicator color={theme.color.brand} style={{ marginTop: 20 }} />}
+            {loading && <ActivityIndicator color={theme.color.brand} style={{ marginTop: 20 }} testID="swap-loading" />}
             {!loading && alts.length === 0 && (
-              <Text style={{ color: theme.color.textMuted, marginTop: 20, fontStyle: "italic" }}>
-                No alternatives available for this move.
-              </Text>
+              // Iter189g · Empty state — clear message + explicit
+              // "Back to Workout" affordance so the client isn't stuck.
+              <View style={sheetStyles.empty} testID="swap-empty">
+                <Ionicons name="information-circle-outline" size={32} color={theme.color.textMuted} />
+                <Text style={sheetStyles.emptyT}>No alternatives available for this exercise</Text>
+                <Text style={sheetStyles.emptyM}>
+                  Louis hasn't authored substitutes for this move yet. Skip it, adjust the reps,
+                  or message your coach if you can't perform it today.
+                </Text>
+                <Pressable onPress={onClose} style={sheetStyles.emptyBtn} testID="swap-back-to-workout">
+                  <Ionicons name="arrow-back" size={16} color="#fff" />
+                  <Text style={sheetStyles.emptyBtnT}>BACK TO WORKOUT</Text>
+                </Pressable>
+              </View>
             )}
-            {alts.map((alt, i) => (
-              <Pressable
-                key={i}
-                style={sheetStyles.altCard}
-                onPress={() => onSwapped({ ...exercise, name: alt.name, notes: alt.reason }, alt.reason)}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={sheetStyles.altName}>{alt.name}</Text>
-                  <Text style={sheetStyles.altReason} numberOfLines={2}>{alt.reason}</Text>
+            {alts.map((alt, i) => {
+              const purpose: string | null = alt?.purpose || null;
+              const label: string | null = alt?.purpose_label || null;
+              const badgeColor = (purpose && purposeColor[purpose]) || theme.color.brand;
+              return (
+                <View key={i} style={sheetStyles.altCard} testID={`swap-alt-${i}`}>
+                  <View style={{ flex: 1 }}>
+                    {label && (
+                      <View style={[sheetStyles.altBadge, { backgroundColor: badgeColor + "22", borderColor: badgeColor }]}>
+                        <Text style={[sheetStyles.altBadgeT, { color: badgeColor }]}>{label.toUpperCase()}</Text>
+                      </View>
+                    )}
+                    <Text style={sheetStyles.altName}>{alt.name}</Text>
+                    {(alt.why || alt.reason) && (
+                      <Text style={sheetStyles.altReason} numberOfLines={2}>{alt.why || alt.reason}</Text>
+                    )}
+                  </View>
+                  <Pressable
+                    style={sheetStyles.swapPickBtn}
+                    onPress={() => onSwapped({ ...exercise, name: alt.name, notes: alt.why || alt.reason }, alt.why || alt.reason)}
+                    testID={`swap-btn-${i}`}
+                    accessibilityLabel={`Swap to ${alt.name}`}
+                  >
+                    <Text style={sheetStyles.swapPickBtnT}>SWAP</Text>
+                  </Pressable>
                 </View>
-                <Ionicons name="arrow-forward" size={16} color={theme.color.brand} />
-              </Pressable>
-            ))}
+              );
+            })}
           </ScrollView>
         </View>
       </View>
@@ -1721,6 +1755,39 @@ const sheetStyles = StyleSheet.create({
   },
   altName: { color: theme.color.text, fontSize: 13, fontWeight: "800" },
   altReason: { color: theme.color.textMuted, fontSize: 11, marginTop: 3, lineHeight: 15 },
+  // Iter189g · Purpose badge — small chip above alt name.
+  altBadge: {
+    alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 4, borderWidth: 1, marginBottom: 4,
+  },
+  altBadgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
+  // Iter189g · Explicit SWAP button per alternative (previously the
+  // whole card was pressable, which felt ambiguous).
+  swapPickBtn: {
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8,
+    backgroundColor: theme.color.brand, minWidth: 72, alignItems: "center",
+  },
+  swapPickBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
+  // Iter189g · Empty state block for the "No alternatives" case.
+  empty: {
+    alignItems: "center", padding: 32, marginTop: 20,
+    borderRadius: 12, backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border, borderStyle: "dashed",
+  },
+  emptyT: {
+    color: theme.color.text, fontSize: 14, fontWeight: "800",
+    marginTop: 10, textAlign: "center",
+  },
+  emptyM: {
+    color: theme.color.textMuted, fontSize: 12, lineHeight: 18,
+    marginTop: 8, textAlign: "center",
+  },
+  emptyBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 18, paddingVertical: 12, borderRadius: 10,
+    backgroundColor: theme.color.brand, marginTop: 18,
+  },
+  emptyBtnT: { color: "#fff", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
   footer: {
     position: "absolute", bottom: 0, left: 0, right: 0,
     padding: 16, paddingBottom: 24,

@@ -1,0 +1,42 @@
+{
+  "summary": "Backend-only testing of iter189f auto YouTube search on exercise create/status-change. 8/10 pytest tests pass. Health endpoint returns new fields (auto_on_create_enabled, quota_used_today, quota_remaining_today, quota_floor_for_auto_search=500). Toggle endpoint persists to db.app_config and reflects in /health. POST /api/exercise-content correctly fires the background auto_yt trigger — backend logs show 'auto_yt: quota floor hit (used=10000, floor=500)' immediately after create, and the exercise status is NOT mutated. Feature flag OFF is respected — no auto_yt log line appears when disabled. Regression: sweep + health endpoints still respond. CRITICAL BUG FOUND: PATCH /api/exercise-content/{ex_id} rejects `draft_requested` and `coach_review_needed` with HTTP 400 'invalid status' because feature_exercise_content.STATUS_VALUES (line 142-146) only contains TitleCase values ('Draft', 'Approved', 'Needs Review', …) — the snake_case statuses that the auto-YT hook (lines 693) is guarded on are not in the allow-list. Consequence: the auto-YT trigger on status transition NEVER fires via the PATCH endpoint. The create-side trigger works fine; only the PATCH-side path is dead code.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "PATCH /api/exercise-content/{ex_id}",
+        "issue": "Rejects status='draft_requested' and status='coach_review_needed' with HTTP 400 'invalid status'. Root cause: STATUS_VALUES set in feature_exercise_content.py:142-146 contains only TitleCase values (Draft, Needs Review, Artwork Needed, Coaching Points Needed, Video Needed, Ready for Approval, Approved, Live, Needs Update, Rejected, Archived) — it does NOT include the snake_case values 'draft_requested' or 'coach_review_needed'. Yet the auto-YT hook at line 693 is guarded on exactly those snake_case statuses. Net effect: the auto YouTube search on status-transition (a core part of iter189f) can NEVER fire through PATCH — the request is 400'd before it even reaches the trigger block.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189f_auto_yt_on_create.py",
+    "/app/test_reports/pytest/iter189f_auto_yt.xml"
+  ],
+  "action_items": [
+    "Fix STATUS_VALUES in /app/backend/feature_exercise_content.py:142 — either add 'draft_requested' and 'coach_review_needed' to the set, OR normalise the snake_case→TitleCase mapping consistently. The auto-YT hook at line 693 must be reachable via PATCH for the iter189f feature to work as designed.",
+    "After the fix, re-run /app/backend/tests/test_iter189f_auto_yt_on_create.py — the two failing tests (test_patch_to_draft_requested_triggers_auto_yt, test_patch_does_not_overwrite_existing_video_url) should then pass and confirm the trigger fires + idempotency guard works.",
+    "Note: create-side trigger (POST /api/exercise-content) works correctly — verified via backend log line 'auto_yt: quota floor hit (used=10000, floor=500) — skipping auto-search for <ex_id>'. Quota is exhausted (used=10000, remaining=0) which is expected."
+  ],
+  "critical_code_review_comments": [
+    "feature_exercise_content.py:142 STATUS_VALUES uses TitleCase strings; feature_exercise_content.py:693 auto-YT hook checks for snake_case 'draft_requested'/'coach_review_needed' — mismatch means the hook is unreachable via PATCH.",
+    "trigger_single_search is fire-and-forget via _spawn_bg with a broad try/except — good defensive posture. Quota-exhausted branch logs 'auto_yt: quota floor hit' cleanly and does not raise back into the request path (verified end-to-end).",
+    "/api/coach/youtube-finder/health returns quota_floor_for_auto_search only in the success branch, not on the quota_exhausted branch (the 429/http_error return omits it). Minor schema inconsistency; not blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189f_auto_yt_on_create.py (new)"
+  ],
+  "success_rate": {"backend": "80%", "frontend": "n/a (backend-only per request)"},
+  "seed_data_creation": "Created and cleaned up (archived) 3 TEST_-prefixed exercises during test runs. All cleanup verified via DELETE.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter189f status-change trigger is blocked by STATUS_VALUES mismatch. Once main agent updates STATUS_VALUES in feature_exercise_content.py to accept 'draft_requested' and 'coach_review_needed', re-run /app/backend/tests/test_iter189f_auto_yt_on_create.py (10 tests). All should pass. YouTube quota is exhausted (used=10000) so expect 'auto_yt: quota floor hit' log lines rather than actual video writes — tests accept both.",
+  "rca_of_issue": "STATUS_VALUES set at feature_exercise_content.py:142-146 is a hard-coded whitelist of TitleCase status strings. The iter189f feature introduced a new business path (auto-YT trigger on status transition INTO 'draft_requested' or 'coach_review_needed') at feature_exercise_content.py:693 that uses snake_case values, but STATUS_VALUES was never extended to include them. So the PATCH validation at line 670 rejects both values with HTTP 400 before the hook block is even reached. Reproduction: coach POSTs any exercise, then PATCH /api/exercise-content/{id} with {\"status\":\"draft_requested\"} — returns 400 'invalid status'. Mitigation: extend STATUS_VALUES to include 'draft_requested' and 'coach_review_needed' (and any other snake_case statuses that /coach/library/exercises returns at line 615)."
+}

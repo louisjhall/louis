@@ -140,9 +140,17 @@ EXERCISE_STYLE_PILOT = (
 EXERCISE_STYLE = EXERCISE_STYLE_MALE
 
 STATUS_VALUES = {
+    # TitleCase — the legacy Draft → Approved workflow
     "Draft", "Needs Review", "Artwork Needed", "Coaching Points Needed",
     "Video Needed", "Ready for Approval", "Approved", "Live",
     "Needs Update", "Rejected", "Archived",
+    # Iter189f · snake_case — the V2 resolver workflow (draft_requested
+    # is what the V2 resolver inserts, coach_review_needed is what the
+    # coach admin uses to promote a candidate). Missing these blocked
+    # the auto-YT hook on PATCH because the endpoint 400s before the
+    # hook line runs. `draft` (lowercase) is a legacy value used by
+    # older resolver code paths — still present in the DB.
+    "draft_requested", "coach_review_needed", "draft",
 }
 
 APPROVAL_VALUES = {"pending", "approved", "rejected"}
@@ -575,6 +583,17 @@ async def ex_create(
     except Exception:
         logger.exception("auto_media_gen: enqueue after coach-create failed (non-fatal)")
 
+    # Iter189f · Auto YouTube video search on create. Fire-and-forget —
+    # never blocks the create response. Result → Needs Review.
+    try:
+        from feature_youtube_video_finder import trigger_single_search
+        from feature_auto_media_gen import _spawn_bg
+        _spawn_bg(trigger_single_search(
+            ex_id, triggered_by=admin.get("id") or "coach", reason="exercise_created",
+        ))
+    except Exception:
+        logger.exception("auto_yt: trigger on create failed (non-fatal)")
+
     doc.pop("_id", None)
     return {"exercise": doc}
 
@@ -673,6 +692,25 @@ async def ex_patch(ex_id: str, body: ExercisePatch, admin: dict = Depends(requir
     if "status" in updates: kinds.append("status_changed")
     for k in (kinds or ["updated"]):
         await _log(ex_id, admin["id"], k)
+
+    # Iter189f · Auto YouTube video search when status transitions INTO
+    # draft_requested or coach_review_needed. Fire-and-forget. Skipped
+    # if the row already has a primary_video_url (idempotent).
+    old_status = (ex.get("status") or "").strip()
+    new_status = (updates.get("status") or old_status).strip()
+    if (new_status in ("draft_requested", "coach_review_needed")
+            and old_status != new_status
+            and not (ex.get("primary_video_url") or updates.get("primary_video_url"))):
+        try:
+            from feature_youtube_video_finder import trigger_single_search
+            from feature_auto_media_gen import _spawn_bg
+            _spawn_bg(trigger_single_search(
+                ex_id, triggered_by=admin.get("id") or "coach",
+                reason=f"status_change:{old_status}→{new_status}",
+            ))
+        except Exception:
+            logger.exception("auto_yt: trigger on patch failed (non-fatal)")
+
     ex = await db.exercises_v2.find_one({"id": ex_id}, {"_id": 0})
     return {"exercise": ex}
 

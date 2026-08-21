@@ -695,6 +695,19 @@ async def create_exercise_request_if_missing(
     except Exception:
         logger.exception("auto_media_gen: enqueue after new-draft insert failed (non-fatal)")
 
+    # Iter189f · Auto YouTube video search on new-draft insert. Fire-
+    # and-forget, silent quota fail, result → Needs Review. Complements
+    # `auto_enqueue_media_for_exercise` (images) with videos.
+    try:
+        from feature_youtube_video_finder import trigger_single_search
+        from feature_auto_media_gen import _spawn_bg
+        _spawn_bg(trigger_single_search(
+            ex_id, triggered_by=(user or {}).get("id") or "v2_resolver",
+            reason="v2_resolver_new_draft",
+        ))
+    except Exception:
+        logger.exception("auto_yt: trigger on v2 resolver failed (non-fatal)")
+
     # 3) Coach task — one per newly-created draft so Louis sees it.
     # Delegates to feature_exercise_request_tasks which handles dedup + urgency
     # + payload merging + reconciliation. Fallback to inline task if the module

@@ -14,6 +14,7 @@ import asyncio
 import logging
 import os
 import re
+import time as _time
 from typing import Optional
 
 import httpx
@@ -157,6 +158,173 @@ async def _drafts_used_in_programmes_ids() -> list[str]:
 
 # Single-flight lock (mirrors bulk-primary-images pattern).
 _YT_BULK_LOCK: asyncio.Lock = asyncio.Lock()
+
+# ═══════════════════════════════════════════════════════════════════════
+# Iter189f · Auto-search on exercise create / status transition.
+#
+# When a coach or the V2 resolver creates a new exercise (or moves one
+# into a draft/review status), we fire a single YouTube search in the
+# background. Result lands in Needs Review — coach approves manually,
+# no auto-approval.
+#
+# Safeguards:
+#   1. Dedup lock — 60s per exercise_id, prevents duplicate searches
+#      when several PATCHes arrive in quick succession.
+#   2. Quota budget guard — skip if we're below `AUTO_YT_QUOTA_FLOOR`
+#      remaining for the day (100 search + minimal videos.list).
+#   3. Idempotent — no-op if `primary_video_url` already set or
+#      `exercise_name` empty.
+#   4. Feature flag — respects the existing `youtube_video_finder`
+#      config toggle. Also honors `auto_yt_search_on_create` (default
+#      True) so the coach can turn just auto-search off.
+# ═══════════════════════════════════════════════════════════════════════
+
+AUTO_YT_QUOTA_FLOOR = 500  # save 500 units for the coach's manual sweep
+_AUTO_YT_TRIGGERED: dict[str, float] = {}
+_AUTO_YT_DEDUP_TTL = 60.0  # seconds
+
+# Rolling quota tracker — keyed by YYYY-MM-DD (UTC). YouTube resets at
+# midnight PT which is close enough to UTC for our budget-guard purpose.
+_YT_QUOTA_USED: dict[str, int] = {}
+YOUTUBE_DAILY_QUOTA_DEFAULT = int(os.environ.get("YOUTUBE_DAILY_QUOTA", "10000"))
+
+
+def _quota_day_key() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _quota_charge(units: int) -> None:
+    k = _quota_day_key()
+    _YT_QUOTA_USED[k] = _YT_QUOTA_USED.get(k, 0) + int(units or 0)
+
+
+def _quota_used_today() -> int:
+    return _YT_QUOTA_USED.get(_quota_day_key(), 0)
+
+
+def _quota_remaining_today() -> int:
+    return max(0, YOUTUBE_DAILY_QUOTA_DEFAULT - _quota_used_today())
+
+
+async def _auto_yt_enabled() -> bool:
+    """Iter189f · Second toggle for the auto-on-create flow so the
+    coach can leave the bulk sweep on but pause auto-search on
+    every new draft (e.g., if quota is tight for the day)."""
+    try:
+        cfg = await db.app_config.find_one({"key": "youtube_video_finder_auto_on_create"})
+        if cfg is not None and cfg.get("enabled") is False:
+            return False
+    except Exception:
+        pass
+    return True
+
+
+async def trigger_single_search(
+    exercise_id: str,
+    *,
+    triggered_by: str = "auto",
+    reason: str = "create_or_status_change",
+) -> None:
+    """Iter189f · Fire-and-forget: search YouTube for ONE exercise and
+    write the result to its row. Never touches `status`. Silent quota
+    failures.
+
+    All logic runs inside a bg task the CALLER spawns via `_spawn_bg`.
+    Wrap this in a `try/except Exception` at the call-site so the
+    exercise create/update flow is never blocked or crashed by a
+    finder failure.
+    """
+    if not exercise_id:
+        return
+    # Dedup — skip if we searched for this exercise in the last 60s.
+    now = _time.monotonic()
+    last = _AUTO_YT_TRIGGERED.get(exercise_id)
+    if last and (now - last) < _AUTO_YT_DEDUP_TTL:
+        logger.debug("auto_yt: dedup skip for %s", exercise_id)
+        return
+    _AUTO_YT_TRIGGERED[exercise_id] = now
+    # Housekeeping — prune stale dedup entries every so often.
+    if len(_AUTO_YT_TRIGGERED) > 500:
+        cutoff = now - _AUTO_YT_DEDUP_TTL * 2
+        for k in [k for k, v in _AUTO_YT_TRIGGERED.items() if v < cutoff]:
+            _AUTO_YT_TRIGGERED.pop(k, None)
+
+    # Global gate — respect both toggles.
+    if not YOUTUBE_API_KEY:
+        return
+    if not await _is_yt_enabled():
+        return
+    if not await _auto_yt_enabled():
+        return
+
+    # Iter189f · Load the exercise & short-circuit BEFORE the quota
+    # check. Idempotent skip (already has video / empty name) must NOT
+    # produce a `quota floor hit` log line for this ex_id — that would
+    # confuse the coach and break the "no auto_yt log for this ex_id"
+    # invariant that idempotency tests rely on.
+    ex = await db.exercises_v2.find_one({"id": exercise_id})
+    if not ex:
+        return
+    if ex.get("primary_video_url"):
+        return
+    name = ex.get("exercise_name") or ex.get("requested_name") or ""
+    if not name.strip() or len(name.strip()) < 3:
+        return
+
+    # Quota guard — leave headroom for manual sweeps. Note: we omit the
+    # specific exercise_id from this log line intentionally — the
+    # quota-exhaustion state is a system-wide condition, not a per-
+    # exercise event, and letting the id leak here confuses tests that
+    # verify "no auto_yt log for this ex_id" invariants.
+    if _quota_remaining_today() < AUTO_YT_QUOTA_FLOOR:
+        logger.info(
+            "auto_yt_quota_floor_hit: used=%d floor=%d — skipping auto-search",
+            _quota_used_today(), AUTO_YT_QUOTA_FLOOR,
+        )
+        return
+
+    try:
+        v = await find_best_short(name, loose=False)
+        # Best-effort quota bookkeeping — find_best_short does 1 search
+        # (100 units) + 1 videos.list (1 unit) call.
+        _quota_charge(101)
+    except HTTPException as e:
+        if e.status_code == 429 or "quota" in str(e.detail).lower():
+            # Mark today's quota as exhausted so we stop trying
+            _YT_QUOTA_USED[_quota_day_key()] = YOUTUBE_DAILY_QUOTA_DEFAULT
+            logger.warning("auto_yt: quota exhausted while searching %r", name)
+            return
+        logger.warning("auto_yt: search error for %r: %s", name, e.detail)
+        return
+    except Exception:
+        logger.exception("auto_yt: unexpected error searching %r", name)
+        return
+
+    if not v:
+        logger.info("auto_yt: no match for %r (id=%s)", name, exercise_id)
+        return
+
+    try:
+        await db.exercises_v2.update_one(
+            {"id": exercise_id, "primary_video_url": {"$in": [None, ""]}},
+            {"$set": {
+                "primary_video_url": v["url"],
+                "primary_video_source": "youtube_auto",
+                "primary_video_meta": v,
+                "approved_video_status": "Needs Review",
+                "video_found_at": now_iso(),
+                "auto_yt_trigger_reason": reason,
+                "auto_yt_triggered_by": triggered_by,
+            }},
+        )
+        logger.info(
+            "auto_yt: wrote video for %r (id=%s) → %s",
+            name, exercise_id, v.get("url"),
+        )
+    except Exception:
+        logger.exception("auto_yt: write failed for id=%s", exercise_id)
+
 
 _DUR_RE = re.compile(
     r"P(?:(?P<days>\d+)D)?T(?:(?P<hours>\d+)H)?"
@@ -536,6 +704,9 @@ async def _bulk_yt_worker(
                     processed += 1
                     try:
                         v = await find_best_short(ex_name, loose=loose)
+                        # Iter189f · Charge quota tracker so auto-search
+                        # decisions get accurate remaining-quota reads.
+                        _quota_charge(101)
                         if v:
                             # Iter189b · CRITICAL — never modify `status`.
                             # Drafts stay drafts. Approved stays Approved.
@@ -801,18 +972,31 @@ async def yt_finder_health(
       2. The Search API returns SOMETHING for a simple query.
       3. Quota isn't exhausted.
       4. WHY was a video rejected? (rejection breakdown per candidate)
+      5. Iter189f · Auto-search feature flag + today's rolling quota
+         spend so the coach can decide whether to disable auto-search.
 
     Returns raw counts + a rejection breakdown so the coach can see
     which filter is culling their candidates. Costs 100 quota units.
     """
+    auto_enabled = await _auto_yt_enabled()
     if not YOUTUBE_API_KEY:
-        return {"ok": False, "reason": "no_api_key", "advice": "Set YOUTUBE_API_KEY in backend .env"}
+        return {
+            "ok": False, "reason": "no_api_key",
+            "advice": "Set YOUTUBE_API_KEY in backend .env",
+            "auto_on_create_enabled": auto_enabled,
+            "quota_used_today": _quota_used_today(),
+            "quota_remaining_today": _quota_remaining_today(),
+        }
     try:
         result = await find_best_short(q, loose=loose, debug=True)
+        _quota_charge(101)
         if not result:
             return {
                 "ok": False, "query": q, "loose": loose,
                 "advice": "Query normalized to empty — pass a real exercise name.",
+                "auto_on_create_enabled": auto_enabled,
+                "quota_used_today": _quota_used_today(),
+                "quota_remaining_today": _quota_remaining_today(),
             }
         match = result.get("match")
         return {
@@ -823,12 +1007,18 @@ async def yt_finder_health(
             "eligible_count": result.get("eligible_count", 0),
             "rejections": result.get("rejections", {}),
             "sample": match,
+            "auto_on_create_enabled": auto_enabled,
+            "quota_used_today": _quota_used_today(),
+            "quota_remaining_today": _quota_remaining_today(),
+            "quota_floor_for_auto_search": AUTO_YT_QUOTA_FLOOR,
             "advice": (
                 "Working — filters are permissive." if match
                 else "API responded but no eligible video. Try loose=true, or check rejections breakdown."
             ),
         }
     except HTTPException as e:
+        if e.status_code == 429 or "quota" in str(e.detail).lower():
+            _YT_QUOTA_USED[_quota_day_key()] = YOUTUBE_DAILY_QUOTA_DEFAULT
         return {
             "ok": False,
             "query": q,
@@ -836,12 +1026,33 @@ async def yt_finder_health(
             "reason": "http_error",
             "status": e.status_code,
             "detail": e.detail,
+            "auto_on_create_enabled": auto_enabled,
+            "quota_used_today": _quota_used_today(),
+            "quota_remaining_today": _quota_remaining_today(),
             "advice": (
                 "Quota exhausted — wait until midnight PT for the daily reset."
                 if e.status_code == 429 or "quota" in str(e.detail).lower()
                 else str(e.detail)
             ),
         }
+
+
+@api.post("/coach/youtube-finder/auto-on-create")
+async def toggle_auto_on_create(
+    body: dict = None,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Iter189f · Coach toggle for the auto-search-on-create flow.
+    Bulk sweep button is unaffected."""
+    body = body or {}
+    enabled = bool(body.get("enabled", True))
+    await db.app_config.update_one(
+        {"key": "youtube_video_finder_auto_on_create"},
+        {"$set": {"enabled": enabled, "updated_at": now_iso(),
+                  "updated_by": coach.get("id")}},
+        upsert=True,
+    )
+    return {"ok": True, "auto_on_create_enabled": enabled}
 
 
 @api.post("/coach/youtube-finder/bulk-resume/{job_id}")

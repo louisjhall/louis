@@ -89,13 +89,16 @@ const TODAY_COPY: Record<string, { eyebrow: string; title: string; body: string;
   travel_day: {
     eyebrow: "TODAY · FLYING",
     title: "Today is built around your flying schedule.",
-    body: "Nutrition, hydration and recovery are the focus today. If your day changes, tap Today's Reality below and Louis will re-plan.",
+    // Iter189i · Removed "tap Today's Reality below" reference — that
+    // banner is hidden per coach request. Feature-flag toggle:
+    // `SHOW_TODAYS_REALITY_BANNER` in (client)/home.tsx.
+    body: "Nutrition, hydration and recovery are the focus today. Message Louis if your day changes and he'll re-plan.",
     icon: "airplane",
   },
   layover_day: {
     eyebrow: "TODAY · LAYOVER",
     title: "Layover day — hotel or bodyweight setup.",
-    body: "Your plan for today is matched to hotel/gym equipment. If your hotel gym is closed, tap Today's Reality and Louis will adjust.",
+    body: "Your plan for today is matched to hotel/gym equipment. Message Louis if your hotel gym is closed and he'll adjust.",
     icon: "bed",
   },
   recovery_planned: {
@@ -119,7 +122,7 @@ const TODAY_COPY: Record<string, { eyebrow: string; title: string; body: string;
   no_session_planned: {
     eyebrow: "TODAY",
     title: "No session planned for today.",
-    body: "Check your calendar for the next scheduled workout, or tap Today's Reality if something has changed.",
+    body: "Check your calendar for the next scheduled workout, or message Louis if something has changed.",
     icon: "calendar-clear",
   },
 };

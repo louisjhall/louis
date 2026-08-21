@@ -12,8 +12,7 @@ import { CrewFitWings } from "@/src/components/Logo";
 import { ClientProfileHeader } from "@/src/components/ClientProfileHeader";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
 import { BrandLogo } from "@/src/components/BrandLogo";
-import { RealityModal } from "@/src/components/RealityModal";
-// Iter168 · WeeklyCheckinCard, WeeklyReviewCard, DualSessionCard and
+import { RealityModal } from "@/src/components/RealityModal";// Iter168 · WeeklyCheckinCard, WeeklyReviewCard, DualSessionCard and
 // HabitTodayCard now render inside <DailyRitualsCard/>. Kept the imports
 // removed so the Today tab doesn't accidentally render them twice.
 import { WelcomeVideoBanner } from "@/src/components/WelcomeVideoBanner";
@@ -44,6 +43,18 @@ import { EventProgressBanner } from "@/src/components/EventProgressBanner";
 import { toast as uxToast } from "@/src/lib/ux";
 import { useThemeMode } from "@/src/hooks/use-theme-mode";
 import type { ThemeMode } from "@/src/lib/theme";
+
+// ═══════════════════════════════════════════════════════════════════════
+// Iter189i · TODAY'S REALITY feature flag.
+//
+// Coach requested (2026-08) to hide the "Today's Reality" check-in
+// banner across the ENTIRE client app while keeping the code intact
+// so it can be re-enabled later. Flipping this to `true` re-surfaces:
+//   * The home banner ("TODAY'S REALITY  · Tell CrewFit what has changed")
+//   * The workout-view prompt (same copy, inside workout/[id]/index.tsx)
+// The RealityModal component + backend endpoint remain untouched.
+// ═══════════════════════════════════════════════════════════════════════
+const SHOW_TODAYS_REALITY_BANNER = false;
 
 function iconFor(kind: string): keyof typeof Ionicons.glyphMap {
   switch (kind) {
@@ -768,22 +779,29 @@ export default function Home() {
                   ))}
                 </View>
               )}
-              <Pressable
-                testID="reality-btn-home"
-                onPress={() => setRealityOpen(true)}
-                style={styles.realityBtn}
-              >
-                <View style={styles.realityBtnLeft}>
-                  <View style={styles.realityIconWrap}>
-                    <Ionicons name="compass" size={16} color={theme.color.textMuted} />
+              {/* Iter189i · TODAY'S REALITY banner hidden per coach
+                  request 2026-08. Toggle back on by flipping the
+                  `SHOW_TODAYS_REALITY_BANNER` flag below. All code
+                  paths (state, modal, styles) are intentionally
+                  preserved so re-enabling is a one-line change. */}
+              {SHOW_TODAYS_REALITY_BANNER && (
+                <Pressable
+                  testID="reality-btn-home"
+                  onPress={() => setRealityOpen(true)}
+                  style={styles.realityBtn}
+                >
+                  <View style={styles.realityBtnLeft}>
+                    <View style={styles.realityIconWrap}>
+                      <Ionicons name="compass" size={16} color={theme.color.textMuted} />
+                    </View>
+                    <View>
+                      <Text style={styles.realityTitle}>TODAY&apos;S REALITY</Text>
+                      <Text style={styles.realitySub}>Tell CrewFit what has changed</Text>
+                    </View>
                   </View>
-                  <View>
-                    <Text style={styles.realityTitle}>TODAY&apos;S REALITY</Text>
-                    <Text style={styles.realitySub}>Tell CrewFit what has changed</Text>
-                  </View>
-                </View>
-                <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
-              </Pressable>
+                  <Ionicons name="chevron-forward" size={14} color={theme.color.textMuted} />
+                </Pressable>
+              )}
               {(() => {
                 // Iter 163 · Rest-day guard. If the workout is explicitly a
                 // Full Rest / recovery day (workout_type in rest/recovery,

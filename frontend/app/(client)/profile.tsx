@@ -447,7 +447,9 @@ export default function ProfileScreen() {
               </View>
             ))}
             {(aiNotes.reality_context || []).length === 0 && (aiNotes.move_rationales || []).length === 0 && (
-              <EmptyRow text="No notes yet. Use Today's Reality to add context." />
+              // Iter189i · Removed "Today's Reality" reference — feature is
+              // hidden. Copy neutralised.
+              <EmptyRow text="No notes yet." />
             )}
           </Section>
 

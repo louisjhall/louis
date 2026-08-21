@@ -12,6 +12,13 @@ import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { clearVideoCache } from "@/src/components/ExerciseVideoPlayer";
 import { StatusBadge, deriveStatus, statusMeta } from "@/src/components/StatusBadge";
 import { RealityModal } from "@/src/components/RealityModal";
+
+// ═══════════════════════════════════════════════════════════════════════
+// Iter189i · TODAY'S REALITY feature flag — mirrors the one in
+// `(client)/home.tsx`. Set to `true` to re-enable the workout-view
+// prompt. RealityModal + backend logic are intentionally preserved.
+// ═══════════════════════════════════════════════════════════════════════
+const SHOW_TODAYS_REALITY_BANNER = false;
 import { ChangeSetupModal } from "@/src/components/ChangeSetupModal";
 import { ModePickerModal } from "@/src/components/ModePickerModal";
 import { AIHeroImage } from "@/src/components/AIHeroImage";
@@ -405,7 +412,11 @@ export default function WorkoutDetail() {
           </Pressable>
         ) : null}
 
-        {!isCoach && (
+        {/* Iter189i · TODAY'S REALITY prompt hidden per coach request
+            2026-08. Toggle back on via `SHOW_TODAYS_REALITY_BANNER`.
+            The "CHANGE SETUP" pressable above is a distinct feature
+            (env/equipment override) and stays visible. */}
+        {!isCoach && SHOW_TODAYS_REALITY_BANNER && (
           <Pressable
             testID="reality-btn-workout"
             onPress={() => setRealityOpen(true)}

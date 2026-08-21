@@ -77,17 +77,36 @@ async def _yt_get(http: httpx.AsyncClient, url: str, params: dict) -> dict:
     raise HTTPException(resp.status_code, f"youtube_{reason or 'error'} msg={msg[:120]}")
 
 
-async def find_best_short(exercise_name: str, loose: bool = False) -> Optional[dict]:
+async def find_best_short(
+    exercise_name: str,
+    loose: bool = False,
+    *,
+    debug: bool = False,
+) -> Optional[dict]:
     """Return the highest-quality ≤ N s embeddable video for `exercise_name`
     or None.
 
-    Iter188 · Added `loose` diagnostic mode:
-      * Query without the "shorts" suffix (broader results).
-      * Max duration bumped 60 s → 180 s.
-      * Skip like-ratio ranking; sort purely by (known_good, views).
-      * Skip the BAD_CHANNEL_WORDS filter — surface EVERYTHING so we
-        can see whether the API is returning zero results because of
-        our filters or because it's quota-exhausted.
+    Iter189 · Filters REBALANCED per coach feedback ("finder found 2/400,
+    filters too strict"). All candidates still go to Needs Review — coach
+    manually approves — so we can afford to be permissive on the auto
+    stage.
+
+    Default mode (relaxed):
+      * NO channel-name blocklist (podcast/talk/interview etc. still
+        surface — coach can reject in review).
+      * Duration cap raised 60 s → 120 s (still short-form).
+      * Query = `"{name} exercise demo"` (adds the intent hint).
+      * Rank by (known_good_channel, view_count) — reward reputable
+        sources without hard-gating anyone else.
+
+    Loose mode (diagnostic, `loose=true`):
+      * Duration cap 180 s.
+      * Query = raw name (broadest possible search).
+      * No ranking heuristics beyond raw view count.
+
+    `debug=True` returns a dict with `.rejections` breakdown instead of
+    just the best match — used by the /health endpoint so the coach
+    can see WHY a query returned 0.
     """
     if not YOUTUBE_API_KEY:
         raise HTTPException(500, "YOUTUBE_API_KEY not configured")
@@ -95,15 +114,26 @@ async def find_best_short(exercise_name: str, loose: bool = False) -> Optional[d
     if not name:
         return None
 
-    query = name if loose else f"{name} shorts"
-    max_dur = 180 if loose else 60
+    if loose:
+        query = name
+        max_dur = 180
+    else:
+        query = f"{name} exercise demo"
+        max_dur = 120
+
+    rejections = {
+        "not_video_kind": 0,
+        "too_long": 0,
+        "not_embeddable": 0,
+        "search_returned_zero": 0,
+    }
 
     async with httpx.AsyncClient(timeout=15) as http:
         try:
             search = await _yt_get(http, SEARCH_URL, {
                 "part": "snippet", "q": query, "type": "video",
                 "videoDuration": "short", "videoEmbeddable": "true",
-                "order": "relevance", "maxResults": 10,
+                "order": "relevance", "maxResults": 15,
             })
         except HTTPException as e:
             # Iter188 · Bubble quota errors UP so the worker pauses the
@@ -114,14 +144,20 @@ async def find_best_short(exercise_name: str, loose: bool = False) -> Optional[d
             logger.warning("yt search failed for %r: %s", exercise_name, e.detail)
             return None
 
+        raw_items = search.get("items") or []
+        if not raw_items:
+            rejections["search_returned_zero"] = 1
+            return {"rejections": rejections, "match": None, "query": query} if debug else None
+
+        # Iter189 · NO channel-blocklist by default anymore.
         cands = [
-            it for it in (search.get("items") or [])
+            it for it in raw_items
             if (it.get("id") or {}).get("kind") == "youtube#video"
-            and (loose or _good_channel((it.get("snippet") or {}).get("channelTitle") or ""))
         ]
+        rejections["not_video_kind"] = len(raw_items) - len(cands)
         ids = [it["id"]["videoId"] for it in cands if (it.get("id") or {}).get("videoId")]
         if not ids:
-            return None
+            return {"rejections": rejections, "match": None, "query": query} if debug else None
 
         details = await _yt_get(http, VIDEOS_URL, {
             "part": "contentDetails,snippet,statistics,status",
@@ -132,8 +168,10 @@ async def find_best_short(exercise_name: str, loose: bool = False) -> Optional[d
         for it in (details.get("items") or []):
             dur = _iso_dur_seconds((it.get("contentDetails") or {}).get("duration") or "")
             if dur > max_dur:
+                rejections["too_long"] += 1
                 continue
             if not (it.get("status") or {}).get("embeddable"):
+                rejections["not_embeddable"] += 1
                 continue
             sn = it.get("snippet") or {}
             st = it.get("statistics") or {}
@@ -152,14 +190,21 @@ async def find_best_short(exercise_name: str, loose: bool = False) -> Optional[d
                 "shorts_url": f"https://www.youtube.com/shorts/{it['id']}",
             })
         if not eligible:
-            return None
+            return {"rejections": rejections, "match": None, "query": query} if debug else None
         if loose:
-            return max(eligible, key=lambda v: (_known_good_priority(v["channel_name"] or ""), v["view_count"]))
-        return max(
-            eligible,
-            key=lambda v: (_known_good_priority(v["channel_name"] or ""),
-                           v["like_ratio"], v["view_count"]),
-        )
+            best = max(eligible, key=lambda v: (_known_good_priority(v["channel_name"] or ""), v["view_count"]))
+        else:
+            # Iter189 · Ranking (not filtering!) — reward known-good
+            # channels & popular videos but never hard-exclude.
+            best = max(
+                eligible,
+                key=lambda v: (
+                    _known_good_priority(v["channel_name"] or ""),
+                    v["view_count"],
+                    v["like_ratio"],
+                ),
+            )
+        return {"rejections": rejections, "match": best, "query": query, "eligible_count": len(eligible)} if debug else best
 
 
 async def _is_yt_enabled() -> bool:
@@ -176,21 +221,25 @@ async def _record_yt_job(job_id: str, patch: dict) -> None:
 def _bulk_yt_query() -> dict:
     """Shared query for the YouTube video-finder bulk sweep.
 
-    Iter188 · Mirrors the hardening we applied to the primary-image
-    sweep in `feature_auto_media_gen._bulk_primary_image_query`. Previous
-    version fed the sweep every one of the ~667 rows in `exercises_v2`,
-    including archived, retired, deprecated, merged, rejected, soft-
-    deleted, and alias-duplicate rows — burning YouTube quota on rows
-    the library never surfaces. This helper is used by BOTH the dry-run
-    count and the worker so the two can NEVER drift.
+    Iter189 · Tightened HARD after discovering the previous filter let
+    ~943 rows through — 1,075 of which were `draft_requested` LLM
+    fallback candidates (visibility=coach_only, safe_for_programming=
+    False) never surfaced in the library UI. The sweep was burning
+    quota on ghost rows.
 
-    Filters applied (all must pass):
-      * `is_deleted != True`             — not soft-deleted
-      * `status` (case-insensitive) NOT in {archived, retired, deprecated,
-        merged, rejected}
-      * missing / empty `primary_video_url`
-      * canonical-only (skip aliases — either `canonical_id` unset OR
-        equal to the row's own `id`)
+    A row is in the LIBRARY iff it satisfies ALL of:
+      * Not soft-deleted (`is_deleted != True`)
+      * Not archived / retired / deprecated / merged / rejected
+      * Actually missing a primary video URL
+      * Canonical only (not an alias — `canonical_id` unset OR equals own `id`)
+      * EITHER `status='Approved'` (capital A — the actual library state)
+        OR (`visibility='client_visible'` AND `safe_for_programming=True`)
+        (the "reachable by clients" gate)
+      * `exercise_name` is a non-empty string (defensive — a ghost row
+        with no name would generate garbage queries anyway)
+
+    This helper is used by BOTH the dry-run count and the worker so
+    the two can NEVER drift.
     """
     return {
         "$and": [
@@ -202,6 +251,17 @@ def _bulk_yt_query() -> dict:
                 {"$toLower": {"$ifNull": ["$status", ""]}},
                 ["archived", "retired", "deprecated", "merged", "rejected"],
             ]}}},
+            # ─── In the library — either Approved OR client-visible ──────
+            # ── AND safe for programming (belt & braces) ─────────────────
+            {"$or": [
+                {"status": "Approved"},
+                {"$and": [
+                    {"visibility": "client_visible"},
+                    {"safe_for_programming": True},
+                ]},
+            ]},
+            # ─── Must have a non-empty exercise_name to query for ────────
+            {"exercise_name": {"$exists": True, "$type": "string", "$ne": ""}},
             # ─── Actually missing a primary video URL ────────────────────
             {"$or": [
                 {"primary_video_url": None},
@@ -414,7 +474,7 @@ async def yt_finder_bulk_run(
     query = _bulk_yt_query()
     if dry_run:
         n = await db.exercises_v2.count_documents(query)
-        # Iter188 · Transparency breakdown — coach can see which
+        # Iter189 · Transparency breakdown — coach can see which
         # exclusion rules cut the raw count down to `would_queue_count`.
         # All counts are read-only $count aggregates → cheap.
         raw_missing_primary_video = await db.exercises_v2.count_documents({
@@ -438,6 +498,23 @@ async def yt_finder_bulk_run(
                 {"$expr": {"$ne": ["$canonical_id", "$id"]}},
             ],
         })
+        excluded_draft_requested = await db.exercises_v2.count_documents({
+            "status": "draft_requested",
+        })
+        excluded_not_library = await db.exercises_v2.count_documents({
+            "status": {"$nin": ["Approved"]},
+            "$or": [
+                {"visibility": {"$ne": "client_visible"}},
+                {"safe_for_programming": {"$ne": True}},
+            ],
+        })
+        excluded_no_name = await db.exercises_v2.count_documents({
+            "$or": [
+                {"exercise_name": None},
+                {"exercise_name": {"$exists": False}},
+                {"exercise_name": ""},
+            ],
+        })
         return {
             "dry_run": True,
             "would_queue_count": n,
@@ -446,6 +523,9 @@ async def yt_finder_bulk_run(
                 "excluded_archived_or_retired": excluded_archived,
                 "excluded_soft_deleted": excluded_deleted,
                 "excluded_alias_duplicates": excluded_aliases,
+                "excluded_draft_requested_llm_ghosts": excluded_draft_requested,
+                "excluded_not_in_library": excluded_not_library,
+                "excluded_missing_name": excluded_no_name,
                 "eligible_after_filters": n,
             },
         }
@@ -508,24 +588,37 @@ async def yt_finder_health(
     loose: bool = False,
     coach: dict = Depends(require_role("coach")),
 ):
-    """Iter188 · One-shot diagnostic — checks that:
+    """Iter189 · One-shot diagnostic — checks that:
       1. YOUTUBE_API_KEY is loaded.
       2. The Search API returns SOMETHING for a simple query.
       3. Quota isn't exhausted.
+      4. WHY was a video rejected? (rejection breakdown per candidate)
 
-    Returns raw counts + the first 3 titles so the coach can see with
-    their own eyes whether the API works. Costs 100 quota units.
+    Returns raw counts + a rejection breakdown so the coach can see
+    which filter is culling their candidates. Costs 100 quota units.
     """
     if not YOUTUBE_API_KEY:
         return {"ok": False, "reason": "no_api_key", "advice": "Set YOUTUBE_API_KEY in backend .env"}
     try:
-        v = await find_best_short(q, loose=loose)
+        result = await find_best_short(q, loose=loose, debug=True)
+        if not result:
+            return {
+                "ok": False, "query": q, "loose": loose,
+                "advice": "Query normalized to empty — pass a real exercise name.",
+            }
+        match = result.get("match")
         return {
-            "ok": bool(v),
+            "ok": bool(match),
             "query": q,
+            "effective_yt_query": result.get("query"),
             "loose": loose,
-            "sample": v,
-            "advice": "Working" if v else "API responded but no eligible video (try loose=true)",
+            "eligible_count": result.get("eligible_count", 0),
+            "rejections": result.get("rejections", {}),
+            "sample": match,
+            "advice": (
+                "Working — filters are permissive." if match
+                else "API responded but no eligible video. Try loose=true, or check rejections breakdown."
+            ),
         }
     except HTTPException as e:
         return {

@@ -758,9 +758,10 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
     <View style={styles.ytBlock}>
       <Text style={styles.ytH}>YOUTUBE VIDEO</Text>
       <Text style={styles.ytHint}>
-        Auto-finds a ≤ 60 s YouTube demo video for each exercise missing one.
-        Filters by known-good channels, view count, and like ratio. Excludes
-        podcast/talk/interview channels. All results go to Needs Review.
+        Auto-finds a ≤ 120 s YouTube demo video for each library exercise
+        missing one. Ranks by channel reputation + views, no hard blocks.
+        Only scans Approved / library-visible exercises. All results go to
+        Needs Review — you approve manually.
       </Text>
       {!ytKeyOk ? (
         <Text style={styles.ytWarn}>⚠ YOUTUBE_API_KEY not configured on the backend.</Text>

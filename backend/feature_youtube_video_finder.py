@@ -43,56 +43,63 @@ def _norm_name(s: str) -> str:
 async def _collect_programme_referenced_ids() -> tuple[set[str], set[str]]:
     """Return (referenced_exercise_ids, referenced_name_norms) across
     every collection that references exercises in a programme/workout
-    context. Used by the "used_drafts" sweep target so we ONLY search
-    videos for draft_requested rows that actually appear in a real
-    programme.
+    context. Used by the "used_in_programmes" sweep target so we ONLY
+    search videos for exercises that actually appear in a real
+    programme, template, plan, or session.
 
-    Scans:
-      * workouts, workouts_archive — live client workouts
-      * workout_slot_templates      — reusable slot templates
-      * plan_drafts, plan_drafts_v2 — coach drafts
-      * plan_live_v2, plan_versions, plan_snapshots — published plans
-      * programmes_v2               — active programme catalog
+    Iter189e · EXPANDED collection list after user reported the sweep
+    was targeting 943 rows when they only had ~79 real programme
+    exercises. Root cause: the previous version scanned only 8
+    collections and missed workout_sets, workout_slot_templates,
+    programme_phases_v2, programme_timeline, phase_definitions,
+    weekly_reviews, and workout_exercise_swaps.
     """
     ids: set[str] = set()
     norms: set[str] = set()
 
-    # Fast path: flat `exercises.*` arrays via distinct()
-    for cn in ("workouts", "workouts_archive", "workout_slot_templates"):
-        for id_field in ("exercises.exercise_id", "exercises.id", "slot_exercises.exercise_id"):
-            try:
-                for x in await db[cn].distinct(id_field):
-                    if x:
-                        ids.add(x)
-            except Exception:
-                pass
-        for name_field in ("exercises.name", "exercises.exercise_name", "slot_exercises.name"):
-            try:
-                for n in await db[cn].distinct(name_field):
-                    if n and isinstance(n, str):
-                        norms.add(_norm_name(n))
-            except Exception:
-                pass
-
-    # Deep-walk plans / programmes (nested dicts)
+    # Deep-walk EVERY exercise-scoped collection (nested dicts + lists).
+    # Iter189e · Prev version used `distinct()` shortcuts on 5 collections
+    # but missed nested arrays (warmup_exercises, cooldown_exercises,
+    # main_block.exercises, etc.). Switched to a single unified deep-walk
+    # for correctness — DB is small, this is cheap.
     def _walk(obj):
         if isinstance(obj, dict):
             eid = obj.get("exercise_id")
             if eid and isinstance(eid, str):
                 ids.add(eid)
-            nm = obj.get("name") or obj.get("exercise_name")
-            if nm and isinstance(nm, str):
-                norms.add(_norm_name(nm))
+            # Capture both `exercise_name` and `name`. `name` in these
+            # collections almost always means the exercise's name (the
+            # collections we walk are all exercise-scoped). False
+            # positives are cheap — worst case, we search YouTube for a
+            # non-exercise term and get "no match".
+            for key in ("exercise_name", "name"):
+                v = obj.get(key)
+                if v and isinstance(v, str) and len(v) > 2:
+                    norms.add(_norm_name(v))
             for v in obj.values():
                 _walk(v)
         elif isinstance(obj, list):
             for v in obj:
                 _walk(v)
 
-    for cn in (
+    collections_to_scan = (
+        # Workouts & session logs
+        "workouts", "workouts_archive",
+        "workout_slot_templates", "workout_sets",
+        "workout_exercise_swaps", "workout_implementations",
+        "workout_assignments",
+        # Plans / drafts / live
         "plan_drafts", "plan_drafts_v2", "plan_live_v2",
-        "plan_versions", "plan_snapshots", "programmes_v2",
-    ):
+        "plan_versions", "plan_snapshots", "plan_shadows",
+        "plan_live_v2_exercise_swaps", "plan_live_v2_implementations",
+        # Programmes / phases / timeline
+        "programmes", "programmes_v2", "programme_phases_v2",
+        "programme_timeline", "phase_definitions",
+        "phase_transition_proposals",
+        # Weekly artefacts
+        "weekly_reviews",
+    )
+    for cn in collections_to_scan:
         try:
             async for d in db[cn].find({}):
                 _walk(d)
@@ -102,10 +109,34 @@ async def _collect_programme_referenced_ids() -> tuple[set[str], set[str]]:
     return ids, norms
 
 
+async def _programme_referenced_exercise_ids() -> list[str]:
+    """Iter189e · Return ALL `exercises_v2.id` values (regardless of
+    status) that are referenced by a programme/workout collection.
+    Used by the "used_in_programmes" sweep target so the sweep only
+    scans exercises the coach actually programmed."""
+    ref_ids, ref_norms = await _collect_programme_referenced_ids()
+    out: list[str] = []
+    async for ex in db.exercises_v2.find(
+        {},  # any status — filtering by role_gate happens in _bulk_yt_query
+        {"id": 1, "exercise_name": 1, "requested_name": 1, "_id": 0},
+    ):
+        if ex.get("id") in ref_ids:
+            out.append(ex["id"])
+            continue
+        en = _norm_name(ex.get("exercise_name") or "")
+        rn = _norm_name(ex.get("requested_name") or "")
+        if en and en in ref_norms:
+            out.append(ex["id"])
+        elif rn and rn in ref_norms:
+            out.append(ex["id"])
+    return out
+
+
 async def _drafts_used_in_programmes_ids() -> list[str]:
-    """Iter189c · Return the list of `exercises_v2.id` for rows with
-    `status='draft_requested'` AND referenced (by id OR name) in any
-    programme/workout collection. Used by the "used_drafts" target."""
+    """Legacy helper — kept for backward compat. Returns programme-
+    referenced ids that are draft_requested. Newer callers should use
+    `_programme_referenced_exercise_ids` and let `_bulk_yt_query`'s
+    role_gate handle the status filter."""
     ref_ids, ref_norms = await _collect_programme_referenced_ids()
     out: list[str] = []
     async for ex in db.exercises_v2.find(
@@ -348,11 +379,19 @@ def _bulk_yt_query(target: str = "library", *, id_filter: Optional[list] = None)
     ]}
     drafts_gate = {"status": "draft_requested"}
     needs_review_gate = {"status": {"$in": ["draft_requested", "coach_review_needed"]}}
+    # Iter189e · used_in_programmes — any active status. id_filter (set
+    # by the caller via `_programme_referenced_exercise_ids`) is what
+    # actually narrows the sweep to real programme references.
+    any_active_gate = {"status": {"$in": [
+        "Approved", "draft_requested", "coach_review_needed", "draft",
+    ]}}
 
     if target == "drafts":
         role_gate = drafts_gate
     elif target == "used_drafts":
         role_gate = drafts_gate  # id_filter narrows this further below
+    elif target == "used_in_programmes":
+        role_gate = any_active_gate  # id_filter is the real narrower
     elif target == "needs_review":
         role_gate = needs_review_gate
     elif target == "both":
@@ -379,16 +418,23 @@ def _bulk_yt_query(target: str = "library", *, id_filter: Optional[list] = None)
             {"primary_video_url": {"$exists": False}},
             {"primary_video_url": ""},
         ]},
-        # ─── Canonical only (skip aliases / duplicates) ──────────────
-        {"$or": [
+    ]
+
+    # ─── Canonical only (skip aliases / duplicates) ──────────────────
+    # Iter189e · Skip the canonical filter when an explicit id_filter
+    # is provided (used_drafts / used_in_programmes). If the coach
+    # programmed a specific alias-row, we need a video on THAT specific
+    # row so the workout resolves correctly — even if a canonical twin
+    # exists elsewhere.
+    if id_filter is None:
+        and_clauses.append({"$or": [
             {"canonical_id": None},
             {"canonical_id": {"$exists": False}},
             {"$expr": {"$eq": ["$canonical_id", "$id"]}},
-        ]},
-    ]
+        ]})
 
     if id_filter is not None:
-        # Iter189c · Narrow to a specific id list (used_drafts target).
+        # Iter189c · Narrow to a specific id list (used_drafts / used_in_programmes).
         and_clauses.insert(0, {"id": {"$in": list(id_filter)}})
 
     return {"$and": and_clauses}
@@ -444,10 +490,12 @@ async def _bulk_yt_worker(
             })
 
             # Hardened query — active, non-archived, non-alias only.
-            # Iter189b · target = "library" | "drafts" | "used_drafts" | "needs_review" | "both"
+            # Iter189b/e · target = "library" | "drafts" | "used_drafts" | "needs_review" | "used_in_programmes" | "both"
             id_filter = None
             if target == "used_drafts":
                 id_filter = await _drafts_used_in_programmes_ids()
+            elif target == "used_in_programmes":
+                id_filter = await _programme_referenced_exercise_ids()
             query = _bulk_yt_query(target=target, id_filter=id_filter)
             # Iter189d · Sort matches the coach's Exercise Library UI —
             # tomorrow's workouts first, then upcoming, then most recently
@@ -598,9 +646,9 @@ async def yt_finder_bulk_run(
 ):
     body = body or {}
     dry_run = bool(body.get("dry_run"))
-    # Iter189b/c/d · target = "library" | "drafts" | "used_drafts" | "needs_review" | "both"
+    # Iter189b/c/d/e · target = "library" | "drafts" | "used_drafts" | "needs_review" | "used_in_programmes" | "both"
     target = (body.get("target") or "library").strip().lower()
-    if target not in ("library", "drafts", "used_drafts", "needs_review", "both"):
+    if target not in ("library", "drafts", "used_drafts", "needs_review", "used_in_programmes", "both"):
         target = "library"
     if not YOUTUBE_API_KEY:
         if response is not None:
@@ -617,10 +665,13 @@ async def yt_finder_bulk_run(
     # active library (or drafts, depending on `target`).
     id_filter = None
     if target == "used_drafts":
-        # Iter189c · Compute the exact id set of draft_requested rows
-        # referenced by a programme/workout. Cached here for both the
-        # dry-run and the actual queue.
+        # Iter189c · draft_requested + referenced in a programme.
         id_filter = await _drafts_used_in_programmes_ids()
+    elif target == "used_in_programmes":
+        # Iter189e · ANY active status + referenced in a programme.
+        # This is what a coach means by "exercises actively used in at
+        # least one programme or workout".
+        id_filter = await _programme_referenced_exercise_ids()
     query = _bulk_yt_query(target=target, id_filter=id_filter)
     if dry_run:
         n = await db.exercises_v2.count_documents(query)

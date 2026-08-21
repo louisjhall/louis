@@ -32,6 +32,98 @@ KNOWN_GOOD_CHANNELS = {
     "athlean-x", "athlean x", "built with science",
 }
 
+# Iter189c · Name-normalizer for used-in-programmes matching.
+_NAME_NORM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _norm_name(s: str) -> str:
+    return _NAME_NORM_RE.sub(" ", (s or "").lower()).strip()
+
+
+async def _collect_programme_referenced_ids() -> tuple[set[str], set[str]]:
+    """Return (referenced_exercise_ids, referenced_name_norms) across
+    every collection that references exercises in a programme/workout
+    context. Used by the "used_drafts" sweep target so we ONLY search
+    videos for draft_requested rows that actually appear in a real
+    programme.
+
+    Scans:
+      * workouts, workouts_archive — live client workouts
+      * workout_slot_templates      — reusable slot templates
+      * plan_drafts, plan_drafts_v2 — coach drafts
+      * plan_live_v2, plan_versions, plan_snapshots — published plans
+      * programmes_v2               — active programme catalog
+    """
+    ids: set[str] = set()
+    norms: set[str] = set()
+
+    # Fast path: flat `exercises.*` arrays via distinct()
+    for cn in ("workouts", "workouts_archive", "workout_slot_templates"):
+        for id_field in ("exercises.exercise_id", "exercises.id", "slot_exercises.exercise_id"):
+            try:
+                for x in await db[cn].distinct(id_field):
+                    if x:
+                        ids.add(x)
+            except Exception:
+                pass
+        for name_field in ("exercises.name", "exercises.exercise_name", "slot_exercises.name"):
+            try:
+                for n in await db[cn].distinct(name_field):
+                    if n and isinstance(n, str):
+                        norms.add(_norm_name(n))
+            except Exception:
+                pass
+
+    # Deep-walk plans / programmes (nested dicts)
+    def _walk(obj):
+        if isinstance(obj, dict):
+            eid = obj.get("exercise_id")
+            if eid and isinstance(eid, str):
+                ids.add(eid)
+            nm = obj.get("name") or obj.get("exercise_name")
+            if nm and isinstance(nm, str):
+                norms.add(_norm_name(nm))
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+
+    for cn in (
+        "plan_drafts", "plan_drafts_v2", "plan_live_v2",
+        "plan_versions", "plan_snapshots", "programmes_v2",
+    ):
+        try:
+            async for d in db[cn].find({}):
+                _walk(d)
+        except Exception:
+            pass
+
+    return ids, norms
+
+
+async def _drafts_used_in_programmes_ids() -> list[str]:
+    """Iter189c · Return the list of `exercises_v2.id` for rows with
+    `status='draft_requested'` AND referenced (by id OR name) in any
+    programme/workout collection. Used by the "used_drafts" target."""
+    ref_ids, ref_norms = await _collect_programme_referenced_ids()
+    out: list[str] = []
+    async for ex in db.exercises_v2.find(
+        {"status": "draft_requested"},
+        {"id": 1, "exercise_name": 1, "requested_name": 1, "_id": 0},
+    ):
+        if ex.get("id") in ref_ids:
+            out.append(ex["id"])
+            continue
+        en = _norm_name(ex.get("exercise_name") or "")
+        rn = _norm_name(ex.get("requested_name") or "")
+        if en and en in ref_norms:
+            out.append(ex["id"])
+        elif rn and rn in ref_norms:
+            out.append(ex["id"])
+    return out
+
+
 # Single-flight lock (mirrors bulk-primary-images pattern).
 _YT_BULK_LOCK: asyncio.Lock = asyncio.Lock()
 
@@ -218,34 +310,29 @@ async def _record_yt_job(job_id: str, patch: dict) -> None:
     await db.backfill_jobs.update_one({"_id": job_id}, {"$set": patch}, upsert=True)
 
 
-def _bulk_yt_query(target: str = "library") -> dict:
+def _bulk_yt_query(target: str = "library", *, id_filter: Optional[list] = None) -> dict:
     """Shared query for the YouTube video-finder bulk sweep.
 
-    Iter189 · Tightened HARD after discovering the previous filter let
-    ~943 rows through — 1,075 of which were `draft_requested` LLM
-    fallback candidates (visibility=coach_only, safe_for_programming=
-    False) never surfaced in the library UI. The sweep was burning
-    quota on ghost rows.
-
-    Iter189b · `target` parameter added for the coach's "sweep drafts
-    too" flow. Draft candidates still get videos written; their status
-    is NOT changed by the worker (only `primary_video_url`,
-    `primary_video_source`, `primary_video_meta`, `approved_video_status`,
-    `video_found_at` are set). Coach can review + approve manually.
+    Iter189c · Added `id_filter` — when passed, restricts the sweep to
+    a pre-computed id set. Used by the "used_drafts" target to only
+    scan draft_requested rows that are actually referenced in a
+    programme/workout (typically ~19-40 rows, not 943).
 
     Targets:
-      * "library" — Approved OR (client-visible + safe-for-programming).
-                    Requires non-empty `exercise_name`.
-      * "drafts"  — `status='draft_requested'` rows missing a video.
-                    Uses `exercise_name` (falls back to `requested_name`
-                    is handled at the worker level).
-      * "both"    — Union of the two above.
+      * "library"       — Approved OR (client-visible + safe-for-programming)
+      * "drafts"        — All `status='draft_requested'` rows
+      * "used_drafts"   — draft_requested rows actually referenced in a
+                          programme/workout. Requires `id_filter=[...]`
+                          to be pre-computed by the caller (usually via
+                          `_drafts_used_in_programmes_ids`).
+      * "both"          — Union of "library" and "drafts"
 
-    A row is in scope iff it also satisfies ALL of:
+    Common filters applied on top of the role gate:
       * Not soft-deleted
       * Not archived / retired / deprecated / merged / rejected
       * Actually missing a primary video URL
       * Canonical only (`canonical_id` unset OR equals own `id`)
+      * `exercise_name` non-empty (defensive)
     """
     library_gate = {"$or": [
         {"status": "Approved"},
@@ -258,39 +345,45 @@ def _bulk_yt_query(target: str = "library") -> dict:
 
     if target == "drafts":
         role_gate = drafts_gate
+    elif target == "used_drafts":
+        role_gate = drafts_gate  # id_filter narrows this further below
     elif target == "both":
         role_gate = {"$or": [library_gate, drafts_gate]}
     else:  # "library" (default)
         role_gate = library_gate
 
-    return {
-        "$and": [
-            # ─── Alive: not soft-deleted ─────────────────────────────────
-            {"is_deleted": {"$ne": True}},
-            # ─── Alive: not archived / retired / deprecated / merged /
-            #             rejected (case-insensitive via $toLower) ────────
-            {"$expr": {"$not": {"$in": [
-                {"$toLower": {"$ifNull": ["$status", ""]}},
-                ["archived", "retired", "deprecated", "merged", "rejected"],
-            ]}}},
-            # ─── Role gate: library / drafts / both ─────────────────────
-            role_gate,
-            # ─── Must have a non-empty exercise_name to query for ────────
-            {"exercise_name": {"$exists": True, "$type": "string", "$ne": ""}},
-            # ─── Actually missing a primary video URL ────────────────────
-            {"$or": [
-                {"primary_video_url": None},
-                {"primary_video_url": {"$exists": False}},
-                {"primary_video_url": ""},
-            ]},
-            # ─── Canonical only (skip aliases / duplicates) ──────────────
-            {"$or": [
-                {"canonical_id": None},
-                {"canonical_id": {"$exists": False}},
-                {"$expr": {"$eq": ["$canonical_id", "$id"]}},
-            ]},
-        ],
-    }
+    and_clauses = [
+        # ─── Alive: not soft-deleted ─────────────────────────────────
+        {"is_deleted": {"$ne": True}},
+        # ─── Alive: not archived / retired / deprecated / merged /
+        #             rejected (case-insensitive via $toLower) ────────
+        {"$expr": {"$not": {"$in": [
+            {"$toLower": {"$ifNull": ["$status", ""]}},
+            ["archived", "retired", "deprecated", "merged", "rejected"],
+        ]}}},
+        # ─── Role gate: library / drafts / used_drafts / both ────────
+        role_gate,
+        # ─── Must have a non-empty exercise_name to query for ────────
+        {"exercise_name": {"$exists": True, "$type": "string", "$ne": ""}},
+        # ─── Actually missing a primary video URL ────────────────────
+        {"$or": [
+            {"primary_video_url": None},
+            {"primary_video_url": {"$exists": False}},
+            {"primary_video_url": ""},
+        ]},
+        # ─── Canonical only (skip aliases / duplicates) ──────────────
+        {"$or": [
+            {"canonical_id": None},
+            {"canonical_id": {"$exists": False}},
+            {"$expr": {"$eq": ["$canonical_id", "$id"]}},
+        ]},
+    ]
+
+    if id_filter is not None:
+        # Iter189c · Narrow to a specific id list (used_drafts target).
+        and_clauses.insert(0, {"id": {"$in": list(id_filter)}})
+
+    return {"$and": and_clauses}
 
 
 async def _bulk_yt_worker(
@@ -336,14 +429,18 @@ async def _bulk_yt_worker(
                 "started_at": existing.get("started_at") or started,
                 "resumed_at": started if resume else None,
                 "coach_id": coach_id,
+                "target": target,
                 "processed": processed, "wrote": wrote,
                 "errors": errors, "results_sample": sample,
                 "processed_ids": list(processed_ids),
             })
 
             # Hardened query — active, non-archived, non-alias only.
-            # Iter189b · target = "library" | "drafts" | "both"
-            query = _bulk_yt_query(target=target)
+            # Iter189b · target = "library" | "drafts" | "used_drafts" | "both"
+            id_filter = None
+            if target == "used_drafts":
+                id_filter = await _drafts_used_in_programmes_ids()
+            query = _bulk_yt_query(target=target, id_filter=id_filter)
             all_exs = await db.exercises_v2.find(
                 query, {"_id": 0, "id": 1, "exercise_name": 1,
                         "requested_name": 1, "status": 1},
@@ -485,9 +582,9 @@ async def yt_finder_bulk_run(
 ):
     body = body or {}
     dry_run = bool(body.get("dry_run"))
-    # Iter189b · target = "library" (default) | "drafts" | "both"
+    # Iter189b/c · target = "library" (default) | "drafts" | "used_drafts" | "both"
     target = (body.get("target") or "library").strip().lower()
-    if target not in ("library", "drafts", "both"):
+    if target not in ("library", "drafts", "used_drafts", "both"):
         target = "library"
     if not YOUTUBE_API_KEY:
         if response is not None:
@@ -502,7 +599,13 @@ async def yt_finder_bulk_run(
     # Excludes archived / retired / deprecated / merged / rejected /
     # soft-deleted / alias-duplicate rows so the sweep only targets the
     # active library (or drafts, depending on `target`).
-    query = _bulk_yt_query(target=target)
+    id_filter = None
+    if target == "used_drafts":
+        # Iter189c · Compute the exact id set of draft_requested rows
+        # referenced by a programme/workout. Cached here for both the
+        # dry-run and the actual queue.
+        id_filter = await _drafts_used_in_programmes_ids()
+    query = _bulk_yt_query(target=target, id_filter=id_filter)
     if dry_run:
         n = await db.exercises_v2.count_documents(query)
         # Iter189 · Transparency breakdown — coach can see which

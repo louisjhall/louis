@@ -688,22 +688,22 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
     } finally { setYtBusy(null); }
   };
 
-  const bulkRun = async (loose: boolean = false) => {
+  const bulkRun = async (loose: boolean = false, target: "library" | "drafts" | "both" = "library") => {
     if (ytBusy) return;
-    setYtBusy("bulk");
+    setYtBusy(target === "drafts" ? "bulk-drafts" : "bulk");
     try {
       const dry = await api<any>("/coach/youtube-finder/bulk-run", {
-        method: "POST", body: { dry_run: true },
+        method: "POST", body: { dry_run: true, target },
       });
       const would = Number(dry?.would_queue_count || 0);
       if (!would) {
-        toast("No exercises missing a primary video — nothing to search.", "info");
+        toast(`No ${target === "drafts" ? "draft" : "library"} exercises missing a primary video — nothing to search.`, "info");
         return;
       }
 
       let kickoff: any;
       try {
-        kickoff = await api<any>("/coach/youtube-finder/bulk-run", { method: "POST", body: { loose } });
+        kickoff = await api<any>("/coach/youtube-finder/bulk-run", { method: "POST", body: { loose, target } });
       } catch (e: any) {
         const jid = e?.response?.job_id;
         if (jid) { kickoff = { job_id: jid }; toast("Attaching to sweep already in flight…", "info"); }
@@ -717,7 +717,7 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         const tot = Number(kickoff?.total_in_scope || would);
         toast(`Resuming from ${pStart}/${tot}${loose ? " (loose)" : ""}…`, "info");
       } else if (kickoff?.status === "queued") {
-        toast(`Starting ${loose ? "LOOSE " : ""}sweep — ${would} exercises`, "info");
+        toast(`Starting ${loose ? "LOOSE " : ""}${target === "drafts" ? "DRAFTS " : ""}sweep — ${would} exercises`, "info");
       }
 
       // Iter188 · Poll for up to 60 min. Each batch of 10 takes ~10s
@@ -730,9 +730,6 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         const wrote = Number(s?.wrote || 0);
         const processedN = Number(s?.processed || 0);
         const total = Number(s?.total_in_scope || would);
-        // Progress toast whenever `processed` (not just `wrote`) changes,
-        // so the coach sees "45 / 527" ticking even when videos aren't
-        // being found for a run of exercises.
         if (processedN !== lastProcessed) {
           toast(`${processedN} / ${total} scanned · ${wrote} found`, "info");
           lastProcessed = processedN;
@@ -783,6 +780,20 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
           ? <ActivityIndicator color="#fff" size="small" />
           : <Ionicons name="logo-youtube" size={16} color="#fff" />}
         <Text style={styles.ytBulkT}>FIND VIDEOS FOR ALL MISSING</Text>
+      </Pressable>
+
+      {/* Iter189b · Sweep draft_requested rows (LLM-suggested candidates
+          that haven't been approved yet). Videos are saved but status
+          stays draft_requested — coach approves manually. */}
+      <Pressable onPress={() => bulkRun(false, "drafts")}
+        disabled={!!ytBusy || !ytEnabled}
+        style={[styles.ytBulk, { backgroundColor: "#5b3fa6" },
+                (!!ytBusy || !ytEnabled) && { opacity: 0.5 }]}
+        testID="yt-finder-bulk-run-drafts">
+        {ytBusy === "bulk-drafts"
+          ? <ActivityIndicator color="#fff" size="small" />
+          : <Ionicons name="documents-outline" size={16} color="#fff" />}
+        <Text style={styles.ytBulkT}>FIND VIDEOS FOR DRAFT_REQUESTED</Text>
       </Pressable>
 
       {/* Iter188 · Diagnostic buttons — one-shot health check and a

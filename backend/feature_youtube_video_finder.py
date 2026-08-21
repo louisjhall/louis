@@ -218,7 +218,7 @@ async def _record_yt_job(job_id: str, patch: dict) -> None:
     await db.backfill_jobs.update_one({"_id": job_id}, {"$set": patch}, upsert=True)
 
 
-def _bulk_yt_query() -> dict:
+def _bulk_yt_query(target: str = "library") -> dict:
     """Shared query for the YouTube video-finder bulk sweep.
 
     Iter189 · Tightened HARD after discovering the previous filter let
@@ -227,20 +227,42 @@ def _bulk_yt_query() -> dict:
     False) never surfaced in the library UI. The sweep was burning
     quota on ghost rows.
 
-    A row is in the LIBRARY iff it satisfies ALL of:
-      * Not soft-deleted (`is_deleted != True`)
+    Iter189b · `target` parameter added for the coach's "sweep drafts
+    too" flow. Draft candidates still get videos written; their status
+    is NOT changed by the worker (only `primary_video_url`,
+    `primary_video_source`, `primary_video_meta`, `approved_video_status`,
+    `video_found_at` are set). Coach can review + approve manually.
+
+    Targets:
+      * "library" — Approved OR (client-visible + safe-for-programming).
+                    Requires non-empty `exercise_name`.
+      * "drafts"  — `status='draft_requested'` rows missing a video.
+                    Uses `exercise_name` (falls back to `requested_name`
+                    is handled at the worker level).
+      * "both"    — Union of the two above.
+
+    A row is in scope iff it also satisfies ALL of:
+      * Not soft-deleted
       * Not archived / retired / deprecated / merged / rejected
       * Actually missing a primary video URL
-      * Canonical only (not an alias — `canonical_id` unset OR equals own `id`)
-      * EITHER `status='Approved'` (capital A — the actual library state)
-        OR (`visibility='client_visible'` AND `safe_for_programming=True`)
-        (the "reachable by clients" gate)
-      * `exercise_name` is a non-empty string (defensive — a ghost row
-        with no name would generate garbage queries anyway)
-
-    This helper is used by BOTH the dry-run count and the worker so
-    the two can NEVER drift.
+      * Canonical only (`canonical_id` unset OR equals own `id`)
     """
+    library_gate = {"$or": [
+        {"status": "Approved"},
+        {"$and": [
+            {"visibility": "client_visible"},
+            {"safe_for_programming": True},
+        ]},
+    ]}
+    drafts_gate = {"status": "draft_requested"}
+
+    if target == "drafts":
+        role_gate = drafts_gate
+    elif target == "both":
+        role_gate = {"$or": [library_gate, drafts_gate]}
+    else:  # "library" (default)
+        role_gate = library_gate
+
     return {
         "$and": [
             # ─── Alive: not soft-deleted ─────────────────────────────────
@@ -251,15 +273,8 @@ def _bulk_yt_query() -> dict:
                 {"$toLower": {"$ifNull": ["$status", ""]}},
                 ["archived", "retired", "deprecated", "merged", "rejected"],
             ]}}},
-            # ─── In the library — either Approved OR client-visible ──────
-            # ── AND safe for programming (belt & braces) ─────────────────
-            {"$or": [
-                {"status": "Approved"},
-                {"$and": [
-                    {"visibility": "client_visible"},
-                    {"safe_for_programming": True},
-                ]},
-            ]},
+            # ─── Role gate: library / drafts / both ─────────────────────
+            role_gate,
             # ─── Must have a non-empty exercise_name to query for ────────
             {"exercise_name": {"$exists": True, "$type": "string", "$ne": ""}},
             # ─── Actually missing a primary video URL ────────────────────
@@ -283,6 +298,7 @@ async def _bulk_yt_worker(
     coach_id: Optional[str],
     resume: bool = False,
     loose: bool = False,
+    target: str = "library",
 ) -> None:
     """Iter188 · Resumable, batched YouTube video-finder sweep.
 
@@ -326,10 +342,12 @@ async def _bulk_yt_worker(
             })
 
             # Hardened query — active, non-archived, non-alias only.
-            query = _bulk_yt_query()
+            # Iter189b · target = "library" | "drafts" | "both"
+            query = _bulk_yt_query(target=target)
             all_exs = await db.exercises_v2.find(
-                query, {"_id": 0, "id": 1, "exercise_name": 1},
-            ).to_list(length=2000)
+                query, {"_id": 0, "id": 1, "exercise_name": 1,
+                        "requested_name": 1, "status": 1},
+            ).to_list(length=5000)
             total_in_scope = len(all_exs)
 
             # Skip anything we've already touched on a previous run.
@@ -349,10 +367,18 @@ async def _bulk_yt_worker(
 
                 for ex in batch:
                     ex_id = ex.get("id")
+                    # Iter189b · Drafts often use `requested_name` before
+                    # coach approval — fall back to it if `exercise_name`
+                    # is missing.
+                    ex_name = (ex.get("exercise_name")
+                               or ex.get("requested_name") or "")
                     processed += 1
                     try:
-                        v = await find_best_short(ex.get("exercise_name") or "", loose=loose)
+                        v = await find_best_short(ex_name, loose=loose)
                         if v:
+                            # Iter189b · CRITICAL — never modify `status`.
+                            # Drafts stay drafts. Approved stays Approved.
+                            # Only URL / meta / video-review state is set.
                             await db.exercises_v2.update_one(
                                 {"id": ex_id},
                                 {"$set": {
@@ -367,7 +393,8 @@ async def _bulk_yt_worker(
                             wrote += 1
                             if len(sample) < 30:
                                 sample.append({
-                                    "id": ex_id, "name": ex.get("exercise_name"),
+                                    "id": ex_id, "name": ex_name,
+                                    "status_untouched": ex.get("status"),
                                     "video_url": v["url"], "channel": v.get("channel_name"),
                                     "duration": v.get("duration_seconds"),
                                 })
@@ -458,6 +485,10 @@ async def yt_finder_bulk_run(
 ):
     body = body or {}
     dry_run = bool(body.get("dry_run"))
+    # Iter189b · target = "library" (default) | "drafts" | "both"
+    target = (body.get("target") or "library").strip().lower()
+    if target not in ("library", "drafts", "both"):
+        target = "library"
     if not YOUTUBE_API_KEY:
         if response is not None:
             response.status_code = 500
@@ -470,8 +501,8 @@ async def yt_finder_bulk_run(
     # Iter188 · Shared hardened query — see `_bulk_yt_query` docstring.
     # Excludes archived / retired / deprecated / merged / rejected /
     # soft-deleted / alias-duplicate rows so the sweep only targets the
-    # active library.
-    query = _bulk_yt_query()
+    # active library (or drafts, depending on `target`).
+    query = _bulk_yt_query(target=target)
     if dry_run:
         n = await db.exercises_v2.count_documents(query)
         # Iter189 · Transparency breakdown — coach can see which
@@ -517,13 +548,14 @@ async def yt_finder_bulk_run(
         })
         return {
             "dry_run": True,
+            "target": target,
             "would_queue_count": n,
             "breakdown": {
                 "raw_missing_primary_video": raw_missing_primary_video,
                 "excluded_archived_or_retired": excluded_archived,
                 "excluded_soft_deleted": excluded_deleted,
                 "excluded_alias_duplicates": excluded_aliases,
-                "excluded_draft_requested_llm_ghosts": excluded_draft_requested,
+                "draft_requested_rows_total": excluded_draft_requested,
                 "excluded_not_in_library": excluded_not_library,
                 "excluded_missing_name": excluded_no_name,
                 "eligible_after_filters": n,
@@ -559,12 +591,15 @@ async def yt_finder_bulk_run(
         if resumable and resumable.get("_id"):
             _spawn_bg(_bulk_yt_worker(
                 resumable["_id"], coach_id=coach.get("id"), resume=True,
+                target=(resumable.get("target") or "library"),
+                loose=bool(resumable.get("loose")),
             ))
             if response is not None:
                 response.status_code = 202
             return {
                 "status": "resumed",
                 "job_id": resumable["_id"],
+                "target": resumable.get("target") or "library",
                 "processed": resumable.get("processed", 0),
                 "total_in_scope": resumable.get("total_in_scope", 0),
                 "poll_url": f"/api/coach/auto-media-gen/backfill-status/{resumable['_id']}",
@@ -574,11 +609,14 @@ async def yt_finder_bulk_run(
     await _record_yt_job(job_id, {"status": "queued",
                                   "kind": "youtube_video_finder",
                                   "coach_id": coach.get("id"),
+                                  "target": target,
                                   "loose": bool(body.get("loose"))})
-    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id"), loose=bool(body.get("loose"))))
+    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id"),
+                              loose=bool(body.get("loose")),
+                              target=target))
     if response is not None:
         response.status_code = 202
-    return {"status": "queued", "job_id": job_id,
+    return {"status": "queued", "job_id": job_id, "target": target,
             "poll_url": f"/api/coach/auto-media-gen/backfill-status/{job_id}"}
 
 
@@ -662,7 +700,9 @@ async def yt_finder_bulk_resume(
         return {"status": "already_complete", "job_id": job_id}
 
     from feature_auto_media_gen import _spawn_bg
-    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id"), resume=True))
+    _spawn_bg(_bulk_yt_worker(job_id, coach_id=coach.get("id"), resume=True,
+                              target=(doc.get("target") or "library"),
+                              loose=bool(doc.get("loose"))))
     if response is not None:
         response.status_code = 202
     return {

@@ -688,16 +688,16 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
     } finally { setYtBusy(null); }
   };
 
-  const bulkRun = async (loose: boolean = false, target: "library" | "drafts" | "used_drafts" | "both" = "library") => {
+  const bulkRun = async (loose: boolean = false, target: "library" | "drafts" | "used_drafts" | "needs_review" | "both" = "library") => {
     if (ytBusy) return;
-    setYtBusy(target === "drafts" || target === "used_drafts" ? "bulk-drafts" : "bulk");
+    setYtBusy(target === "drafts" || target === "used_drafts" || target === "needs_review" ? "bulk-drafts" : "bulk");
     try {
       const dry = await api<any>("/coach/youtube-finder/bulk-run", {
         method: "POST", body: { dry_run: true, target },
       });
       const would = Number(dry?.would_queue_count || 0);
       if (!would) {
-        toast(`No ${target === "drafts" || target === "used_drafts" ? "draft" : "library"} exercises missing a primary video — nothing to search.`, "info");
+        toast(`No ${target === "library" ? "library" : "review"} exercises missing a primary video — nothing to search.`, "info");
         return;
       }
 
@@ -717,7 +717,7 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         const tot = Number(kickoff?.total_in_scope || would);
         toast(`Resuming from ${pStart}/${tot}${loose ? " (loose)" : ""}…`, "info");
       } else if (kickoff?.status === "queued") {
-        toast(`Starting ${loose ? "LOOSE " : ""}${target === "drafts" ? "DRAFTS " : target === "used_drafts" ? "USED-DRAFTS " : ""}sweep — ${would} exercises`, "info");
+        toast(`Starting ${loose ? "LOOSE " : ""}${target === "needs_review" ? "REVIEW " : target === "drafts" ? "DRAFTS " : target === "used_drafts" ? "USED-DRAFTS " : ""}sweep — ${would} exercises`, "info");
       }
 
       // Iter188 · Poll for up to 60 min. Each batch of 10 takes ~10s
@@ -782,10 +782,11 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         <Text style={styles.ytBulkT}>FIND VIDEOS FOR ALL MISSING</Text>
       </Pressable>
 
-      {/* Iter189c · Sweep draft_requested rows THAT ARE ACTUALLY USED
-          in a programme/workout (skip ghost drafts). Videos are saved
-          but status stays draft_requested — coach approves manually. */}
-      <Pressable onPress={() => bulkRun(false, "used_drafts")}
+      {/* Iter189d · Sweep target now matches the coach's NEEDS REVIEW
+          UI exactly (status ∈ [draft_requested, coach_review_needed],
+          missing video). Sorted by usage so exercises about to be
+          programmed get videos first. */}
+      <Pressable onPress={() => bulkRun(false, "needs_review")}
         disabled={!!ytBusy || !ytEnabled}
         style={[styles.ytBulk, { backgroundColor: "#5b3fa6" },
                 (!!ytBusy || !ytEnabled) && { opacity: 0.5 }]}
@@ -793,7 +794,7 @@ function YoutubeFinderSection({ toast }: { toast: (m: string, k?: any) => void }
         {ytBusy === "bulk-drafts"
           ? <ActivityIndicator color="#fff" size="small" />
           : <Ionicons name="documents-outline" size={16} color="#fff" />}
-        <Text style={styles.ytBulkT}>FIND VIDEOS FOR DRAFTS USED IN PROGRAMMES</Text>
+        <Text style={styles.ytBulkT}>FIND VIDEOS FOR NEEDS REVIEW</Text>
       </Pressable>
 
       {/* Iter188 · Diagnostic buttons — one-shot health check and a

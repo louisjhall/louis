@@ -313,18 +313,23 @@ async def _record_yt_job(job_id: str, patch: dict) -> None:
 def _bulk_yt_query(target: str = "library", *, id_filter: Optional[list] = None) -> dict:
     """Shared query for the YouTube video-finder bulk sweep.
 
-    Iter189c · Added `id_filter` — when passed, restricts the sweep to
-    a pre-computed id set. Used by the "used_drafts" target to only
-    scan draft_requested rows that are actually referenced in a
-    programme/workout (typically ~19-40 rows, not 943).
+    Iter189c/d · Added `id_filter` + more targets. When `id_filter` is
+    passed, restricts the sweep to a pre-computed id set. Used by the
+    "used_drafts" target to only scan draft_requested rows actually
+    referenced in a programme/workout.
 
     Targets:
       * "library"       — Approved OR (client-visible + safe-for-programming)
       * "drafts"        — All `status='draft_requested'` rows
       * "used_drafts"   — draft_requested rows actually referenced in a
                           programme/workout. Requires `id_filter=[...]`
-                          to be pre-computed by the caller (usually via
-                          `_drafts_used_in_programmes_ids`).
+                          to be pre-computed by the caller.
+      * "needs_review"  — Iter189d · Matches the coach's Needs Review UI
+                          filter EXACTLY: status IN [draft_requested,
+                          coach_review_needed]. Broader than "drafts"
+                          and used_drafts. This is what the coach sees
+                          when they open the Exercise Library → NEEDS
+                          REVIEW tab.
       * "both"          — Union of "library" and "drafts"
 
     Common filters applied on top of the role gate:
@@ -342,11 +347,14 @@ def _bulk_yt_query(target: str = "library", *, id_filter: Optional[list] = None)
         ]},
     ]}
     drafts_gate = {"status": "draft_requested"}
+    needs_review_gate = {"status": {"$in": ["draft_requested", "coach_review_needed"]}}
 
     if target == "drafts":
         role_gate = drafts_gate
     elif target == "used_drafts":
         role_gate = drafts_gate  # id_filter narrows this further below
+    elif target == "needs_review":
+        role_gate = needs_review_gate
     elif target == "both":
         role_gate = {"$or": [library_gate, drafts_gate]}
     else:  # "library" (default)
@@ -436,15 +444,23 @@ async def _bulk_yt_worker(
             })
 
             # Hardened query — active, non-archived, non-alias only.
-            # Iter189b · target = "library" | "drafts" | "used_drafts" | "both"
+            # Iter189b · target = "library" | "drafts" | "used_drafts" | "needs_review" | "both"
             id_filter = None
             if target == "used_drafts":
                 id_filter = await _drafts_used_in_programmes_ids()
             query = _bulk_yt_query(target=target, id_filter=id_filter)
+            # Iter189d · Sort matches the coach's Exercise Library UI —
+            # tomorrow's workouts first, then upcoming, then most recently
+            # edited. Ensures the ones about to hit clients get videos
+            # BEFORE quota runs out for the day.
             all_exs = await db.exercises_v2.find(
                 query, {"_id": 0, "id": 1, "exercise_name": 1,
                         "requested_name": 1, "status": 1},
-            ).to_list(length=5000)
+            ).sort([
+                ("used_in_tomorrow_workouts_count", -1),
+                ("used_in_upcoming_workouts_count", -1),
+                ("updated_at", -1),
+            ]).to_list(length=5000)
             total_in_scope = len(all_exs)
 
             # Skip anything we've already touched on a previous run.
@@ -582,9 +598,9 @@ async def yt_finder_bulk_run(
 ):
     body = body or {}
     dry_run = bool(body.get("dry_run"))
-    # Iter189b/c · target = "library" (default) | "drafts" | "used_drafts" | "both"
+    # Iter189b/c/d · target = "library" | "drafts" | "used_drafts" | "needs_review" | "both"
     target = (body.get("target") or "library").strip().lower()
-    if target not in ("library", "drafts", "used_drafts", "both"):
+    if target not in ("library", "drafts", "used_drafts", "needs_review", "both"):
         target = "library"
     if not YOUTUBE_API_KEY:
         if response is not None:

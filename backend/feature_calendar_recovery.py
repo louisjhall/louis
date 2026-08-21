@@ -199,10 +199,17 @@ def _duty_is_off(row: Optional[dict]) -> bool:
 def _badge_for(
     w: Optional[dict], the_date: _dt.date, today: _dt.date, roster_row: Optional[dict],
     *, account_start: Optional[_dt.date] = None,
+    workouts_with_logs: Optional[set[str]] = None,
 ) -> str:
     """Resolve a single primary badge for a day-card workout.
 
     Order matters — first match wins.
+
+    Iter189h · If the workout has ANY logged sets in `workout_sets`
+    (passed in via `workouts_with_logs`), treat it as completed even if
+    the `completed` flag was never flipped. Previously a client who
+    logged every set but never tapped "Finish Workout" would see their
+    session incorrectly flagged as "missed".
     """
     if not w:
         # Roster-based badges only.
@@ -210,6 +217,10 @@ def _badge_for(
             return "roster_adjusted"
         return "rest"
     if w.get("completed"):
+        return "completed"
+    # Iter189h · Presence of a completion log = completed. Regardless of
+    # when it was logged.
+    if workouts_with_logs and w.get("id") and w["id"] in workouts_with_logs:
         return "completed"
     if w.get("skipped") or str(w.get("recovery_status") or "").lower() == "skipped":
         return "skipped"
@@ -260,6 +271,32 @@ async def _workouts_between(user_id: str, d_from: _dt.date, d_to: _dt.date) -> l
         {"_id": 0},
     ).sort("date", 1).to_list(1000)
     return rows or []
+
+
+async def _workouts_with_logged_sets(
+    user_id: str, workout_ids: list[str],
+) -> set[str]:
+    """Iter189h · Return the set of workout_ids that have AT LEAST ONE
+    logged set in `workout_sets`. A session is only "missed" if it has
+    zero logged sets AND no `completed` flag. This helper fixes the bug
+    where clients who logged their sets but never tapped "Finish
+    Workout" were incorrectly prompted with a missed-session check-in.
+
+    One aggregation, keyed by user_id + workout_id, so it stays cheap
+    even for a 60-day calendar view.
+    """
+    if not workout_ids:
+        return set()
+    pipeline = [
+        {"$match": {"user_id": user_id, "workout_id": {"$in": list(workout_ids)}}},
+        {"$group": {"_id": "$workout_id"}},
+    ]
+    try:
+        rows = await db.workout_sets.aggregate(pipeline).to_list(len(workout_ids) + 1)
+    except Exception:
+        # Never let missing/broken workout_sets crash the calendar view.
+        return set()
+    return {r["_id"] for r in rows if r.get("_id")}
 
 
 async def _roster_days_between(user_id: str, d_from: _dt.date, d_to: _dt.date) -> dict[str, dict]:
@@ -477,6 +514,12 @@ async def calendar_range(
     # days don't get flagged as missed.
     account_start = _account_start_date(user)
 
+    # Iter189h · Pre-fetch workouts that have any logged sets so we can
+    # treat "logged but not marked completed" as completed (not missed).
+    workouts_with_logs = await _workouts_with_logged_sets(
+        user["id"], [w.get("id") for w in by_date.values() if w.get("id")],
+    )
+
     days: list[dict] = []
     step = d_from
     while step <= d_to:
@@ -484,7 +527,11 @@ async def calendar_range(
         w = by_date.get(ds)
         rd = roster_by_date.get(ds)
         acts = acts_by_date.get(ds, [])
-        badge = _badge_for(w, step, today, rd, account_start=account_start)
+        badge = _badge_for(
+            w, step, today, rd,
+            account_start=account_start,
+            workouts_with_logs=workouts_with_logs,
+        )
         card = {
             "date": ds,
             "is_today": step == today,
@@ -498,7 +545,12 @@ async def calendar_range(
                     "focus": w.get("focus"),
                     "session_type": w.get("session_type"),
                     "day_load": w.get("day_load"),
-                    "completed": bool(w.get("completed")),
+                    # Iter189h · completed = flag OR has logs. Keeps
+                    # the UI consistent with the badge computation.
+                    "completed": bool(
+                        w.get("completed")
+                        or (w.get("id") and w["id"] in workouts_with_logs)
+                    ),
                     "skipped": bool(w.get("skipped") or str(w.get("recovery_status") or "").lower() == "skipped"),
                     "key_session": bool(w.get("key_session")),
                     "coach_locked": bool(w.get("coach_locked")),
@@ -578,11 +630,23 @@ async def workouts_missed(
         },
         {"_id": 0},
     ).sort("date", 1).to_list(200)
+
+    # Iter189h · Exclude any workout that has AT LEAST ONE logged set
+    # in `workout_sets`. Root-cause fix for the false-positive missed-
+    # session prompt reported by the coach — a client who logs every set
+    # but never taps "Finish Workout" should NEVER be flagged as missed.
+    workouts_with_logs = await _workouts_with_logged_sets(
+        user["id"], [w.get("id") for w in (rows or []) if w.get("id")],
+    )
+
     out: list[dict] = []
     for w in rows or []:
         if _is_off_workout(w):
             continue
         if str(w.get("recovery_status") or "").lower() in {"skipped", "moved"}:
+            continue
+        if w.get("id") and w["id"] in workouts_with_logs:
+            # Client logged this session — not missed.
             continue
         try:
             when = _dt.date.fromisoformat(str(w.get("date") or "")[:10])

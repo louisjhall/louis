@@ -284,13 +284,31 @@ async def compute_live_state(db, user_id: str, days: int = 14) -> dict[str, Any]
     since_iso_date = since.isoformat()
     wk_last14 = await db.workouts.find(
         {"user_id": user_id, "date": {"$gte": since_iso_date}},
-        {"_id": 0, "focus": 1, "completed": 1, "rpe": 1, "date": 1}
+        {"_id": 0, "id": 1, "focus": 1, "completed": 1, "rpe": 1, "date": 1}
     ).to_list(100)
+
+    # Iter189h · A workout with AT LEAST ONE logged set counts as
+    # completed — otherwise clients who log their sets but never tap
+    # "Finish Workout" get a false-positive missed-session count that
+    # inflates the auto-deload trigger. Fixes the coach-reported bug.
+    _wk_ids = [w.get("id") for w in wk_last14 if w.get("id")]
+    try:
+        # Iter189h · Reuse the shared aggregation helper so this module
+        # and feature_calendar_recovery never drift on the definition
+        # of "has a logged set".
+        from feature_calendar_recovery import _workouts_with_logged_sets
+        logged_ids: set[str] = await _workouts_with_logged_sets(user_id, _wk_ids)
+    except Exception:
+        logged_ids = set()
+
+    def _is_completed(w: dict) -> bool:
+        return bool(w.get("completed")) or (bool(w.get("id")) and w["id"] in logged_ids)
+
     real_wk = [w for w in wk_last14 if str(w.get("focus") or "").lower() not in ("recovery", "mobility", "rest")]
-    completed_wk = [w for w in real_wk if w.get("completed")]
+    completed_wk = [w for w in real_wk if _is_completed(w)]
     planned_past = [w for w in real_wk if (w.get("date") or "9999") <= today.isoformat()]
-    completed_past = [w for w in planned_past if w.get("completed")]
-    missed = [w for w in planned_past if not w.get("completed")]
+    completed_past = [w for w in planned_past if _is_completed(w)]
+    missed = [w for w in planned_past if not _is_completed(w)]
     adherence_pct = (len(completed_past) / len(planned_past)) if planned_past else None
 
     # Avg RPE last 7 days (from workouts.rpe)

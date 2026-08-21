@@ -1,0 +1,34 @@
+{
+  "summary": "Iter189h backend-only test — verified missed-session detection now treats a workout as 'completed' when at least one row exists in db.workout_sets for that workout_id + user_id, even if workouts.completed=False. All 4 targeted tests PASS: (1) /api/recovery/missed excludes workouts with logged sets; (2) regression — workouts with NO logged sets are still included; (3) /api/calendar/range badges logged-but-not-completed workouts as 'completed' and returns workout.completed=true; (4) feature_live_state.compute_live_state() counts logged workouts as completed and does not inflate missed_sessions_14d. Fix is correct in both /app/backend/feature_calendar_recovery.py and /app/backend/feature_live_state.py.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189h_missed_session_detection.py",
+    "/app/test_reports/pytest/iter189h_missed_detection.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Both _workouts_with_logged_sets (feature_calendar_recovery.py) and the inline aggregation in compute_live_state (feature_live_state.py) use identical Mongo pipelines. Consider extracting to a shared helper to keep them in sync if the schema evolves.",
+    "workout.completed in the /api/calendar/range payload is now a derived boolean (flag OR has_logs). Downstream frontend that treats completed as an authoritative 'user tapped Finish' signal may need to distinguish between 'has_logs' and 'explicitly finished'. Not a blocker for iter189h, just a note."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189h_missed_session_detection.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (4/4)",
+    "frontend": "not tested (backend-only iter)"
+  },
+  "seed_data_creation": "Test fixtures inserted TEST_iter189h_* prefixed workouts + workout_sets for the working test client (0b0651e2-3453-4c39-b858-b377e8284f8c) and a throwaway synthetic user_id for the compute_live_state unit test. All test data is cleaned up in the finally block of every test (deleted by regex ^TEST_iter189h_).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend URL comes from EXPO_PUBLIC_BACKEND_URL. Working client fixture: client@crewfit.com / Client123! (id 0b0651e2-3453-4c39-b858-b377e8284f8c). Note: db.workouts has a unique index on (user_id, date) — creating multiple test workouts for the same user requires distinct dates. For compute_live_state unit tests, use a synthetic user_id to sidestep index conflicts against pre-seeded data. Motor's AsyncIOMotorClient shares an executor across event loops, so wrapping mongo CRUD in fresh loops fails with 'Event loop is closed' — use pymongo (sync) for setup/teardown and spin up a per-test AsyncIOMotorClient only for direct async function invocations.",
+  "rca_of_issue": "Original bug: coach reported false-positive missed-session prompts for clients who had logged every set. Root cause: _badge_for() and /api/recovery/missed only checked workouts.completed. If the client logged sets but never tapped 'Finish Workout', completed stayed False and the row appeared missed. Fix (verified by these tests): /api/recovery/missed now excludes any workout whose id appears in db.workout_sets (single aggregation), _badge_for() accepts a workouts_with_logs set and returns 'completed' when present, and compute_live_state() runs the same aggregation over its 14d window so adherence + missed counts stay consistent."
+}

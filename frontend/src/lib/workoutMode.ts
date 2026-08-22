@@ -15,13 +15,14 @@ export type WorkoutMode = "manual" | "guided";
 /* -------------------------------------------------------------------------- */
 
 /**
- * Priority order:
- *   1. `logging_type` — always wins if set by coach / JSON importer / library.
- *        · "cardio" | "timer"  → cardio
- *        · any other explicit value → strength (name-regex is skipped so
- *          e.g. "Tempo Back Squat" typed as "strength" never flips)
- *   2. Fallback keyword regex over name + reps + duration + category. Only
- *      runs when `logging_type` is missing / blank.
+ * Priority order (iter189m hardened):
+ *   1. Coach `logging_type_override` — hard win.
+ *   2. `logging_type` = "cardio" | "timer" — hard win (true).
+ *      Any OTHER logging_type value (weighted / bodyweight / mobility /
+ *      unknown) does NOT short-circuit — we still run the name-regex
+ *      so mis-typed library rows (e.g. "Easy Walk" tagged as bodyweight)
+ *      are still recognised as cardio by name.
+ *   3. Fallback keyword regex over name + reps + duration + category.
  *
  * NOTE: `tempo` is intentionally excluded — "Tempo Back Squat" is a lift.
  * `zone[\s-]?[1235]` matches "zone 2", "zone-2", "z2" and captures the
@@ -35,9 +36,11 @@ export function isCardioExercise(ex: any): boolean {
   if (override === "cardio") return true;
   if (override === "timer" || override === "reps") return false;
 
+  // Iter189m · Only positive cardio/timer values short-circuit. Any
+  // other value (weighted / bodyweight / mobility / unknown) still
+  // lets the name regex run so mis-typed rows can be corrected.
   const lt = (ex.logging_type || "").toString().toLowerCase().trim();
   if (lt === "cardio" || lt === "timer") return true;
-  if (lt) return false;
 
   const hay = `${ex.name || ""} ${ex.reps || ""} ${ex.duration || ""} ${ex.category || ""}`.toLowerCase();
 

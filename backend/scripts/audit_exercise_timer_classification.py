@@ -100,16 +100,21 @@ async def main() -> None:
         {"is_deleted": {"$ne": True}},
         {
             "_id": 0, "id": 1, "exercise_name": 1, "category": 1,
-            "status": 1, "logging_type_override": 1,
+            "status": 1, "logging_type_override": 1, "logging_type": 1,
         },
     ):
         name = ex.get("exercise_name") or ""
         cat = str(ex.get("category") or "").lower()
         override = ex.get("logging_type_override")
+        lt = str(ex.get("logging_type") or "").strip().lower()
 
         # Skip anything already explicitly overridden — the coach has already
         # dealt with these.
         if override:
+            continue
+        # Iter189m — skip rows the library has explicitly typed with a
+        # positive time-based value. The frontend now trusts these.
+        if lt in ("cardio", "timer", "hold", "time", "duration"):
             continue
 
         is_cardio_named = name_hits_cardio(name)

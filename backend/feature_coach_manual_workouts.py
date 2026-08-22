@@ -100,10 +100,31 @@ def _norm_exercise(e: dict, section: str, idx: int) -> dict:
 
 def _derive_logging_type(v2: dict | None) -> str:
     """Map an exercises_v2 row to the `logging_type` the Guided Flow expects.
-    Returns 'cardio' for cardio/timed drills, 'weighted' otherwise. Guided
-    uses this to pick the right autopilot timer + narration path."""
+
+    Priority order (iter189m hardening):
+      1. Library's explicit `logging_type` — if the coach / importer
+         already tagged this exercise as `timer` / `cardio` / `weighted`
+         / `bodyweight` / `mobility`, we ALWAYS pass that through
+         verbatim. This is the single source of truth.
+      2. Fallback heuristic on `category` / `training_type` — only used
+         when the library value is blank/missing.
+
+    Returns one of: 'cardio' | 'timer' | 'weighted' | 'bodyweight' |
+    'mobility'. Guided uses this to pick the right autopilot timer +
+    narration path.
+    """
     if not v2:
         return "weighted"
+
+    # Priority 1: pass-through of the library's explicit value. Any
+    # non-empty string wins — even if it doesn't match the canonical
+    # set the frontend will treat unknowns as strength and the
+    # name-regex fallback still runs.
+    lt_raw = v2.get("logging_type")
+    if isinstance(lt_raw, str) and lt_raw.strip():
+        return lt_raw.strip().lower()
+
+    # Priority 2: category / training_type heuristic.
     cat = (v2.get("category") or "").lower()
     tt = (v2.get("training_type") or "").lower()
     if cat == "cardio" or tt == "cardio":
@@ -124,7 +145,9 @@ async def _enrich_for_guided(items: list[dict]) -> list[dict]:
     v2_by_id: dict[str, dict] = {}
     async for row in db.exercises_v2.find(
         {"id": {"$in": xids}},
-        {"_id": 0, "id": 1, "category": 1, "training_type": 1, "movement_pattern": 1},
+        {"_id": 0, "id": 1, "category": 1, "training_type": 1,
+         "movement_pattern": 1, "logging_type": 1,
+         "logging_type_override": 1},
     ):
         v2_by_id[row["id"]] = row
     for e in items:

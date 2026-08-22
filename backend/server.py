@@ -14146,6 +14146,7 @@ import feature_nutrition_photo   # noqa: E402,F401  Nutrition Centre — Phase 3
 import feature_nutrition_travel  # noqa: E402,F401  Nutrition Centre — Phase 4 (roster/airport/timing/guide)
 import feature_nutrition_insights  # noqa: E402,F401  Nutrition Centre — Phase 5 (adaptive insights + coach todos)
 import feature_admin_migrations  # noqa: E402,F401  Ops: storage backfill + exercise-library migration
+import feature_coach_docs  # noqa: E402,F401  Serves /api/docs/* markdown
 import feature_admin_telemetry   # noqa: E402,F401  Ops: AI usage + cost telemetry admin dashboard
 import feature_crew_base         # noqa: E402,F401  Iter 129: Crew Base community MVP (posts/comments/reactions/scheduler)
 import feature_coach_inbox       # noqa: E402,F401  Iter 129d: Coach Messages inbox + client-context aggregation

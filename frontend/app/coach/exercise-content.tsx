@@ -58,7 +58,11 @@ type Exercise = {
   tags?: string[];
   used_in_tomorrow_workouts_count?: number;
   used_in_active_programmes_count?: number;
-  alternatives?: string[];
+  alternatives?: (string | { name?: string; purpose?: string; why?: string })[];
+  // Iter189g/j · Purpose-tagged trio. When present, coach UI shows a
+  // 3-slot layout with a coloured badge per purpose. Legacy flat
+  // `alternatives` still supported for backward compat.
+  alternatives_meta?: { name: string; purpose?: string; why?: string; backfilled?: boolean }[];
 };
 
 const FILTERS: { key: string; label: string; q: Record<string, string | boolean> }[] = [
@@ -699,19 +703,87 @@ export default function ExerciseContentScreen() {
                 {detail.client_facing_instructions || "No instructions yet. Tap edit or Atlas ✨."}
               </Text>
 
-              {/* Alternatives */}
+              {/* Alternatives — Iter189j · Defensive rendering.
+                  Historically the backend has stored alternatives as
+                  plain strings, but iter189g introduced dicts with
+                  `purpose` metadata AND some rows on production ended
+                  up with stringified JSON (raw {"name": ...}) because
+                  of a partial LLM parse. This block normalises every
+                  shape into a `{name, purpose}` tuple before rendering. */}
               <SectionHeader
-                label={`ALTERNATIVES · ${detail.alternatives?.length || 0}`}
+                label={`ALTERNATIVES · ${(detail.alternatives_meta?.length || detail.alternatives?.length || 0)}`}
                 onEdit={() => setShowEditAlts(true)}
                 onAtlas={() => genContent("alternatives")}
                 atlasBusy={busy === "content-alternatives"}
               />
-              {(detail.alternatives || []).length ? (detail.alternatives || []).map((a, i) => (
-                <View key={i} style={styles.cpRow}>
-                  <Ionicons name="swap-horizontal" size={13} color={theme.color.textMuted} />
-                  <Text style={styles.cpT}>{a}</Text>
-                </View>
-              )) : <Text style={styles.empty}>None linked.</Text>}
+              {(() => {
+                // Prefer purpose-tagged meta if present, else the flat
+                // legacy list. Deduplicate by lowercased name.
+                type NormAlt = { name: string; purpose?: string; why?: string };
+                const norm: NormAlt[] = [];
+                const seen = new Set<string>();
+                const pushIfUnique = (a: NormAlt) => {
+                  const k = a.name.trim().toLowerCase();
+                  if (!k || seen.has(k)) return;
+                  seen.add(k);
+                  norm.push(a);
+                };
+                if (detail.alternatives_meta?.length) {
+                  for (const m of detail.alternatives_meta) {
+                    if (m?.name) pushIfUnique({ name: m.name, purpose: m.purpose, why: m.why });
+                  }
+                }
+                for (const raw of detail.alternatives || []) {
+                  if (typeof raw === "string") {
+                    const t = raw.trim();
+                    if (!t) continue;
+                    // Iter189j · If the string looks like JSON, try to
+                    // parse it and pull `.name`. Handles legacy rows
+                    // where the LLM output was written into the flat
+                    // list before parsing was fixed.
+                    if (t.startsWith("{") || t.startsWith("[")) {
+                      try {
+                        const parsed = JSON.parse(t);
+                        const arr = Array.isArray(parsed) ? parsed : [parsed];
+                        for (const p of arr) {
+                          if (p && typeof p === "object" && (p as any).name) {
+                            pushIfUnique({ name: String((p as any).name), purpose: (p as any).purpose, why: (p as any).why });
+                          }
+                        }
+                        continue;
+                      } catch { /* fall through — display raw as name */ }
+                    }
+                    pushIfUnique({ name: t });
+                  } else if (raw && typeof raw === "object" && (raw as any).name) {
+                    pushIfUnique({ name: String((raw as any).name), purpose: (raw as any).purpose, why: (raw as any).why });
+                  }
+                }
+                if (!norm.length) return <Text style={styles.empty}>None linked.</Text>;
+                const purposeMeta: Record<string, { color: string; label: string }> = {
+                  equipment_swap:            { color: "#4a90e2", label: "Equipment" },
+                  easier_regression:         { color: "#7ac74f", label: "Easier" },
+                  injury_mobility_friendly:  { color: "#d99a3f", label: "Injury-friendly" },
+                };
+                return norm.slice(0, 6).map((a, i) => {
+                  const meta = a.purpose ? purposeMeta[a.purpose] : undefined;
+                  return (
+                    <View key={`${a.name}-${i}`} style={styles.altRow}>
+                      <Ionicons name="swap-horizontal" size={13} color={theme.color.textMuted} />
+                      <View style={{ flex: 1 }}>
+                        <View style={styles.altRowTop}>
+                          <Text style={styles.cpT} numberOfLines={2}>{a.name}</Text>
+                          {meta && (
+                            <View style={[styles.altBadge, { backgroundColor: meta.color + "22", borderColor: meta.color }]}>
+                              <Text style={[styles.altBadgeT, { color: meta.color }]}>{meta.label.toUpperCase()}</Text>
+                            </View>
+                          )}
+                        </View>
+                        {!!a.why && <Text style={styles.altWhy} numberOfLines={2}>{a.why}</Text>}
+                      </View>
+                    </View>
+                  );
+                });
+              })()}
 
               {/* Video */}
               <SectionHeader label="VIDEO" onEdit={() => setShowEditVideo(true)} />
@@ -779,7 +851,42 @@ export default function ExerciseContentScreen() {
           <EditListModal
             visible={showEditAlts}
             title="EDIT ALTERNATIVES"
-            items={detail.alternatives || []}
+            // Iter189j · Normalise mixed shapes (string / dict / JSON-string)
+            // into plain names so the modal never shows raw JSON. When
+            // saved, the backend keeps `alternatives_meta` intact — we only
+            // overwrite the flat legacy `alternatives` list here.
+            items={(() => {
+              const out: string[] = [];
+              const seen = new Set<string>();
+              const push = (n: string) => {
+                const t = n.trim();
+                if (!t) return;
+                const k = t.toLowerCase();
+                if (seen.has(k)) return;
+                seen.add(k);
+                out.push(t);
+              };
+              if (detail.alternatives_meta?.length) {
+                for (const m of detail.alternatives_meta) if (m?.name) push(m.name);
+              }
+              for (const raw of detail.alternatives || []) {
+                if (typeof raw === "string") {
+                  const t = raw.trim();
+                  if (t.startsWith("{") || t.startsWith("[")) {
+                    try {
+                      const parsed = JSON.parse(t);
+                      const arr = Array.isArray(parsed) ? parsed : [parsed];
+                      for (const p of arr) if (p && typeof p === "object" && (p as any).name) push(String((p as any).name));
+                      continue;
+                    } catch { /* fall through */ }
+                  }
+                  push(t);
+                } else if (raw && typeof raw === "object" && (raw as any).name) {
+                  push(String((raw as any).name));
+                }
+              }
+              return out;
+            })()}
             placeholder="Related exercise name"
             onSave={(next) => patchExercise({ alternatives: next }, "alts")}
             onClose={() => setShowEditAlts(false)}
@@ -1246,6 +1353,20 @@ const styles = StyleSheet.create({
 
   cpRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4 },
   cpT: { color: theme.color.text, fontSize: 13, flex: 1, fontFamily: theme.font.text },
+  // Iter189j · Alternatives row layout — supports optional purpose
+  // badge + optional "why" subtitle without breaking the plain
+  // string-only rendering path.
+  altRow: { flexDirection: "row", alignItems: "flex-start", gap: 8, paddingVertical: 6 },
+  altRowTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  altBadge: {
+    alignSelf: "flex-start", paddingHorizontal: 7, paddingVertical: 2,
+    borderRadius: 4, borderWidth: 1,
+  },
+  altBadgeT: { fontSize: 9, fontWeight: "900", letterSpacing: 1.1 },
+  altWhy: {
+    color: theme.color.textMuted, fontSize: 11, marginTop: 3, lineHeight: 15,
+    fontStyle: "italic",
+  },
 
   metaCard: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 10, backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border },
   metaCardK: { color: theme.color.textDim, fontSize: 11, letterSpacing: 1, fontWeight: "800" },

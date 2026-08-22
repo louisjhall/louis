@@ -5030,6 +5030,75 @@ async def _heal_workouts_batch(rows: list[dict], user: dict) -> list[dict]:
             logger.exception("equipment-guard sweep failed (non-fatal)")
         logger.info("workout heal-on-read: healed %d workouts for user=%s",
                     len(to_persist), user.get("id"))
+
+    # ─── Iter189j · Stamp coach's `logging_type_override` onto embedded
+    # exercises so the client's workout player reads the correct mode
+    # (Timer / Cardio / Reps). The override was previously only visible
+    # via /coach/library APIs — the client-facing /workouts/* endpoints
+    # never merged it. Root cause of the "still shows reps for cardio
+    # exercises" bug reported by the coach on production.
+    #
+    # Cost: ONE query per batch keyed on the union of (exercise_id +
+    # exercise_name) referenced across all workouts. Non-fatal — a DB
+    # hiccup here must never mask the healed workouts.
+    try:
+        overrides_by_id: dict[str, str] = {}
+        overrides_by_name: dict[str, str] = {}
+        wanted_ids: set[str] = set()
+        wanted_names: set[str] = set()
+        for wk in healed_rows:
+            for block in ("exercises", "warmup", "cooldown"):
+                for ex in (wk.get(block) or []):
+                    if not isinstance(ex, dict):
+                        continue
+                    eid = ex.get("exercise_id")
+                    nm = ex.get("name") or ex.get("exercise_name")
+                    if eid:
+                        wanted_ids.add(eid)
+                    if nm and isinstance(nm, str):
+                        wanted_names.add(nm.strip().lower())
+        if wanted_ids or wanted_names:
+            q_conds: list[dict] = []
+            if wanted_ids:
+                q_conds.append({"id": {"$in": list(wanted_ids)}})
+            if wanted_names:
+                q_conds.append({"$expr": {"$in": [
+                    {"$toLower": {"$ifNull": ["$exercise_name", ""]}},
+                    list(wanted_names),
+                ]}})
+            q = {
+                "logging_type_override": {"$in": ["timer", "cardio", "reps"]},
+                "$or": q_conds,
+            }
+            async for row in db.exercises_v2.find(
+                q, {"_id": 0, "id": 1, "exercise_name": 1, "logging_type_override": 1},
+            ):
+                lt = row.get("logging_type_override")
+                if not lt:
+                    continue
+                if row.get("id"):
+                    overrides_by_id[row["id"]] = lt
+                nm = (row.get("exercise_name") or "").strip().lower()
+                if nm:
+                    overrides_by_name[nm] = lt
+        if overrides_by_id or overrides_by_name:
+            for wk in healed_rows:
+                for block in ("exercises", "warmup", "cooldown"):
+                    for ex in (wk.get(block) or []):
+                        if not isinstance(ex, dict):
+                            continue
+                        if ex.get("logging_type_override"):
+                            continue
+                        eid = ex.get("exercise_id")
+                        nm = ex.get("name") or ex.get("exercise_name")
+                        nm_lc = (nm or "").strip().lower() if isinstance(nm, str) else ""
+                        lt = (
+                            overrides_by_id.get(eid) if eid else None
+                        ) or overrides_by_name.get(nm_lc)
+                        if lt:
+                            ex["logging_type_override"] = lt
+    except Exception:
+        logger.exception("iter189j: logging_type_override merge failed (non-fatal)")
     return healed_rows
 
 

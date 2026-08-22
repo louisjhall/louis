@@ -333,3 +333,158 @@ async def checkins_unify(dry_run: bool = Query(True), rename_legacy: bool = Quer
         "renamed_legacy": renamed,
         "errors": errors[:20],
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Iter189j/k · Alternatives-meta backfill (legacy `alternatives[]` → new
+#              `alternatives_meta[]` with purpose labels).
+# ---------------------------------------------------------------------------
+#
+# Iter189g introduced the purpose-tagged trio shape:
+#
+#     alternatives_meta: [
+#         {name, purpose: equipment_swap|easier_regression|injury_mobility_friendly, why}
+#     ]
+#
+# Rows created before that iteration still carry the flat legacy list
+# (`alternatives: ["Name A", "Name B", ...]`). This migration maps the
+# first three unique names into the three purpose slots in order:
+#
+#     1st non-empty item → equipment_swap
+#     2nd non-empty item → easier_regression
+#     3rd non-empty item → injury_mobility_friendly
+#
+# The mapping is heuristic — the flat list wasn't ordered by purpose —
+# but it's strictly better than nothing AND the coach can regenerate
+# any row via the "Generate Alternatives" LLM button for a properly
+# labelled trio. Every backfilled row is stamped with
+# `alternatives_meta_backfill_source = "iter189j_legacy_migration"` so
+# coach UIs can render a soft "regenerate me" hint on backfilled rows.
+#
+# Idempotency: skips any row where `alternatives_meta` is already a
+# non-empty array. Safe to re-run.
+
+_ALT_PURPOSE_ORDER = ("equipment_swap", "easier_regression", "injury_mobility_friendly")
+_ALT_LEGACY_WHY = "Legacy alternative — regenerate for a purpose-labelled trio."
+
+
+def _legacy_alts_to_meta(raw_alts) -> list[dict]:
+    """Best-effort mapping of the first 3 unique legacy names → purpose
+    slots. Handles both plain-string and legacy-dict shapes."""
+    if not isinstance(raw_alts, list):
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for entry in raw_alts:
+        if len(out) >= 3:
+            break
+        if isinstance(entry, str):
+            name = entry.strip()
+            why: Optional[str] = None
+        elif isinstance(entry, dict):
+            name = str(entry.get("name") or "").strip()
+            why = entry.get("why") or entry.get("reason")
+        else:
+            continue
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append({
+            "name": name,
+            "purpose": _ALT_PURPOSE_ORDER[len(out)],
+            "why": why or _ALT_LEGACY_WHY,
+            "backfilled": True,
+        })
+    return out
+
+
+@api.post("/admin/exercises/backfill-alternatives-meta")
+async def alternatives_meta_backfill(
+    dry_run: bool = Query(True),
+    admin: dict = Depends(require_admin()),
+):
+    """Idempotent migration — convert legacy `alternatives[]` into the
+    purpose-tagged `alternatives_meta[]` shape introduced in iter189g.
+
+    Mirrors the shape/contract of `/admin/storage/backfill`:
+      * `dry_run=true` (default) → count only, no writes.
+      * `dry_run=false`          → apply.
+
+    Returns a summary with counts + a small sample so the coach can
+    verify the mapping before / after the run.
+    """
+    candidate_q = {
+        "alternatives": {"$exists": True, "$ne": []},
+        "$or": [
+            {"alternatives_meta": {"$exists": False}},
+            {"alternatives_meta": []},
+            {"alternatives_meta": None},
+        ],
+    }
+    total_with_alts = await db.exercises_v2.count_documents(
+        {"alternatives": {"$exists": True, "$ne": []}},
+    )
+    already_populated = await db.exercises_v2.count_documents(
+        {"alternatives_meta": {"$exists": True, "$type": "array",
+                               "$not": {"$size": 0}}},
+    )
+    candidates = await db.exercises_v2.count_documents(candidate_q)
+
+    # Preview sample — always included so the coach can eyeball what
+    # would change before flipping `dry_run=false`.
+    sample: list[dict] = []
+    async for row in db.exercises_v2.find(candidate_q).limit(10):
+        meta = _legacy_alts_to_meta(row.get("alternatives") or [])
+        sample.append({
+            "id": row.get("id"),
+            "exercise_name": row.get("exercise_name"),
+            "would_write": meta,
+        })
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "canonical": "alternatives_meta",
+            "total_with_alts": total_with_alts,
+            "already_populated": already_populated,
+            "candidates": candidates,
+            "would_update": candidates,
+            "sample": sample,
+        }
+
+    now = now_iso()
+    updated = 0
+    skipped_empty = 0
+    async for row in db.exercises_v2.find(candidate_q):
+        meta = _legacy_alts_to_meta(row.get("alternatives") or [])
+        if not meta:
+            skipped_empty += 1
+            continue
+        try:
+            await db.exercises_v2.update_one(
+                {"id": row["id"]},
+                {"$set": {
+                    "alternatives_meta": meta,
+                    "alternatives_meta_backfilled_at": now,
+                    "alternatives_meta_backfill_source": "iter189j_legacy_migration",
+                }},
+            )
+            updated += 1
+        except Exception as e:
+            logger.exception(
+                "alternatives_meta_backfill: update failed for id=%s: %s",
+                row.get("id"), e,
+            )
+
+    return {
+        "dry_run": False,
+        "canonical": "alternatives_meta",
+        "total_with_alts": total_with_alts,
+        "already_populated_before": already_populated,
+        "candidates_before": candidates,
+        "updated": updated,
+        "skipped_empty": skipped_empty,
+        "sample": sample,
+    }
+

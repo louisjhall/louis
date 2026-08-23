@@ -31,6 +31,13 @@ export default function CheckinScreen() {
   const [heading, setHeading] = useState<string>("WEEKLY CHECK-IN");
   const [intro, setIntro] = useState<string>("");
   const [checkinType, setCheckinType] = useState<"weekly" | "monthly">("weekly");
+  // Iter189p · Coach's weekly review summary — shown as a read-only
+  // paragraph block at the top of the check-in form. Silently hides
+  // when the review hasn't generated (e.g. very first Sunday, or a
+  // temporary aggregation lag).
+  const [review, setReview] = useState<{
+    message_lines: string[]; week_start: string; week_end: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -38,9 +45,13 @@ export default function CheckinScreen() {
       // coach-editable LLM list served from /checkins/questions. Habit
       // and nutrition appends were removed; total is capped server-side
       // at 10 items.
-      const [q, cur] = await Promise.all([
+      // Iter189p — also fetch the coach's weekly review so we can show
+      // its summary paragraph at the top of the check-in flow. Best-effort:
+      // if the review isn't ready yet, the block silently hides.
+      const [q, cur, wr] = await Promise.all([
         api<any>("/checkins/questions"),
         api<any>("/checkins/current"),
+        api<any>("/weekly-review/current").catch(() => null),
       ]);
       const qs: Question[] = q?.questions || q?.core || [];
       setQuestions(qs.slice(0, 10));
@@ -49,6 +60,15 @@ export default function CheckinScreen() {
       setIntro(String(q?.intro || ""));
       setCheckinType((q?.type === "monthly" ? "monthly" : "weekly"));
       if (cur?.check_in) setSubmitted(cur.check_in);
+      // Only stash the review if we have meaningful content — hide silently otherwise.
+      const lines: string[] = Array.isArray(wr?.message_lines) ? wr.message_lines.filter((l: any) => !!l && String(l).trim()) : [];
+      if (lines.length > 0) {
+        setReview({
+          message_lines: lines,
+          week_start: wr?.week_start || "",
+          week_end: wr?.week_end || "",
+        });
+      }
     } catch (e: any) {
       Alert.alert("Could not load check-in", e?.message || "");
     } finally { setLoading(false); }
@@ -116,6 +136,27 @@ export default function CheckinScreen() {
           <SubmittedView ci={submitted} onDone={() => router.replace("/(client)/home" as any)} />
         ) : (
           <>
+            {/* Iter189p · Weekly Review summary from the coach, shown as
+                a read-only card at the top of the check-in form so the
+                client reads Louis's take on their week before filling
+                anything in. Auto-hides when the review hasn't generated. */}
+            {review && review.message_lines.length > 0 ? (
+              <View style={styles.reviewCard} testID="checkin-weekly-review">
+                <View style={styles.reviewHeader}>
+                  <Ionicons name="chatbubble-ellipses" size={16} color={theme.color.brand} />
+                  <Text style={styles.reviewEyebrow}>LOUIS{"’"}S WEEKLY REVIEW</Text>
+                </View>
+                {review.message_lines.map((line, i) => (
+                  <Text key={i} style={[styles.reviewLine, i > 0 && { marginTop: 8 }]}>
+                    {line}
+                  </Text>
+                ))}
+                <Text style={styles.reviewHint}>
+                  Read the summary above, then complete this week{"’"}s check-in below.
+                </Text>
+              </View>
+            ) : null}
+
             <View style={styles.introCard}>
               <Text style={styles.introEyebrow}>{checkinType === "monthly" ? "MONTHLY REVIEW · ATLAS" : "ATLAS"}</Text>
               <Text style={styles.introT}>
@@ -272,6 +313,28 @@ const styles = StyleSheet.create({
   headerT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
   introCard: { padding: 16, marginBottom: 20, borderRadius: 12, backgroundColor: theme.color.brandTint, borderWidth: 1, borderColor: theme.color.brand },
   introEyebrow: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2 },
+  // Iter189p · Weekly-review summary block shown at the top of the
+  // check-in form. Distinct visual style so the client immediately
+  // recognises it as coach-authored, not part of the question set.
+  reviewCard: {
+    padding: 16, marginBottom: 16, borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderLeftWidth: 3, borderLeftColor: theme.color.brand,
+  },
+  reviewHeader: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    marginBottom: 10,
+  },
+  reviewEyebrow: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 2,
+  },
+  reviewLine: {
+    color: theme.color.text, fontSize: 14, lineHeight: 20,
+  },
+  reviewHint: {
+    color: theme.color.textMuted, fontSize: 11,
+    fontStyle: "italic", marginTop: 12,
+  },
   introT: { color: theme.color.text, fontSize: 14, fontWeight: "700", marginTop: 8, lineHeight: 19 },
   introHint: { color: theme.color.textMuted, fontSize: 11, marginTop: 10, lineHeight: 15, fontStyle: "italic" },
   goalPill: {

@@ -1,21 +1,20 @@
 /**
- * DailyRitualsCard — Iter168 (Today-tab overhaul).
+ * DailyRitualsCard — Iter168 (Today-tab overhaul) · Iter189p reshuffled.
  *
- * Consolidates four previously-independent home surfaces into ONE
- * collapsible section so the Today tab reads as: "workout → rituals →
- * schedule" instead of a wall of ~6 different cards.
+ * Iter189p: The Weekly Check-In and Weekly Review cards no longer live
+ * inside Daily Rituals. The Weekly Check-In is now a floating standalone
+ * card at the top of the home screen, and the Weekly Review is folded
+ * into the check-in flow itself as a coach-summary paragraph. Daily
+ * Rituals is now HABITS + optional DUAL-SESSION only.
  *
  * Wrapped children (in render order when expanded):
  *   1. HabitTodayCard      — daily habit ring
  *   2. DualSessionCard     — airport-gap bonus session (short-haul only)
- *   3. WeeklyCheckinCard   — Sunday check-in touchpoint
- *   4. WeeklyReviewCard    — Sunday weekly review
  *
  * Collapsed state shows a single one-line summary that pulls light-weight
- * status from `/habits/today-summary` (habits done vs total) and the
- * check-in / review status flags returned by their respective endpoints.
- * Any child that returns null (not eligible / already handled) is
- * silently omitted from both the summary count and the expanded body.
+ * status from `/habits/today-summary` (habits done vs total). Any child
+ * that returns null (not eligible / already handled) is silently omitted
+ * from both the summary count and the expanded body.
  *
  * Per iter168 UX brief: **collapsed by default**, one-line summary +
  * chevron. Tap the header to expand. `AsyncStorage` remembers the
@@ -34,8 +33,6 @@ import { theme } from "@/src/lib/theme";
 import { useFlag } from "@/src/lib/appConfig";
 import { HabitTodayCard } from "@/src/components/HabitTodayCard";
 import { DualSessionCard } from "@/src/components/DualSessionCard";
-import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
-import { WeeklyReviewCard } from "@/src/components/WeeklyReviewCard";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -46,16 +43,12 @@ const OPEN_KEY = "crewfit.dailyRituals.expanded";
 type SummaryState = {
   habits_done: number;
   habits_total: number;
-  checkin_due: boolean;
-  review_due: boolean;
   dual_session_available: boolean;
 };
 
 const EMPTY: SummaryState = {
   habits_done: 0,
   habits_total: 0,
-  checkin_due: false,
-  review_due: false,
   dual_session_available: false,
 };
 
@@ -81,38 +74,23 @@ export function DailyRitualsCard({ refreshKey = 0 }: { refreshKey?: number }) {
     });
   }, []);
 
-  // Fetch the light-weight status flags so the collapsed summary line has
-  // real content ("2/3 habits · check-in due"). We deliberately keep each
-  // call best-effort so a single 500 doesn't hide the whole card.
+  // Fetch the light-weight habit status so the collapsed summary line has
+  // real content ("2/3 habits"). Best-effort — a single 500 doesn't hide
+  // the whole card.
   const load = useCallback(async () => {
     setLoading(true);
-    // refreshKey referenced so `load` re-generates when the parent's
-    // activityRefreshKey ticks, driving a refetch on focus.
     void refreshKey;
     try {
-      const [habits, checkin, review] = await Promise.all([
-        // /habits/today returns { habits: [...] } with today_log per row.
-        api<any>("/habits/today").catch(() => null),
-        api<any>("/checkins/current").catch(() => null),
-        api<any>("/weekly-review/current").catch(() => null),
-      ]);
+      const habits = await api<any>("/habits/today").catch(() => null);
       const hlist: any[] = habits?.habits || [];
       const habits_total = hlist.length;
       const habits_done = hlist.filter(
         (h) => (h.today_log?.status || "").toLowerCase() === "done",
       ).length;
-      const checkin_due =
-        !!checkin?.should_show_card && !checkin?.check_in;
-      const review_due =
-        !!review &&
-        (review.checkin_status === "incomplete" ||
-          review.progress_status === "incomplete");
       setSummary({
         habits_done,
         habits_total,
-        checkin_due,
-        review_due,
-        dual_session_available: false, // set lazily below if needed
+        dual_session_available: false,
       });
     } catch {
       /* ignore — card degrades to zero counts */
@@ -128,8 +106,6 @@ export function DailyRitualsCard({ refreshKey = 0 }: { refreshKey?: number }) {
   if (summary.habits_total > 0) {
     summaryParts.push(`${summary.habits_done}/${summary.habits_total} habits`);
   }
-  if (summary.checkin_due) summaryParts.push("check-in due");
-  if (summary.review_due) summaryParts.push("weekly review due");
   const summaryLine =
     summaryParts.length > 0
       ? summaryParts.join(" · ")
@@ -137,10 +113,7 @@ export function DailyRitualsCard({ refreshKey = 0 }: { refreshKey?: number }) {
         ? "Loading…"
         : "You're on track — nothing pending";
 
-  const hasWork =
-    summary.habits_done < summary.habits_total ||
-    summary.checkin_due ||
-    summary.review_due;
+  const hasWork = summary.habits_done < summary.habits_total;
 
   return (
     <View style={styles.card} testID="daily-rituals-card">
@@ -171,13 +144,11 @@ export function DailyRitualsCard({ refreshKey = 0 }: { refreshKey?: number }) {
 
       {expanded ? (
         <View style={styles.body} testID="daily-rituals-body">
-          {/* Each child card handles its own null / not-eligible state.
-              We add small vertical spacing between them so the expanded
-              body looks like a clean stack, not four boxes glued together. */}
+          {/* Iter189p · Weekly Check-In and Weekly Review moved out of
+              Daily Rituals. Check-In is now a floating card at the top
+              of home; the Review is folded into the check-in flow. */}
           <HabitTodayCard />
           {dualSessionFlag ? <DualSessionCard refreshKey={refreshKey} /> : null}
-          <WeeklyCheckinCard />
-          <WeeklyReviewCard refreshKey={refreshKey} />
         </View>
       ) : null}
     </View>

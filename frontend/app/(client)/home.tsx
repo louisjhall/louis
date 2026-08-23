@@ -23,6 +23,7 @@ import { MissedSessionsCard } from "@/src/components/MissedSessionsCard";
 import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
 import { DailyRitualsCard } from "@/src/components/DailyRitualsCard";
+import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
 import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
@@ -555,7 +556,12 @@ export default function Home() {
               Placed as the very first surface so it never gets buried. */}
           <WelcomeVideoBanner />
 
-          {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
+          {/* Iter189p · Weekly Check-In floating card — always at the very
+              top of the home screen (above roster hero, quick nav, workout,
+              rituals). Renders nothing until Sunday or after submission
+              (per WeeklyCheckinCard's own gating). Provides the single
+              highest-priority weekly touchpoint front-and-centre. */}
+          <WeeklyCheckinCard />          {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
               pinned directly beneath Pietro's name/header per coach request.
               The chips route to the deeper Calendar / Check-In / Progress
               screens — moved from the old Utilities block at the bottom so

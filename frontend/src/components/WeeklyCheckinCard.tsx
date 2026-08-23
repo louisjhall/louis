@@ -137,14 +137,14 @@ export function WeeklyCheckinCard() {
 }
 
 const styles = StyleSheet.create({
-  skeleton: { marginHorizontal: 16, marginTop: 12, padding: 16, borderRadius: 12, backgroundColor: theme.color.surface2, alignItems: "center" },
+  skeleton: { padding: 16, borderRadius: 12, backgroundColor: theme.color.surface2, alignItems: "center" },
   pending: {
     flexDirection: "row", alignItems: "center", gap: 12,
-    marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 12,
+    padding: 14, borderRadius: 12,
     backgroundColor: theme.color.surface2, borderWidth: 1, borderColor: theme.color.border,
   },
   videoReadyCard: {
-    marginHorizontal: 16, marginTop: 12, padding: 14, borderRadius: 12,
+    padding: 14, borderRadius: 12,
     backgroundColor: theme.color.brand,
   },
   videoTopRow: { flexDirection: "row", alignItems: "center" },

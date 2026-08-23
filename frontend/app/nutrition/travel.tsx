@@ -10,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import {
   Screen, TravelHeader, ContextRibbon, ListBlock, travelStyles,
 } from "@/src/components/nutrition/travel-shared";
@@ -39,6 +40,7 @@ export default function TravelGuidesScreen() {
   const [ctx, setCtx] = useState<Context | null>(null);
   const [loadingTopic, setLoadingTopic] = useState<string | null>(null);
   const [openGuide, setOpenGuide] = useState<Guide | null>(null);
+  const bottomPad = useBottomSafePad(40);
 
   useEffect(() => {
     api<{ context: Context }>("/nutrition/travel/context").then((r) => setCtx(r.context)).catch(() => {});
@@ -68,7 +70,7 @@ export default function TravelGuidesScreen() {
   return (
     <Screen>
       <TravelHeader title="TRAVEL FOOD" subtitle="GOAL-PERSONALISED GUIDES" />
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: bottomPad }}>
         <ContextRibbon goal={ctx?.goal} remaining={ctx?.remaining} />
         <Text style={travelStyles.section}>PICK A TOPIC</Text>
 
@@ -104,7 +106,7 @@ export default function TravelGuidesScreen() {
             <Text style={styles.modalHeadT}>{openGuide?.title.toUpperCase()}</Text>
             <View style={{ width: 24 }} />
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: bottomPad }}>
             {openGuide?.one_liner ? (
               <View style={styles.oneLiner}>
                 <Ionicons name="sparkles" size={13} color={theme.color.brand} />

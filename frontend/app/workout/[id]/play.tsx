@@ -299,14 +299,18 @@ export default function AtlasPlayer() {
             onBack={() => setTile("IMAGE")}
             onPick={async (n: string, reason?: string) => {
               try {
-                const r = await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
+                await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
                   method: "POST",
                   body: { exercise_index: idx, new_name: n, reason: reason || null },
                 });
-                // Iter189g · Refresh workout in place so all tiles now
-                // show the new exercise, then send the client STRAIGHT
-                // back to the workout (Image tile — the default view).
-                if (r?.workout) setW(r.workout);
+                // Iter189r · Instead of using the raw workout returned by
+                // the swap endpoint (which lacks the exercise media
+                // hydration that GET /workouts/:id does), re-run `load()`
+                // so images, videos and how-to content re-resolve for the
+                // swapped exercise. Previously the swap "silently
+                // worked" but the tile went blank, giving the illusion
+                // that "tapping alternatives did nothing".
+                await load();
                 setTile("IMAGE");
                 toast(`Swapped to ${n}`, "success");
               } catch (e: any) {

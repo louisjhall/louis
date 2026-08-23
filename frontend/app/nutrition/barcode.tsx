@@ -23,6 +23,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type Product = {
   source: string; name: string; brand?: string; image_url?: string;
@@ -39,6 +40,7 @@ const MEALS = [
 export default function BarcodeScanner() {
   const router = useRouter();
   const [permission, requestPermission] = useCameraPermissions();
+  const bottomPad = useBottomSafePad(100);
   const [phase, setPhase] = useState<"scanning" | "loading" | "review" | "not_found" | "manual">(
     Platform.OS === "web" ? "manual" : "scanning",
   );
@@ -191,7 +193,7 @@ export default function BarcodeScanner() {
       ) : phase === "review" && product ? (
         <>
           <Header onBack={scanAgain} title="REVIEW & LOG" />
-          <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 100 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: bottomPad }}>
             <View style={styles.productCard}>
               {product.image_url ? (
                 <Image source={{ uri: product.image_url }} style={styles.productImg} />

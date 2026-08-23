@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import {
   Screen, TravelHeader, LoadingBlock, ContextRibbon, ResultCard, ListBlock,
   Chips, travelStyles,
@@ -46,6 +47,7 @@ const NEXT_CTX = [
 
 export default function DecisionScreen() {
   const [ctx, setCtx] = useState<Context | null>(null);
+  const bottomPad = useBottomSafePad(40);
   const [situation, setSituation] = useState<string | null>(null);
   const [hunger, setHunger] = useState<string>("medium");
   const [nextCtx, setNextCtx] = useState<string>("duty");
@@ -73,7 +75,7 @@ export default function DecisionScreen() {
   return (
     <Screen>
       <TravelHeader title="ATLAS DECIDE" subtitle="ONE-CALL MEAL DECISION" />
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: bottomPad }}>
         <ContextRibbon goal={ctx?.goal} remaining={ctx?.remaining} />
 
         <Text style={travelStyles.section}>SITUATION</Text>

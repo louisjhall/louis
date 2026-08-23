@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import {
   Screen, TravelHeader, LoadingBlock, ContextRibbon, ResultCard,
   Chips, travelStyles,
@@ -41,6 +42,7 @@ const TZ_HINTS = [
 
 export default function TimingScreen() {
   const [ctx, setCtx] = useState<Context | null>(null);
+  const bottomPad = useBottomSafePad(40);
   const [homeTz, setHomeTz] = useState<string | null>(null);
   const [currentTz, setCurrentTz] = useState<string | null>(null);
   const [flightCtx, setFlightCtx] = useState<string | null>(null);
@@ -79,7 +81,7 @@ export default function TimingScreen() {
   return (
     <Screen>
       <TravelHeader title="MEAL TIMING" subtitle="TIME-ZONE COACHING" />
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: bottomPad }}>
         <ContextRibbon goal={ctx?.goal} remaining={ctx?.remaining} />
 
         <Text style={travelStyles.section}>HOME TIME ZONE</Text>

@@ -17,6 +17,7 @@ import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type FoodResult = {
   id: string;
@@ -46,6 +47,7 @@ const MEALS = [
 
 export default function FoodSearchScreen() {
   const router = useRouter();
+  const bottomPad = useBottomSafePad(40);
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
   const [results, setResults] = useState<FoodResult[]>([]);
@@ -131,7 +133,7 @@ export default function FoodSearchScreen() {
         )}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ paddingBottom: bottomPad }} keyboardShouldPersistTaps="handled">
         {/* Aviation quick chips */}
         {chips.length > 0 && (
           <>

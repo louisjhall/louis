@@ -12,6 +12,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 const MEALS = [
   { key: "breakfast", label: "BREAKFAST" }, { key: "lunch", label: "LUNCH" }, { key: "dinner", label: "DINNER" },
@@ -32,6 +33,7 @@ export default function LogMeal() {
   const router = useRouter();
   const params = useLocalSearchParams<{ barcode?: string }>();
   const barcodeParam = typeof params?.barcode === "string" ? params.barcode : undefined;
+  const bottomPad = useBottomSafePad(120);
   const [name, setName] = useState("");
   const [mealType, setMealType] = useState("snack");
   const [cal, setCal] = useState("");
@@ -96,7 +98,7 @@ export default function LogMeal() {
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 12 }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad, gap: 12 }} keyboardShouldPersistTaps="handled">
           <Text style={styles.label}>FOOD NAME *</Text>
           <TextInput value={name} onChangeText={setName} style={styles.input}
             placeholder="e.g. Chicken rice bowl" placeholderTextColor={theme.color.textDim} autoFocus />

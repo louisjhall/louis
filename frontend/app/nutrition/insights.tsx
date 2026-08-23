@@ -12,6 +12,7 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type Insight = {
   id: string; week_start: string; week_end: string;
@@ -39,6 +40,7 @@ const ACTION_ICON: Record<string, any> = {
 
 export default function InsightsScreen() {
   const router = useRouter();
+  const bottomPad = useBottomSafePad(40);
   const [latest, setLatest] = useState<Insight | null>(null);
   const [history, setHistory] = useState<Insight[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,7 +91,7 @@ export default function InsightsScreen() {
         <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>
       ) : (
         <ScrollView
-          contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}
+          contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: bottomPad }}
           refreshControl={<RefreshControl refreshing={refreshing}
             onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
             tintColor={theme.color.brand} />}>

@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import type { ThemeMode } from "@/src/lib/theme";
 import { useThemeMode } from "@/src/hooks/use-theme-mode";
 import { toast } from "@/src/lib/ux";
@@ -40,6 +41,7 @@ export default function NutritionHome() {
   // Insight text (BLACK on the pale card) all repaint on theme toggle.
   const { mode } = useThemeMode();
   const styles = useMemo(() => makeStyles(mode), [mode]);
+  const bottomPad = useBottomSafePad(120);
   const [today, setToday] = useState<Today | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [tip, setTip] = useState<string>("");
@@ -107,7 +109,7 @@ export default function NutritionHome() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 14 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: bottomPad, gap: 14 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.color.brand} />}>
 
         {/* Header row — goal + date */}

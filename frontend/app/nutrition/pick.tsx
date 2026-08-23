@@ -19,6 +19,7 @@ import { Stack, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
 import { useFlag } from "@/src/lib/appConfig";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type Modality = {
   key: string;
@@ -34,6 +35,7 @@ export default function LogFoodPicker() {
   const router = useRouter();
   const photoEnabled  = useFlag("nutrition_photo_enabled", true);
   const barcodeEnabled = useFlag("nutrition_barcode_enabled", true);
+  const bottomPad = useBottomSafePad(60);
 
   const modalities: Modality[] = [
     { key: "photo",   label: "TAKE FOOD PHOTO", sub: "Scan a meal with your camera",
@@ -49,7 +51,7 @@ export default function LogFoodPicker() {
   return (
     <SafeAreaView style={styles.wrap} edges={["top", "left", "right"]}>
       <Stack.Screen options={{ title: "Log Food" }} />
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad }}>
         <View style={styles.header}>
           <Pressable onPress={() => router.back()} hitSlop={10} testID="log-pick-back">
             <Ionicons name="chevron-back" size={24} color={theme.color.text} />

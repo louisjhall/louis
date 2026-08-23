@@ -1,0 +1,30 @@
+{
+  "summary": "Iter189r follow-up retest — TDZ fix on /app/frontend/app/workout/[id]/guided.tsx is VERIFIED. The hoist of `currentEx`, `isCardio`, `targetSets`, `targetReps`, `restSec`, `workSec` from ~L346 up to L250 (BEFORE the `openHowTo` useCallback at L257) resolves the 'Cannot access currentEx before initialization' TDZ that crashed the screen in iter121. Full retest passed end-to-end on client@crewfit.com / today's workout 'Home Strength — Full Body' (id e0e25bc8-f00a-465a-80e4-5c012649e39c). GUIDED mode: screen mounts cleanly, mode picker shows (`gf-mode-log`, `gf-mode-autopilot`), selecting `gf-mode-log` advances to WARM-UP → tapping `gf-warmup-skip` reveals the work UI with the `gf-swap` bottom-bar button. SWAP flow: `gf-swap` opens the sheet showing all 3 legacy alternatives (`swap-btn-0/1/2`) with EQUIPMENT SWAP / EASIER REGRESSION / INJURY-FRIENDLY labels. Tapping `swap-btn-0` (Rear Foot Elevated Split Squat) successfully swapped 'Bulgarian Split Squat' → 'Rear Foot Elevated Split Squat (Bench)' — sheet closed, no error alert, no crash, and the WORK header + tile name + NEXT UP block all updated to the new exercise (proves reloadWorkout() re-hydration ran). AUTOPILOT mode: also loads cleanly (no TDZ), lands on the warm-up with NEXT UP correctly pointing at the newly swapped 'Rear Foot Elevated Split Squat (Bench) Set 1'. Both legs verified — retest complete.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "web-only warnings (pre-existing, informational)", "issue": "Console still logs 'Unexpected text node' warnings and shadow*/textShadow* deprecation warnings during guided flow. Non-blocking; carried over from iter121."}
+    ]
+  },
+  "test_report_links": [
+    "/tmp/gf_a01_after_mode.png",
+    "/tmp/gf_a02_swap_sheet.png",
+    "/tmp/gf_a03_after_swap.png",
+    "/tmp/gf_a04_autopilot.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Hoist implementation at /app/frontend/app/workout/[id]/guided.tsx L244-L255 is clean — the derived values (currentEx, isCardio, targetSets, targetReps, restSec, workSec) are declared right after state setup and before the first useCallback that references currentEx?.name. Comment block at L244-L249 accurately documents the fix and its motivation.",
+    "Screen appears to also correctly de-duplicate the later declaration site (~L360 now a comment referencing the moved block) — no double-declaration linter warning surfaced.",
+    "reloadWorkout() at L301-L329 is invoked from both mount (useEffect L336) and the swap handler flow, which is why the WORK header + tile + NEXT UP all update in-place after swap — confirmed via the after-swap body: main[0] name went Bulgarian Split Squat → Rear Foot Elevated Split Squat (Bench)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only retest; swap-exercise still 200)", "frontend": "GUIDED mode swap: PASS · AUTOPILOT mode load: PASS · TDZ crash: RESOLVED"},
+  "seed_data_creation": "None. Used existing today's workout for client@crewfit.com. After the retest, main[0] on the workout is now 'Rear Foot Elevated Split Squat (Bench)' (swapped in from 'Bulgarian Split Squat'). If the next testing agent needs the original state, POST /api/workouts/{id}/swap-exercise with the reverse mapping.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter189r fully validated across all three modes (Manual/list.tsx PASS in iter121, Autopilot/play.tsx PASS in iter121, Guided/guided.tsx PASS in iter122). No open guided-flow issues. If further work touches guided.tsx, remember: `currentEx` and derivations are now at L250 BEFORE `openHowTo` useCallback at L257 — do not move them back down. Workout id e0e25bc8-f00a-465a-80e4-5c012649e39c, client@crewfit.com / Client123!, testIDs: gf-mode-log, gf-mode-autopilot, gf-warmup-skip, gf-swap, swap-btn-0/1/2."
+}

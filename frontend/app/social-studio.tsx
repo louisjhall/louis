@@ -10,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { useAuth } from "@/src/lib/auth";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type Post = {
   id: string; title: string; platform?: string; post_type?: string; content_pillar?: string;
@@ -33,6 +34,8 @@ const TONE_ACTIONS: { key: string; label: string }[] = [
 export default function SocialStudio() {
   const { user } = useAuth();
   const router = useRouter();
+  const bottomPad = useBottomSafePad(100);
+  const bottomPadList = useBottomSafePad(40);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -141,7 +144,7 @@ export default function SocialStudio() {
       </View>
 
       {selected ? (
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad }}>
           <Pressable onPress={() => setSelected(null)} style={styles.backChip}>
             <Ionicons name="arrow-back" size={14} color={theme.color.brand} />
             <Text style={styles.backChipT}>ALL POSTS</Text>
@@ -205,7 +208,7 @@ export default function SocialStudio() {
         </ScrollView>
       ) : (
         <ScrollView
-          contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+          contentContainerStyle={{ padding: 16, paddingBottom: bottomPadList }}
           refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
         >
           <Pressable testID="generate-daily" onPress={generateDaily} disabled={!!busy} style={styles.dailyCta}>

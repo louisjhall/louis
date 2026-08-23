@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 // Duty types the client can pick from. Keys are what get persisted on
 // day.day_type; labels are what the user sees.
@@ -103,6 +104,7 @@ export default function RosterConfirm() {
   const qs = on_behalf_of ? `?on_behalf_of=${encodeURIComponent(String(on_behalf_of))}` : "";
   const qsAmp = on_behalf_of ? `&on_behalf_of=${encodeURIComponent(String(on_behalf_of))}` : "";
   const router = useRouter();
+  const bottomPad = useBottomSafePad(140);
   const [pending, setPending] = useState<Pending | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -530,7 +532,7 @@ export default function RosterConfirm() {
         })()}
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140 }}>
+      <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: bottomPad }}>
         {/* Iter 83 · Tool 1: Bulk-shift banner (auto-hide once dismissed) */}
         {!shiftBannerDismissed && (
           <View style={styles.shiftBanner} testID="rc-shift-banner">

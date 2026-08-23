@@ -17,6 +17,7 @@ import { useRouter, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { confirm, toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import {
   EditListModal, EditTextModal, CreateExerciseModal, ChangeLogModal,
 } from "@/src/components/coach/ExerciseEditModals";
@@ -87,6 +88,7 @@ const FILTERS: { key: string; label: string; q: Record<string, string | boolean>
 export default function ExerciseContentScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ tab?: string }>();
+  const bottomPad = useBottomSafePad(100);
   const [items, setItems] = useState<Exercise[]>([]);
   const [selected, setSelected] = useState<Exercise | null>(null);
   const [detail, setDetail] = useState<Exercise | null>(null);
@@ -545,7 +547,7 @@ export default function ExerciseContentScreen() {
         </View>
 
         {/* RIGHT: detail */}
-        <ScrollView style={styles.rightPane} contentContainerStyle={{ padding: 12, paddingBottom: 100 }}>
+        <ScrollView style={styles.rightPane} contentContainerStyle={{ padding: 12, paddingBottom: bottomPad }}>
           {!detail ? (
             <Text style={styles.empty}>Select an exercise.</Text>
           ) : (

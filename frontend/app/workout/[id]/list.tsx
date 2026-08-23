@@ -20,6 +20,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons } from "@expo/vector-icons";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { toast } from "@/src/lib/ux";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
 import { RestTimer } from "@/src/components/RestTimer";
 import { hapticSuccess } from "@/src/lib/haptics";
@@ -322,7 +323,7 @@ export default function ManualListSession() {
   const [loading, setLoading] = useState(true);
   const [existingSets, setExistingSets] = useState<any[]>([]);
   const [rateOpen, setRateOpen] = useState(false);
-  const [detailFor, setDetailFor] = useState<ExRow | null>(null);
+  const [detailFor, setDetailFor] = useState<{ ex: ExRow; section: "warmup" | "main" | "cooldown"; idx: number } | null>(null);
   // input state keyed by "section:index" -> array of set inputs
   const [inputs, setInputs] = useState<Record<string, SetInput[]>>({});
 
@@ -570,7 +571,7 @@ export default function ManualListSession() {
             inputs={inputs[`warmup:${i}`] || []}
             onPatch={(setIdx, patch) => patchSet(`warmup:${i}`, setIdx, patch)}
             onLog={(setIdx) => logSet("warmup", i, setIdx, ex)}
-            onOpenDetail={() => setDetailFor(ex)}
+            onOpenDetail={() => setDetailFor({ ex, section: "warmup", idx: i })}
           />
         ))}
 
@@ -587,7 +588,7 @@ export default function ManualListSession() {
             inputs={inputs[`main:${i}`] || []}
             onPatch={(setIdx, patch) => patchSet(`main:${i}`, setIdx, patch)}
             onLog={(setIdx) => logSet("main", i, setIdx, ex)}
-            onOpenDetail={() => setDetailFor(ex)}
+            onOpenDetail={() => setDetailFor({ ex, section: "main", idx: i })}
           />
         ))}
 
@@ -604,7 +605,7 @@ export default function ManualListSession() {
             inputs={inputs[`cooldown:${i}`] || []}
             onPatch={(setIdx, patch) => patchSet(`cooldown:${i}`, setIdx, patch)}
             onLog={(setIdx) => logSet("cooldown", i, setIdx, ex)}
-            onOpenDetail={() => setDetailFor(ex)}
+            onOpenDetail={() => setDetailFor({ ex, section: "cooldown", idx: i })}
           />
         ))}
 
@@ -620,8 +621,17 @@ export default function ManualListSession() {
 
       {/* Detail sheet */}
       <ExerciseDetailSheet
-        ex={detailFor}
+        detail={detailFor}
+        workout={w}
+        workoutId={String(id)}
         onClose={() => setDetailFor(null)}
+        onSwapped={async () => {
+          setDetailFor(null);
+          // Iter189r · Re-hydrate the workout so images/videos on the
+          // swapped exercise resolve. Same fix that unbroke play.tsx and
+          // guided.tsx after alternatives-swap.
+          await load();
+        }}
       />
 
       {/* Post-workout rating */}
@@ -951,10 +961,22 @@ function ExerciseImage({ name }: { name: string }) {
 /* -------------------------------------------------------------------------- */
 /*  Detail sheet — image + tips + video + alternatives                          */
 /* -------------------------------------------------------------------------- */
-function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () => void }) {
+function ExerciseDetailSheet({
+  detail, workout, workoutId, onClose, onSwapped,
+}: {
+  detail: { ex: ExRow; section: "warmup" | "main" | "cooldown"; idx: number } | null;
+  workout: any;
+  workoutId: string;
+  onClose: () => void;
+  onSwapped: () => void | Promise<void>;
+}) {
+  const ex = detail?.ex || null;
+  const section = detail?.section;
+  const canSwap = section === "main"; // backend swap endpoint only touches w.exercises (main)
   const [info, setInfo] = useState<any>(null);
   const [alts, setAlts] = useState<any[]>([]);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [swapping, setSwapping] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ex?.name) { setInfo(null); setAlts([]); setImgUrl(null); return; }
@@ -983,6 +1005,53 @@ function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () =>
     })();
     return () => { cancel = true; };
   }, [ex?.name]);
+
+  // Iter189r · Resolve the exercise's real position in `w.exercises`
+  // (the swap endpoint's operand). We prefer identity match on the
+  // stored `exercise_id`, then fall back to name match, then finally
+  // to detail.idx as-is (which is correct when no cooldown-tagged
+  // items precede this one — the common case).
+  const resolveMainIndex = (): number | null => {
+    if (!detail || !workout) return null;
+    const arr = (workout.exercises || []) as any[];
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    if (ex?.exercise_id) {
+      const byId = arr.findIndex((e) => e?.exercise_id === ex.exercise_id);
+      if (byId >= 0) return byId;
+    }
+    if (ex?.name) {
+      const byName = arr.findIndex((e) => (e?.name || "").toLowerCase() === (ex.name || "").toLowerCase());
+      if (byName >= 0) return byName;
+    }
+    return detail.idx;
+  };
+
+  const doSwap = async (newName: string, reason?: string) => {
+    const targetIdx = resolveMainIndex();
+    if (targetIdx == null) {
+      Alert.alert("Couldn't swap", "This session can't be modified right now.");
+      return;
+    }
+    setSwapping(newName);
+    try {
+      await api<{ workout: any }>(`/workouts/${workoutId}/swap-exercise`, {
+        method: "POST",
+        body: { exercise_index: targetIdx, new_name: newName, reason: reason || null },
+      });
+      toast(`Swapped to ${newName}`, "success");
+      await onSwapped();
+    } catch (e: any) {
+      Alert.alert("Couldn't swap exercise", e?.message || "Please try again.");
+    } finally {
+      setSwapping(null);
+    }
+  };
+
+  const purposeColor: Record<string, string> = {
+    equipment_swap: "#4a90e2",
+    easier_regression: "#7ac74f",
+    injury_mobility_friendly: "#d99a3f",
+  };
 
   const visible = !!ex;
   const coachingPoints: string[] = info?.coaching_points || [];
@@ -1047,15 +1116,51 @@ function ExerciseDetailSheet({ ex, onClose }: { ex: ExRow | null; onClose: () =>
           ) : null}
           {alts.length > 0 && (
             <View style={styles.detailSection}>
-              <Text style={styles.detailSectionT}>ALTERNATIVES</Text>
-              {alts.map((a: any, i: number) => (
-                <View key={i} style={styles.altRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.altName}>{a.name}</Text>
-                    {a.why && <Text style={styles.altWhy}>{a.why}</Text>}
+              <Text style={styles.detailSectionT}>
+                {canSwap ? "SWAP TO AN ALTERNATIVE" : "ALTERNATIVES"}
+              </Text>
+              {!canSwap && (
+                <Text style={styles.altHint}>
+                  Swapping is only available for main workout exercises.
+                </Text>
+              )}
+              {alts.map((a: any, i: number) => {
+                const purpose: string | null = a?.purpose || null;
+                const label: string | null = a?.purpose_label || null;
+                const badgeColor = (purpose && purposeColor[purpose]) || theme.color.brand;
+                const isBusy = swapping === a.name;
+                return (
+                  <View key={i} style={styles.altRow} testID={`list-alt-${i}`}>
+                    <View style={{ flex: 1 }}>
+                      {label && (
+                        <View style={[styles.altBadge, { backgroundColor: badgeColor + "22", borderColor: badgeColor }]}>
+                          <Text style={[styles.altBadgeT, { color: badgeColor }]}>{label.toUpperCase()}</Text>
+                        </View>
+                      )}
+                      <Text style={styles.altName}>{a.name}</Text>
+                      {a.why && <Text style={styles.altWhy}>{a.why}</Text>}
+                    </View>
+                    {canSwap && (
+                      <Pressable
+                        onPress={() => doSwap(a.name, a.why)}
+                        style={[styles.altSwapBtn, (swapping && !isBusy) && { opacity: 0.4 }]}
+                        disabled={!!swapping}
+                        testID={`list-alt-swap-${i}`}
+                        accessibilityLabel={`Swap to ${a.name}`}
+                      >
+                        {isBusy ? (
+                          <ActivityIndicator color="#fff" size="small" />
+                        ) : (
+                          <>
+                            <Text style={styles.altSwapBtnT}>SWAP</Text>
+                            <Ionicons name="swap-horizontal" size={13} color="#fff" />
+                          </>
+                        )}
+                      </Pressable>
+                    )}
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           )}
         </ScrollView>
@@ -1262,4 +1367,20 @@ const styles = StyleSheet.create({
   },
   altName: { color: theme.color.text, fontSize: 14, fontWeight: "700" },
   altWhy: { color: theme.color.textMuted, fontSize: 11, marginTop: 3 },
+  altBadge: {
+    alignSelf: "flex-start", paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 4, borderWidth: 1, marginBottom: 4,
+  },
+  altBadgeT: { fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
+  altHint: {
+    color: theme.color.textDim, fontSize: 11, fontStyle: "italic",
+    marginBottom: 4, marginTop: -2,
+  },
+  altSwapBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: theme.color.brand,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, marginLeft: 8,
+    minWidth: 76, justifyContent: "center",
+  },
+  altSwapBtnT: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1 },
 });

@@ -45,13 +45,23 @@ function fmtMMSS(sec: number): string {
 /**
  * Autopilot / Flow Mode — compute how long each work interval should run for.
  * - Cardio / timed exercises: honour explicit `duration_sec` / `work_sec` on
- *   the exercise (or fall back to 60s).
+ *   the exercise. Cardio uses a wide clamp (10s..3h) so long runs / rides
+ *   aren't chopped down; timed strength holds share the same wide clamp.
  * - Weighted / bodyweight sets: rough tempo of ~3s per rep, clamped 20-90s
  *   so a 5-rep heavy set doesn't fly by and a 20-rep set doesn't drag on.
+ *
+ * Iter189r bug fix: previously clamped explicit durations to 600s (10 min)
+ * unconditionally — a 30-minute Easy Run timer opened at 10:00 instead of
+ * 30:00. The clamp is now cardio-aware.
  */
 function autopilotWorkSeconds(ex: any, targetReps: number, isCardio: boolean): number {
   const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
-  if (explicit && explicit > 0) return Math.max(10, Math.min(600, explicit));
+  if (explicit && explicit > 0) {
+    // Cardio / long holds → 3h ceiling (long runs, treadmill sessions,
+    // extended rows). Strength holds still cap at 10 min for safety.
+    const ceiling = isCardio ? 10800 : 600;
+    return Math.max(10, Math.min(ceiling, explicit));
+  }
   if (isCardio) return 60;
   const est = Math.round((targetReps || 10) * 3);
   return Math.max(20, Math.min(90, est));
@@ -230,6 +240,20 @@ export default function GuidedFlow() {
   // a work set, we auto-pause the workout so they can actually study the
   // video. On close we restore whatever paused state they were in before.
   const pausedBeforeHowTo = useRef<boolean>(false);
+
+  // Iter189r · Hoisted currentEx (and related derivations) BEFORE the
+  // `openHowTo` useCallback below so that its dep array can safely
+  // evaluate `currentEx?.name` without hitting a TDZ error on first
+  // render. Previously these were declared ~100 lines further down which
+  // meant the guided-flow screen crashed on mount with
+  // "Cannot access 'currentEx' before initialization".
+  const currentEx = workout?.exercises?.[exIdx];
+  const isCardio = isCardioExercise(currentEx);
+  const targetSets = Math.max(1, parseInt(String(currentEx?.sets || 3), 10));
+  const targetReps = parseTargetReps(currentEx);
+  const restSec = Math.max(15, parseInt(String(currentEx?.rest_sec || 90), 10));
+  const workSec = autopilotWorkSeconds(currentEx, targetReps, isCardio);
+
   const openHowTo = useCallback(() => {
     pausedBeforeHowTo.current = paused;
     setPaused(true);
@@ -269,51 +293,52 @@ export default function GuidedFlow() {
   const workTick = useRef<any>(null);
   const restSeconds = useRef<number>(0);
 
+  // Iter189r · Extracted so the Alternatives Swap handler can re-hydrate
+  // the workout AFTER a successful swap. Previously the raw workout from
+  // the swap endpoint replaced state directly, but that payload lacks the
+  // exercise media hydration `GET /workouts/:id` performs — so the tile
+  // went blank giving the illusion that "tapping alternatives did nothing".
+  const reloadWorkout = useCallback(async () => {
+    const w = await api<any>(`/workouts/${id}`);
+    let wWithVariant = w;
+    const vKey = String(variantParam || "").toLowerCase();
+    if (vKey === "amber" || vKey === "red") {
+      try {
+        let variantsBlob = w?.variants;
+        if (!variantsBlob || !variantsBlob.green || !variantsBlob[vKey]) {
+          const r = await api<any>(`/workouts/${id}/variants`);
+          variantsBlob = r?.variants || null;
+        }
+        const chosen = variantsBlob?.[vKey];
+        if (chosen && Array.isArray(chosen.exercises) && chosen.exercises.length) {
+          wWithVariant = {
+            ...w,
+            exercises: chosen.exercises,
+            warmup: chosen.warmup || w.warmup,
+            cooldown: chosen.cooldown || w.cooldown,
+            _variant_key: vKey,
+            _variant_label: chosen.label || null,
+            _variant_intensity_note: chosen.intensity_note || null,
+          };
+        }
+      } catch (_e) { /* fall through to base */ }
+    }
+    const wAdapted = adaptWorkoutForGuided(wWithVariant);
+    setWorkout(wAdapted);
+    return wAdapted;
+  }, [id, variantParam]);
+
   // Load workout + settings
   useEffect(() => {
     warmupSoundEngine(); // Pre-warm native audio players so first cue has no lag.
     (async () => {
-      const [w, ac, ar, so, vo] = await Promise.all([
-        api<any>(`/workouts/${id}`),
+      const [, ac, ar, so, vo] = await Promise.all([
+        reloadWorkout(),
         getAutoContinue(),
         getAutoRest(),
         getSoundOn(),
         getVoiceOn(),
       ]);
-      // Traffic Light — overlay the selected variant (amber / red) onto the
-      // base workout so the guided flow plays the ADJUSTED session, not the
-      // base "green" one. If variants are missing from the doc we fetch
-      // them (the server backfills on demand).
-      let wWithVariant = w;
-      const vKey = String(variantParam || "").toLowerCase();
-      if (vKey === "amber" || vKey === "red") {
-        try {
-          let variantsBlob = w?.variants;
-          if (!variantsBlob || !variantsBlob.green || !variantsBlob[vKey]) {
-            const r = await api<any>(`/workouts/${id}/variants`);
-            variantsBlob = r?.variants || null;
-          }
-          const chosen = variantsBlob?.[vKey];
-          if (chosen && Array.isArray(chosen.exercises) && chosen.exercises.length) {
-            wWithVariant = {
-              ...w,
-              exercises: chosen.exercises,
-              warmup: chosen.warmup || w.warmup,
-              cooldown: chosen.cooldown || w.cooldown,
-              _variant_key: vKey,
-              _variant_label: chosen.label || null,
-              _variant_intensity_note: chosen.intensity_note || null,
-            };
-          }
-        } catch (_e) {
-          // Variant fetch failed — fall through to base workout. Never
-          // dead-end the client for a traffic-light UX hiccup.
-        }
-      }
-      // Iter 115 — V2 workouts arrive without warmup[] / exercises[] shape.
-      // The adapter is idempotent for legacy V1 workouts.
-      const wAdapted = adaptWorkoutForGuided(wWithVariant);
-      setWorkout(wAdapted);
       setAutoCont(ac);
       setAutoRest(ar);
       setSoundOn(so);
@@ -329,17 +354,15 @@ export default function GuidedFlow() {
       if (workTick.current) clearInterval(workTick.current);
       stopNarration();
     };
-  }, [id]);
+  }, [id, reloadWorkout]);
 
   const totalExercises = workout?.exercises?.length || 0;
-  const currentEx = workout?.exercises?.[exIdx];
-  const isCardio = isCardioExercise(currentEx);
-  const targetSets = Math.max(1, parseInt(String(currentEx?.sets || 3), 10));
-  const targetReps = parseTargetReps(currentEx);
-  const restSec = Math.max(15, parseInt(String(currentEx?.rest_sec || 90), 10));
+  // Iter189r · currentEx / isCardio / targetSets / targetReps / restSec /
+  // workSec are hoisted ~100 lines up so `openHowTo`'s useCallback dep
+  // array doesn't TDZ. Only per-render values that don't feed into
+  // openHowTo remain here.
   const isLastSet = setIdx >= targetSets;
   const isLastExercise = exIdx >= totalExercises - 1;
-  const workSec = autopilotWorkSeconds(currentEx, targetReps, isCardio);
   const isAutopilot = logMode === "autopilot";
 
   // Fetch content + previous performance whenever exercise changes.
@@ -791,11 +814,17 @@ export default function GuidedFlow() {
           // API is unreachable so the user isn't stranded mid-workout.
           const newName = newEx?.name;
           try {
-            const r = await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
+            await api<{ workout: any }>(`/workouts/${id}/swap-exercise`, {
               method: "POST",
               body: { exercise_index: exIdx, new_name: newName, reason: reason || null },
             });
-            if (r?.workout) setWorkout(r.workout);
+            // Iter189r · Re-hydrate via GET /workouts/:id so the swapped
+            // exercise picks up its images/video/how-to. Previously the
+            // raw workout returned by the swap endpoint replaced state
+            // directly, but it lacked the exercise media hydration —
+            // making the tile go blank and creating the illusion that
+            // "tapping alternatives did nothing".
+            await reloadWorkout();
           } catch (e: any) {
             // Non-fatal — apply locally so the guided flow keeps moving.
             setWorkout((w: any) => ({

@@ -21,6 +21,7 @@ import * as ImagePicker from "expo-image-picker";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast, confirm } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type Scan = {
   id: string;
@@ -47,6 +48,7 @@ export default function PhotoScan() {
   const router = useRouter();
   const params = useLocalSearchParams<{ mode?: string }>();
   const initialMode: "meal" | "hotel_buffet" = params?.mode === "hotel_buffet" ? "hotel_buffet" : "meal";
+  const bottomPad = useBottomSafePad(120);
 
   const [phase, setPhase] = useState<"pick" | "analysing" | "review">("pick");
   const [mode, setMode] = useState<"meal" | "hotel_buffet">(initialMode);
@@ -268,7 +270,7 @@ export default function PhotoScan() {
         </View>
       ) : scan ? (
         <>
-          <ScrollView contentContainerStyle={{ padding: 14, gap: 12, paddingBottom: 120 }}>
+          <ScrollView contentContainerStyle={{ padding: 14, gap: 12, paddingBottom: bottomPad }}>
             {/* Photo */}
             <View style={styles.reviewPhotoWrap}>
               {previewUri ? (

@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
 import { isCardioExercise, getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
@@ -42,6 +43,7 @@ export default function WorkoutDetail() {
   const router = useRouter();
   const { user } = useAuth();
   const isCoach = user?.role === "coach";
+  const bottomPad = useBottomSafePad(160);
   const [w, setW] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -258,7 +260,7 @@ export default function WorkoutDetail() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 160 }}>
+      <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: bottomPad }}>
         <AIHeroImage
           ctx={{
             workout_type: (view.focus || "").toLowerCase().includes("run") ? "endurance"

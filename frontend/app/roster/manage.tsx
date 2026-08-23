@@ -20,6 +20,7 @@ import { useRouter, Stack } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type MgmtData = {
   active_roster: any | null;
@@ -32,6 +33,7 @@ type MgmtData = {
 
 export default function RosterManagement() {
   const router = useRouter();
+  const bottomPad = useBottomSafePad(32);
   const [data, setData] = useState<MgmtData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +113,7 @@ export default function RosterManagement() {
         <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad }}>
         {receipt && (
           <View style={[styles.card, styles.successCard]}>
             <View style={styles.rowCenter}>

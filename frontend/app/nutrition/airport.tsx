@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import {
   Screen, TravelHeader, LoadingBlock, ContextRibbon, ResultCard, ListBlock,
   Chips, travelStyles,
@@ -30,6 +31,7 @@ const NEXT_CTX = [
 
 export default function AirportScreen() {
   const [ctx, setCtx] = useState<Context | null>(null);
+  const bottomPad = useBottomSafePad(40);
   const [airport, setAirport] = useState("");
   const [time, setTime] = useState<string>("45");
   const [hunger, setHunger] = useState("medium");
@@ -62,7 +64,7 @@ export default function AirportScreen() {
   return (
     <Screen>
       <TravelHeader title="AIRPORT MODE" subtitle="BEST / OK / AVOID PLAYBOOK" />
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: bottomPad }}>
         <ContextRibbon goal={ctx?.goal} remaining={ctx?.remaining} />
 
         <Text style={travelStyles.section}>AIRPORT (OPTIONAL)</Text>

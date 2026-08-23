@@ -18,6 +18,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, buildStreamUrl, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type Asset = {
   id: string; post_id: string; kind: string; mime?: string;
@@ -47,6 +48,7 @@ type Subtitle = {
 export default function SubtitleEditor() {
   const { assetId } = useLocalSearchParams<{ assetId: string }>();
   const router = useRouter();
+  const bottomPad = useBottomSafePad(60);
 
   const [asset, setAsset] = useState<Asset | null>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -209,7 +211,7 @@ export default function SubtitleEditor() {
       {loading ? (
         <View style={styles.center}><ActivityIndicator color={theme.color.brand} /></View>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: 60 }}>
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 14, paddingBottom: bottomPad }}>
           {/* Video preview */}
           <View style={styles.videoWrap}>
             {Platform.OS === "web" && (showBurned && burnedUrl ? burnedUrl : streamUrl) ? (

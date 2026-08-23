@@ -20,6 +20,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
 type BrandImage = {
   id: string; key: string; category: string;
@@ -35,6 +36,7 @@ type BrandImage = {
 
 export default function BrandImagesScreen() {
   const router = useRouter();
+  const bottomPad = useBottomSafePad(100);
   const [images, setImages] = useState<BrandImage[]>([]);
   const [pending, setPending] = useState<BrandImage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,7 +151,7 @@ export default function BrandImagesScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 100 }}
+        contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: bottomPad }}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
       >
         <View style={styles.headerCard}>

@@ -50,8 +50,9 @@ export function isCardioExercise(ex: any): boolean {
 
   // Strength patterns that CONTAIN a cardio keyword must be excluded.
   // Rows in the gym (barbell / dumbbell / cable / seal / pendlay …) are
-  // strength, not cardio. "Walking lunge" and "walking plank" are strength.
-  const strengthNameExclude = /\b(walking\s+(lunge|plank|push|dead\s?bug)|bent[- ]?over\s?row|barbell\s?row|dumbbell\s?row|db\s?row|kb\s?row|pendlay\s?row|seal\s?row|meadows\s?row|chest[- ]?supported\s?row|inverted\s?row|single[- ]?arm\s?row|renegade\s?row|t[- ]?bar\s?row|kroc\s?row|upright\s?row|face\s?pull|cable\s?row|iso\s?row|smith\s?row|helms\s?row|hip\s?thrust)\b/.test(hay);
+  // strength, not cardio. "Walking lunge(s)" and "walking plank(s)" are
+  // strength. Plural forms honoured.
+  const strengthNameExclude = /\b(walking\s+(lunges?|planks?|push|dead\s?bug)|bent[- ]?over\s?row|barbell\s?row|dumbbell\s?row|db\s?row|kb\s?row|pendlay\s?row|seal\s?row|meadows\s?row|chest[- ]?supported\s?row|inverted\s?row|single[- ]?arm\s?row|renegade\s?row|t[- ]?bar\s?row|kroc\s?row|upright\s?row|face\s?pull|cable\s?row|iso\s?row|smith\s?row|helms\s?row|hip\s?thrust)\b/.test(hay);
 
   return cardioHit && !strengthNameExclude;
 }
@@ -130,6 +131,29 @@ export function formatMMSS(totalSec: number): string {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Iter189s · Single source of truth for the reps/time toggle & badge.       */
+/*                                                                             */
+/*  Per user spec:                                                             */
+/*    • `logging_type === "timer"` (or legacy `"cardio"`) → LOCKED to time.   */
+/*        No toggle, no reps input, prescription badge reads "TIME".          */
+/*    • Anything else (including missing) → toggle IS shown, client can       */
+/*        freely switch reps ↔ time.                                          */
+/*                                                                             */
+/*  Consumers (list.tsx, guided.tsx, play.tsx, workout/[id]/index.tsx) must    */
+/*  read from this helper — never from name regex, reps-string heuristics,    */
+/*  or local state. The picker in the coach editor writes the authoritative    */
+/*  value.                                                                     */
+/* -------------------------------------------------------------------------- */
+export function isTimerLocked(ex: any): boolean {
+  if (!ex) return false;
+  const override = getLoggingOverride(ex);
+  if (override === "timer" || override === "cardio") return true;
+  if (override === "reps") return false;
+  const lt = String(ex.logging_type || "").toLowerCase().trim();
+  return lt === "timer" || lt === "cardio";
 }
 
 /* -------------------------------------------------------------------------- */

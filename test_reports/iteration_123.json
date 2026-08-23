@@ -1,0 +1,48 @@
+{
+  "summary": "Iter189s reps/time toggle refactor tested. Backend contract PASSES 6/6 (POST/PATCH exercise-content with logging_type, PATCH coach/library override, backfill verification). Frontend coach UI mostly works (2-option picker, testIDs correct, PATCH round-trip fires). CRITICAL BUG: Coach editor picker (exercise-content.tsx line 576) reads ONLY logging_type_override, not logging_type — so newly created timer exercises and the 204 backfilled rows show REPS as selected even though logging_type='timer' is persisted. This violates the iter189s spec that logging_type is the single source of truth, and breaks spec test E-2 ('On a currently-timer exercise like Plank, the TIMER button should be selected'). Verified via GET /api/exercise-content — the created row has logging_type='timer' but picker still highlights REPS. Client-side workout preview shows correct reps meta for strength exercises. Client-side Manual/Guided flows for timer-locked exercises could not be fully verified because the fixture workout for client@crewfit.com contained only strength exercises (Bench, Pull-Up, RFE Split Squat) — no cardio/hold exercises mixed in on the visible page; recommend main agent seed a mixed workout or self-verify via the AR client and a timer-locked exercise.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "coach/exercise-content.tsx LoggingTypeOverrideRow",
+        "issue": "Picker's `current` prop is `detail.logging_type_override ?? null` — does NOT fall back to `detail.logging_type`. Result: any exercise whose base `logging_type='timer'` (204 backfilled rows OR newly created via the modal with TIMER selected) shows REPS as active in the picker after reopening, because the coach override field is null. Backend correctly persists `logging_type='timer'`; UI just misrepresents the state. Violates iter189s single-source-of-truth rule. Reference: /app/frontend/app/coach/exercise-content.tsx:576",
+        "testID": "lto-reps / lto-timer",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Create Exercise Modal → open detail",
+        "issue": "POST /api/exercise-content?logging_type=timer succeeds and DB row has logging_type='timer', but reopening the created exercise's detail pane in coach editor shows REPS selected (not TIMER). Spec test F-2 requires TIMER to be selected — fails as-implemented. Same problem for the 204 rows the backfill stamped.",
+        "affected_testIDs": ["lto-reps", "lto-timer", "create-lt-timer"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189s_logging_type_toggle.py",
+    "/app/test_reports/pytest/iter189s_results.xml"
+  ],
+  "action_items": [
+    "FIX: /app/frontend/app/coach/exercise-content.tsx line 576 — change `current={detail.logging_type_override ?? null}` to consider `detail.logging_type` as fallback. Recommended: `current={detail.logging_type_override ?? (detail.logging_type === 'timer' || detail.logging_type === 'cardio' ? 'timer' : (detail.logging_type === 'reps' ? 'reps' : null))}`. Alternatively, per the spec that logging_type is the SINGLE source of truth, the PATCH endpoint should update `logging_type` directly (not `logging_type_override`) — then the picker just reads `logging_type`.",
+    "OPTIONAL: Verify client-side Manual Mode (list.tsx) and Guided Flow (guided.tsx) badges/columns on a workout that contains a mix of strength + timer-locked exercises (e.g. Plank, Zone 2 Row). Current test client's visible workout was strength-only, so timer-locked visual behaviour on those two screens was not visually confirmed — code path is correct (isTimerLocked wired into resolveCols / showTimeBadge) but a live smoke on a mixed workout would be reassuring."
+  ],
+  "critical_code_review_comments": [
+    "Coach editor picker read-path is inconsistent with write-path: the write goes to logging_type_override via PATCH /coach/library/exercise/{id}/logging-type, but the create modal writes logging_type via POST /api/exercise-content. Two different fields — the picker's 'current' selection only reflects one of them. Consolidate.",
+    "isTimerLocked() in workoutMode.ts correctly consults BOTH logging_type_override AND logging_type — good. list.tsx, guided.tsx, play.tsx, workout/[id]/index.tsx all correctly import and use isTimerLocked — good.",
+    "Backfill did land: verified 'Plank' (logging_type='timer') exists via API and picker on that row also fails the same way (shows REPS active until coach explicitly taps TIMER, which then sets the override)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189s_logging_type_toggle.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "80%"},
+  "seed_data_creation": "Created and deleted one throwaway exercise (TEST Timer 189s 18213) via POST /api/exercise-content with logging_type='timer'. Cleaned up via DELETE after the test.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The single bug is the coach editor picker read-path (exercise-content.tsx:576). Everything else in the refactor is correctly wired. Backend endpoints all work as spec'd. If the picker fix lands, re-run /app/backend/tests/test_iter189s_logging_type_toggle.py (6/6 should still pass) and then re-check coach Plank detail — TIMER button should be selected on load.",
+  "rca_of_issue": "Root cause: /app/frontend/app/coach/exercise-content.tsx passes `detail.logging_type_override ?? null` as the picker's `current`. It never inspects the base `logging_type` field. Meanwhile, POST /api/exercise-content (create modal) persists the value to `logging_type` — not to `logging_type_override`. And the iter189s backfill script stamps `logging_type='timer'` on 204 rows — again not `logging_type_override`. Consequence: neither the newly-created rows nor the 204 backfilled rows appear as TIMER-selected in the picker until a coach manually taps TIMER (which THEN writes the override). Reproduction: 1) login as louis@crewfit.net; 2) go to /coach/exercise-content; 3) search 'Plank' and open detail — picker shows REPS active despite DB row having logging_type='timer'. Mitigation options: (a) picker reads `override ?? base logging_type`, or (b) unify writes so the picker's PATCH endpoint updates `logging_type` (not the override field)."
+}

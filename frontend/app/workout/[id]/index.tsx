@@ -7,7 +7,7 @@ import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import { useAuth } from "@/src/lib/auth";
 import { theme, loadColor } from "@/src/lib/theme";
-import { isCardioExercise, getRememberedMode, WorkoutMode } from "@/src/lib/workoutMode";
+import { isCardioExercise, getRememberedMode, WorkoutMode, isTimerLocked } from "@/src/lib/workoutMode";
 import { bucketWorkout, formatCardioMeta, formatWarmupMeta } from "@/src/lib/workoutSections";
 import { ExerciseThumbnail } from "@/src/components/ExerciseThumbnail";
 import { clearVideoCache } from "@/src/components/ExerciseVideoPlayer";
@@ -678,13 +678,11 @@ export default function WorkoutDetail() {
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.exName} numberOfLines={2}>{ex.name}</Text>
                   <Text style={styles.exMeta}>
-                    {/* Iter182 · Cardio meta now delegates to the shared
-                        `formatCardioMeta` which falls back to the coach's
-                        raw `load_prescription` string when duration and
-                        distance are absent — so a "Zone 2 · 45 min" free-
-                        text prescription still renders instead of an
-                        RPE-only line. */}
-                    {isCardioExercise(ex)
+                    {/* Iter189s · Prescription meta line — logging_type
+                        is the source of truth. Timer-locked exercises
+                        render the TIME line (cardio meta or duration);
+                        everything else shows sets × reps. */}
+                    {isTimerLocked(ex)
                       ? (formatCardioMeta(ex) || (ex.rpe ? `RPE ${ex.rpe}` : "—"))
                       : `${ex.sets ?? "—"} × ${ex.reps ?? "—"} · rest ${ex.rest_sec ?? 60}s${ex.rpe ? ` · RPE ${ex.rpe}` : ""}`}
                   </Text>
@@ -717,7 +715,7 @@ export default function WorkoutDetail() {
             {groups.cooldown.map((cd: any, i: number) => {
               const meta =
                 formatWarmupMeta(cd) ||
-                (isCardioExercise(cd) ? formatCardioMeta(cd) : "");
+                (isTimerLocked(cd) ? formatCardioMeta(cd) : "");
               return (
                 <View key={`cd-${i}`} style={styles.warmupRow} testID={`cd-${i}`}>
                   <Text style={styles.warmupName}>{cd.name}</Text>

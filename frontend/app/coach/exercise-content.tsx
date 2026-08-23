@@ -44,6 +44,10 @@ type Exercise = {
   // Iter188 · Coach-forced logging_type override — wins over the
   // client-side classifier when set. null = classifier decides.
   logging_type_override?: "timer" | "cardio" | "reps" | null;
+  // Iter189s · Intrinsic logging_type on the exercise itself. Read
+  // alongside `logging_type_override` so the picker reflects whichever
+  // is set (override wins for display when both exist).
+  logging_type?: "timer" | "cardio" | "reps" | null;
   // Movement-aware image slots — supports bottom / top / apex / etc.
   demo_slots?: Record<string, string | null>;
   demo_slots_female?: Record<string, string | null>;
@@ -566,27 +570,52 @@ export default function ExerciseContentScreen() {
                 ) : null}
               </View>
 
-              {/* Iter188 · Logging-type override — coach escape hatch for
-                  any exercise the workout player's automatic classifier
-                  puts in the wrong bucket. Default is AUTO (classifier
-                  decides via name + reps + category). Force TIMER for a
-                  hold that doesn't match the regex, CARDIO for a piece
-                  of cardio kit misnamed, or REPS to disable the timer. */}
+              {/* Iter189s · Simplified per user spec — two options:
+                    • REPS (default): shows reps/time toggle in the workout player.
+                    • TIMER: locks the row to time-only (no toggle, TIME badge).
+                  This drives every reps/time badge and input across list.tsx,
+                  guided.tsx, play.tsx and workout/[id]/index.tsx. */}
               <Text style={styles.sect}>WORKOUT PLAYER LOGGING</Text>
               <LoggingTypeOverrideRow
-                current={detail.logging_type_override ?? null}
+                current={
+                  // Read from override first (coach-forced), then fall back
+                  // to the intrinsic logging_type on the exercise so rows
+                  // stamped by the backfill / import display TIMER correctly.
+                  (detail.logging_type_override ?? detail.logging_type ?? null) as
+                    "timer" | "cardio" | "reps" | null
+                }
                 onChange={async (next) => {
-                  const prev = detail.logging_type_override ?? null;
-                  setDetail({ ...detail, logging_type_override: next });
+                  const prevOverride = detail.logging_type_override ?? null;
+                  const prevLogging = detail.logging_type ?? null;
+                  // Iter189s · The PATCH endpoint drops null values, so
+                  // send explicit "reps" (equivalent to no timer lock) to
+                  // clear the timer state. `isTimerLocked` only matches
+                  // "timer" | "cardio", so "reps" behaves as reps-toggle.
+                  const persist = next ?? "reps";
+                  setDetail({
+                    ...detail,
+                    logging_type_override: next,
+                    logging_type: next,
+                  });
                   try {
-                    await api(`/coach/library/exercise/${detail.id}/logging-type`, {
-                      method: "PATCH",
-                      body: { logging_type: next },
-                    });
+                    await Promise.all([
+                      api(`/coach/library/exercise/${detail.id}/logging-type`, {
+                        method: "PATCH",
+                        body: { logging_type: next },  // override endpoint accepts null
+                      }),
+                      api(`/exercise-content/${detail.id}`, {
+                        method: "PATCH",
+                        body: { logging_type: persist },  // never null (drops on server)
+                      }),
+                    ]);
                     const { reloadOverrides } = await import("@/src/lib/loggingTypeOverrides");
                     await reloadOverrides();
                   } catch (e: any) {
-                    setDetail({ ...detail, logging_type_override: prev });
+                    setDetail({
+                      ...detail,
+                      logging_type_override: prevOverride,
+                      logging_type: prevLogging,
+                    });
                     Alert.alert("Couldn't save override", e?.message || "Please try again.");
                   }
                 }}
@@ -1219,22 +1248,35 @@ function LoggingTypeOverrideRow({
   current: "timer" | "cardio" | "reps" | null;
   onChange: (next: "timer" | "cardio" | "reps" | null) => void;
 }) {
-  const opts: { value: "timer" | "cardio" | "reps" | null; label: string; icon: any; hint: string }[] = [
-    { value: null,     label: "AUTO",   icon: "flash",       hint: "Classifier decides (default)" },
-    { value: "timer",  label: "TIMER",  icon: "hourglass",   hint: "Force hold timer" },
-    { value: "cardio", label: "CARDIO", icon: "bicycle",     hint: "Force cardio stopwatch" },
-    { value: "reps",   label: "REPS",   icon: "barbell",     hint: "Force reps + weight" },
+  // Iter189s · Simplified to REPS / TIMER — the two states the user
+  // spec calls for. Legacy `null` (AUTO) and `cardio` values from older
+  // rows are shown as-is in the label but map to REPS / TIMER buckets
+  // for selection. Timer wins → time-only, no toggle. Anything else
+  // → toggle shown, client picks reps or time freely.
+  //
+  // `null` (AUTO / no override) is treated as REPS for selection since
+  // that's what the workout player will render — a toggle-enabled reps
+  // row. If the coach wants cardio/hold behaviour they explicitly pick
+  // TIMER.
+  const isTimer = current === "timer" || current === "cardio";
+  const opts: { value: "reps" | "timer"; label: string; icon: any; hint: string }[] = [
+    { value: "reps",  label: "REPS",  icon: "barbell",   hint: "Client sees a reps/time toggle in the workout player (default)." },
+    { value: "timer", label: "TIMER", icon: "hourglass", hint: "Locked to time-only. Use for cardio and holds where reps don't make sense." },
   ];
-  const activeHint = opts.find((o) => o.value === current)?.hint || opts[0].hint;
+  const activeVal: "reps" | "timer" = isTimer ? "timer" : "reps";
+  const activeHint = opts.find((o) => o.value === activeVal)?.hint || opts[0].hint;
   return (
     <View style={ltoStyles.wrap} testID="logging-type-override">
       <View style={ltoStyles.row}>
         {opts.map((o) => {
-          const active = current === o.value;
+          const active = activeVal === o.value;
           return (
             <Pressable
-              key={String(o.value)}
-              onPress={() => onChange(o.value)}
+              key={o.value}
+              onPress={() => {
+                // REPS → null (default, no override); TIMER → "timer".
+                onChange(o.value === "timer" ? "timer" : null);
+              }}
               style={[ltoStyles.opt, active && ltoStyles.optActive]}
               testID={`lto-${o.label.toLowerCase()}`}
               accessibilityRole="button"

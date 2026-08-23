@@ -15,7 +15,7 @@ import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer, preloadExerciseVideos } from "@/src/components/ExerciseVideoPlayer";
 import { RestTimer } from "@/src/components/RestTimer";
-import { getAutoRest, isCardioExercise, isTimeBased, extractTargetSeconds } from "@/src/lib/workoutMode";
+import { getAutoRest, isCardioExercise, isTimeBased, extractTargetSeconds, isTimerLocked } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete } from "@/src/lib/sounds";
 import { toast } from "@/src/lib/ux";
@@ -324,7 +324,11 @@ export default function AtlasPlayer() {
           />
         )}
         {tile === "LOG" && (
-          isCardioExercise(currentEx) ? (
+          // Iter189s · logging_type drives the log-tile choice. Timer-
+          // locked exercises pick between Cardio (TIME+DIST) and Hold
+          // (live timer) based on isCardioExercise name/category. All
+          // other exercises show the standard REPS/WEIGHT TileLog.
+          isTimerLocked(currentEx) && isCardioExercise(currentEx) ? (
             <TileLogCardio
               ex={currentEx}
               idx={idx}
@@ -332,12 +336,7 @@ export default function AtlasPlayer() {
               existing={currentSets}
               onLogged={(s: any) => { setSets((all) => [...all, s]); }}
             />
-          ) : isTimeBased(currentEx) ? (
-            /* Iter188 · Time-based non-cardio holds (side plank, wall
-                sit, farmer's carry, dead hang, hollow hold, etc.) get
-                a live hold-timer instead of REPS/WEIGHT fields. This
-                was the "Why does side plank show kg and reps?" bug —
-                play.tsx had no time-based branch at all. */
+          ) : isTimerLocked(currentEx) || isTimeBased(currentEx) ? (
             <TileLogHold
               ex={currentEx}
               idx={idx}

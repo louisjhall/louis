@@ -26,7 +26,7 @@ import { RestTimer } from "@/src/components/RestTimer";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 import { formatPrescription, inferPrescription } from "@/src/lib/formatPrescription";
-import { isCardioExercise as _sharedIsCardio } from "@/src/lib/workoutMode";
+import { isCardioExercise as _sharedIsCardio, isTimerLocked } from "@/src/lib/workoutMode";
 import { bucketWorkout } from "@/src/lib/workoutSections";
 
 /* -------------------------------------------------------------------------- */
@@ -69,13 +69,12 @@ function _isCardioName(name?: string, reps?: any, duration?: string): boolean {
 
 function resolveCols(ex: ExRow, primaryOverride?: "reps" | "duration"): ColSpec[] {
   const cols: ColSpec[] = [];
-  // Iter167 · Single source of truth for cardio-vs-strength classification.
-  const isCardio = _sharedIsCardio(ex);
+  // Iter189s · logging_type is the source of truth. `timer` (and legacy
+  // `cardio`) mean the row is locked to time-only rendering.
+  const timerLocked = isTimerLocked(ex);
   const hasReps = ex.reps != null && String(ex.reps).trim() !== "";
   const hasDuration =
-    (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
-    ex.logging_type === "timer" ||
-    isCardio;
+    (typeof ex.duration_sec === "number" && ex.duration_sec > 0) || timerLocked;
   const hasLoad =
     ex.load != null &&
     String(ex.load).trim() !== "" &&
@@ -83,25 +82,24 @@ function resolveCols(ex: ExRow, primaryOverride?: "reps" | "duration"): ColSpec[
   const nameLc = (ex.name || "").toLowerCase();
   const impliesLoad = /(dumbbell|barbell|kettlebell|kb|db|cable|machine|weighted|load)/.test(nameLc);
   // kg column: only when explicitly prescribed or implied by name — never on
-  // pure cardio (running/rowing/etc).
-  const showLoad = (hasLoad || impliesLoad) && !isCardio;
+  // timer-locked rows (running/rowing/plank/etc).
+  const showLoad = (hasLoad || impliesLoad) && !timerLocked;
 
   // Iter170 · Frictionless Logging spec:
-  //   • RPE column is HIDDEN everywhere (no more grey box the client ignores)
+  //   • RPE column is HIDDEN everywhere
   //   • Single-box: exactly ONE main input — REPS or TIME — never both
   //   • The primary is inferred from the prescription; a per-exercise
   //     override (via the Switch icon in the header) can flip it.
-  //   • Main input is full-width (flex: 1) so it's easy to tap.
   //
-  // Deciding the primary:
+  // Deciding the primary (iter189s):
   //   1. If the caller passed an override, honour it.
-  //   2. Else cardio → duration.
+  //   2. Else timer-locked → duration.
   //   3. Else prescribed duration but no reps → duration.
   //   4. Else → reps (default; covers strength / mixed / neither).
   let primary: "reps" | "duration";
   if (primaryOverride === "reps" || primaryOverride === "duration") {
     primary = primaryOverride;
-  } else if (isCardio) {
+  } else if (timerLocked) {
     primary = "duration";
   } else if (hasDuration && !hasReps) {
     primary = "duration";
@@ -109,10 +107,13 @@ function resolveCols(ex: ExRow, primaryOverride?: "reps" | "duration"): ColSpec[
     primary = "reps";
   }
 
-  if (isCardio) {
-    // Cardio: TIME (flex) + DIST km (flex). No REPS/RPE.
+  if (timerLocked) {
+    // Timer-locked: TIME (flex) + optional DIST km (only when cardio-ish
+    // by name AND the prescription actually has distance data).
     cols.push({ key: "duration", label: "TIME", flex: 1 });
-    cols.push({ key: "distance", label: "DIST km", flex: 1 });
+    if (_sharedIsCardio(ex)) {
+      cols.push({ key: "distance", label: "DIST km", flex: 1 });
+    }
     return cols;
   }
 
@@ -673,17 +674,17 @@ function ExerciseCard({
   onLog: (setIdx: number) => void;
   onOpenDetail: () => void;
 }) {
-  // Iter170 · Frictionless Logging — per-exercise Switch state that lets
-  // the client flip between logging REPS or TIME without leaving the row.
-  // Defaults are computed once from the prescription; the Switch button
-  // in the header toggles between the two.
-  const isCardioEx = _sharedIsCardio(ex);
+  // Iter189s · Single source of truth is `logging_type`.
+  //   • `timer` (or legacy `cardio`) → locked to time, no toggle, TIME badge.
+  //   • anything else → toggle IS shown so the client can pick reps or time.
+  // No name-regex, no reps-string heuristics — those diverged across screens.
+  const timerLocked = isTimerLocked(ex);
   const _hasReps = ex.reps != null && String(ex.reps).trim() !== "";
   const _hasDur =
     (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
-    ex.logging_type === "timer";
+    timerLocked;
   const defaultPrimary: "reps" | "duration" =
-    isCardioEx ? "duration"
+    timerLocked ? "duration"
     : _hasDur && !_hasReps ? "duration"
     : "reps";
   const [primary, setPrimary] = useState<"reps" | "duration">(defaultPrimary);
@@ -692,20 +693,11 @@ function ExerciseCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ex, primary],
   );
-  // Only offer the Switch on non-cardio, non-time-based rows where
-  // flipping actually makes sense. Cardio and any time-based hold
-  // (Plank, Farmer's Carry, Zone 2 Row, Easy Run, …) lock to
-  // duration-only. Iter189q · widened from `!isCardioEx` to also
-  // block the reps-toggle when duration_sec is set OR the reps
-  // string looks like a time value ("30 min", "5:00", "45s", "hold").
-  const _repsLooksLikeTime = /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hold|steady)\b|^\d+:\d+$/i.test(
-    String(ex?.reps || ""),
-  );
-  const _hasExplicitDuration =
-    (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
-    ex.logging_type === "timer" ||
-    ex.logging_type === "cardio";
-  const canSwitch = !isCardioEx && !_hasExplicitDuration && !_repsLooksLikeTime;
+  // Iter189s · Toggle is hidden ONLY when logging_type locks the row to
+  // time (timer / cardio). All other exercises — bodyweight, weighted,
+  // mobility, or unset — show the toggle so the client can switch modes
+  // when equipment or context demands it.
+  const canSwitch = !timerLocked;
   const targetReps = ex.reps != null ? String(ex.reps) : (ex.duration_sec ? fmtMMSS(ex.duration_sec) : "—");
   const rest = ex.rest_sec || 0;
   const [restRunning, setRestRunning] = useState(false);

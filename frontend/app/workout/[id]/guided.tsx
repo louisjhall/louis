@@ -23,7 +23,7 @@ import { RestTimer } from "@/src/components/RestTimer";
 import {
   getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue,
   getAutoRest, getVoiceOn, setVoiceOn as saveVoiceOn,
-  isCardioExercise, isTimeBased, extractTargetSeconds,
+  isCardioExercise, isTimeBased, extractTargetSeconds, isTimerLocked,
 } from "@/src/lib/workoutMode";
 import { hapticSuccess } from "@/src/lib/haptics";
 import { playWorkoutComplete, playCountdownTick, warmupSoundEngine } from "@/src/lib/sounds";
@@ -248,11 +248,15 @@ export default function GuidedFlow() {
   // meant the guided-flow screen crashed on mount with
   // "Cannot access 'currentEx' before initialization".
   const currentEx = workout?.exercises?.[exIdx];
+  // Iter189s · logging_type is the source of truth for whether this row
+  // is time-locked (badge = TIME, auto-timer runs, no reps toggle).
+  // `isCardioExercise` remains for sub-classification (cardio vs hold UI).
+  const timerLocked = isTimerLocked(currentEx);
   const isCardio = isCardioExercise(currentEx);
   const targetSets = Math.max(1, parseInt(String(currentEx?.sets || 3), 10));
   const targetReps = parseTargetReps(currentEx);
   const restSec = Math.max(15, parseInt(String(currentEx?.rest_sec || 90), 10));
-  const workSec = autopilotWorkSeconds(currentEx, targetReps, isCardio);
+  const workSec = autopilotWorkSeconds(currentEx, targetReps, timerLocked);
 
   const openHowTo = useCallback(() => {
     pausedBeforeHowTo.current = paused;
@@ -767,6 +771,7 @@ export default function GuidedFlow() {
             media={media}
             prev={prev}
             isCardio={isCardio}
+            timerLocked={timerLocked}
             logWeight={logWeight} setLogWeight={setLogWeight}
             logReps={logReps} setLogReps={setLogReps}
             logRpe={logRpe} setLogRpe={setLogRpe}
@@ -921,7 +926,7 @@ function WarmupPanel({
 /*  Work Panel                                                                 */
 /* -------------------------------------------------------------------------- */
 function WorkPanel({
-  ex, setIdx, targetSets, targetReps, cue, media, prev, isCardio,
+  ex, setIdx, targetSets, targetReps, cue, media, prev, isCardio, timerLocked,
   logWeight, setLogWeight, logReps, setLogReps, logRpe, setLogRpe, logNote, setLogNote,
   saving, paused, autopilot, workTimer, workSec,
   onTogglePause, onComplete, onHowTo, onSwap,
@@ -930,6 +935,11 @@ function WorkPanel({
   const suggestedT = suggested ? `${suggested}kg × ${targetReps}` : null;
   const progReason = prev?.progression_hint?.reason;
   const workPct = workSec ? Math.max(0, Math.min(100, Math.round(((workSec - workTimer) / workSec) * 100))) : 0;
+  // Iter189s · timerLocked (logging_type === 'timer' | 'cardio') is the
+  // SINGLE source of truth for whether this row shows the TIME badge +
+  // auto-timer. Other classifiers (`isCardio`, `isTimeBased`) are used
+  // ONLY to pick the *style* of time UI (cardio TIME+DIST vs hold timer).
+  const showTimeBadge = timerLocked;
 
   return (
     <View>
@@ -947,14 +957,14 @@ function WorkPanel({
       <Text style={styles.exName}>{ex?.name}</Text>
       <Text style={styles.exMeta}>
         Set {setIdx} of {targetSets}
-        {isCardio
+        {showTimeBadge
           ? ` · ${_fmtCardioTarget(ex)}`
           : ` · ${targetReps} reps`}
       </Text>
       {/* Iter189q · Cardio meta line — extra context (Zone 2 / MP+90s /
           cadence / RPE) only when it's a text hint, NOT a bare rep count.
           A bare "40" would be misread as "40 reps" (Iter189q bug fix). */}
-      {isCardio && ex?.reps && _looksLikeCardioHint(ex.reps) ? (
+      {showTimeBadge && ex?.reps && _looksLikeCardioHint(ex.reps) ? (
         <Text style={styles.exMetaCardio}>{String(ex.reps)}</Text>
       ) : null}
 
@@ -962,7 +972,7 @@ function WorkPanel({
         <WorkoutMediaCarousel
           exerciseName={ex?.name || ""}
           height={280}
-          autoScroll={!paused && (isCardio || isMobilityLike(ex) || autopilot)}
+          autoScroll={!paused && (showTimeBadge || isMobilityLike(ex) || autopilot)}
           autoScrollIntervalMs={isMobilityLike(ex) ? 6000 : 4000}
           contentFit="contain"
         />
@@ -1010,20 +1020,18 @@ function WorkPanel({
             </View>
           )}
 
-          {/* Log inputs */}
-          {isCardio ? (
+          {/* Log inputs — Iter189s · timerLocked (logging_type) drives
+              which layout to show. Within timer-locked exercises, we
+              still use `isCardio` (name/category-based) to pick between
+              cardio-style TIME+DIST fields and hold-style live timer. */}
+          {showTimeBadge && isCardio ? (
             <View style={styles.logGrid}>
               <LogInput label="TIME (mm:ss)" value={logWeight} onChangeText={setLogWeight} placeholder="30:00" />
               <LogInput label="DIST (km)" value={logReps} onChangeText={setLogReps} placeholder="5.0" />
               <LogInput label="RPE" value={logRpe} onChangeText={setLogRpe} placeholder="1-10" />
             </View>
-          ) : isTimeBased(ex) ? (
-            /* Iter186 · Time-based exercises (side plank, wall sit, dead
-               hang, farmer's carry, hollow hold, etc.) get an in-line
-               HOLD TIMER instead of a reps input. On stop the elapsed
-               seconds are written into `logReps` and the coach can see
-               "45s" in history. The client STILL fills weight (if any)
-               + RPE + notes exactly as before. */
+          ) : showTimeBadge ? (
+            /* Iter186 · Time-based (hold) exercises get a live HOLD TIMER. */
             <HoldTimerLog
               targetSeconds={extractTargetSeconds(ex)}
               onLogged={(sec) => setLogReps(String(sec))}

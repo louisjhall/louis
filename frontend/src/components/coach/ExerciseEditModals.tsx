@@ -180,6 +180,7 @@ export function CreateExerciseModal({
   onCreate: (body: {
     exercise_name: string; category?: string; training_type?: string;
     body_area?: string; equipment_type?: string[]; coaching_points?: string[];
+    logging_type?: "reps" | "timer";
   }) => Promise<void> | void;
   onClose: () => void;
 }) {
@@ -188,10 +189,14 @@ export function CreateExerciseModal({
   const [tType, setTType] = useState<string>("");
   const [bodyArea, setBodyArea] = useState<string>("");
   const [equipment, setEquipment] = useState<string>("");
+  const [loggingType, setLoggingType] = useState<"reps" | "timer">("reps");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (visible) { setName(""); setCategory(""); setTType(""); setBodyArea(""); setEquipment(""); }
+    if (visible) {
+      setName(""); setCategory(""); setTType(""); setBodyArea(""); setEquipment("");
+      setLoggingType("reps");
+    }
   }, [visible]);
 
   const doSave = async () => {
@@ -206,6 +211,7 @@ export function CreateExerciseModal({
         equipment_type: equipment
           ? equipment.split(",").map((x) => x.trim()).filter(Boolean)
           : undefined,
+        logging_type: loggingType,
       });
       onClose();
     } finally { setSaving(false); }
@@ -230,6 +236,30 @@ export function CreateExerciseModal({
       <Text style={s.label}>EQUIPMENT (comma-separated)</Text>
       <TextInput style={s.input} value={equipment} onChangeText={setEquipment}
         placeholder="kettlebell, mat" placeholderTextColor={theme.color.textDim} autoCapitalize="none" />
+
+      {/* Iter189s · logging_type picker — REPS shows toggle; TIMER locks
+          to time-only in the workout player. Set TIMER for cardio &
+          holds where reps make no sense. */}
+      <Text style={s.label}>WORKOUT PLAYER LOGGING</Text>
+      <View style={s.chipsRow}>
+        <Pressable
+          onPress={() => setLoggingType("reps")}
+          style={[s.chip, loggingType === "reps" && s.chipOn]}
+          testID="create-lt-reps"
+        >
+          <Text style={[s.chipT, loggingType === "reps" && s.chipTOn]}>REPS (TOGGLE)</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setLoggingType("timer")}
+          style={[s.chip, loggingType === "timer" && s.chipOn]}
+          testID="create-lt-timer"
+        >
+          <Text style={[s.chipT, loggingType === "timer" && s.chipTOn]}>TIMER (TIME ONLY)</Text>
+        </Pressable>
+      </View>
+      <Text style={{ color: theme.color.textMuted, fontSize: 11, fontStyle: "italic", marginTop: 6 }}>
+        Use TIMER for cardio & holds. REPS lets the client switch between reps and time freely.
+      </Text>
     </ModalShell>
   );
 }

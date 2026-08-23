@@ -1,0 +1,35 @@
+{
+  "summary": "Iter189s follow-up — Coach exercise-content picker read/write fix VERIFIED. 10/10 UI tests PASS. Previously-broken bug (backfilled TIMER exercises showing REPS as active) is now fixed: picker reads detail.logging_type_override ?? detail.logging_type ?? null and reflects TIMER on load for backfilled rows (Plank, Side plank, Easy Run). Dual-endpoint PATCH write (override endpoint + exercise-content endpoint) fires as designed. Persistence verified on reopen for both directions (REPS→TIMER, TIMER→REPS). Create Exercise Modal with TIMER selected persists TIMER on reopen (proves both write-from-create and read-in-detail work together). No React Native / Expo issues found in this change. Only pre-existing dev-mode console warnings (shadow*/textShadow* deprecations, expo-notifications web listener) — not part of this fix scope.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_124.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "exercise-content.tsx is 1400+ lines — consider extracting LoggingTypeOverrideRow, SlotPicker, ImgSlot into /src/components/coach/ for maintainability (not blocking, pre-existing)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (10/10)"},
+  "seed_data_creation": "Created & archived a throwaway exercise TEST_TimerCheck_<epoch> to verify create→reopen TIMER persistence.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test verified via computed backgroundColor (rgba brand-red rgb(163,24,46) = active) since React Native's accessibilityState.selected does NOT render as `aria-selected` on the web DOM in this Expo build. Use getComputedStyle for future active-state checks on Pressable buttons. Exercises used: 'Side plank' (override=None, logging_type=timer → main bug case), 'Easy Run' (same), 'Plank' (override=timer already), 'Back Squat' (default REPS strength).",
+  "test_results_detail": {
+    "1a_sideplank_shows_timer_on_load": "PASS — main bug case (override=None, logging_type=timer)",
+    "1b_easyrun_shows_timer_on_load":  "PASS — main bug case (override=None, logging_type=timer)",
+    "2_plank_initial_timer":           "PASS",
+    "2_dual_patch_endpoints":          "PASS — /coach/library/exercise/{id}/logging-type AND /exercise-content/{id} both fired",
+    "2_reps_active_after_tap":         "PASS",
+    "2_reps_persist_on_reopen":        "PASS",
+    "3_timer_persist_on_reopen":       "PASS",
+    "4a_backsquat_default_reps":       "PASS",
+    "4b_backsquat_timer_persist":      "PASS",
+    "5_create_modal_timer_persist":    "PASS"
+  }
+}

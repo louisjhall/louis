@@ -175,6 +175,10 @@ class ExerciseCreate(BaseModel):
     alternatives: Optional[list[str]] = None
     regressions: Optional[list[str]] = None
     progressions: Optional[list[str]] = None
+    # Iter189s · Workout Player logging type — "reps" (default, toggle
+    # shown) or "timer" (locked to time, no toggle). Only these two
+    # values are honoured; legacy values are treated as "reps".
+    logging_type: Optional[str] = None
     # Iter181c — override the similarity-guard 409 when the coach is
     # deliberately creating a variant that the fuzzy matcher would
     # otherwise flag (e.g. "Kettlebell Deadlift" vs "Barbell Deadlift"
@@ -204,6 +208,8 @@ class ExercisePatch(BaseModel):
     status: Optional[str] = None
     approved_video_status: Optional[str] = None
     approved_image_status: Optional[str] = None
+    # Iter189s · Workout Player logging type (see ExerciseCreate).
+    logging_type: Optional[str] = None
 
 
 class ApproveBody(BaseModel):

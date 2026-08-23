@@ -26,6 +26,7 @@ media once (dedup by name). No duplicate rows.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -134,22 +135,116 @@ def _derive_logging_type(v2: dict | None) -> str:
     return "weighted"
 
 
+# Iter189o · Rep-count → approximate duration inference for warm-up /
+# cool-down / mobility drills. When ChatGPT (or the coach) leaves
+# duration_sec blank on a mobility drill like Cat-Cow (reps=8), the
+# guided flow would default to a bare reps checkbox. We estimate a
+# sensible timer instead so the client sees "40-sec Cat-Cow" narration.
+_REPS_PER_SIDE_RE = re.compile(
+    r"(?:each\s*side|per\s*side|/\s*side|\ba\s*side\b|/each)",
+    re.I,
+)
+_REPS_BREATH_RE = re.compile(r"\b(breath|breaths|inhale|inhales|exhale|exhales|breathing)\b", re.I)
+_REPS_HAS_TIME_HINT_RE = re.compile(
+    r"\b(s|sec|secs|second|seconds|min|mins|minute|minutes|hold|steady|for\s+time)\b|^\d+:\d+$",
+    re.I,
+)
+
+
+def _approx_duration_from_reps(
+    reps: Any,
+    section: str,
+    logging_type: Optional[str] = None,
+    category: Optional[str] = None,
+) -> Optional[int]:
+    """Estimate a target duration in seconds from a bare rep count on
+    warm-up / cool-down / mobility drills. Returns None when we cannot
+    or should not estimate (main-section strength, cardio, empty reps,
+    reps already carrying a time unit).
+
+    Heuristics:
+      * warm-up dynamic drills → 3 sec/rep
+      * cool-down / mobility   → 5 sec/rep
+      * breath work            → 6 sec/rep (slower cadence)
+      * per-side reps          → count both sides
+      * range ("8-10")         → use midpoint
+      * clamped to [15s, 300s]
+    """
+    if reps is None:
+        return None
+    lt = str(logging_type or "").strip().lower()
+    cat = str(category or "").strip().lower()
+
+    # Never overwrite cardio prescriptions — those scale distance/time via
+    # their own pathway and often carry "30 min" in reps anyway.
+    if lt in ("cardio", "timer"):
+        # If reps is already a time-string, skip; extractTargetSeconds handles it.
+        # If it's a bare count on a cardio row, still skip — we don't guess for cardio.
+        return None
+
+    # Only apply to warm-up / cool-down sections OR to mobility rows.
+    if section not in ("warmup", "cooldown") and lt != "mobility" and cat != "mobility":
+        return None
+
+    s = str(reps).strip()
+    if not s:
+        return None
+
+    # If reps already encodes a time value, do nothing.
+    if _REPS_HAS_TIME_HINT_RE.search(s):
+        return None
+
+    # Extract the primary rep count. Accepts:
+    #   "8"          → 8
+    #   "8-10"       → midpoint 9
+    #   "10/side"    → 10 (per-side flag flips ×2 below)
+    #   "6 per side" → 6 (per-side)
+    #   "5 breaths"  → 5 (breath flag flips seconds/rep)
+    m = re.search(r"(\d+)(?:\s*[-–]\s*(\d+))?", s)
+    if not m:
+        return None
+    lo = int(m.group(1))
+    hi = int(m.group(2)) if m.group(2) else lo
+    n = max(1, (lo + hi) // 2 if hi >= lo else lo)
+
+    # Per-side reps count both sides.
+    if _REPS_PER_SIDE_RE.search(s):
+        n *= 2
+
+    # Seconds per rep — breath-work is slowest, warm-up is quickest.
+    if _REPS_BREATH_RE.search(s):
+        sec_per = 6
+    elif section == "warmup":
+        sec_per = 3
+    else:  # cooldown OR mobility logging_type
+        sec_per = 5
+
+    est = n * sec_per
+    return max(15, min(300, est))
+
+
+
+
 async def _enrich_for_guided(items: list[dict]) -> list[dict]:
     """Batch-lookup exercises_v2 rows and copy Guided-Flow-required fields
-    onto every exercise row: logging_type + category. Idempotent."""
+    onto every exercise row: logging_type + category. Idempotent.
+
+    Iter189o · Also fills `duration_sec` on warm-up / cool-down / mobility
+    rows that only carry a bare `reps` count, so the guided flow renders
+    a timer instead of a bare reps checkbox. See `_approx_duration_from_reps`.
+    """
     if not items:
         return items
     xids = list({e["exercise_id"] for e in items if e.get("exercise_id")})
-    if not xids:
-        return items
     v2_by_id: dict[str, dict] = {}
-    async for row in db.exercises_v2.find(
-        {"id": {"$in": xids}},
-        {"_id": 0, "id": 1, "category": 1, "training_type": 1,
-         "movement_pattern": 1, "logging_type": 1,
-         "logging_type_override": 1},
-    ):
-        v2_by_id[row["id"]] = row
+    if xids:
+        async for row in db.exercises_v2.find(
+            {"id": {"$in": xids}},
+            {"_id": 0, "id": 1, "category": 1, "training_type": 1,
+             "movement_pattern": 1, "logging_type": 1,
+             "logging_type_override": 1},
+        ):
+            v2_by_id[row["id"]] = row
     for e in items:
         v2 = v2_by_id.get(e.get("exercise_id"))
         e["logging_type"] = _derive_logging_type(v2)
@@ -157,6 +252,21 @@ async def _enrich_for_guided(items: list[dict]) -> list[dict]:
             e.setdefault("category", v2["category"])
         if v2 and v2.get("movement_pattern"):
             e.setdefault("movement_pattern", v2["movement_pattern"])
+
+        # Iter189o · Auto-fill duration_sec for warm-up / cool-down / mobility
+        # drills so the guided player picks the timer UI. Idempotent: only
+        # writes when duration_sec is missing / falsy AND reps is a bare
+        # count (never overwrites explicit coach-set durations).
+        if not e.get("duration_sec"):
+            est = _approx_duration_from_reps(
+                e.get("reps"),
+                str(e.get("section") or "").lower(),
+                logging_type=e.get("logging_type"),
+                category=e.get("category"),
+            )
+            if est:
+                e["duration_sec"] = est
+                e["duration_sec_estimated"] = True
     return items
 
 

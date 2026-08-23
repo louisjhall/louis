@@ -146,6 +146,33 @@ The CrewFit client renders each exercise using its library `logging_type`. You d
 4. For **bodyweight** — give `sets`, `reps`, and `rpe`; skip `load`.
 5. Do NOT invent cardio names that overlap strength (e.g. don't call a row exercise "Barbell Row" — that's strength; use `Cable Row` or `Dumbbell Row` for strength, and `Zone 2 Row` for cardio).
 
+## 🕒 Guided-Flow Rule — every warm-up / cool-down / mobility item MUST carry `duration_sec`
+
+The client's Guided Flow renders each exercise as either a **live timer** or a **reps checkbox**. Warm-up / cool-down / mobility drills are timer exercises — a bare rep count (`reps: 8`) makes them fall through to the reps-checkbox UI, which is wrong for a stretching / mobility drill. To keep the guided experience clean, **always** set `duration_sec` on every warmup / cooldown item AND on every main-section mobility drill.
+
+**Conversion cheat-sheet (rough guides you can use verbatim):**
+
+| Drill style | Rule | Example |
+|---|---|---|
+| Warm-up dynamic drill (leg swings, ankle circles, arm circles) | `duration_sec ≈ reps × 3` | 10 reps → 30 sec; 10/side → 60 sec |
+| Warm-up activation (glute bridge, band pull-apart, dead bug, bird-dog) | `duration_sec ≈ reps × 4` | 12 reps → 48 sec; 6/side → 48 sec |
+| Slow mobility (cat-cow, 90/90, world's greatest stretch, thoracic rotation) | `duration_sec ≈ reps × 5` | 8 reps → 40 sec; 4/side → 40 sec |
+| Static stretch (calf, quad, pigeon, child's pose) | `duration_sec = 30–60` | typically `30 sec/side` or `60 sec hold` |
+| Breath work (box breathing, deep breathing, physiological sigh) | `duration_sec ≈ breaths × 6` | 5 breaths → 30 sec; 2 min protocol → 120 sec |
+| Cardio-warm-up walks / rows (treadmill warm-up, 5 min light cardio, cool-down walk) | `duration_sec = minutes × 60` | 5 min → 300 sec |
+
+**Rule of thumb:** whenever you'd write `reps: "8"` on a warm-up drill, ALSO add `duration_sec: 40` (or whatever the cheat-sheet gives). Keep `reps` too — it's helpful narration ("do 8 rounds of cat-cow over the next 40 seconds") — but `duration_sec` is what drives the timer.
+
+**Never skip `duration_sec` on:**
+- Any item in the `warmup` array
+- Any item in the `cooldown` array
+- Any main-section item whose intended UI is a timer (holds, carries, planks, breath work, isometrics)
+- Any cardio item (use `duration_sec` for time, `reps` optional for narration)
+
+**Do skip `duration_sec` on:**
+- Main-section weighted strength lifts (Back Squat, Bench, RDL, etc.)
+- Main-section bodyweight rep-based lifts (Push-Up, Pull-Up, Dip)
+
 ## Alternatives
 
 The envelope carries **ONE** alternative per exercise, via `alternative_name` (or `alternative_exercise_id` if you know it). Set this only when the primary needs a fallback (equipment swap or regression). **Never** try to encode more than one alternative here — the 3-alternatives system (Equipment swap · Easier regression · Injury/mobility friendly) lives inside the CrewFit library itself and is generated separately by the coach's "Generate Alternatives" button, not by this envelope.
@@ -184,10 +211,10 @@ Here is a fully-formed example day. Use it as a template for structure and depth
   "rpe": 8,
   "coach_notes": "Foundation phase week 1 — build volume before we chase a heavy 5RM in week 4.",
   "warmup": [
-    { "ref": { "name": "Cat-Cow" }, "sets": 2, "reps": "8", "rest_sec": 20, "notes": "Slow, breathe through each rep" },
-    { "ref": { "name": "World's Greatest Stretch" }, "sets": 2, "reps": "6/side", "rest_sec": 20 },
-    { "ref": { "name": "90/90 Hip Switch" }, "sets": 2, "reps": "10/side", "rest_sec": 20 },
-    { "ref": { "name": "Bodyweight Squats" }, "sets": 1, "reps": "15", "rest_sec": 30, "notes": "Grease the groove" }
+    { "ref": { "name": "Cat-Cow" }, "sets": 2, "reps": "8", "duration_sec": 40, "rest_sec": 20, "notes": "Slow, breathe through each rep" },
+    { "ref": { "name": "World's Greatest Stretch" }, "sets": 2, "reps": "6/side", "duration_sec": 60, "rest_sec": 20 },
+    { "ref": { "name": "90/90 Hip Switch" }, "sets": 2, "reps": "10/side", "duration_sec": 60, "rest_sec": 20 },
+    { "ref": { "name": "Bodyweight Squats" }, "sets": 1, "reps": "15", "duration_sec": 45, "rest_sec": 30, "notes": "Grease the groove" }
   ],
   "exercises": [
     {
@@ -255,11 +282,13 @@ Here is a fully-formed example day. Use it as a template for structure and depth
 ```
 
 Notes on the example:
-- The Back Squat uses `weighted` UI on the client — `sets`, `reps`, `load`, `rpe`.
+- The Back Squat uses `weighted` UI on the client — `sets`, `reps`, `load`, `rpe` (no `duration_sec`, that's correct for strength).
 - Bulgarian Split Squat inside the superset gets `sets` = `rounds` (3) automatically from the group.
 - Plank uses `duration_sec: 45` — the client will render a live hold timer, not a reps grid.
+- Every warm-up drill has BOTH `reps` AND `duration_sec` — reps drives narration ("do 8 rounds"), `duration_sec` drives the timer.
 - Zone 2 Row uses both `reps: "8 min"` AND `duration_sec: 480` — both are safe; the cardio logger reads either. Setting both is belt-and-braces.
 - Child's Pose and Standing Calf Stretch use `duration_sec` — mobility flow UI.
+- Every warm-up / cool-down / mobility item in the envelope carries `duration_sec`. Every strength item does NOT (strength stays as sets × reps).
 
 ## Client brief goes here
 

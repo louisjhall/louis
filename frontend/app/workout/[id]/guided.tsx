@@ -13,6 +13,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useExerciseMedia } from "@/src/lib/useExerciseMedia";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
@@ -63,6 +64,40 @@ function isMobilityLike(ex: any): boolean {
   const hay = `${ex.name || ""} ${ex.category || ""} ${ex.section || ""}`.toLowerCase();
   return /\b(mobility|stretch|flow|breath|activation|cool.?down|warm.?up|rock|rotation|open.?book|hip.?flex|thoracic|foam|glute.?bridge|cat.?cow)\b/.test(hay);
 }
+
+// Iter189q · Format the cardio target header. Cardio must NEVER show a
+// bare rep count — always show a duration or a distance/pace hint.
+function _fmtCardioTarget(ex: any): string {
+  const secs = extractTargetSeconds(ex);
+  if (secs && secs > 0) {
+    if (secs >= 60) {
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      return s === 0 ? `${m} min` : `${m}:${String(s).padStart(2, "0")}`;
+    }
+    return `${secs}s`;
+  }
+  // No duration hint? Show distance if present, else a generic label.
+  const dist = ex?.distance_km || ex?.distance_m;
+  if (dist) {
+    return ex?.distance_km ? `${ex.distance_km} km` : `${ex.distance_m} m`;
+  }
+  return "steady effort";
+}
+
+// Iter189q · Returns true when the reps string is a genuine cardio hint
+// (pace/zone/RPE/distance/time) rather than a bare rep count. Guards the
+// cardio-meta line so we never render "40" — which reads as "40 reps".
+function _looksLikeCardioHint(reps: any): boolean {
+  const s = String(reps || "").trim();
+  if (!s) return false;
+  // Bare integer or bare rep range → NOT a cardio hint, skip it.
+  if (/^\d+(-\d+)?$/.test(s)) return false;
+  // Otherwise assume it's coaching text (Zone 2, MP+90s, 5:30/km, RPE 7…)
+  return true;
+}
+
+
 
 /**
  * Iter188 · `isTimeBased` and `extractTargetSeconds` moved to
@@ -307,7 +342,9 @@ export default function GuidedFlow() {
   const workSec = autopilotWorkSeconds(currentEx, targetReps, isCardio);
   const isAutopilot = logMode === "autopilot";
 
-  // Fetch content + previous performance whenever exercise changes
+  // Fetch content + previous performance whenever exercise changes.
+  // Iter189q · media resolution now runs via useExerciseMedia (below) so
+  // guided flow gets the same V2 image stream that manual mode uses.
   useEffect(() => {
     if (!currentEx?.name || phase !== "work") return;
     setContent(null); setPrev(null);
@@ -320,6 +357,10 @@ export default function GuidedFlow() {
     // Coach voice cue for the incoming set.
     narrateWorkStart(currentEx.name, setIdx, targetSets, targetReps, isCardio);
   }, [currentEx?.name, phase, exIdx, setIdx, targetReps, targetSets, isCardio]);
+
+  // Iter189q · Shared media hook — same fallback ladder as manual mode
+  // (V2 primary_image_id → legacy custom_image → legacy coach_image).
+  const mainMedia = useExerciseMedia(phase === "work" ? currentEx?.name : null);
 
   // Warmup timer
   useEffect(() => {
@@ -456,8 +497,13 @@ export default function GuidedFlow() {
         exercise_index: exIdx,
         exercise_name: currentEx.name,
         set_number: setIdx,
-        target_reps: String(targetReps),
       };
+      // Iter189q · Only strength / bodyweight sets carry `target_reps`.
+      // Cardio must never send a reps target — the log is purely time
+      // and distance.
+      if (!isCardio) {
+        body.target_reps = String(targetReps);
+      }
       if (isCardio) {
         // For cardio, treat weight box as time (mm:ss), reps box as distance km
         if (!ap) {
@@ -550,11 +596,9 @@ export default function GuidedFlow() {
     (workout?.warmup?.length || 0) + exIdx + ((setIdx - 1) / Math.max(1, targetSets));
   const pct = totalUnits ? Math.min(100, Math.round((completedUnits / totalUnits) * 100)) : 0;
 
-  // Media priority: custom_image → coach_image → video thumb → placeholder
-  const media = useMemo(() => {
-    if (!content && !currentEx) return null;
-    return content?.custom_image_b64 || content?.coach_image_url || null;
-  }, [content, currentEx]);
+  // Media priority (iter189q): V2 stream → legacy custom_image → legacy coach_image.
+  // Sourced from the shared useExerciseMedia hook so guided flow matches manual mode.
+  const media = mainMedia.thumbUrl;
 
   const primaryCue: string = useMemo(() => {
     const cues = content?.cues;
@@ -786,9 +830,11 @@ function WarmupPanel({
     api<any>(`/exercises/content?name=${encodeURIComponent(item.name)}`)
       .then((r) => setContent(r?.exercise || null)).catch(() => setContent(null));
   }, [item?.name]);
+  // Iter189q · V2-aware thumbnail (same fallback ladder as manual mode).
+  const warmupMedia = useExerciseMedia(item?.name);
   const total_sec = Math.max(10, parseInt(String(item.duration_sec || 30), 10));
   const pct = Math.round(((total_sec - timeLeft) / total_sec) * 100);
-  const img = content?.custom_image_b64 || content?.coach_image_url;
+  const img = warmupMedia.thumbUrl;
   const cues = Array.isArray(content?.cues) ? content.cues : [];
 
   return (
@@ -872,13 +918,14 @@ function WorkPanel({
       <Text style={styles.exName}>{ex?.name}</Text>
       <Text style={styles.exMeta}>
         Set {setIdx} of {targetSets}
-        {isCardio ? "" : ` · ${targetReps} reps`}
+        {isCardio
+          ? ` · ${_fmtCardioTarget(ex)}`
+          : ` · ${targetReps} reps`}
       </Text>
-      {/* Iter 115b — Cardio target line (Z2 / MP+90s / cadence / RPE) that
-          the V2 adapter puts into ex.reps. The set/reps summary hides
-          reps for cardio (correct — "10 reps" makes no sense on a run) so
-          we render the coaching target here as a subtle second line. */}
-      {isCardio && ex?.reps ? (
+      {/* Iter189q · Cardio meta line — extra context (Zone 2 / MP+90s /
+          cadence / RPE) only when it's a text hint, NOT a bare rep count.
+          A bare "40" would be misread as "40 reps" (Iter189q bug fix). */}
+      {isCardio && ex?.reps && _looksLikeCardioHint(ex.reps) ? (
         <Text style={styles.exMetaCardio}>{String(ex.reps)}</Text>
       ) : null}
 

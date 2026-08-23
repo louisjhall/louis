@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, Pressable, Modal, ActivityIndicator,
-  Platform, Linking, useWindowDimensions,
+  Platform, Linking, useWindowDimensions, Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/src/lib/theme";
@@ -235,14 +235,30 @@ export function ExerciseVideoPlayer({
                   style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
                   alt: video.title || exerciseName,
                 })
-              : null
+              : (
+                // Iter189q · Native was rendering `null` here so the thumb
+                // was a black rectangle — the play button below was hard
+                // to see against the plain black. Now render the actual
+                // YouTube thumbnail image (native Image component).
+                <Image
+                  source={{ uri: video.thumbnail_url }}
+                  style={{ width: "100%", height: "100%" }}
+                  resizeMode="cover"
+                  accessibilityLabel={video.title || exerciseName}
+                />
+              )
           ) : (
             <View style={{ flex: 1, backgroundColor: "#000" }} />
           )}
+          {/* Iter189q · Beefed-up play overlay: subtle radial darken behind
+              the pill so the orange button pops off both light thumbnails
+              AND plain-black fallbacks. Play icon centred + TAP TO PLAY
+              label under it — unmistakably tappable. */}
           <View style={styles.thumbOverlay} pointerEvents="none">
             <View style={styles.playBtn}>
-              <Ionicons name="play" size={compact ? 16 : 22} color="#fff" />
+              <Ionicons name="play" size={compact ? 20 : 28} color="#fff" />
             </View>
+            <Text style={styles.thumbTapHint}>TAP TO PLAY</Text>
           </View>
         </View>
         <View style={styles.meta}>
@@ -339,19 +355,27 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.15)",
+    backgroundColor: "rgba(0,0,0,0.28)",
+    gap: 6,
   },
   playBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "rgba(255, 96, 30, 0.95)",
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(255, 96, 30, 0.98)",
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOpacity: 0.55,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.85)",
+  },
+  thumbTapHint: {
+    color: "#fff", fontSize: 10, fontWeight: "900", letterSpacing: 2,
+    textShadowColor: "rgba(0,0,0,0.9)", textShadowRadius: 4,
   },
   meta: {
     flexDirection: "row",

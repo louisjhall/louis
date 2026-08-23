@@ -13,10 +13,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator, Modal, Image, Alert,
+  ActivityIndicator, Modal, Image, Alert, Platform,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
@@ -317,6 +317,7 @@ const pillStyles = StyleSheet.create({
 export default function ManualListSession() {
   const { id, variant: variantParam } = useLocalSearchParams<{ id: string; variant?: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [w, setW] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [existingSets, setExistingSets] = useState<any[]>([]);
@@ -547,7 +548,13 @@ export default function ManualListSession() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 140 }}
+        contentContainerStyle={{
+          // Iter189q · Android system-nav-bar clearance. iOS gets the
+          // standard 140; Android adds the reported bottom inset so the
+          // last card + rate-workout CTA never sit under the gesture
+          // pill or 3-button nav bar.
+          paddingBottom: 140 + (Platform.OS === "android" ? insets.bottom + 16 : 0),
+        }}
         keyboardShouldPersistTaps="handled"
       >
         {/* Warm-up section */}
@@ -675,9 +682,20 @@ function ExerciseCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ex, primary],
   );
-  // Only offer the Switch on non-cardio rows where flipping actually makes
-  // sense. Cardio locks to TIME + DIST.
-  const canSwitch = !isCardioEx;
+  // Only offer the Switch on non-cardio, non-time-based rows where
+  // flipping actually makes sense. Cardio and any time-based hold
+  // (Plank, Farmer's Carry, Zone 2 Row, Easy Run, …) lock to
+  // duration-only. Iter189q · widened from `!isCardioEx` to also
+  // block the reps-toggle when duration_sec is set OR the reps
+  // string looks like a time value ("30 min", "5:00", "45s", "hold").
+  const _repsLooksLikeTime = /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hold|steady)\b|^\d+:\d+$/i.test(
+    String(ex?.reps || ""),
+  );
+  const _hasExplicitDuration =
+    (typeof ex.duration_sec === "number" && ex.duration_sec > 0) ||
+    ex.logging_type === "timer" ||
+    ex.logging_type === "cardio";
+  const canSwitch = !isCardioEx && !_hasExplicitDuration && !_repsLooksLikeTime;
   const targetReps = ex.reps != null ? String(ex.reps) : (ex.duration_sec ? fmtMMSS(ex.duration_sec) : "—");
   const rest = ex.rest_sec || 0;
   const [restRunning, setRestRunning] = useState(false);

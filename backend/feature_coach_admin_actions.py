@@ -174,6 +174,13 @@ class BulkDeleteWorkoutsBody(BaseModel):
                         description="Required — audit trail explanation.")
     confirm: bool = Field(default=False,
                           description="Must be true to actually delete.")
+    skip_completed: bool = Field(
+        default=False,
+        description="Iter189u — if true, silently exclude completed "
+                    "workouts from the delete filter (no 409). Used by "
+                    "the client-side Clear Month action which should "
+                    "wipe pending sessions but preserve history.",
+    )
 
 
 _ISO_DATE = _dt.date.fromisoformat
@@ -219,15 +226,25 @@ async def bulk_delete_workouts(
         q["import_ref"] = {"$regex": f"^{body.import_ref_prefix}"}
 
     # Refuse to delete completed sessions — surface them to the caller.
-    completed = await db.workouts.count_documents(
-        {**q, "completed": True},
-    )
-    if completed:
-        raise HTTPException(
-            409,
-            f"{completed} workout(s) in this range are marked completed. "
-            "Delete completed sessions individually via the workout view.",
+    # Iter189u — the client-side Clear Month action passes
+    # `skip_completed=true` so completed workouts are excluded from the
+    # filter instead of aborting the whole operation.
+    if body.skip_completed:
+        q["$or"] = [
+            {"completed": {"$exists": False}},
+            {"completed": False},
+            {"completed": None},
+        ]
+    else:
+        completed = await db.workouts.count_documents(
+            {**q, "completed": True},
         )
+        if completed:
+            raise HTTPException(
+                409,
+                f"{completed} workout(s) in this range are marked completed. "
+                "Delete completed sessions individually via the workout view.",
+            )
 
     # Fetch what we're about to delete so we can write per-row audit rows.
     to_delete = await db.workouts.find(

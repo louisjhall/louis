@@ -412,6 +412,57 @@ export default function CoachWorkspaceScreen() {
     })();
   }, [clientId, loadMonth]);
 
+  // Iter189u — Clear Month: wipe every applied CrewFit Plan workout for
+  // the current month in one tap. Never touches flight roster
+  // (roster_days / flight_support_overrides / activities) — only rows in
+  // `db.workouts`. Completed sessions are preserved automatically via
+  // `skip_completed=true` on the backend.
+  const clearMonth = useCallback(async () => {
+    if (!month) return;
+    const [y, m] = month.split("-").map(Number);
+    if (!y || !m) return;
+    const monthLabel = new Date(y, m - 1, 1).toLocaleDateString(undefined, {
+      month: "long", year: "numeric",
+    });
+    const start = `${month}-01`;
+    const end = new Date(y, m, 0).toISOString().slice(0, 10);
+
+    const ok = await confirm({
+      title: "Clear Month?",
+      message: `Delete all workouts for ${monthLabel}? This cannot be undone.\n\nFlight roster and Flight Support are not affected.`,
+      confirmLabel: "CLEAR MONTH",
+      cancelLabel: "CANCEL",
+      destructive: true,
+    });
+    if (!ok) return;
+
+    setBusy(true);
+    try {
+      const res: any = await api(
+        `/coach/clients/${clientId}/workouts/bulk-delete`,
+        {
+          method: "POST",
+          body: {
+            start_date: start,
+            end_date: end,
+            reason: `Coach cleared ${monthLabel} from Plan toolbar`,
+            confirm: true,
+            skip_completed: true,
+          },
+        },
+      );
+      await loadMonth();
+      const n = res?.deleted_count ?? 0;
+      if (n === 0) {
+        toast("No workouts to clear this month.", "info");
+      } else {
+        toast(`Cleared ${n} workout${n === 1 ? "" : "s"} for ${monthLabel}`, "success");
+      }
+    } catch (e: any) {
+      toast(`Clear failed: ${e?.message || String(e)}`, "error");
+    } finally { setBusy(false); }
+  }, [clientId, month, loadMonth]);
+
   const stepMonth = useCallback((delta: number) => {
     if (!month) return;
     const [y, m] = month.split("-").map((s) => parseInt(s, 10));
@@ -685,6 +736,17 @@ export default function CoachWorkspaceScreen() {
           >
             <Ionicons name="download-outline" size={13} color={theme.color.text} />
             <Text style={styles.tbBtnText}>Import</Text>
+          </Pressable>
+          {/* Iter189u — Clear Month wipes all Plan workouts in the current
+              calendar month. Flight roster & Flight Support untouched. */}
+          <Pressable
+            style={[styles.tbBtn, { borderColor: theme.color.red + "88" }]}
+            onPress={clearMonth}
+            disabled={busy || !month}
+            testID="clear-month-btn"
+          >
+            <Ionicons name="trash-outline" size={13} color={theme.color.red} />
+            <Text style={[styles.tbBtnText, { color: theme.color.red }]}>Clear Month</Text>
           </Pressable>
           {data.counts?.ready > 0 && (
             <Pressable

@@ -1,0 +1,35 @@
+{
+  "summary": "Iter189u — Clear Month button on coach workspace toolbar. Backend: 6/6 pytest tests pass covering skip_completed=true/false semantics, auth, empty month, confirm flag, and preservation of roster_days / flight_support_overrides / activities collections. Frontend: button renders as red trash + 'Clear Month' immediately to the right of import-programme-btn on the same row (bbox verified); confirm modal shows correct title 'Clear Month?' and body 'Delete all workouts for August 2026? This cannot be undone. Flight roster and Flight Support are not affected.'; CANCEL fires no network call; CLEAR MONTH fires POST /api/coach/clients/{id}/workouts/bulk-delete with the expected body ({start_date:2026-08-01,end_date:2026-08-31,reason:'Coach cleared August 2026 from Plan toolbar',confirm:true,skip_completed:true}) and receives 200; roster days (CF412/CF413/CF884/CF885/CF178) and completed workouts (Home Strength/Layover Mobility/Post-Duty Reset marked 'Done') visibly intact after the clear.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "coach/client/[id]/workspace", "issues": ["Toolbar Pressable height ~26px is below the mobile 44px touch target — acceptable on desktop coach view but flag for mobile use. Not new to this iteration."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189u_clear_month.py",
+    "/app/test_reports/pytest/iter189u_clear_month.xml"
+  ],
+  "action_items": [
+    "OPTIONAL — Add testID attributes to the confirm() modal's CANCEL and CLEAR MONTH buttons (e.g. testID='confirm-modal-cancel' / 'confirm-modal-confirm') to make future automated testing more robust. Currently they only have visible uppercase text labels so tests must fall back to text or bbox coordinates."
+  ],
+  "critical_code_review_comments": [
+    "feature_coach_admin_actions.py: skip_completed branch adds $or to the query. The $or is safe here because no other $or is set earlier in the query builder, but if a future contributor adds another $or (e.g. for source variants) it will silently overwrite. Consider wrapping in $and for defensive composition.",
+    "clearMonth callback in workspace.tsx correctly limits the delete window to the exact calendar month (uses new Date(y, m, 0) for last-day-of-month, DST-safe) and passes skip_completed:true. LGTM."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189u_clear_month.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Backend pytest seeds TEST_iter189u workouts directly in db.workouts for client 0b0651e2-3453-4c39-b858-b377e8284f8c (Alex Rivera) and cleans them up between tests. No UI-side seeding needed — the workspace already contained enough real August-2026 workouts to exercise the flow.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Confirm dialog is a custom in-app modal (not window.confirm), so page.on('dialog') doesn't fire. Its CANCEL / CLEAR MONTH buttons have no testID — click them via exact-text coord match or add testIDs first. Note that 'Clear Month' toolbar button label and modal 'CLEAR MONTH' button label collide under case-insensitive text= selectors; use exact match.",
+  "rca_of_issue": "N/A — feature works as specified."
+}

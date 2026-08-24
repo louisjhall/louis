@@ -1,0 +1,29 @@
+{
+  "summary": "Iter189t Rest/Recovery day preview screen fix — VALIDATED. Seeded a workout with workout_type='rest', empty exercises/warmup/cooldown, duration_min=0, coach_notes for client 0b06...84f8c on 2026-08-24 and a control 'Upper Strength' workout on 2026-08-25. As client@crewfit.com verified via Playwright (mobile 390x844): A) rest-day-card renders with green leaf icon, 'REST DAY' title, 'No session scheduled — enjoy the recovery.' sub, and COACH NOTE box containing 'Full recovery. Sleep 8h.'; B) variant-row is absent; C) rpe-input is absent; D) atlas-play (START WORKOUT) is absent; E) complete-workout is a single full-width button labelled 'MARK REST DAY DONE'; F) tapping opens the PostWorkoutRatingSheet; after selecting 'Smooth flight' → 'LOG WORKOUT', POST /api/workouts/{id}/complete succeeded and on revisit the button reads 'REST DAY COMPLETE ✓' with the green background and a COMPLETED status badge is shown. G) Normal workout still shows variant-row, rpe-input, atlas-play ('START WORKOUT →') and small 'MARK DONE' — non-rest path unchanged. Only cosmetic finding: the coach's note is duplicated on rest days (once inside rest-day-card and once via the pre-existing generic COACH NOTE rationale block that is not gated by isRestDay).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "workout/[id]/index.tsx", "issue": "On rest days, coach_notes renders twice — once inside `rest-day-card` and once inside the generic COACH NOTE block at lines 802-807 (`!isCoach && w.coach_notes && ...`). Suggest gating the generic block with `!isRestDay` so the rest-day card is the single source of the coach note.", "testID": "rest-day-card", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "workout/[id]/index.tsx (or a child View)", "issue": "Console emits 'Unexpected text node: A text node cannot be a child of a <View>.' on the workout preview screen. Likely a stray whitespace/newline inside a <View> child — should be wrapped in <Text> or removed. Pre-existing, not introduced by this iteration."}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_125.json"],
+  "action_items": [
+    "Optional: hide the generic COACH NOTE rationale block (lines 802-807 in /app/frontend/app/workout/[id]/index.tsx) when isRestDay is true, so the rest-day-card is the sole coach-note surface — currently it displays twice.",
+    "Investigate 'Unexpected text node: A text node cannot be a child of a <View>.' warning emitted on the workout preview screen — locate the stray whitespace/newline child and wrap it in <Text> or remove it."
+  ],
+  "critical_code_review_comments": [
+    "isRestDay memo logic is thorough (workout_type / title / duration_min / total items) and identical in intent to the startWorkout guard — good single-source design.",
+    "isRestDay also correctly hides the RPE input via `!isRestDay` on the compBox, and the sticky footer swaps to a single full-width MARK DONE — matches spec."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100% (7/7 spec checks A–G passed)"},
+  "seed_data_creation": "Inserted two workouts (test-restday-10e387a7 rest day on 2026-08-24 and test-normal-0d19414b Upper Strength on 2026-08-25) for user 0b0651e2-3453-4c39-b858-b377e8284f8c via direct MongoDB insert. Both were DELETED after testing — DB is clean.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter189t validated end-to-end on the mobile web preview. If rerunning, seed a workout with workout_type='rest', empty exercises/warmup/cooldown, duration_min=0 and open /workout/{id} as the client — expect rest-day-card + a single 'MARK REST DAY DONE' CTA and no variant/RPE/START-WORKOUT elements. Cleanup by deleting the seeded doc from db.workouts by id."
+}

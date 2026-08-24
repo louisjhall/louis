@@ -102,6 +102,28 @@ export default function WorkoutDetail() {
   // `w` directly (unbucketed) so edits touch the raw `exercises[]`.
   const groups = useMemo(() => bucketWorkout(view), [view]);
 
+  // Iter189t · Rest/Recovery workouts imported via JSON with no
+  // exercises should NOT show a START WORKOUT button, variant chips,
+  // or an RPE input — they're rest days, not sessions. Just a coach
+  // note + a MARK DONE button. Single source of truth so every render
+  // branch below agrees.
+  const isRestDay = useMemo(() => {
+    if (!view) return false;
+    const wt = String((view as any).workout_type || "").toLowerCase();
+    const title = String((view as any).title || "").toLowerCase();
+    const dur = (view as any).duration_min;
+    const totalItems =
+      ((view as any).exercises || []).length +
+      ((view as any).warmup || []).length +
+      ((view as any).cooldown || []).length;
+    return (
+      wt === "rest" || wt === "recovery" || wt === "off" || wt === "day_off" ||
+      title.startsWith("rest") || title.startsWith("off") || title.includes("full rest") ||
+      (typeof dur === "number" && dur === 0) ||
+      totalItems === 0
+    );
+  }, [view]);
+
   // Fire-and-forget: log the selected variant for coach dashboards.
   const pickVariant = useCallback((next: VariantKey) => {
     setVariant(next);
@@ -356,7 +378,7 @@ export default function WorkoutDetail() {
           </View>
         ) : null}
 
-        {!isCoach && !editing && variants && (
+        {!isCoach && !editing && !isRestDay && variants && (
           <View style={styles.variantRow} testID="variant-row">
             {(Object.keys(VARIANT_LABELS) as VariantKey[]).map((k) => {
               const meta = VARIANT_LABELS[k];
@@ -387,6 +409,33 @@ export default function WorkoutDetail() {
             <Text style={styles.variantNoteText}>{view._variant_intensity_note}</Text>
           </View>
         ) : null}
+
+        {/* Iter189t · Rest / Recovery day banner — replaces the whole
+            exercise stack when the workout has no items. Shows a clear
+            "REST DAY" heading and (if present) the coach's note as the
+            single piece of content. All other sections below still
+            render but will be empty by definition. */}
+        {isRestDay && (
+          <View style={styles.restDayCard} testID="rest-day-card">
+            <View style={styles.restDayHeader}>
+              <Ionicons name="leaf" size={22} color={theme.color.green} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.restDayTitle}>
+                  {String(view.workout_type || "").toLowerCase() === "recovery"
+                    ? "RECOVERY DAY"
+                    : "REST DAY"}
+                </Text>
+                <Text style={styles.restDaySub}>No session scheduled — enjoy the recovery.</Text>
+              </View>
+            </View>
+            {view.coach_notes ? (
+              <View style={styles.restDayNoteBox}>
+                <Text style={styles.restDayNoteLabel}>COACH NOTE</Text>
+                <Text style={styles.restDayNoteText}>{view.coach_notes}</Text>
+              </View>
+            ) : null}
+          </View>
+        )}
 
         {w.override_applied || w.override_generated ? (
           <View style={styles.overrideBanner}>
@@ -750,14 +799,14 @@ export default function WorkoutDetail() {
             </Pressable>
           </View>
         )}
-        {!isCoach && w.coach_notes && (
+        {!isCoach && !isRestDay && w.coach_notes && (
           <View style={styles.rationale}>
             <Text style={styles.rLabel}>COACH NOTE</Text>
             <Text style={styles.rText}>{w.coach_notes}</Text>
           </View>
         )}
 
-        {!isCoach && !w.completed && (
+        {!isCoach && !w.completed && !isRestDay && (
           <View style={styles.compBox}>
             <Text style={styles.sectSm}>RATE THIS SESSION (RPE 1-10)</Text>
             <TextInput style={styles.exNameInput} value={rpe} onChangeText={setRpe} keyboardType="number-pad" placeholder="7" placeholderTextColor={theme.color.textDim} testID="rpe-input" />
@@ -779,12 +828,39 @@ export default function WorkoutDetail() {
           </View>
         ) : (
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable testID="atlas-play" onPress={startWorkout} disabled={w.completed} style={[styles.cta, { flex: 2 }, w.completed && { backgroundColor: theme.color.green }]}>
-              <Text style={styles.ctaText}>{w.completed ? "COMPLETED ✓" : "START WORKOUT →"}</Text>
-            </Pressable>
-            <Pressable testID="complete-workout" onPress={complete} disabled={saving || w.completed} style={[styles.ctaSecondary, { flex: 1 }, saving && { opacity: 0.6 }]}>
-              {saving ? <ActivityIndicator color={theme.color.brand} /> : <Text style={styles.ctaSecondaryText}>{w.completed ? "DONE" : "MARK DONE"}</Text>}
-            </Pressable>
+            {/* Iter189t · Rest/Recovery days (imported via JSON with no
+                exercises) show ONLY a MARK DONE button — no START
+                WORKOUT (would enter an empty player), no split CTAs. */}
+            {isRestDay ? (
+              <Pressable
+                testID="complete-workout"
+                onPress={complete}
+                disabled={saving || w.completed}
+                style={[
+                  styles.cta,
+                  { flex: 1 },
+                  w.completed && { backgroundColor: theme.color.green },
+                  saving && { opacity: 0.6 },
+                ]}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.ctaText}>
+                    {w.completed ? "REST DAY COMPLETE ✓" : "MARK REST DAY DONE"}
+                  </Text>
+                )}
+              </Pressable>
+            ) : (
+              <>
+                <Pressable testID="atlas-play" onPress={startWorkout} disabled={w.completed} style={[styles.cta, { flex: 2 }, w.completed && { backgroundColor: theme.color.green }]}>
+                  <Text style={styles.ctaText}>{w.completed ? "COMPLETED ✓" : "START WORKOUT →"}</Text>
+                </Pressable>
+                <Pressable testID="complete-workout" onPress={complete} disabled={saving || w.completed} style={[styles.ctaSecondary, { flex: 1 }, saving && { opacity: 0.6 }]}>
+                  {saving ? <ActivityIndicator color={theme.color.brand} /> : <Text style={styles.ctaSecondaryText}>{w.completed ? "DONE" : "MARK DONE"}</Text>}
+                </Pressable>
+              </>
+            )}
           </View>
         )}
       </View>
@@ -1022,4 +1098,54 @@ const styles = StyleSheet.create({
   // Dark Mode: sticky footer is dark, brand-red outline still reads.
   ctaSecondary: { backgroundColor: "transparent", borderWidth: 1, borderColor: theme.color.brand, paddingVertical: 16, borderRadius: theme.radius.md, alignItems: "center" },
   ctaSecondaryText: { color: theme.color.brand, fontWeight: "800", letterSpacing: 2, fontSize: 13 },
+
+  // Iter189t · Rest / Recovery day card styles.
+  restDayCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 14,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.green + "55",
+    gap: 12,
+  },
+  restDayHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  restDayTitle: {
+    color: theme.color.text,
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 2,
+    fontFamily: theme.font.display,
+  },
+  restDaySub: {
+    color: theme.color.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  restDayNoteBox: {
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1,
+    borderColor: theme.color.divider,
+  },
+  restDayNoteLabel: {
+    color: theme.color.brand,
+    fontSize: 11,
+    fontWeight: "900",
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  restDayNoteText: {
+    color: theme.color.text,
+    fontSize: 13,
+    lineHeight: 18,
+    fontFamily: theme.font.text,
+  },
 });

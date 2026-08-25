@@ -60,45 +60,66 @@ function fmtMMSS(sec: number): string {
  * work-timer.
  *
  * Priority (highest wins):
- *   1. valid `logging_type` ('timer' | 'cardio')
- *   2. valid explicit `duration_sec` / `work_sec` — ALWAYS honoured
- *      regardless of name matching, subject only to a 3-hour global
- *      sanity ceiling (corrupt-data guard, not a prescription override)
- *   3. reps-text parsing ("25 min" / "5:00" / "45s" …)
- *   4. exercise-name inference (`isCardioExercise` regex) — last resort
+ *   1. valid `logging_type` + valid explicit `duration_sec` — trust both
+ *   2. valid explicit `duration_sec` alone — ALWAYS honoured regardless
+ *      of name matching, subject only to the 3-hour sanity ceiling
+ *   3. `reps` text parses to a duration ("25 min" → 1500, "5:00" → 300,
+ *      "30 sec" → 30) — return the PARSED value, not a 60s default
+ *   4. logging_type says timer/cardio but no usable duration → 60s
+ *   5. cardio name regex → 60s last-resort fallback
+ *   6. otherwise rep-based estimator (3s/rep clamped [20s, 90s])
  *
  * A valid `duration_sec` of 1500s MUST initialise the guided flow at
- * 25:00 even when `logging_type` is missing / incorrect. The old
- * 10-minute clamp for "non-cardio name" is removed — it silently
- * reduced valid prescribed work.
+ * 25:00 even when `logging_type` is missing / incorrect. Global 3-hour
+ * sanity ceiling only — no name-conditional 10-min clamp exists.
  */
-// Global sanity ceiling for a single work interval — 3 hours. Anything
-// beyond this is almost certainly corrupt data; the coach dashboard
-// separately caps individual exercises far below this.
-const _MAX_WORK_SEC = 10800;
+const _MAX_WORK_SEC = 10800; // 3-hour global sanity ceiling.
+
+// Parse a reps-string into seconds. Mirrors the backend
+// `_parse_reps_time_to_seconds` used by the guided-flow enricher.
+// Handles "25 min" / "5 minutes" / "45 sec" / "90s" / "1 hr" / "5:00"
+// and range forms ("20-25 min" → upper bound). Returns 0 when the reps
+// string is not a recognisable duration.
+function _parseRepsToSeconds(reps: any): number {
+  const s = String(reps || "").trim();
+  if (!s) return 0;
+  const mmss = s.match(/^\s*(\d+):(\d{2})\s*$/);
+  if (mmss) return parseInt(mmss[1], 10) * 60 + parseInt(mmss[2], 10);
+  const m = s.match(
+    /(\d+(?:\.\d+)?)\s*(?:[-–]\s*(\d+(?:\.\d+)?)\s*)?(hr|hrs|hour|hours|min|mins|minute|minutes|s|sec|secs|second|seconds)\b/i,
+  );
+  if (!m) return 0;
+  const lo = parseFloat(m[1]);
+  const hi = m[2] ? parseFloat(m[2]) : lo;
+  const n = hi; // upper bound so clients hit the top of the range
+  const unit = m[3].toLowerCase();
+  if (unit.startsWith("hr") || unit.startsWith("hour")) return Math.round(n * 3600);
+  if (unit.startsWith("min") || unit.startsWith("minute")) return Math.round(n * 60);
+  return Math.round(n);
+}
 
 function autopilotWorkSeconds(ex: any, targetReps: number, isCardioOrTimer: boolean): number {
   const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
 
-  // Priority 1 & 2 — trust the coach's explicit prescription.
-  // ANY valid explicit duration_sec > 0 wins, name matching does NOT gate.
+  // Priority 1 & 2 — any valid explicit duration_sec wins outright.
   if (explicit && explicit > 0) {
     return Math.max(10, Math.min(_MAX_WORK_SEC, explicit));
   }
 
-  // Priority 1 fallback — logging_type says timer/cardio but no duration.
+  // Priority 3 — reps text successfully parses to a duration. Return
+  // the parsed value, not a 60s default.
+  const repsSecs = _parseRepsToSeconds(ex?.reps);
+  if (repsSecs > 0) {
+    return Math.max(10, Math.min(_MAX_WORK_SEC, repsSecs));
+  }
+
+  // Priority 4 — timer/cardio type but no usable duration.
   if (isCardioOrTimer) return 60;
 
-  // Priority 3 — parsed reps text (rare: enricher normally fills duration_sec).
-  const repsStr = String(ex?.reps || "");
-  const repsLooksLikeTime =
-    /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|hold|steady)\b|^\d+:\d+$/i.test(repsStr);
-  if (repsLooksLikeTime) return 60;
-
-  // Priority 4 — name regex, last resort.
+  // Priority 5 — name-regex last-resort fallback.
   if (isCardioExercise(ex)) return 60;
 
-  // Default: rep-based estimator 3s/rep clamped [20s, 90s].
+  // Priority 6 — rep-based estimator.
   const est = Math.round((targetReps || 10) * 3);
   return Math.max(20, Math.min(90, est));
 }

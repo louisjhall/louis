@@ -102,15 +102,18 @@ function autopilotWorkSeconds(ex: any, targetReps: number, isCardioOrTimer: bool
   const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
 
   // Priority 1 & 2 — any valid explicit duration_sec wins outright.
+  // Honour the coach's prescription EXACTLY. Only the 3-hour max
+  // sanity ceiling applies; no minimum floor is imposed so a
+  // legitimate 5-second prescription stays 5 seconds.
   if (explicit && explicit > 0) {
-    return Math.max(10, Math.min(_MAX_WORK_SEC, explicit));
+    return Math.min(_MAX_WORK_SEC, explicit);
   }
 
   // Priority 3 — reps text successfully parses to a duration. Return
-  // the parsed value, not a 60s default.
+  // the parsed value exactly. Same 3-hour ceiling, no minimum floor.
   const repsSecs = _parseRepsToSeconds(ex?.reps);
   if (repsSecs > 0) {
-    return Math.max(10, Math.min(_MAX_WORK_SEC, repsSecs));
+    return Math.min(_MAX_WORK_SEC, repsSecs);
   }
 
   // Priority 4 — timer/cardio type but no usable duration.
@@ -119,7 +122,9 @@ function autopilotWorkSeconds(ex: any, targetReps: number, isCardioOrTimer: bool
   // Priority 5 — name-regex last-resort fallback.
   if (isCardioExercise(ex)) return 60;
 
-  // Priority 6 — rep-based estimator.
+  // Priority 6 — rep-based estimator (3s/rep clamped [20s, 90s]).
+  // This clamp only applies to the estimator itself — never to an
+  // explicit coach-set duration.
   const est = Math.round((targetReps || 10) * 3);
   return Math.max(20, Math.min(90, est));
 }

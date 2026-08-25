@@ -1,0 +1,36 @@
+{
+  "summary": "Iter189v — Guided Flow badge + timer + media + Android CTA fixes validated end-to-end. Backend: 27/27 pytest tests pass covering _parse_reps_time_to_seconds (14 param cases), _derive_logging_type reps-time-hint promotion (5 cases), _enrich_for_guided idempotent duration fills on main/warmup/cooldown (6 cases), the iter189v backfill script's _apply_to_row (Mongo-seeded doc), and existing iter189o/iter189s/iter189m regressions (47/47 pass). Frontend: verified via seeded Mongo doc + Playwright on 390×844 viewport. Workout Detail correctly reads 'Zone 2 Walk/Light Jog · 25 min · RPE 4'. Guided Flow WORK panel now reads 'Set 1 of 1 · 25 min' (NOT '25 reps') and the big autopilot timer starts at 25:00 counting down (captured mid-countdown at 24:54). Warm-up phase (5 min row) correctly starts the timer at 5:00 (captured at 4:57). Android sticky CTA (START WORKOUT + MARK DONE) sits above bottom safe-area — insets.bottom applied on the sticky bar. Media carousel gate is now relaxed (verified in code — approval blocks only on explicit draft/rejected/blocked); the seeded synthetic Zone 2 exercise has no exercise_id link so shows the silhouette fallback (expected — not a regression, would render library media for library-backed exercises). Backend contract for programme-import→_enrich_for_guided validated at the unit level; the seeded raw Mongo doc + backfill produces {logging_type:'timer', duration_sec:1500} as designed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189v_guided_flow_duration.py",
+    "/app/backend/tests/seed/seed_iter189v_zone2.py",
+    "/app/test_reports/pytest/iter189v_results.xml"
+  ],
+  "action_items": [
+    "None blocking. Optional: add a testID='guided-work-timer' to the big autopilot timer <Text> in guided.tsx so future e2e tests can grab it directly instead of scraping page text (currently we assert via 'MM:SS' text-content regex).",
+    "Optional: add testID='workout-start-cta' to the START WORKOUT sticky Pressable in workout/[id]/index.tsx (there's a Pressable but no testID — we had to fall back to text=/START WORKOUT/i)."
+  ],
+  "critical_code_review_comments": [
+    "guided.tsx autopilotWorkSeconds: the timeLike compound check (timerLocked || isCardioExercise(ex) || repsLooksLikeTime) elegantly avoids the 600s clamp for any coach-set duration; ceiling max of 10800 (3h) is sensible. LGTM.",
+    "WorkoutMediaCarousel: relaxed gate is coherent with ExerciseThumbnail (renders unless explicitly blocked). Consider extracting the shared 'shouldShowMedia' predicate into a util so the two components can never drift again.",
+    "feature_coach_manual_workouts._enrich_for_guided now runs the reps-time parser on ALL sections including main. Idempotency test passes (existing duration_sec is preserved). Marks estimated fills with duration_sec_estimated:true / logging_type_estimated:true — good breadcrumb.",
+    "backfill_workout_durations_iter189v.py: idempotent, only patches when duration_sec is 0/missing AND reps parses as duration. Bulk_write is unordered — safe. Records duration_backfilled_at_iter189v ISO timestamp on the workout doc for auditability.",
+    "workout/[id]/index.tsx sticky bar paddingBottom uses (insets.bottom || 0) so iOS non-notched devices don't get double padding. Correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189v_guided_flow_duration.py (new)",
+    "/app/backend/tests/seed/seed_iter189v_zone2.py (new — reusable Mongo seed for iter189v UI tests)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created /app/backend/tests/seed/seed_iter189v_zone2.py which inserts workout id=iter189v_zone2_test_workout for client 0b0651e2-3453-4c39-b858-b377e8284f8c on 2027-01-27 with Zone 2 Walk/Light Jog (25 min, duration_sec=1500, logging_type=timer) + 5 min warmup + 5 min cooldown. Seed cleaned up after UI tests (delete_many by id). Re-runnable — script deletes any prior doc with the same id before inserting.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Guided Flow entry is a 2-step modal: (1) tap START WORKOUT on detail, (2) select 'START GUIDED SESSION' + tap the modal's START WORKOUT. Guided route is /workout/{id}/guided. Autopilot vs manual choice is a second in-flow modal ('Track my lifts' vs 'Just flow'). Warm-up plays first — use SKIP WARM-UP or SKIP MOVE to advance to the main-section Zone 2 row where the 25:00 timer lives. WORK phase header reads 'Set 1 of 1 · 25 min' (Text meta line) and the big timer text is a single MM:SS Text node with no testID today.",
+  "rca_of_issue": "Iter189v RCA (validated): (a) main-section imported cardio missed logging_type because library lookup returned no v2 row → _derive_logging_type now honours reps-time-hint / duration_sec on the exercise row itself. (b) autopilotWorkSeconds' ceiling was gated only on timerLocked (post-iter189s) → now widened to timerLocked || isCardioExercise(regex) || _repsLooksLikeTime, so a 1500s duration_sec passes through. (c) WorkoutMediaCarousel required approval='approved|Live' → now blocks only on explicit draft/rejected/blocked, matching ExerciseThumbnail. (d) Android sticky CTA lacked safe-area inset → paddingBottom now = theme.space.lg + insets.bottom. Backfill script has been run on preview DB and only the 9 'Child's pose 60s hold' workouts were affected (no lingering Zone 2 issue in preview data)."
+}

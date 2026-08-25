@@ -50,14 +50,21 @@ async function resolveMediaForName(name: string): Promise<ResolvedMedia | null> 
     const ex = r?.exercises?.[0];
     if (!ex) { _resolveCache.set(key, null); return null; }
 
-    // Client safety: only render media when the exercise is approved and
-    // its image approval status is 'Live' or 'Approved'. Anything drafty
-    // → falls through to placeholder so drafts never leak.
-    const approved =
-      ex.approval_status === "approved" ||
-      ex.status === "Live" ||
-      ex.approved_image_status === "Approved" ||
-      ex.approved_image_status === "Live";
+    // Iter189v · Relaxed approval gate. Previously required
+    // `approval_status="approved"`, `status="Live"`, or
+    // `approved_image_status` ∈ {"Approved","Live"} — imported /
+    // ChatGPT-fresh exercises with missing approval fields fell into
+    // the placeholder branch and lost their images in the guided flow
+    // even when the Workout Detail thumbnail rendered them correctly
+    // (ExerciseThumbnail has no such gate). Now: block only when the
+    // approval status is EXPLICITLY draft/rejected — everything else
+    // (missing, approved, live, or coach-authored w/o metadata) shows.
+    const rawStatus = String(
+      ex.approved_image_status || ex.approval_status || ex.status || ""
+    ).toLowerCase();
+    const explicitlyBlocked =
+      rawStatus === "draft" || rawStatus === "rejected" || rawStatus === "blocked";
+    const approved = !explicitlyBlocked;
 
     const token = await getToken();
     const legacy: Record<string, string | undefined> = {

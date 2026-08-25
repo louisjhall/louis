@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
@@ -44,6 +44,10 @@ export default function WorkoutDetail() {
   const { user } = useAuth();
   const isCoach = user?.role === "coach";
   const bottomPad = useBottomSafePad(160);
+  // Iter189v · Android system nav bar (both 3-button and gesture) was
+  // clipping the sticky START WORKOUT / MARK DONE bar. Add the device
+  // bottom inset directly to the sticky container's paddingBottom.
+  const insets = useSafeAreaInsets();
   const [w, setW] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -814,7 +818,16 @@ export default function WorkoutDetail() {
         )}
       </ScrollView>
 
-      <View style={styles.sticky}>
+      <View
+        style={[
+          styles.sticky,
+          // Iter189v · Push the sticky bar above Android system nav
+          // (3-button or gesture). iOS insets.bottom is usually 0 on
+          // devices without a home indicator, so this doesn't add
+          // unnecessary padding there.
+          { paddingBottom: theme.space.lg + (insets.bottom || 0) },
+        ]}
+      >
         {editing ? (
           <Pressable testID="save-workout" onPress={() => save()} disabled={saving} style={[styles.cta, saving && { opacity: 0.6 }]}>
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>SAVE CHANGES</Text>}

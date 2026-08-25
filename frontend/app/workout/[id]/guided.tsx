@@ -20,6 +20,7 @@ import { ExerciseVideoPlayer } from "@/src/components/ExerciseVideoPlayer";
 import { WorkoutMediaCarousel } from "@/src/components/WorkoutMediaCarousel";
 import { PostWorkoutRatingSheet } from "@/src/components/PostWorkoutRatingSheet";
 import { RestTimer } from "@/src/components/RestTimer";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import {
   getAutoContinue, getSoundOn, setAutoContinue as saveAutoContinue,
   getAutoRest, getVoiceOn, setVoiceOn as saveVoiceOn,
@@ -54,15 +55,37 @@ function fmtMMSS(sec: number): string {
  * unconditionally — a 30-minute Easy Run timer opened at 10:00 instead of
  * 30:00. The clamp is now cardio-aware.
  */
-function autopilotWorkSeconds(ex: any, targetReps: number, isCardio: boolean): number {
+/*
+ * Iter189v — Compute the guided-flow work-timer for a single exercise.
+ *
+ * Contract:
+ *   • If the exercise carries an explicit `duration_sec` / `work_sec`,
+ *     honour it verbatim (subject to a light sanity ceiling).
+ *   • Cardio / timed rows → 3-hour ceiling (long runs, 2h+ zone-2 rows).
+ *   • Non-cardio holds  → 10-minute ceiling (side-plank, wall-sit).
+ *   • Fallback for rep-based → 3s/rep clamped [20s, 90s].
+ *
+ * Iter189v bug fix: previously the ceiling was `timerLocked ? 10800 : 600`,
+ * so an imported main-section cardio exercise with `duration_sec=1500`
+ * but no library `logging_type` was clamped to 600s and displayed "10:00"
+ * despite the coach prescribing 25 min. The ceiling now honours ANY
+ * signal that the row is time-based (timerLocked, `isCardioExercise` name
+ * regex, or `_repsLooksLikeTime` on the reps string).
+ */
+function autopilotWorkSeconds(ex: any, targetReps: number, isCardioOrTimer: boolean): number {
   const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+  // Iter189v · a reps string like "25 min" / "45 sec" / "5:00" is a
+  // strong hint the coach set this as time-based even when the library
+  // logging_type wasn't backfilled.
+  const repsStr = String(ex?.reps || "");
+  const repsLooksLikeTime =
+    /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|hold|steady)\b|^\d+:\d+$/i.test(repsStr);
+  const timeLike = isCardioOrTimer || isCardioExercise(ex) || repsLooksLikeTime;
   if (explicit && explicit > 0) {
-    // Cardio / long holds → 3h ceiling (long runs, treadmill sessions,
-    // extended rows). Strength holds still cap at 10 min for safety.
-    const ceiling = isCardio ? 10800 : 600;
+    const ceiling = timeLike ? 10800 : 600;
     return Math.max(10, Math.min(ceiling, explicit));
   }
-  if (isCardio) return 60;
+  if (isCardioOrTimer) return 60;
   const est = Math.round((targetReps || 10) * 3);
   return Math.max(20, Math.min(90, est));
 }
@@ -296,6 +319,16 @@ export default function GuidedFlow() {
   const warmupTick = useRef<any>(null);
   const workTick = useRef<any>(null);
   const restSeconds = useRef<number>(0);
+  // Iter189t · Wall-clock epoch refs for the warmup + work timers — mirrors
+  // the fix already applied to the standalone Guided Timer (timer.tsx,
+  // Iter 152). Plain setInterval countdowns drift/stall when Android
+  // throttles JS timers on screen-lock or backgrounding; recomputing from
+  // Date.now() each tick keeps the displayed time correct regardless of
+  // how long the interval was suspended.
+  const warmupEndEpochRef = useRef<number | null>(null);
+  const warmupAnnouncedRef = useRef({ four: false, three: false, two: false });
+  const workEndEpochRef = useRef<number | null>(null);
+  const workAnnouncedRef = useRef({ four: false, three: false, two: false });
 
   // Iter189r · Extracted so the Alternatives Swap handler can re-hydrate
   // the workout AFTER a successful swap. Previously the raw workout from
@@ -396,32 +429,36 @@ export default function GuidedFlow() {
     if (!item) return;
     const dur = Math.max(10, parseInt(String(item.duration_sec || 30), 10));
     setWarmupTimer(dur);
+    warmupEndEpochRef.current = Date.now() + dur * 1000;
+    warmupAnnouncedRef.current = { four: false, three: false, two: false };
     // Announce the move as it kicks off.
     narrateWarmup(item.name, warmupIdx + 1, workout?.warmup?.length || 1);
     if (warmupTick.current) clearInterval(warmupTick.current);
     warmupTick.current = setInterval(() => {
-      setWarmupTimer((s) => {
-        // 3-2-1 audio cues on the tail end of each warm-up move
-        if (s === 4) playCountdownTick();
-        else if (s === 3) playCountdownTick();
-        else if (s === 2) playCountdownTick();
-        if (s <= 1) {
-          clearInterval(warmupTick.current);
-          Vibration.vibrate([0, 200, 100, 200]);
-          // Auto-advance to next warmup item or first exercise
-          setTimeout(() => {
-            const next = warmupIdx + 1;
-            if (next < (workout?.warmup?.length || 0)) {
-              setWarmupIdx(next);
-            } else {
-              setPhase("work");
-            }
-          }, 400);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
+      const end = warmupEndEpochRef.current;
+      if (end === null) return;
+      const s = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+      // 3-2-1 audio cues on the tail end of each warm-up move — each fires
+      // exactly once (guarded), unlike the old per-tick countdown.
+      if (s === 4 && !warmupAnnouncedRef.current.four) { warmupAnnouncedRef.current.four = true; playCountdownTick(); }
+      else if (s === 3 && !warmupAnnouncedRef.current.three) { warmupAnnouncedRef.current.three = true; playCountdownTick(); }
+      else if (s === 2 && !warmupAnnouncedRef.current.two) { warmupAnnouncedRef.current.two = true; playCountdownTick(); }
+      setWarmupTimer(s);
+      if (s <= 0) {
+        clearInterval(warmupTick.current);
+        warmupEndEpochRef.current = null;
+        Vibration.vibrate([0, 200, 100, 200]);
+        // Auto-advance to next warmup item or first exercise
+        setTimeout(() => {
+          const next = warmupIdx + 1;
+          if (next < (workout?.warmup?.length || 0)) {
+            setWarmupIdx(next);
+          } else {
+            setPhase("work");
+          }
+        }, 400);
+      }
+    }, 250);
     return () => { if (warmupTick.current) clearInterval(warmupTick.current); };
   }, [phase, warmupIdx, paused, workout]);
 
@@ -444,22 +481,25 @@ export default function GuidedFlow() {
     if (!currentEx) return;
     if (saving) return;
     setWorkTimer(workSec);
+    workEndEpochRef.current = Date.now() + workSec * 1000;
+    workAnnouncedRef.current = { four: false, three: false, two: false };
     if (workTick.current) clearInterval(workTick.current);
     workTick.current = setInterval(() => {
-      setWorkTimer((s) => {
-        if (s === 4) playCountdownTick();
-        else if (s === 3) playCountdownTick();
-        else if (s === 2) playCountdownTick();
-        if (s <= 1) {
-          clearInterval(workTick.current);
-          workTick.current = null;
-          // Fire outside the setState updater so we don't double-schedule.
-          setTimeout(() => { completeSet({ autopilot: true }); }, 250);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
+      const end = workEndEpochRef.current;
+      if (end === null) return;
+      const s = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+      if (s === 4 && !workAnnouncedRef.current.four) { workAnnouncedRef.current.four = true; playCountdownTick(); }
+      else if (s === 3 && !workAnnouncedRef.current.three) { workAnnouncedRef.current.three = true; playCountdownTick(); }
+      else if (s === 2 && !workAnnouncedRef.current.two) { workAnnouncedRef.current.two = true; playCountdownTick(); }
+      setWorkTimer(s);
+      if (s <= 0) {
+        clearInterval(workTick.current);
+        workTick.current = null;
+        workEndEpochRef.current = null;
+        // Fire outside the setState updater so we don't double-schedule.
+        setTimeout(() => { completeSet({ autopilot: true }); }, 250);
+      }
+    }, 250);
     return () => { if (workTick.current) { clearInterval(workTick.current); workTick.current = null; } };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAutopilot, phase, exIdx, setIdx, paused, currentEx?.name, workSec, saving]);
@@ -935,11 +975,20 @@ function WorkPanel({
   const suggestedT = suggested ? `${suggested}kg × ${targetReps}` : null;
   const progReason = prev?.progression_hint?.reason;
   const workPct = workSec ? Math.max(0, Math.min(100, Math.round(((workSec - workTimer) / workSec) * 100))) : 0;
-  // Iter189s · timerLocked (logging_type === 'timer' | 'cardio') is the
-  // SINGLE source of truth for whether this row shows the TIME badge +
-  // auto-timer. Other classifiers (`isCardio`, `isTimeBased`) are used
-  // ONLY to pick the *style* of time UI (cardio TIME+DIST vs hold timer).
-  const showTimeBadge = timerLocked;
+  // Iter189v · Show TIME badge whenever the exercise is time-driven —
+  // even if the library `logging_type` wasn't backfilled. Signals we
+  // trust (in order): explicit logging_type ('timer'|'cardio'), explicit
+  // `duration_sec` set by the importer/coach, reps string carrying a
+  // time unit ("25 min", "45 sec", "5:00"), or a cardio name match.
+  // Previously this only checked `timerLocked` so an imported main-
+  // section cardio (Zone 2 Walk/Light Jog with reps="25 min", no
+  // library logging_type) rendered "25 reps" and clamped its timer.
+  const _repsLooksLikeTime =
+    /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|hold|steady)\b|^\d+:\d+$/i.test(
+      String(ex?.reps || ""),
+    );
+  const _explicitDur = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10) > 0;
+  const showTimeBadge = timerLocked || isCardio || _explicitDur || _repsLooksLikeTime;
 
   return (
     <View>
@@ -1123,36 +1172,49 @@ function HoldTimerLog({
   const [running, setRunning] = React.useState(false);
   const [elapsed, setElapsed] = React.useState(0);
   const tick = React.useRef<any>(null);
+  // Iter189t · Wall-clock stopwatch — recompute elapsed from Date.now()
+  // each tick so a screen lock / background pause during a hold can't
+  // desync the displayed time from real elapsed time (same class of bug
+  // as the warmup/work timers above).
+  const startEpochRef = React.useRef<number | null>(null);
+  const buzzedRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!running) return;
+    if (startEpochRef.current === null) startEpochRef.current = Date.now() - elapsed * 1000;
     tick.current = setInterval(() => {
-      setElapsed((s) => {
-        const next = s + 1;
-        // Buzz once when target reached — client can keep going or stop.
-        if (next === targetSeconds) {
-          try { Vibration.vibrate([0, 200, 100, 200]); } catch { /* web */ }
-        }
-        return next;
-      });
-    }, 1000);
+      const start = startEpochRef.current;
+      if (start === null) return;
+      const next = Math.floor((Date.now() - start) / 1000);
+      // Buzz once when target reached — client can keep going or stop.
+      if (next >= targetSeconds && !buzzedRef.current) {
+        buzzedRef.current = true;
+        try { Vibration.vibrate([0, 200, 100, 200]); } catch { /* web */ }
+      }
+      setElapsed(next);
+    }, 250);
     return () => { if (tick.current) clearInterval(tick.current); };
   }, [running, targetSeconds]);
 
   const toggle = () => {
     if (!running) {
       setElapsed(0);
+      startEpochRef.current = Date.now();
+      buzzedRef.current = false;
       setRunning(true);
       return;
     }
     // stopping — commit elapsed seconds into the parent form
     setRunning(false);
+    startEpochRef.current = null;
     if (elapsed > 0) onLogged(elapsed);
   };
 
   const reset = () => {
     if (tick.current) clearInterval(tick.current);
     setRunning(false);
+    startEpochRef.current = null;
+    buzzedRef.current = false;
     setElapsed(0);
     onLogged(0);
   };
@@ -1206,6 +1268,11 @@ function HowToSheet({
 }: {
   visible: boolean; exercise: any; content: any; onClose: () => void; onSwap: () => void;
 }) {
+  // Iter189u · Route through the app's Android-safe bottom-padding hook
+  // instead of a hardcoded value — this sheet was missed in the Iter189r
+  // audit of 23 screens, so its content could clip behind the Android
+  // nav bar (gesture pill or 3-button nav).
+  const bottomPad = useBottomSafePad(100);
   if (!visible) return null;
   const instr = Array.isArray(content?.instructions) ? content.instructions : [];
   const cues = Array.isArray(content?.cues) ? content.cues : [];
@@ -1249,7 +1316,7 @@ function HowToSheet({
               <Ionicons name="close" size={22} color={theme.color.text} />
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 100 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad }}>
             <Text style={sheetStyles.title}>{exercise?.name}</Text>
             {hasVideo ? (
               <View style={{ marginTop: 12, borderRadius: 12, overflow: "hidden" }}>
@@ -1329,6 +1396,10 @@ function SwapSheet({
 }) {
   const [loading, setLoading] = useState(false);
   const [alts, setAlts] = useState<any[]>([]);
+  // Iter189u · Same Android-safe bottom-padding fix as HowToSheet — this
+  // sheet's paddingBottom:24 was the one that actually clipped its last
+  // card behind the nav bar (confirmed live on a 3-button-nav device).
+  const bottomPad = useBottomSafePad(24);
   useEffect(() => {
     if (!visible || !exercise?.name) return;
     setLoading(true);
@@ -1355,7 +1426,7 @@ function SwapSheet({
             <Text style={sheetStyles.eyebrow}>SWAP EXERCISE</Text>
             <Pressable onPress={onClose} hitSlop={12} testID="swap-close"><Ionicons name="close" size={22} color={theme.color.text} /></Pressable>
           </View>
-          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad }}>
             <Text style={sheetStyles.title}>{exercise?.name}</Text>
             <Text style={sheetStyles.subtle}>
               Louis suggests up to three alternatives — one equipment swap, one easier regression,

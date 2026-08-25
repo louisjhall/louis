@@ -99,39 +99,49 @@ def _norm_exercise(e: dict, section: str, idx: int) -> dict:
     }
 
 
-def _derive_logging_type(v2: dict | None) -> str:
+def _derive_logging_type(v2: dict | None, exercise_row: dict | None = None) -> str:
     """Map an exercises_v2 row to the `logging_type` the Guided Flow expects.
 
-    Priority order (iter189m hardening):
-      1. Library's explicit `logging_type` — if the coach / importer
-         already tagged this exercise as `timer` / `cardio` / `weighted`
-         / `bodyweight` / `mobility`, we ALWAYS pass that through
-         verbatim. This is the single source of truth.
-      2. Fallback heuristic on `category` / `training_type` — only used
-         when the library value is blank/missing.
+    Priority order (iter189v hardening):
+      1. Library's explicit `logging_type` (single source of truth).
+      2. Reps-time-hint on the exercise row — if the coach wrote
+         `reps: "25 min"` / `"45 sec"` / `"5:00"` this row is clearly
+         time-based even without a library entry. Marked as "timer".
+      3. Fallback heuristic on `category` / `training_type`.
+      4. Default "weighted".
 
     Returns one of: 'cardio' | 'timer' | 'weighted' | 'bodyweight' |
     'mobility'. Guided uses this to pick the right autopilot timer +
     narration path.
     """
-    if not v2:
-        return "weighted"
+    # Priority 1: pass-through of the library's explicit value.
+    if v2:
+        lt_raw = v2.get("logging_type")
+        if isinstance(lt_raw, str) and lt_raw.strip():
+            return lt_raw.strip().lower()
 
-    # Priority 1: pass-through of the library's explicit value. Any
-    # non-empty string wins — even if it doesn't match the canonical
-    # set the frontend will treat unknowns as strength and the
-    # name-regex fallback still runs.
-    lt_raw = v2.get("logging_type")
-    if isinstance(lt_raw, str) and lt_raw.strip():
-        return lt_raw.strip().lower()
+    # Priority 2: reps-time-hint on the exercise row itself.
+    if exercise_row is not None:
+        reps_str = str(exercise_row.get("reps") or "").strip()
+        if reps_str and _REPS_HAS_TIME_HINT_RE.search(reps_str):
+            return "timer"
+        # Explicit duration_sec on a non-warmup/cooldown row is also a
+        # strong "this is time-based" signal.
+        try:
+            if int(exercise_row.get("duration_sec") or 0) > 0:
+                return "timer"
+        except (TypeError, ValueError):
+            pass
 
-    # Priority 2: category / training_type heuristic.
-    cat = (v2.get("category") or "").lower()
-    tt = (v2.get("training_type") or "").lower()
-    if cat == "cardio" or tt == "cardio":
-        return "cardio"
-    if cat in ("conditioning", "hiit", "endurance"):
-        return "cardio"
+    # Priority 3: category / training_type heuristic.
+    if v2:
+        cat = (v2.get("category") or "").lower()
+        tt = (v2.get("training_type") or "").lower()
+        if cat == "cardio" or tt == "cardio":
+            return "cardio"
+        if cat in ("conditioning", "hiit", "endurance"):
+            return "cardio"
+
     return "weighted"
 
 
@@ -149,6 +159,41 @@ _REPS_HAS_TIME_HINT_RE = re.compile(
     r"\b(s|sec|secs|second|seconds|min|mins|minute|minutes|hold|steady|for\s+time)\b|^\d+:\d+$",
     re.I,
 )
+
+
+# Iter189v · Parse a reps-string that already encodes a duration.
+# Handles: "25 min", "5 minutes", "45 sec", "90s", "1 hr", "5:00" (mm:ss),
+# and range forms like "20-25 min" (uses upper bound so clients complete
+# the prescribed ceiling). Returns None when the reps string is not a
+# recognisable duration.
+_REPS_TIME_UNIT_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:[-–]\s*(\d+(?:\.\d+)?)\s*)?"
+    r"(hr|hrs|hour|hours|min|mins|minute|minutes|s|sec|secs|second|seconds)\b",
+    re.I,
+)
+_REPS_MMSS_RE = re.compile(r"^\s*(\d+):(\d{2})\s*$")
+
+
+def _parse_reps_time_to_seconds(reps: str) -> Optional[int]:
+    if not reps:
+        return None
+    s = reps.strip()
+    mmss = _REPS_MMSS_RE.match(s)
+    if mmss:
+        return int(mmss.group(1)) * 60 + int(mmss.group(2))
+    m = _REPS_TIME_UNIT_RE.search(s)
+    if not m:
+        return None
+    lo = float(m.group(1))
+    hi = float(m.group(2)) if m.group(2) else lo
+    n = hi  # Use upper bound so clients hit the top of the prescribed range.
+    unit = m.group(3).lower()
+    if unit.startswith(("hr", "hour")):
+        return int(round(n * 3600))
+    if unit.startswith(("min", "minute")):
+        return int(round(n * 60))
+    return int(round(n))
+
 
 
 def _approx_duration_from_reps(
@@ -247,26 +292,37 @@ async def _enrich_for_guided(items: list[dict]) -> list[dict]:
             v2_by_id[row["id"]] = row
     for e in items:
         v2 = v2_by_id.get(e.get("exercise_id"))
-        e["logging_type"] = _derive_logging_type(v2)
+        # Iter189v · Pass the exercise row itself so the derived
+        # logging_type can honour reps-time-hints / explicit
+        # duration_sec even when the library row is missing / doesn't
+        # tag the exercise as timer.
+        e["logging_type"] = _derive_logging_type(v2, e)
         if v2 and v2.get("category"):
             e.setdefault("category", v2["category"])
         if v2 and v2.get("movement_pattern"):
             e.setdefault("movement_pattern", v2["movement_pattern"])
 
-        # Iter189o · Auto-fill duration_sec for warm-up / cool-down / mobility
-        # drills so the guided player picks the timer UI. Idempotent: only
-        # writes when duration_sec is missing / falsy AND reps is a bare
-        # count (never overwrites explicit coach-set durations).
+        # Iter189v · Fill duration_sec on ANY row (not just warmup /
+        # cooldown / mobility) when the reps carry a time hint AND
+        # duration_sec isn't already set. This gives main-section
+        # cardio like `Zone 2 Walk/Light Jog · 25 min` a real countdown
+        # instead of a 10-min-capped fallback in the guided flow.
         if not e.get("duration_sec"):
-            est = _approx_duration_from_reps(
-                e.get("reps"),
-                str(e.get("section") or "").lower(),
-                logging_type=e.get("logging_type"),
-                category=e.get("category"),
-            )
-            if est:
-                e["duration_sec"] = est
+            reps_str = str(e.get("reps") or "").strip()
+            secs = _parse_reps_time_to_seconds(reps_str)
+            if secs:
+                e["duration_sec"] = secs
                 e["duration_sec_estimated"] = True
+            else:
+                est = _approx_duration_from_reps(
+                    e.get("reps"),
+                    str(e.get("section") or "").lower(),
+                    logging_type=e.get("logging_type"),
+                    category=e.get("category"),
+                )
+                if est:
+                    e["duration_sec"] = est
+                    e["duration_sec_estimated"] = True
     return items
 
 

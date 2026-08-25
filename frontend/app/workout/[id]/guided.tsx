@@ -56,43 +56,49 @@ function fmtMMSS(sec: number): string {
  * 30:00. The clamp is now cardio-aware.
  */
 /*
- * Iter189v (refined per audit) — Compute the guided-flow work-timer.
+ * Iter189v (final refinement per user audit) — Compute the guided-flow
+ * work-timer.
  *
- * Priority order (highest wins):
- *   1. logging_type ('timer' | 'cardio')  → `isCardioOrTimer` param
- *   2. explicit `duration_sec` / `work_sec` on the exercise
- *   3. parsed time-unit inside `reps` ("25 min", "5:00", "45s", …)
- *   4. name-based `isCardioExercise` regex — LAST-RESORT only
+ * Priority (highest wins):
+ *   1. valid `logging_type` ('timer' | 'cardio')
+ *   2. valid explicit `duration_sec` / `work_sec` — ALWAYS honoured
+ *      regardless of name matching, subject only to a 3-hour global
+ *      sanity ceiling (corrupt-data guard, not a prescription override)
+ *   3. reps-text parsing ("25 min" / "5:00" / "45s" …)
+ *   4. exercise-name inference (`isCardioExercise` regex) — last resort
  *
- * When ANY of 1–3 holds we trust the coach's explicit prescription and
- * apply only a soft 3-hour sanity clamp. The 10-minute strength-hold
- * clamp is reserved for exercises that fall to the name-regex fallback
- * with an unusually large `duration_sec` — a defensive guard against
- * bad data, not a prescription override.
+ * A valid `duration_sec` of 1500s MUST initialise the guided flow at
+ * 25:00 even when `logging_type` is missing / incorrect. The old
+ * 10-minute clamp for "non-cardio name" is removed — it silently
+ * reduced valid prescribed work.
  */
+// Global sanity ceiling for a single work interval — 3 hours. Anything
+// beyond this is almost certainly corrupt data; the coach dashboard
+// separately caps individual exercises far below this.
+const _MAX_WORK_SEC = 10800;
+
 function autopilotWorkSeconds(ex: any, targetReps: number, isCardioOrTimer: boolean): number {
   const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
+
+  // Priority 1 & 2 — trust the coach's explicit prescription.
+  // ANY valid explicit duration_sec > 0 wins, name matching does NOT gate.
+  if (explicit && explicit > 0) {
+    return Math.max(10, Math.min(_MAX_WORK_SEC, explicit));
+  }
+
+  // Priority 1 fallback — logging_type says timer/cardio but no duration.
+  if (isCardioOrTimer) return 60;
+
+  // Priority 3 — parsed reps text (rare: enricher normally fills duration_sec).
   const repsStr = String(ex?.reps || "");
   const repsLooksLikeTime =
     /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|hold|steady)\b|^\d+:\d+$/i.test(repsStr);
+  if (repsLooksLikeTime) return 60;
 
-  if (explicit && explicit > 0) {
-    // Priority 1–3: explicit structured data (logging_type / duration_sec /
-    // parsed reps). Trust the coach; only apply a soft 3-hour sanity max.
-    if (isCardioOrTimer || repsLooksLikeTime) {
-      return Math.max(10, Math.min(10800, explicit));
-    }
-    // Priority 4: name-regex fallback. Keep the 10-min hold clamp so a
-    // corrupt duration_sec on a rep-based row doesn't lock the client in.
-    const nameSaysCardio = isCardioExercise(ex);
-    const ceiling = nameSaysCardio ? 10800 : 600;
-    return Math.max(10, Math.min(ceiling, explicit));
-  }
+  // Priority 4 — name regex, last resort.
+  if (isCardioExercise(ex)) return 60;
 
-  // No explicit duration_sec — decide via lower-priority signals.
-  if (isCardioOrTimer) return 60;             // 1. logging_type
-  if (repsLooksLikeTime) return 60;           // 3. parsed reps (rare — enricher fills duration_sec)
-  if (isCardioExercise(ex)) return 60;        // 4. name-regex last resort
+  // Default: rep-based estimator 3s/rep clamped [20s, 90s].
   const est = Math.round((targetReps || 10) * 3);
   return Math.max(20, Math.min(90, est));
 }

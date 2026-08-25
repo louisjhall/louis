@@ -137,41 +137,48 @@ async def main() -> None:
         if args.limit and total > args.limit:
             break
 
-        w_changed = False
+        changed_sections: dict[str, list] = {}
         for section in ("warmup", "exercises", "cooldown"):
             items = w.get(section) or []
             if not isinstance(items, list):
                 continue
+            section_had_change = False
             for row in items:
                 changed, _ = _apply_to_row(row)
                 if changed:
-                    w_changed = True
+                    section_had_change = True
                     rows_patched += 1
                     if len(samples) < 15:
                         samples.append(
                             f"{w.get('date', '?'):>10}  {row.get('name'):<40}  "
                             f"reps={row.get('reps')!r:<15}  → duration_sec={row.get('duration_sec')}"
                         )
+            if section_had_change:
+                changed_sections[section] = items
 
-        if w_changed:
+        if changed_sections:
             wrote += 1
+            # Iter189v audit — narrow the write to ONLY the sections we
+            # actually modified. Reduces blast radius on concurrent writes
+            # (a coach edit landing between find and update would still
+            # win on untouched sections).
+            set_body: dict = {
+                **changed_sections,
+                "duration_backfilled_at_iter189v": datetime.now(timezone.utc).isoformat(),
+            }
             ops.append(
-                UpdateOne(
-                    {"id": w["id"]},
-                    {"$set": {
-                        "warmup": w.get("warmup"),
-                        "exercises": w.get("exercises"),
-                        "cooldown": w.get("cooldown"),
-                        "duration_backfilled_at_iter189v": datetime.now(timezone.utc).isoformat(),
-                    }},
-                )
+                UpdateOne({"id": w["id"]}, {"$set": set_body})
             )
 
-    log.info(f"Scanned:            {total}")
-    log.info(f"Workouts patched:   {wrote}")
-    log.info(f"Rows patched:       {rows_patched}")
+    log.info("=" * 60)
+    log.info(f"PRE-EXECUTION INTENT")
+    log.info(f"  Workouts scanned:            {total}")
+    log.info(f"  Workouts needing patch:      {wrote}")
+    log.info(f"  Exercise rows needing patch: {rows_patched}")
+    log.info(f"  Rows left untouched:         (any row with duration_sec already set OR reps not a duration)")
+    log.info("=" * 60)
     if samples:
-        log.info("Sample rows:")
+        log.info("Sample rows we WILL modify:")
         for s in samples:
             log.info(f"  • {s}")
 
@@ -181,7 +188,13 @@ async def main() -> None:
 
     if ops:
         res = await db.workouts.bulk_write(ops, ordered=False)
-        log.info(f"Bulk write matched={res.matched_count} modified={res.modified_count}")
+        log.info("=" * 60)
+        log.info(f"POST-EXECUTION RESULT")
+        log.info(f"  Matched:  {res.matched_count}")
+        log.info(f"  Modified: {res.modified_count}")
+        log.info("=" * 60)
+    else:
+        log.info("Nothing to write. All rows already correct — idempotent no-op.")
 
     log.info("Done.")
 

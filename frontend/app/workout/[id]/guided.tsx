@@ -56,36 +56,43 @@ function fmtMMSS(sec: number): string {
  * 30:00. The clamp is now cardio-aware.
  */
 /*
- * Iter189v — Compute the guided-flow work-timer for a single exercise.
+ * Iter189v (refined per audit) — Compute the guided-flow work-timer.
  *
- * Contract:
- *   • If the exercise carries an explicit `duration_sec` / `work_sec`,
- *     honour it verbatim (subject to a light sanity ceiling).
- *   • Cardio / timed rows → 3-hour ceiling (long runs, 2h+ zone-2 rows).
- *   • Non-cardio holds  → 10-minute ceiling (side-plank, wall-sit).
- *   • Fallback for rep-based → 3s/rep clamped [20s, 90s].
+ * Priority order (highest wins):
+ *   1. logging_type ('timer' | 'cardio')  → `isCardioOrTimer` param
+ *   2. explicit `duration_sec` / `work_sec` on the exercise
+ *   3. parsed time-unit inside `reps` ("25 min", "5:00", "45s", …)
+ *   4. name-based `isCardioExercise` regex — LAST-RESORT only
  *
- * Iter189v bug fix: previously the ceiling was `timerLocked ? 10800 : 600`,
- * so an imported main-section cardio exercise with `duration_sec=1500`
- * but no library `logging_type` was clamped to 600s and displayed "10:00"
- * despite the coach prescribing 25 min. The ceiling now honours ANY
- * signal that the row is time-based (timerLocked, `isCardioExercise` name
- * regex, or `_repsLooksLikeTime` on the reps string).
+ * When ANY of 1–3 holds we trust the coach's explicit prescription and
+ * apply only a soft 3-hour sanity clamp. The 10-minute strength-hold
+ * clamp is reserved for exercises that fall to the name-regex fallback
+ * with an unusually large `duration_sec` — a defensive guard against
+ * bad data, not a prescription override.
  */
 function autopilotWorkSeconds(ex: any, targetReps: number, isCardioOrTimer: boolean): number {
   const explicit = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10);
-  // Iter189v · a reps string like "25 min" / "45 sec" / "5:00" is a
-  // strong hint the coach set this as time-based even when the library
-  // logging_type wasn't backfilled.
   const repsStr = String(ex?.reps || "");
   const repsLooksLikeTime =
     /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|hold|steady)\b|^\d+:\d+$/i.test(repsStr);
-  const timeLike = isCardioOrTimer || isCardioExercise(ex) || repsLooksLikeTime;
+
   if (explicit && explicit > 0) {
-    const ceiling = timeLike ? 10800 : 600;
+    // Priority 1–3: explicit structured data (logging_type / duration_sec /
+    // parsed reps). Trust the coach; only apply a soft 3-hour sanity max.
+    if (isCardioOrTimer || repsLooksLikeTime) {
+      return Math.max(10, Math.min(10800, explicit));
+    }
+    // Priority 4: name-regex fallback. Keep the 10-min hold clamp so a
+    // corrupt duration_sec on a rep-based row doesn't lock the client in.
+    const nameSaysCardio = isCardioExercise(ex);
+    const ceiling = nameSaysCardio ? 10800 : 600;
     return Math.max(10, Math.min(ceiling, explicit));
   }
-  if (isCardioOrTimer) return 60;
+
+  // No explicit duration_sec — decide via lower-priority signals.
+  if (isCardioOrTimer) return 60;             // 1. logging_type
+  if (repsLooksLikeTime) return 60;           // 3. parsed reps (rare — enricher fills duration_sec)
+  if (isCardioExercise(ex)) return 60;        // 4. name-regex last resort
   const est = Math.round((targetReps || 10) * 3);
   return Math.max(20, Math.min(90, est));
 }
@@ -975,20 +982,20 @@ function WorkPanel({
   const suggestedT = suggested ? `${suggested}kg × ${targetReps}` : null;
   const progReason = prev?.progression_hint?.reason;
   const workPct = workSec ? Math.max(0, Math.min(100, Math.round(((workSec - workTimer) / workSec) * 100))) : 0;
-  // Iter189v · Show TIME badge whenever the exercise is time-driven —
-  // even if the library `logging_type` wasn't backfilled. Signals we
-  // trust (in order): explicit logging_type ('timer'|'cardio'), explicit
-  // `duration_sec` set by the importer/coach, reps string carrying a
-  // time unit ("25 min", "45 sec", "5:00"), or a cardio name match.
-  // Previously this only checked `timerLocked` so an imported main-
-  // section cardio (Zone 2 Walk/Light Jog with reps="25 min", no
-  // library logging_type) rendered "25 reps" and clamped its timer.
+  // Iter189v (refined per audit) — Show TIME badge whenever the row is
+  // time-driven. Priority: logging_type → duration_sec → parsed reps →
+  // (name-regex only as last-resort fallback). Structured data wins so
+  // the badge never depends on name matching when explicit fields exist.
+  const _explicitDur = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10) > 0;
   const _repsLooksLikeTime =
     /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|hr|hrs|hour|hours|hold|steady)\b|^\d+:\d+$/i.test(
       String(ex?.reps || ""),
     );
-  const _explicitDur = parseInt(String(ex?.work_sec || ex?.duration_sec || 0), 10) > 0;
-  const showTimeBadge = timerLocked || isCardio || _explicitDur || _repsLooksLikeTime;
+  const showTimeBadge =
+    timerLocked            // 1. logging_type (structured)
+    || _explicitDur        // 2. explicit duration_sec (structured)
+    || _repsLooksLikeTime  // 3. parsed reps text
+    || isCardio;           // 4. name-regex — last resort
 
   return (
     <View>

@@ -1,0 +1,34 @@
+{
+  "summary": "Iter189w — validated both fixes end-to-end. Backend 5/5 pytest pass (test_iter189w_delete_and_auto_approve.py). A) DELETE /api/messages/{message_id} — coach can delete own message (200 {ok:true, deleted_id}), the deleted row disappears from both coach's and client's GET /api/messages/{other_id} threads; coach trying to delete client's message returns 403 with 'forbidden — only the sender can delete a message'; unknown id returns 404 'message_not_found'. B) _tick_auto_approve_stale_reviews is neutralised — direct call on live db returns 0 without touching rosters or messages; a seeded roster with coach_review_state='awaiting_review' + awaiting_review_since 48h old stays 'awaiting_review' after the tick and no auto_kind='roster_auto_approve' Louis message is inserted; grep confirms the reminder-tick block in /app/backend/server.py:14288 is fully commented out. C) Coach explicit approval still works — POST /api/coach/rosters/{rid}/review outcome=approved flips coach_review_state to 'coach_approved' and NO auto_kind='roster_auto_approve' Louis message is inserted (that path only fired from auto_24h which is now dead). Frontend UI (mobile 390×844 as coach louis@crewfit.net): long-press on msg-bubble-mine-{id} (>350ms hold) opens the confirm modal with the correct title 'Delete message?' AND the exact body copy 'This will remove the message from both your view and the client's view. This can't be undone.'; CANCEL keeps the bubble; long-press again + DELETE removes the bubble optimistically and a 'Message deleted' success toast appears; after page reload the message is still gone (server-side delete confirmed). Client-bubble negative case is enforced structurally in code (messages.tsx line 486: `onLongPress={isMine ? () => deleteMessage(m) : undefined}`) — the UI test could not re-open the same client thread post-reload (coach landed on a different conv 'App Store Reviewer') so the theirs-bubble long-press was skipped at runtime, but the guarantee is code-level and cannot regress without editing that ternary.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter189w_delete_and_auto_approve.py",
+    "/app/test_reports/pytest/iter189w_results.xml"
+  ],
+  "action_items": [
+    "Optional: add a testID to the confirm-modal CANCEL / DELETE Pressables in /app/frontend/src/lib/ux.tsx (e.g. testID='confirm-cancel' / 'confirm-confirm') so future e2e tests can grab them without text matching. Currently harmless — the copy is stable and unique enough.",
+    "Optional: add testID='msg-bubble-content-{id}' or wrap the delete affordance in a visible marker (e.g. hint pill 'Long-press to delete') so first-time coach discovery of the delete gesture is better — long-press is not discoverable without accessibilityHint being surfaced."
+  ],
+  "critical_code_review_comments": [
+    "server.py msg_delete (lines 10711-10732): sender check inspects BOTH from_user_id AND sender_id — matches the mixed-shape docs some legacy messages carry. Attachment cascade is scoped to `uploaded_by: user['id']` which is safe (won't nuke someone else's uploads even if the same attachment id was cross-referenced). Hard delete is a raw delete_one; consider soft-delete + tombstone if audit becomes a concern, but per spec this is intentional.",
+    "feature_roster_coach_review._tick_auto_approve_stale_reviews returns 0 immediately — legacy body preserved as _tick_auto_approve_stale_reviews_LEGACY_DISABLED for reference. Clean pattern.",
+    "server.py:14286-14290: tick call is commented out in the reminder-tick coroutine — grep in test B3 asserts no uncommented occurrence remains. Coach explicit endpoint at feature_roster_coach_review.py:464 still directly calls _do_approve(actor='coach') which fires notify_roster_approved but bypasses the auto-message insert (that only lived on the auto_24h branch, now dead).",
+    "messages.tsx line 486: `onLongPress={isMine ? () => deleteMessage(m) : undefined}` is the sole gate keeping coaches from deleting client bubbles — it should stay a compile-time constant so refactors can't accidentally wire it for both sides. Consider extracting `const canDelete = isMine;` for readability but functionally correct.",
+    "The optimistic-remove rollback in deleteMessage (setThread(prev) on catch) captures `prev` as `thread` in a useCallback dep — good, but if the thread is re-fetched between click and API-fail, the rollback could resurrect a stale list. Low risk given the hard-delete semantics."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter189w_delete_and_auto_approve.py (new — 5 tests, all pass)"
+  ],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% on positive paths (dialog copy + cancel + delete + toast + reload persistence); negative test on theirs-bubble skipped at runtime but enforced by code (messages.tsx:486)"},
+  "seed_data_creation": "Runtime-only: seeded two /api/messages docs via API (one coach→client, one client→coach) and one throwaway roster doc with awaiting_review state. Both cleaned up in the test's finally block.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Coach messages UI lives at /(coach)/messages (Expo Router — the web preview navigates to /messages after login as Louis). Login page is at /(auth)/login; the app's root URL '/' lands on a welcome/marketing screen — navigate directly to /(auth)/login or /login to reach the sign-in form. The confirm() util (src/lib/ux.tsx) renders a real Modal on web (not window.confirm) because RN-Web's Alert.alert with buttons is a no-op; text 'Delete message?' + 'CANCEL' / 'DELETE' Pressables are your test hooks. Long-press requires >=350ms via delayLongPress — page.mouse.down / wait_for_timeout(600) / mouse.up works reliably. Do not use page.click() or dispatch_event('mousedown') alone — Pressable measures the actual hold interval. Coach test creds: louis@crewfit.net / Louis123! (id 4ceee276-bf51-4f9c-bfdd-f1ef8e266f8b). Client: client@crewfit.com / Client123! (id 0b0651e2-3453-4c39-b858-b377e8284f8c). Coach explicit approve endpoint is POST /api/coach/rosters/{rid}/review body={outcome:'approved'|'rejected'} — resulting state is 'coach_approved' (not 'approved') per state machine.",
+  "rca_of_issue": "Not a bug fix — this is verification of two implementation fixes (delete-message + neutralise auto-approve). Both fixes are correctly implemented and behave per spec across backend + frontend."
+}

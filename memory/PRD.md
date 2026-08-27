@@ -41,6 +41,12 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
 - Backend: FastAPI + Motor (MongoDB), JWT auth, bcrypt, httpx.
 - LLM: emergentintegrations — Claude Sonnet 4.5 (workouts) + Gemini 2.5 Flash (roster + meal photo).
 
+## Iter190 — Coach Video MP4 Compatibility
+- Added `imageio-ffmpeg` to backend dependencies (ships a static ffmpeg binary; no system packages required).
+- `_save_coach_video` now transcodes WebM uploads to H.264/AAC MP4 (+faststart) before storage; QuickTime .mov is passed through unchanged; hard-fallback to raw WebM only if ffmpeg errors.
+- `GET /coach/videos/{id}/file` now emits `Accept-Ranges: bytes` and honours `Range: bytes=start-end` (single-range, incl. suffix ranges) with proper 206/416 responses so native iOS/Android <video> players can seek/stream.
+- Migration script `/app/backend/scripts/migrate_coach_videos_webm_to_mp4.py` retro-actively converts existing WebM videos in R2 to MP4, preserves the WebM originals under `legacy_webm_key`, and stamps `migrated_to_mp4_at` for idempotent re-runs. Supports `--dry-run` and `--limit N`.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

@@ -260,6 +260,18 @@ async def mark_awaiting_coach_review(db, roster: dict) -> None:
 # locked out if the coach never opens the app. Runs from the reminder tick.
 # ---------------------------------------------------------------------------
 async def _tick_auto_approve_stale_reviews(db, enqueue_message=None) -> int:
+    """DISABLED (iter189w) — auto-approval removed per user request.
+
+    A programme / roster must only become live when the coach explicitly
+    approves. No timer, no automatic status change, no automatic message
+    is sent from this path any more. Kept as a no-op stub so any legacy
+    caller (schedulers, tests) doesn't crash; returns 0 approvals every
+    time.
+    """
+    return 0
+
+
+async def _tick_auto_approve_stale_reviews_LEGACY_DISABLED(db, enqueue_message=None) -> int:  # noqa: N802
     """Flip any roster in `awaiting_review` older than 24 h → `approved`.
 
     Also drops a Louis chat message so the client sees something the moment

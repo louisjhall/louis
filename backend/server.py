@@ -29,7 +29,7 @@ import bcrypt
 import httpx
 import jwt
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, Request, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -10708,6 +10708,30 @@ async def msg_send(body: MessageBody, user: dict = Depends(current_user)):
         logger.exception("message draft trigger failed")
     return doc
 
+@api.delete("/messages/{message_id}")
+async def msg_delete(message_id: str, user: dict = Depends(current_user)):
+    """Iter189w · Delete a sent message. Sender-only. Removes the row so
+    both the sender and recipient views drop it immediately on next
+    fetch. Attachments bound to the message are cascaded so no orphans
+    linger.
+    """
+    m = await db.messages.find_one({"id": message_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "message_not_found")
+    if m.get("from_user_id") != user["id"] and m.get("sender_id") != user["id"]:
+        raise HTTPException(403, "forbidden — only the sender can delete a message")
+    try:
+        att_ids = m.get("attachment_ids") or []
+        if att_ids:
+            await db.message_attachments.delete_many(
+                {"id": {"$in": att_ids}, "uploaded_by": user["id"]},
+            )
+    except Exception:
+        logger.exception("message-delete attachment cleanup failed for %s", message_id)
+    await db.messages.delete_one({"id": message_id})
+    return {"ok": True, "deleted_id": message_id}
+
+
 @api.get("/messages/{other_id}")
 async def msg_thread(other_id: str, user: dict = Depends(current_user)):
     rows = await db.messages.find(
@@ -13678,6 +13702,51 @@ async def coach_generate_welcome_script(
 
 
 # ---- Coach Videos (storage abstraction) -----------------------------------
+def _transcode_webm_to_mp4_sync(webm_bytes: bytes) -> bytes:
+    """Transcode WebM bytes → MP4 (H.264/AAC + faststart) using the ffmpeg
+    binary bundled by imageio-ffmpeg. Runs synchronously; call from a worker
+    thread. Raises RuntimeError on ffmpeg failure.
+    """
+    import subprocess
+    import imageio_ffmpeg  # local import — resolved lazily so cold-start is cheap
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    # Use two temp files (input + output) — piping mp4 through stdout is
+    # unreliable because the mp4 muxer needs to seek back to write the
+    # moov atom (which +faststart also relocates to the front).
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tin, \
+         tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tout:
+        in_path, out_path = tin.name, tout.name
+        tin.write(webm_bytes)
+        tin.flush()
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg, "-y", "-loglevel", "error",
+                "-i", in_path,
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k",
+                "-movflags", "+faststart",
+                out_path,
+            ],
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"ffmpeg failed (rc={proc.returncode}): {err}")
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            Path(in_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            Path(out_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dict:
     """Persist a coach video via the abstracted storage driver so it survives
     server restarts and container churn.
@@ -13685,6 +13754,11 @@ async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dic
     Iter 155 — routed through `storage.py`. When `R2_*` env vars are set,
     `storage` is the R2 driver and bytes land in the CrewFit R2 bucket.
     Falls back to the on-disk driver in dev.
+
+    Iter190 — Incoming WebM (Chrome/Firefox MediaRecorder default) is
+    transcoded to MP4 (H.264/AAC, +faststart) before storage so native
+    iOS/Android players can play the file without a compatibility shim.
+    QuickTime .mov is left alone — iOS players handle it natively.
 
     Returns::
 
@@ -13703,7 +13777,16 @@ async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dic
     content_type = "video/mp4"
     lower = (mime or "").lower()
     if "webm" in lower:
-        ext, content_type = "webm", "video/webm"
+        # Transcode WebM → MP4 in a worker thread so the event loop stays hot.
+        try:
+            loop = asyncio.get_running_loop()
+            video_bytes = await loop.run_in_executor(
+                None, _transcode_webm_to_mp4_sync, video_bytes,
+            )
+            ext, content_type = "mp4", "video/mp4"
+        except Exception:
+            logger.exception("webm→mp4 transcode failed for %s — falling back to raw webm", video_id)
+            ext, content_type = "webm", "video/webm"
     elif "quicktime" in lower or "mov" in lower:
         ext, content_type = "mov", "video/quicktime"
     # Import locally so we don't perturb the top-of-file import block; the
@@ -13886,7 +13969,7 @@ async def video_viewed(video_id: str, user: dict = Depends(current_user)):
 
 
 @api.get("/coach/videos/{video_id}/file")
-async def coach_video_file(video_id: str):
+async def coach_video_file(video_id: str, request: Request):
     """Serve a coach-recorded video.
 
     Iter 155 — routed through `storage.py`. Behaviour:
@@ -13894,6 +13977,13 @@ async def coach_video_file(video_id: str):
       2. Read the bytes via the active storage driver (R2 or disk).
       3. Fall back to the legacy on-disk directory for videos recorded
          BEFORE the storage migration (docs without a `storage_key`).
+
+    Iter190 — Emits `Accept-Ranges: bytes` on every 200 response and
+    honours `Range: bytes=start-end` by slicing the buffer and returning
+    a 206 Partial Content response so native <video> players (iOS
+    AVPlayer, Android ExoPlayer) can seek/stream instead of downloading
+    the whole file up-front.
+
     No auth for MVP — swap for signed URLs when we start putting these
     behind a public CDN.
     """
@@ -13907,26 +13997,93 @@ async def coach_video_file(video_id: str):
     )
     mimes = {"mp4": "video/mp4", "webm": "video/webm", "mov": "video/quicktime"}
 
+    data: Optional[bytes] = None
+    media_type = "video/mp4"
+    file_ext = "mp4"
+
     if doc and doc.get("storage_key"):
         data = await storage.read_bytes(doc["storage_key"])
         if data is not None:
-            media_type = doc.get("file_mime") or mimes.get(doc.get("file_ext") or "", "video/mp4")
-            return Response(
-                content=data,
-                media_type=media_type,
-                headers={
-                    "Cache-Control": "private, max-age=3600",
-                    "Content-Disposition": f'inline; filename="{video_id}.{doc.get("file_ext") or "mp4"}"',
-                },
-            )
+            file_ext = doc.get("file_ext") or "mp4"
+            media_type = doc.get("file_mime") or mimes.get(file_ext, "video/mp4")
 
     # Legacy fallback: on-disk file laid down before the migration.
-    for ext in ("mp4", "webm", "mov"):
-        p = COACH_VIDEO_DIR / f"{video_id}.{ext}"
-        if p.exists():
-            return FileResponse(str(p), media_type=mimes[ext])
+    if data is None:
+        for ext in ("mp4", "webm", "mov"):
+            p = COACH_VIDEO_DIR / f"{video_id}.{ext}"
+            if p.exists():
+                try:
+                    data = p.read_bytes()
+                    file_ext = ext
+                    media_type = mimes[ext]
+                    break
+                except Exception:
+                    logger.exception("coach video legacy read failed for %s", p)
 
-    raise HTTPException(404, "video file not found")
+    if data is None:
+        raise HTTPException(404, "video file not found")
+
+    total = len(data)
+    filename = f"{video_id}.{file_ext}"
+    range_header = request.headers.get("range") or request.headers.get("Range")
+
+    # Handle HTTP Range requests (RFC 7233) — required for native players
+    # to seek. We only support a single `bytes=start-end` range which is
+    # what iOS/Android request in practice.
+    if range_header:
+        try:
+            units, _, rng = range_header.partition("=")
+            if units.strip().lower() != "bytes":
+                raise ValueError("unsupported range units")
+            first_range = rng.split(",")[0].strip()
+            start_s, _, end_s = first_range.partition("-")
+            if start_s == "":
+                # Suffix range: "-500" → last 500 bytes.
+                length = int(end_s)
+                if length <= 0:
+                    raise ValueError("invalid suffix length")
+                start = max(0, total - length)
+                end = total - 1
+            else:
+                start = int(start_s)
+                end = int(end_s) if end_s else total - 1
+            if start > end or start >= total:
+                # RFC 7233 §4.4 — 416 Range Not Satisfiable.
+                return Response(
+                    status_code=416,
+                    headers={
+                        "Content-Range": f"bytes */{total}",
+                        "Accept-Ranges": "bytes",
+                    },
+                )
+            end = min(end, total - 1)
+            chunk = data[start:end + 1]
+            return Response(
+                content=chunk,
+                status_code=206,
+                media_type=media_type,
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(chunk)),
+                    "Cache-Control": "private, max-age=3600",
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                },
+            )
+        except (ValueError, TypeError):
+            # Malformed Range — fall through to full 200 response.
+            pass
+
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(total),
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": f'inline; filename="{filename}"',
+        },
+    )
 
 
 @api.get("/videos/for-me")
@@ -14253,14 +14410,17 @@ async def _tick_reminders_all() -> None:
         await feature_roster_lifecycle._tick_roster_no_replacement_warning()
     except Exception:
         logger.exception("roster no-replacement tick failed")
-    # Iter186 · Auto-approve any roster stuck in `awaiting_review` for
-    # more than 24 h. Safety net so clients are never permanently locked
-    # out of re-uploading if the coach never opens the app.
-    try:
-        import feature_roster_coach_review as _rcr
-        await _rcr._tick_auto_approve_stale_reviews(db)
-    except Exception:
-        logger.exception("roster coach-review auto-approve tick failed")
+    # Iter189w · Auto-approval REMOVED per user request. A programme /
+    # roster must only become live when the coach explicitly approves.
+    # No timer, no automatic status change, no background job promoting
+    # a programme to live, and no automatic client message. The coach's
+    # manual approval is the sole trigger. Tick preserved below only
+    # for future reintroduction — currently a no-op.
+    # try:
+    #     import feature_roster_coach_review as _rcr
+    #     await _rcr._tick_auto_approve_stale_reviews(db)
+    # except Exception:
+    #     logger.exception("roster coach-review auto-approve tick failed")
     try:
         await feature_social_studio._tick_daily_social()
     except Exception:

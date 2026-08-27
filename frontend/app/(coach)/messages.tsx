@@ -28,7 +28,7 @@ import * as ImagePicker from "expo-image-picker";
 import Constants from "expo-constants";
 import { api, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
-import { toast } from "@/src/lib/ux";
+import { toast, confirm } from "@/src/lib/ux";
 import { MessageAttachmentBubble } from "@/src/components/MessageAttachmentBubble";
 
 /* -------------------------------------------------------------------------- */
@@ -295,6 +295,32 @@ export default function CoachMessagesScreen() {
     router.push(`/coach/client/${activeId}/workspace${q}` as any);
   };
 
+  // Iter189w · Long-press → confirm → DELETE a message the coach sent.
+  // Removes the row from both coach & client threads immediately (the
+  // backend delete is authoritative — the client's next fetch will
+  // drop it). We only expose this on the sender's own bubbles so a
+  // coach cannot delete a client's message.
+  const deleteMessage = useCallback(async (m: ThreadMessage) => {
+    const ok = await confirm({
+      title: "Delete message?",
+      message: "This will remove the message from both your view and the client's view. This can't be undone.",
+      confirmLabel: "DELETE",
+      cancelLabel: "CANCEL",
+      destructive: true,
+    });
+    if (!ok) return;
+    // Optimistic remove — the API is a hard delete so failure rolls back.
+    const prev = thread;
+    setThread((rows) => rows.filter((r) => r.id !== m.id));
+    try {
+      await api(`/messages/${m.id}`, { method: "DELETE" });
+      toast("Message deleted", "success");
+    } catch (e: any) {
+      setThread(prev);
+      toast(`Delete failed: ${e?.message || String(e)}`, "error");
+    }
+  }, [thread]);
+
   /* Render --------------------------------------------------------------- */
   const totalUnread = convs.reduce((n, c) => n + c.unread_count, 0);
   const showRight = isDesktop; // hide right panel on medium screens per spec §28
@@ -456,7 +482,13 @@ export default function CoachMessagesScreen() {
                           </View>
                         ) : null}
                         <View style={[styles.bubbleRow, isMine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-                          <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}>
+                          <Pressable
+                            onLongPress={isMine ? () => deleteMessage(m) : undefined}
+                            delayLongPress={350}
+                            style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
+                            testID={isMine ? `msg-bubble-mine-${m.id}` : `msg-bubble-theirs-${m.id}`}
+                            accessibilityHint={isMine ? "Long-press to delete this message" : undefined}
+                          >
                             {/* Iter 165f · Delegate attachment rendering to the
                                 shared <MessageAttachmentBubble /> exactly as
                                 the client thread does. The previous inline
@@ -481,7 +513,7 @@ export default function CoachMessagesScreen() {
                               <Text style={[styles.bubbleText, isMine ? { color: "#fff" } : { color: theme.color.text }]}>{m.text}</Text>
                             ) : null}
                             <Text style={[styles.bubbleMeta, isMine && { color: "rgba(255,255,255,0.7)" }]}>{bubbleTime(m.created_at)}</Text>
-                          </View>
+                          </Pressable>
                         </View>
                       </React.Fragment>
                     );

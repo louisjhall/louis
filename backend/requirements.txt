@@ -28,3 +28,4 @@ emergentintegrations==0.2.0
 sentry-sdk==2.64.0
 httpx>=0.28.1
 Pillow>=11.0.0
+imageio-ffmpeg>=0.6.0

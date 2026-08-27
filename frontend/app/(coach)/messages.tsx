@@ -483,11 +483,12 @@ export default function CoachMessagesScreen() {
                         ) : null}
                         <View style={[styles.bubbleRow, isMine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                           <Pressable
+                            onPress={isMine ? () => deleteMessage(m) : undefined}
                             onLongPress={isMine ? () => deleteMessage(m) : undefined}
                             delayLongPress={350}
                             style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
                             testID={isMine ? `msg-bubble-mine-${m.id}` : `msg-bubble-theirs-${m.id}`}
-                            accessibilityHint={isMine ? "Long-press to delete this message" : undefined}
+                            accessibilityHint={isMine ? "Tap or long-press to delete this message" : undefined}
                           >
                             {/* Iter 165f · Delegate attachment rendering to the
                                 shared <MessageAttachmentBubble /> exactly as

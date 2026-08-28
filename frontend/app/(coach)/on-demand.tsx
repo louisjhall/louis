@@ -67,8 +67,11 @@ type EditorState = {
   thumbnail?: MediaPayload;
   thumbnailPreviewUri?: string;
   media?: MediaPayload;
-  mediaFileLabel?: string;       // "workout.json (12 KB)" or filename
+  mediaFileLabel?: string;       // "workout.mp4 (12 KB)" or filename — video/audio only now
   workout_json?: any;
+  workoutJsonText?: string;      // raw paste buffer (workout content only)
+  workoutJsonError?: string | null;
+  workoutJsonAutoNote?: string | null;   // "Auto-populated title, duration, category" etc.
 };
 
 /* ---------------------------------------------------------------------- */
@@ -143,8 +146,16 @@ export default function CoachOnDemandScreen() {
         duration_seconds: it.duration_seconds != null ? String(it.duration_seconds) : "",
         published: it.published,
         workout_json: it.workout_json,
+        // For workouts: seed the paste area with the current JSON so the coach
+        // can edit it in-place. For video/audio: keep the "media (loaded)"
+        // label so they know a file is already attached.
+        workoutJsonText: it.content_type === "workout" && it.workout_json
+          ? safeStringify(it.workout_json)
+          : undefined,
+        workoutJsonError: null,
+        workoutJsonAutoNote: null,
         mediaFileLabel: it.content_type === "workout"
-          ? (it.workout_json ? "workout.json (loaded)" : undefined)
+          ? undefined
           : (it.media_storage_key ? "media (loaded)" : undefined),
       });
     } catch (e: any) {
@@ -372,28 +383,96 @@ function ItemEditorModal({
   };
 
   const pickMedia = async () => {
-    const isWorkout = state.content_type === "workout";
+    // Iter192 · Workout content is now paste-only (see `handleWorkoutJsonPaste`
+    // below). This function only handles video / audio.
     const isVideo = state.content_type === "video";
-    const type = isWorkout ? "application/json" : isVideo ? "video/*" : "audio/*";
+    const type = isVideo ? "video/*" : "audio/*";
     try {
       const res = await DocumentPicker.getDocumentAsync({ type, copyToCacheDirectory: true });
       if (res.canceled) return;
       const a = res.assets[0];
-      if (isWorkout) {
-        const raw = await FileSystem.readAsStringAsync(a.uri, { encoding: "utf8" });
-        let parsed: any;
-        try { parsed = JSON.parse(raw); }
-        catch (e: any) { Alert.alert("Invalid JSON", e?.message || String(e)); return; }
-        setField("workout_json", parsed);
-        setField("mediaFileLabel", `${a.name} (${prettySize(a.size)})`);
-      } else {
-        const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: "base64" });
-        setField("media", { file_b64: b64, file_mime: a.mimeType || (isVideo ? "video/mp4" : "audio/mpeg"), file_name: a.name });
-        setField("mediaFileLabel", `${a.name} (${prettySize(a.size)})`);
-      }
+      const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: "base64" });
+      setField("media", { file_b64: b64, file_mime: a.mimeType || (isVideo ? "video/mp4" : "audio/mpeg"), file_name: a.name });
+      setField("mediaFileLabel", `${a.name} (${prettySize(a.size)})`);
     } catch (e: any) {
       Alert.alert("Pick failed", e?.message || String(e));
     }
+  };
+
+  /**
+   * Handle the coach pasting/typing workout JSON into the textarea.
+   *
+   * Behaviour (matches the "same way workout JSON is handled elsewhere"
+   * requirement — see `/app/(coach)/coach/client/[id]/import.tsx`):
+   *
+   *  • Always update the text buffer so what the coach sees is what they
+   *    typed — no reformatting.
+   *  • Empty text → clear the parsed payload + errors + auto-note.
+   *  • Try `JSON.parse`. If it fails, keep the last valid `workout_json`
+   *    intact (they may still save it) but surface the parse error inline.
+   *  • On successful parse, unwrap the envelope shape (`{ workouts: [w0, ...] }`)
+   *    and pull field candidates out of the FIRST workout — same convention
+   *    the programme-import flow uses.
+   *  • Auto-populate `title`, `description`, `duration_seconds`, and
+   *    `category_id` (by fuzzy-matching workout_type/category against the
+   *    coach's own category list). Every populated field can still be
+   *    edited manually afterwards.
+   */
+  const handleWorkoutJsonPaste = (raw: string) => {
+    setState((s) => {
+      const next: EditorState = { ...s, workoutJsonText: raw };
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        next.workout_json = undefined;
+        next.workoutJsonError = null;
+        next.workoutJsonAutoNote = null;
+        return next;
+      }
+      let parsed: any;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch (e: any) {
+        next.workoutJsonError = `Invalid JSON — ${e?.message || String(e)}`;
+        return next;
+      }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        next.workoutJsonError = "Expected a JSON object at the top level.";
+        return next;
+      }
+      next.workout_json = parsed;
+      next.workoutJsonError = null;
+
+      const extracted = extractWorkoutJsonFields(parsed);
+      const notes: string[] = [];
+
+      if (typeof extracted.title === "string" && extracted.title.trim()) {
+        next.title = extracted.title.trim();
+        notes.push("title");
+      }
+      if (typeof extracted.description === "string" && extracted.description.trim()) {
+        next.description = extracted.description.trim();
+        notes.push("description");
+      }
+      if (typeof extracted.duration_seconds === "number" && extracted.duration_seconds >= 0) {
+        next.duration_seconds = String(Math.round(extracted.duration_seconds));
+        notes.push("duration");
+      }
+      if (extracted.category_hint) {
+        const hint = extracted.category_hint.trim().toLowerCase();
+        const match = categories.find(
+          (c) => c.name.toLowerCase() === hint || c.slug === hint,
+        );
+        if (match) {
+          next.category_id = match.id;
+          notes.push("category");
+        }
+      }
+
+      next.workoutJsonAutoNote = notes.length
+        ? `Auto-populated: ${notes.join(", ")}. Override any field as needed.`
+        : null;
+      return next;
+    });
   };
 
   const toggleTag = (tagId: string) => {
@@ -406,13 +485,17 @@ function ItemEditorModal({
     if (!state.title.trim()) { Alert.alert("Title required"); return; }
     if (state.mode === "create") {
       if (state.content_type === "workout" && !state.workout_json) {
-        Alert.alert("Workout JSON required", "Pick a JSON file for this workout item.");
+        Alert.alert("Workout JSON required", "Paste a valid workout JSON in the text box below.");
         return;
       }
       if (state.content_type !== "workout" && !state.media) {
         Alert.alert(`${state.content_type === "video" ? "Video" : "Audio"} file required`);
         return;
       }
+    }
+    if (state.content_type === "workout" && state.workoutJsonError) {
+      Alert.alert("Fix JSON first", state.workoutJsonError);
+      return;
     }
     setSaving(true);
     try {
@@ -577,21 +660,48 @@ function ItemEditorModal({
             </Pressable>
 
             {/* Media / workout JSON */}
-            <Text style={styles.label}>
-              {state.content_type === "workout" ? "WORKOUT JSON" : state.content_type === "video" ? "VIDEO FILE" : "AUDIO FILE"}
-            </Text>
-            <Pressable onPress={pickMedia} style={styles.pickerBtn} testID="od-editor-pick-media">
-              <Ionicons
-                name={state.content_type === "workout" ? "document-outline"
-                    : state.content_type === "video"   ? "videocam-outline"
-                    :                                    "headset-outline"}
-                size={20} color={theme.color.brand}
-              />
-              <Text style={styles.pickerBtnText}>{state.mediaFileLabel || "Choose file"}</Text>
-            </Pressable>
-            {state.mode === "edit" && !state.media && state.content_type !== "workout" ? (
-              <Text style={styles.hint}>Leave blank to keep the existing file.</Text>
-            ) : null}
+            {state.content_type === "workout" ? (
+              <>
+                <Text style={styles.label}>WORKOUT JSON</Text>
+                <TextInput
+                  style={[styles.input, styles.jsonArea]}
+                  value={state.workoutJsonText || ""}
+                  onChangeText={handleWorkoutJsonPaste}
+                  multiline
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
+                  placeholder='Paste your workout JSON here, e.g. {"title":"Layover Mobility","duration_min":15,...}'
+                  placeholderTextColor={theme.color.textDim}
+                  testID="od-editor-workout-json"
+                />
+                {state.workoutJsonError ? (
+                  <Text style={[styles.hint, { color: theme.color.brand }]}>{state.workoutJsonError}</Text>
+                ) : state.workoutJsonAutoNote ? (
+                  <Text style={[styles.hint, { color: theme.color.brand }]}>{state.workoutJsonAutoNote}</Text>
+                ) : (
+                  <Text style={styles.hint}>
+                    Title, description, duration and category will be auto-filled from the JSON. You can override any field before saving.
+                  </Text>
+                )}
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>
+                  {state.content_type === "video" ? "VIDEO FILE" : "AUDIO FILE"}
+                </Text>
+                <Pressable onPress={pickMedia} style={styles.pickerBtn} testID="od-editor-pick-media">
+                  <Ionicons
+                    name={state.content_type === "video" ? "videocam-outline" : "headset-outline"}
+                    size={20} color={theme.color.brand}
+                  />
+                  <Text style={styles.pickerBtnText}>{state.mediaFileLabel || "Choose file"}</Text>
+                </Pressable>
+                {state.mode === "edit" && !state.media ? (
+                  <Text style={styles.hint}>Leave blank to keep the existing file.</Text>
+                ) : null}
+              </>
+            )}
 
             {/* Publish switch */}
             <View style={styles.pubRow}>
@@ -767,6 +877,74 @@ function prettySize(bytes?: number | null) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Pretty-print a workout JSON object for the paste area. Falls back to a
+ * raw string if the input somehow isn't serialisable.
+ */
+function safeStringify(obj: any): string {
+  try { return JSON.stringify(obj, null, 2); }
+  catch { return String(obj ?? ""); }
+}
+
+/**
+ * Pull the fields we know about out of a workout JSON payload. Handles
+ * two shapes seen across the app:
+ *
+ *   1. Envelope shape from the programme importer:
+ *          { "$schema": "...", "meta": {...}, "workouts": [ {...}, ... ] }
+ *      → we take `workouts[0]` as the source workout.
+ *   2. A single workout object:
+ *          { "title": "...", "duration_min": 15, "workout_type": "...", ... }
+ *
+ * Returned fields:
+ *   • title            — from `.title`
+ *   • description      — from `.description` or `.coach_notes`
+ *   • duration_seconds — from `.duration_seconds` OR `.duration_sec` OR
+ *                        `.duration_min * 60` OR `.duration * 60` (only if
+ *                        the raw `.duration` looks like minutes, i.e. < 300)
+ *   • category_hint    — from `.category` OR `.workout_type` (fuzzy-match
+ *                        against the coach's category list by the caller)
+ */
+function extractWorkoutJsonFields(obj: any): {
+  title?: string;
+  description?: string;
+  duration_seconds?: number;
+  category_hint?: string;
+} {
+  if (!obj || typeof obj !== "object") return {};
+  const wk = Array.isArray(obj?.workouts) && obj.workouts.length > 0 ? obj.workouts[0] : obj;
+  if (!wk || typeof wk !== "object") return {};
+
+  const out: {
+    title?: string;
+    description?: string;
+    duration_seconds?: number;
+    category_hint?: string;
+  } = {};
+
+  if (typeof wk.title === "string") out.title = wk.title;
+  if (typeof wk.description === "string") out.description = wk.description;
+  else if (typeof wk.coach_notes === "string") out.description = wk.coach_notes;
+
+  if (typeof wk.duration_seconds === "number") out.duration_seconds = wk.duration_seconds;
+  else if (typeof wk.duration_sec === "number") out.duration_seconds = wk.duration_sec;
+  else if (typeof wk.duration_min === "number") out.duration_seconds = wk.duration_min * 60;
+  else if (typeof wk.duration === "number" && wk.duration > 0 && wk.duration < 300) {
+    // Ambiguous `duration` — treat < 300 as minutes to match the rest of
+    // the app's parsing convention (durations of "25" meaning 25 min).
+    out.duration_seconds = wk.duration * 60;
+  } else if (typeof wk.duration === "number") {
+    out.duration_seconds = wk.duration;
+  }
+
+  if (typeof wk.category === "string" && wk.category.trim()) {
+    out.category_hint = wk.category;
+  } else if (typeof wk.workout_type === "string" && wk.workout_type.trim()) {
+    out.category_hint = wk.workout_type;
+  }
+  return out;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -949,6 +1127,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   textarea: { minHeight: 88, textAlignVertical: "top" },
+  jsonArea: {
+    minHeight: 180,
+    textAlignVertical: "top",
+    fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
+    fontSize: 12,
+    lineHeight: 18,
+  },
   segRow: { flexDirection: "row", gap: 8 },
   segBtn: {
     flex: 1,

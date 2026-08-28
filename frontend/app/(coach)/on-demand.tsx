@@ -410,7 +410,18 @@ function ItemEditorModal({
       const res = await DocumentPicker.getDocumentAsync({ type: "image/*", copyToCacheDirectory: true });
       if (res.canceled) return;
       const a = res.assets[0];
-      const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: "base64" });
+      // Iter195 · Cross-platform base64 read. `FileSystem.readAsStringAsync`
+      // on WEB (where the coach dashboard runs in production via
+      // DesktopShell) does not reliably read the blob URIs that
+      // `DocumentPicker` returns — it silently produces an empty string,
+      // so we were uploading 0-byte thumbnails to R2. The
+      // fetch → blob → FileReader.readAsDataURL pattern works on native
+      // AND web (see CrewBaseComposer / videos.tsx for the same helper).
+      const b64 = await fileUriToBase64(a.uri);
+      if (!b64) {
+        Alert.alert("Pick failed", "Could not read the selected image. Please try a different file.");
+        return;
+      }
       const mime = a.mimeType || "image/jpeg";
       setField("thumbnail", { file_b64: b64, file_mime: mime, file_name: a.name });
       setField("thumbnailPreviewUri", a.uri);
@@ -914,6 +925,31 @@ function prettySize(bytes?: number | null) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Read a file URI (from DocumentPicker) into a pure base64 string.
+ *
+ * `FileSystem.readAsStringAsync` on WEB does NOT support the blob URIs
+ * that DocumentPicker returns — it silently resolves to an empty
+ * string, producing a 0-byte upload. The `fetch → blob → FileReader`
+ * flow works on both native AND web because native runtime handlers
+ * accept `file://` and `content://` URIs in `fetch`, and web accepts
+ * `blob:` URIs. Mirrors the helper in `CrewBaseComposer.tsx`.
+ */
+async function fileUriToBase64(uri: string): Promise<string> {
+  const res = await fetch(uri);
+  const blob = await res.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error("failed to read file"));
+    r.onload = () => {
+      const dataUri = String(r.result || "");
+      const comma = dataUri.indexOf(",");
+      resolve(comma >= 0 ? dataUri.slice(comma + 1) : dataUri);
+    };
+    r.readAsDataURL(blob);
+  });
 }
 
 /**

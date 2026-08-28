@@ -1,143 +1,394 @@
 /**
- * On Demand — Client tab (Stage 1 placeholder).
+ * On Demand — Client browse (Stage 2).
  *
- * The full member-facing browse / player UI lands in Stage 2. This tab
- * exists now so the bottom navigation is stable and can be enabled the
- * moment we have items to show. Keeping the placeholder here (rather
- * than an empty file) makes the tab feel intentional instead of broken.
+ * Replaces the Stage 1 placeholder with a real browse experience:
+ *   • Horizontal category rail across the top (prominent) — tapping
+ *     one filters the grid below. "All" is the default.
+ *   • Two-column grid of content cards. Each card shows the thumbnail
+ *     (or a type-appropriate placeholder), title, duration and a
+ *     content-type badge (WORKOUT / VIDEO / AUDIO).
+ *   • Only published items are visible — the backend enforces this on
+ *     `/api/on-demand/items` but the coach cache is also filtered
+ *     defensively client-side.
+ *
+ * Tap-through routing:
+ *   • Workout → POST /on-demand/items/{id}/start-workout, then push
+ *     `/workout/{new_id}/guided` so completion tracking uses the
+ *     existing system.
+ *   • Video   → push `/on-demand/{id}/video` — full-screen player.
+ *   • Audio   → push `/on-demand/{id}/audio` — simple in-app player.
  *
  * Route: /(client)/on-demand
  */
-import React from "react";
-import { View, Text, StyleSheet, ScrollView } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  View, Text, StyleSheet, ScrollView, Pressable, Image,
+  ActivityIndicator, RefreshControl, useWindowDimensions, Alert,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { theme } from "@/src/lib/theme";
+import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 
+type ContentType = "workout" | "video" | "audio";
+
+type Category = { id: string; name: string; slug: string };
+type Item = {
+  id: string;
+  title: string;
+  description?: string;
+  content_type: ContentType;
+  category_id: string | null;
+  tag_ids: string[];
+  duration_seconds: number | null;
+  thumbnail_storage_key?: string | null;
+  published: boolean;
+};
+
 export default function OnDemandClientScreen() {
+  const router = useRouter();
   const bottomPad = useBottomSafePad();
+  const { width } = useWindowDimensions();
+  const cardWidth = Math.floor((width - 20 * 2 - 12) / 2);   // 20 h-pad, 12 gap
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [items, setItems] = useState<Item[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string | "all">("all");
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  const [startingId, setStartingId] = useState<string | null>(null);
+
+  const reload = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    try {
+      const [cRes, iRes] = await Promise.all([
+        api<{ categories: Category[] }>("/on-demand/categories"),
+        // The public list endpoint returns published items only.
+        api<{ items: Item[] }>("/on-demand/items?limit=200"),
+      ]);
+      setCategories(cRes.categories || []);
+      setItems((iRes.items || []).filter((it) => it.published));
+    } catch (e: any) {
+      if (!silent) Alert.alert("Couldn't load On Demand", e?.message || String(e));
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // Fetch presigned thumbnail URLs lazily — only for items that have a
+  // thumbnail and aren't already resolved. Runs after the item list lands.
+  useEffect(() => {
+    const missing = items.filter(
+      (it) => it.thumbnail_storage_key && !thumbUrls[it.id],
+    );
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const it of missing) {
+        try {
+          const r = await api<{ url: string }>(`/on-demand/items/${it.id}/thumbnail-url`);
+          if (r?.url) next[it.id] = r.url;
+        } catch { /* ignore per-thumbnail failures */ }
+      }
+      if (!cancelled && Object.keys(next).length > 0) {
+        setThumbUrls((prev) => ({ ...prev, ...next }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [items, thumbUrls]);
+
+  // Category counts for the rail — "All" first, then categories with ≥ 1 item.
+  const rail = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const it of items) {
+      const key = it.category_id || "__uncat";
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    const chips: { id: string | "all"; label: string; count: number }[] = [
+      { id: "all", label: "All", count: items.length },
+    ];
+    for (const c of categories) {
+      const n = counts.get(c.id) || 0;
+      if (n > 0) chips.push({ id: c.id, label: c.name, count: n });
+    }
+    if (counts.get("__uncat")) {
+      chips.push({ id: "__uncat" as any, label: "Uncategorised", count: counts.get("__uncat") || 0 });
+    }
+    return chips;
+  }, [items, categories]);
+
+  const filtered = useMemo(() => {
+    if (activeCategory === "all") return items;
+    if ((activeCategory as any) === "__uncat") return items.filter((it) => !it.category_id);
+    return items.filter((it) => it.category_id === activeCategory);
+  }, [items, activeCategory]);
+
+  const onOpen = useCallback(async (item: Item) => {
+    if (item.content_type === "workout") {
+      try {
+        setStartingId(item.id);
+        const r = await api<{ workout_id: string }>(`/on-demand/items/${item.id}/start-workout`, {
+          method: "POST", body: {},
+        });
+        setStartingId(null);
+        router.push(`/workout/${r.workout_id}/guided` as any);
+      } catch (e: any) {
+        setStartingId(null);
+        Alert.alert("Couldn't start", e?.message || String(e));
+      }
+      return;
+    }
+    if (item.content_type === "video") {
+      router.push(`/on-demand/${item.id}/video` as any);
+      return;
+    }
+    if (item.content_type === "audio") {
+      router.push(`/on-demand/${item.id}/audio` as any);
+    }
+  }, [router]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.title}>ON DEMAND</Text>
-        <Text style={styles.subtitle}>Workouts · Videos · Audio</Text>
+        <Text style={styles.subtitle}>Curated by your coach</Text>
       </View>
 
+      {/* Category rail */}
       <ScrollView
-        contentContainerStyle={[styles.body, { paddingBottom: bottomPad + 24 }]}
-        showsVerticalScrollIndicator={false}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.railBody}
+        style={styles.rail}
       >
-        <View style={styles.hero} testID="on-demand-placeholder">
-          <View style={styles.heroIconWrap}>
-            <Ionicons name="library-outline" size={44} color={theme.color.brand} />
-          </View>
-          <Text style={styles.heroTitle}>Coming Soon</Text>
-          <Text style={styles.heroBody}>
-            Your coach is curating a library of on-demand workouts,
-            coaching videos and mindset audio for you. Check back shortly
-            — everything will show up here the moment it&apos;s published.
-          </Text>
-        </View>
-
-        <View style={styles.tilesRow}>
-          <PlaceholderTile icon="barbell-outline" label="Workouts" />
-          <PlaceholderTile icon="videocam-outline" label="Videos" />
-          <PlaceholderTile icon="headset-outline" label="Audio" />
-        </View>
+        {rail.map((c) => {
+          const active = activeCategory === c.id;
+          return (
+            <Pressable
+              key={String(c.id)}
+              onPress={() => setActiveCategory(c.id as any)}
+              style={[styles.chip, active && styles.chipActive]}
+              testID={`od-rail-${c.id}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                {c.label.toUpperCase()}
+              </Text>
+              <View style={[styles.chipCount, active && styles.chipCountActive]}>
+                <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>
+                  {c.count}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
       </ScrollView>
+
+      {loading ? (
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={theme.color.brand} />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={[styles.grid, { paddingBottom: bottomPad + 24 }]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); reload(true); }}
+              tintColor={theme.color.brand}
+            />
+          }
+        >
+          {filtered.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Ionicons name="albums-outline" size={38} color={theme.color.brand} />
+              <Text style={styles.emptyTitle}>Nothing here yet</Text>
+              <Text style={styles.emptyBody}>
+                Your coach hasn&apos;t published any items in this category. Pull to refresh, or tap another category above.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.cards}>
+              {filtered.map((it) => (
+                <ContentCard
+                  key={it.id}
+                  item={it}
+                  thumbUrl={thumbUrls[it.id]}
+                  width={cardWidth}
+                  starting={startingId === it.id}
+                  onPress={() => onOpen(it)}
+                />
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
-function PlaceholderTile({ icon, label }: { icon: any; label: string }) {
+/* ---------------------------------------------------------------------- */
+/* Card                                                                    */
+/* ---------------------------------------------------------------------- */
+
+function ContentCard({
+  item, thumbUrl, width, starting, onPress,
+}: {
+  item: Item;
+  thumbUrl?: string;
+  width: number;
+  starting: boolean;
+  onPress: () => void;
+}) {
+  const badge = item.content_type.toUpperCase();
+  const badgeIcon: any = item.content_type === "workout" ? "barbell"
+                       : item.content_type === "video"   ? "videocam"
+                       :                                    "headset";
+  const dur = item.duration_seconds
+    ? `${Math.max(1, Math.round(item.duration_seconds / 60))} min`
+    : null;
   return (
-    <View style={styles.tile}>
-      <Ionicons name={icon} size={26} color={theme.color.brand} />
-      <Text style={styles.tileLabel}>{label}</Text>
-    </View>
+    <Pressable
+      onPress={onPress}
+      style={[styles.card, { width }]}
+      testID={`od-card-${item.id}`}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.title} — ${badge}${dur ? ` — ${dur}` : ""}`}
+      disabled={starting}
+    >
+      <View style={styles.thumbWrap}>
+        {thumbUrl ? (
+          <Image source={{ uri: thumbUrl }} style={styles.thumb} />
+        ) : (
+          <View style={styles.thumbFallback}>
+            <Ionicons name={badgeIcon} size={30} color={theme.color.brand} />
+          </View>
+        )}
+        <View style={styles.badge}>
+          <Ionicons name={badgeIcon} size={11} color="#fff" />
+          <Text style={styles.badgeText}>{badge}</Text>
+        </View>
+        {starting ? (
+          <View style={styles.startingOverlay}>
+            <ActivityIndicator color="#fff" />
+          </View>
+        ) : null}
+      </View>
+      <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
+      {dur ? <Text style={styles.cardMeta}>{dur}</Text> : null}
+    </Pressable>
   );
 }
+
+/* ---------------------------------------------------------------------- */
+/* Styles                                                                  */
+/* ---------------------------------------------------------------------- */
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.color.surface },
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.color.border,
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.border,
   },
   title: {
-    color: theme.color.text,
-    fontSize: 22,
-    fontWeight: "800",
-    letterSpacing: 1.5,
+    color: theme.color.text, fontSize: 22, fontWeight: "800", letterSpacing: 1.5,
   },
   subtitle: {
-    color: theme.color.textDim,
-    fontSize: 12,
-    letterSpacing: 1,
-    marginTop: 2,
+    color: theme.color.textDim, fontSize: 12, letterSpacing: 1, marginTop: 2,
   },
-  body: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
+
+  rail: {
+    maxHeight: 56, flexGrow: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.border,
   },
-  hero: {
-    alignItems: "center",
-    padding: 24,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
+  railBody: {
+    paddingHorizontal: 16, paddingVertical: 10, gap: 8, alignItems: "center",
+  },
+  chip: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
     backgroundColor: theme.color.surface2,
   },
-  heroIconWrap: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.color.brandTint,
-    borderWidth: 1,
-    borderColor: theme.color.brand,
-    marginBottom: 14,
+  chipActive: {
+    backgroundColor: theme.color.brand, borderColor: theme.color.brand,
   },
-  heroTitle: {
-    color: theme.color.text,
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    marginBottom: 8,
+  chipText: {
+    color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1,
   },
-  heroBody: {
-    color: theme.color.text,
-    fontSize: 14,
-    lineHeight: 21,
-    textAlign: "center",
-    opacity: 0.85,
+  chipTextActive: { color: "#fff" },
+  chipCount: {
+    minWidth: 20, height: 20, paddingHorizontal: 5,
+    alignItems: "center", justifyContent: "center", borderRadius: 10,
+    backgroundColor: theme.color.surface,
   },
-  tilesRow: {
-    flexDirection: "row",
-    marginTop: 20,
-    gap: 12,
+  chipCountActive: { backgroundColor: "rgba(255,255,255,0.25)" },
+  chipCountText: {
+    color: theme.color.textDim, fontSize: 10, fontWeight: "800",
   },
-  tile: {
-    flex: 1,
-    padding: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: theme.color.border,
-    backgroundColor: theme.color.surface2,
-    gap: 8,
+  chipCountTextActive: { color: "#fff" },
+
+  centerFill: { flex: 1, alignItems: "center", justifyContent: "center" },
+  grid: { paddingHorizontal: 20, paddingTop: 16 },
+  cards: {
+    flexDirection: "row", flexWrap: "wrap", gap: 12,
   },
-  tileLabel: {
-    color: theme.color.text,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0.8,
+  card: {
+    borderRadius: 14, backgroundColor: theme.color.surface2,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
+    overflow: "hidden",
+  },
+  thumbWrap: {
+    width: "100%", aspectRatio: 16 / 10, backgroundColor: "#000",
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
+  },
+  thumb: { width: "100%", height: "100%" },
+  thumbFallback: {
+    width: "100%", height: "100%",
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.surface,
+  },
+  badge: {
+    position: "absolute", top: 8, left: 8,
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 6, backgroundColor: "rgba(0,0,0,0.7)",
+  },
+  badgeText: {
+    color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.8,
+  },
+  startingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center", justifyContent: "center",
+  },
+  cardTitle: {
+    color: theme.color.text, fontSize: 13, fontWeight: "700",
+    paddingHorizontal: 10, paddingTop: 10,
+  },
+  cardMeta: {
+    color: theme.color.textDim, fontSize: 11,
+    paddingHorizontal: 10, paddingBottom: 10, paddingTop: 3,
+  },
+
+  emptyBox: {
+    marginTop: 40, alignItems: "center", padding: 24,
+    borderRadius: 16, borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border, backgroundColor: theme.color.surface2,
+  },
+  emptyTitle: {
+    color: theme.color.text, fontSize: 16, fontWeight: "800", marginTop: 10,
+  },
+  emptyBody: {
+    color: theme.color.text, fontSize: 12, lineHeight: 18,
+    textAlign: "center", marginTop: 6, opacity: 0.8,
   },
 });

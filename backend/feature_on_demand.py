@@ -473,6 +473,35 @@ async def od_coach_delete_item(item_id: str, coach: dict = Depends(require_role(
 # Public read + media delivery
 # ---------------------------------------------------------------------------
 
+@api.get("/on-demand/items")
+async def od_public_list_items(
+    user: dict = Depends(current_user),
+    content_type: Optional[str] = None,
+    category_id: Optional[str] = None,
+    limit: int = 200,
+):
+    """Public list of On Demand items.
+
+    Non-coach users only see PUBLISHED items. Coaches see everything so
+    they can preview the browse experience without publishing first. The
+    heavy `workout_json` blob is stripped — clients only need list-card
+    metadata; workout starts pull the full doc via
+    `/on-demand/items/{id}/start-workout`.
+    """
+    q: dict[str, Any] = {}
+    if user.get("role") != "coach":
+        q["published"] = True
+    if content_type in CONTENT_TYPES:
+        q["content_type"] = content_type
+    if category_id:
+        q["category_id"] = category_id
+    rows = await db.on_demand_items.find(
+        q,
+        {"_id": 0, "workout_json": 0},
+    ).sort("created_at", -1).to_list(max(1, min(limit, 500)))
+    return {"items": rows, "count": len(rows)}
+
+
 @api.get("/on-demand/items/{item_id}")
 async def od_item_detail(item_id: str, user: dict = Depends(current_user)):
     """Return a single item. Coaches see drafts too; clients only see
@@ -543,3 +572,238 @@ async def od_item_thumbnail_url(item_id: str, user: dict = Depends(current_user)
 
 
 logger.info("feature_on_demand: /on-demand/* endpoints registered")
+
+
+# ---------------------------------------------------------------------------
+# Iter193 · Stage 2 additions — featured pin + workout hydration
+# ---------------------------------------------------------------------------
+
+_FEATURED_SINGLETON_ID = "singleton"
+
+
+class FeaturedBody(BaseModel):
+    item_id: Optional[str] = None  # `null` clears the pin
+
+
+async def _load_featured_doc() -> Optional[dict]:
+    return await db.on_demand_featured.find_one({"id": _FEATURED_SINGLETON_ID}, {"_id": 0})
+
+
+@api.get("/on-demand/featured")
+async def od_get_featured(user: dict = Depends(current_user)):
+    """Return the currently-featured On Demand item (or `{item: null}`).
+
+    Non-coaches only see the featured item when it is published; if the
+    coach has pinned an item and then unpublished it, clients see nothing
+    until it's re-published or another item is pinned. Coaches always see
+    the pin so they can manage it from the coach screen.
+    """
+    doc = await _load_featured_doc()
+    item_id = (doc or {}).get("item_id")
+    if not item_id:
+        return {"item": None}
+    item = await db.on_demand_items.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        return {"item": None}
+    if not item.get("published") and user.get("role") != "coach":
+        return {"item": None}
+    # Strip the heavy workout_json — the Today card only needs light metadata.
+    item.pop("workout_json", None)
+    return {"item": item, "featured_at": (doc or {}).get("updated_at")}
+
+
+@api.put("/on-demand/coach/featured")
+async def od_set_featured(body: FeaturedBody, coach: dict = Depends(require_role("coach"))):
+    """Coach pins (or clears) the featured On Demand item.
+
+    Sending `{item_id: null}` clears the pin. Sending an id verifies the
+    item exists and stamps the pin. Only one item can be featured at a
+    time — this is a singleton doc keyed by `id="singleton"`.
+    """
+    if body.item_id:
+        exists = await db.on_demand_items.count_documents({"id": body.item_id})
+        if not exists:
+            raise HTTPException(404, "item_not_found")
+    await db.on_demand_featured.update_one(
+        {"id": _FEATURED_SINGLETON_ID},
+        {"$set": {
+            "id": _FEATURED_SINGLETON_ID,
+            "item_id": body.item_id or None,
+            "updated_at": now_iso(),
+            "updated_by": coach["id"],
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "item_id": body.item_id or None}
+
+
+# ---------------------------------------------------------------------------
+# Workout hydration — client tap on a workout card creates a real workout doc
+# in `db.workouts` so Guided Flow, timers, alternatives and completion
+# tracking all "just work" without any extra plumbing.
+# ---------------------------------------------------------------------------
+
+def _flatten_flat_item(item: dict) -> dict:
+    """Envelope FlatItem → guided-flow warmup/cooldown row.
+
+    Guided Flow reads each drill as an object with a top-level `name`,
+    `duration_sec` or `reps`, `rest_sec`, `notes`. Our envelope shape
+    nests the exercise under `ref: {name}` — flatten it here.
+    """
+    ref = item.get("ref") or {}
+    out: dict[str, Any] = {"name": ref.get("name") or "Drill"}
+    for k in ("sets", "reps", "duration_sec", "rest_sec", "load", "tempo", "rpe", "notes"):
+        if item.get(k) is not None:
+            out[k] = item[k]
+    if ref.get("exercise_id"):
+        out["exercise_id"] = ref["exercise_id"]
+    return out
+
+
+def _flatten_main_block(block: dict) -> list[dict]:
+    """Envelope MainExerciseBlock → 1..N guided-flow exercise rows.
+
+    Single exercises produce one row. Group blocks are expanded to a
+    sequence of rows (one per item, `rounds` × repeated) so the current
+    Guided Flow can play them in order. Phase 4 (A1/A2 rotation UI) will
+    later swap this expansion for a real group-aware renderer — but for
+    Stage 2 we prioritise "playable everywhere" over "rendered as a
+    superset". Every row carries a `group_hint` so the future renderer
+    can regroup by that key without touching the DB.
+    """
+    kind = block.get("kind") or "single"
+    if kind == "single":
+        ref = block.get("ref") or {}
+        row: dict[str, Any] = {
+            "name": ref.get("name") or "Exercise",
+        }
+        for k in (
+            "sets", "reps", "duration_sec", "rest_sec", "load",
+            "tempo", "rpe", "notes", "equipment",
+            "alternative_exercise_id", "alternative_name",
+        ):
+            if block.get(k) is not None:
+                row[k] = block[k]
+        if ref.get("exercise_id"):
+            row["exercise_id"] = ref["exercise_id"]
+        return [row]
+
+    # kind == "group"
+    group_type = block.get("group_type") or "group"
+    group_label = block.get("group_label") or group_type.upper()
+    rounds = int(block.get("rounds") or 1)
+    rest_between_items = block.get("rest_between_items_sec")
+    rest_between_rounds = block.get("rest_between_rounds_sec")
+    items = block.get("items") or []
+    rows: list[dict[str, Any]] = []
+    for r in range(max(1, rounds)):
+        for j, gi in enumerate(items):
+            ref = gi.get("ref") or {}
+            row: dict[str, Any] = {
+                "name": ref.get("name") or "Exercise",
+                "group_hint": group_label,
+                "group_type": group_type,
+                "group_round": r + 1,
+                "group_index": j,
+            }
+            for k in ("reps", "duration_sec", "rest_sec", "load", "tempo", "notes"):
+                if gi.get(k) is not None:
+                    row[k] = gi[k]
+            # If the group carries an item-level rest, prefer it; otherwise
+            # inherit the group's between-items rest.
+            if row.get("rest_sec") is None and rest_between_items is not None and j < len(items) - 1:
+                row["rest_sec"] = rest_between_items
+            if row.get("rest_sec") is None and rest_between_rounds is not None and j == len(items) - 1 and r < rounds - 1:
+                row["rest_sec"] = rest_between_rounds
+            if ref.get("exercise_id"):
+                row["exercise_id"] = ref["exercise_id"]
+            rows.append(row)
+    return rows
+
+
+def _hydrate_on_demand_workout(item: dict, user_id: str) -> dict:
+    """Build a `db.workouts` doc from an On Demand workout item.
+
+    Accepts the workout JSON in either shape:
+      • Envelope: `{ workouts: [w0, ...] }` — takes the first workout.
+      • Single object: `{ title, warmup, exercises, cooldown, ... }`.
+
+    The output doc mirrors what the programme importer writes (`source`,
+    `approved`, `manual_lock`, timestamps) so the rest of the app treats
+    it identically to any other coach-authored workout.
+    """
+    wjson = item.get("workout_json") or {}
+    if isinstance(wjson.get("workouts"), list) and wjson["workouts"]:
+        wk = wjson["workouts"][0]
+    else:
+        wk = wjson
+
+    warmup = [_flatten_flat_item(x) for x in (wk.get("warmup") or []) if isinstance(x, dict)]
+    exercises: list[dict[str, Any]] = []
+    for blk in (wk.get("exercises") or []):
+        if isinstance(blk, dict):
+            exercises.extend(_flatten_main_block(blk))
+    cooldown = [_flatten_flat_item(x) for x in (wk.get("cooldown") or []) if isinstance(x, dict)]
+
+    duration_min = wk.get("duration_min")
+    if duration_min is None:
+        d_sec = item.get("duration_seconds")
+        if isinstance(d_sec, (int, float)) and d_sec > 0:
+            duration_min = int(round(d_sec / 60))
+
+    now_str = now_iso()
+    today = now_str[:10]
+    return {
+        "id": new_id(),
+        "user_id": user_id,
+        "date": today,
+        "title": item.get("title") or wk.get("title") or "On Demand workout",
+        "focus": wk.get("workout_type") or "other",
+        "workout_type": wk.get("workout_type") or "other",
+        "location": wk.get("location"),
+        "equipment_context": wk.get("equipment_context"),
+        "duration_min": duration_min,
+        "rpe": wk.get("rpe"),
+        "coach_notes": wk.get("coach_notes") or item.get("description"),
+        "warmup": warmup,
+        "exercises": exercises,
+        "cooldown": cooldown,
+        "alternatives": {},
+        # Same "manual + approved" markers the programme importer stamps
+        # so the Today / Calendar / Guided Flow surfaces treat this as a
+        # first-class workout — no extra approval step required.
+        "source": "on_demand",
+        "on_demand_item_id": item["id"],
+        "manual_lock": True,
+        "approved": True,
+        "approved_at": now_str,
+        "approved_source": "on_demand_start",
+        "created_at": now_str,
+        "updated_at": now_str,
+        "original_date": today,
+    }
+
+
+@api.post("/on-demand/items/{item_id}/start-workout")
+async def od_start_workout(item_id: str, user: dict = Depends(current_user)):
+    """Client taps a workout card → hydrate a real workout doc & return its id.
+
+    The client then navigates to the standard `/workout/{id}/guided`
+    route which reads the workout via the existing endpoints. This keeps
+    Guided Flow, timers, alternatives and completion tracking on the
+    same code path used by manual builder + programme-import workouts.
+    """
+    item = await db.on_demand_items.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "item_not_found")
+    if item.get("content_type") != "workout":
+        raise HTTPException(400, "item_is_not_a_workout")
+    if not item.get("published") and user.get("role") != "coach":
+        raise HTTPException(404, "item_not_found")
+    if not item.get("workout_json"):
+        raise HTTPException(400, "item_missing_workout_json")
+
+    doc = _hydrate_on_demand_workout(item, user["id"])
+    await db.workouts.insert_one(doc)
+    return {"workout_id": doc["id"], "date": doc["date"]}
+

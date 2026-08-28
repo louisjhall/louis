@@ -91,18 +91,22 @@ export default function CoachOnDemandScreen() {
 
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
+  // Iter193 · Currently-pinned featured item (or null when nothing pinned).
+  const [featuredId, setFeaturedId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [it, cats, tgs] = await Promise.all([
+      const [it, cats, tgs, feat] = await Promise.all([
         api<{ items: Item[] }>("/on-demand/coach/items"),
         api<{ categories: Category[] }>("/on-demand/categories"),
         api<{ tags: Tag[] }>("/on-demand/tags"),
+        api<{ item: any }>("/on-demand/featured").catch(() => ({ item: null })),
       ]);
       setItems(it.items || []);
       setCategories(cats.categories || []);
       setTags(tgs.tags || []);
+      setFeaturedId(feat?.item?.id || null);
     } catch (e: any) {
       Alert.alert("Failed to load", e?.message || String(e));
     } finally {
@@ -111,6 +115,21 @@ export default function CoachOnDemandScreen() {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+
+  /** Pin or unpin an item as this week's featured card. Only one item can be
+      featured at a time — pinning a new one replaces the previous. */
+  const toggleFeatured = useCallback(async (it: Item) => {
+    const nextId = featuredId === it.id ? null : it.id;
+    // Optimistic — flip immediately so the star updates without a round-trip.
+    setFeaturedId(nextId);
+    try {
+      await api("/on-demand/coach/featured", { method: "PUT", body: { item_id: nextId } });
+    } catch (e: any) {
+      // Roll back on failure.
+      setFeaturedId(featuredId);
+      Alert.alert("Featured update failed", e?.message || String(e));
+    }
+  }, [featuredId]);
 
   const filtered = useMemo(() => items.filter((i) => {
     if (filterType !== "all" && i.content_type !== filterType) return false;
@@ -258,8 +277,10 @@ export default function CoachOnDemandScreen() {
                 key={it.id}
                 item={it}
                 categoryName={categories.find((c) => c.id === it.category_id)?.name || null}
+                isFeatured={featuredId === it.id}
                 onEdit={() => openEdit(it.id)}
                 onPublish={() => togglePublish(it)}
+                onFeature={() => toggleFeatured(it)}
                 onDelete={() => deleteItem(it)}
               />
             ))
@@ -293,12 +314,14 @@ export default function CoachOnDemandScreen() {
 /* ---------------------------------------------------------------------- */
 
 function ItemRow({
-  item, categoryName, onEdit, onPublish, onDelete,
+  item, categoryName, isFeatured, onEdit, onPublish, onFeature, onDelete,
 }: {
   item: Item;
   categoryName: string | null;
+  isFeatured: boolean;
   onEdit: () => void;
   onPublish: () => void;
+  onFeature: () => void;
   onDelete: () => void;
 }) {
   const icon: any = item.content_type === "workout" ? "barbell-outline"
@@ -316,12 +339,26 @@ function ItemRow({
           <Text style={styles.rowMeta}>{item.content_type.toUpperCase()}</Text>
           {categoryName ? <Text style={styles.rowMeta}> · {categoryName}</Text> : null}
           {durMin != null ? <Text style={styles.rowMeta}> · {durMin} min</Text> : null}
+          {isFeatured ? <Text style={[styles.rowMeta, { color: theme.color.brand, fontWeight: "800" }]}> · ★ FEATURED</Text> : null}
         </View>
       </View>
       <Pressable onPress={onPublish} style={[styles.pubPill, item.published ? styles.pubPillOn : styles.pubPillOff]}>
         <Text style={[styles.pubPillText, item.published ? { color: "#fff" } : { color: theme.color.textDim }]}>
           {item.published ? "LIVE" : "DRAFT"}
         </Text>
+      </Pressable>
+      <Pressable
+        onPress={onFeature}
+        hitSlop={8}
+        style={styles.iconBtn}
+        testID={`od-feature-${item.id}`}
+        accessibilityLabel={isFeatured ? "Unpin from Today" : "Pin to Today"}
+      >
+        <Ionicons
+          name={isFeatured ? "star" : "star-outline"}
+          size={20}
+          color={isFeatured ? theme.color.brand : theme.color.text}
+        />
       </Pressable>
       <Pressable onPress={onEdit} hitSlop={8} style={styles.iconBtn} testID={`od-edit-${item.id}`}>
         <Ionicons name="create-outline" size={20} color={theme.color.text} />

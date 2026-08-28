@@ -24,6 +24,7 @@ import { ClientCalendarPanel } from "@/src/components/ClientCalendarPanel";
 import { NutritionTodayCard } from "@/src/components/NutritionTodayCard";
 import { DailyRitualsCard } from "@/src/components/DailyRitualsCard";
 import { WeeklyCheckinCard } from "@/src/components/WeeklyCheckinCard";
+import { FeaturedOnDemandCard } from "@/src/components/FeaturedOnDemandCard";
 import { DailyBriefingModal } from "@/src/components/DailyBriefingModal";
 import { RosterReviewBanner } from "@/src/components/RosterReviewBanner";
 import { ProgrammeStatusCard } from "@/src/components/ProgrammeStatusCard";
@@ -443,6 +444,18 @@ export default function Home() {
               <View style={styles.topBar}>
                 <BrandLogo style={styles.topLogoCentered} />
                 <View style={styles.topBarRight}>
+                  {/* Iter194 · Calendar icon replaces the Calendar bottom
+                      tab — opens the existing monthly calendar screen. */}
+                  <Pressable
+                    onPress={() => router.push("/(client)/calendar")}
+                    hitSlop={10}
+                    style={styles.topBarIconBtn}
+                    testID="today-open-calendar"
+                    accessibilityRole="button"
+                    accessibilityLabel="Open calendar"
+                  >
+                    <Ionicons name="calendar-outline" size={22} color={theme.color.text} />
+                  </Pressable>
                   <NotificationBell testID="client-notif-bell" />
                 </View>
               </View>
@@ -561,7 +574,11 @@ export default function Home() {
               rituals). Renders nothing until Sunday or after submission
               (per WeeklyCheckinCard's own gating). Provides the single
               highest-priority weekly touchpoint front-and-centre. */}
-          <WeeklyCheckinCard />          {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
+          <WeeklyCheckinCard />
+          {/* Iter193 · Featured On Demand card — renders only when the
+              coach has pinned an item on the On Demand coach screen. */}
+          <FeaturedOnDemandCard />
+          {/* Iter 130c — quick-nav chip row (Monthly / Check-In / Progress)
               pinned directly beneath Pietro's name/header per coach request.
               The chips route to the deeper Calendar / Check-In / Progress
               screens — moved from the old Utilities block at the bottom so
@@ -1253,7 +1270,8 @@ function makeStyles(_mode: ThemeMode) {
   // `marginBottom: 12` on the topBar preserves the requested 12px padding
   // between the logo and the greeting/name below it.
   topBar: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginBottom: 12, minHeight: 40 },
-  topBarRight: { position: "absolute", right: 0, top: 0, bottom: 0, justifyContent: "center" },
+  topBarRight: { position: "absolute", right: 0, top: 0, bottom: 0, flexDirection: "row", alignItems: "center", gap: 8 },
+  topBarIconBtn: { padding: 6 },
   topLogo: { width: 96, height: 30, opacity: 0.82 },  // legacy — no longer rendered
   topLogoCentered: { width: 120, height: 38, opacity: 0.95 },  // Iter 162c · exactly +25% vs the 96×30 legacy size
   hello: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "800" },

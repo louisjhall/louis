@@ -30,7 +30,10 @@ const TAB_META: Record<string, { label: string; icon: IconName; iconActive?: Ico
   home:        { label: "TODAY",     icon: "lightning-bolt-outline",   iconActive: "lightning-bolt"          },
   nutrition:   { label: "NUTRITION", icon: "silverware-fork-knife",    iconActive: "silverware-fork-knife"   },
   "on-demand": { label: "ON DEMAND", icon: "play-circle-outline",      iconActive: "play-circle"             },
-  calendar:    { label: "CALENDAR",  icon: "calendar-blank-outline",   iconActive: "calendar-blank"          },
+  // Iter196 · Calendar removed from the bottom nav — the route lives on
+  // and opens from the top-right icon on the Today screen. Leaving no
+  // TAB_META entry guarantees the button never renders even if a stale
+  // expo-router state briefly includes the route.
   base:        { label: "BASE",      icon: "account-group-outline",    iconActive: "account-group",   custom: "base" },
   profile:     { label: "PROFILE",   icon: "account-circle-outline",   iconActive: "account-circle"          },
 };

@@ -51,7 +51,6 @@ export default function OnDemandClientScreen() {
   const router = useRouter();
   const bottomPad = useBottomSafePad();
   const { width } = useWindowDimensions();
-  const cardWidth = Math.floor((width - 20 * 2 - 12) / 2);   // 20 h-pad, 12 gap
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -138,7 +137,11 @@ export default function OnDemandClientScreen() {
           method: "POST", body: {},
         });
         setStartingId(null);
-        router.push(`/workout/${r.workout_id}/guided` as any);
+        // Iter196 · Route to the standard workout entry point so the user
+        // gets the same Guided / Manual choice as any other workout. If
+        // they've already chosen a preferred mode via
+        // `getRememberedMode()`, that path deep-links straight through.
+        router.push(`/workout/${r.workout_id}` as any);
       } catch (e: any) {
         setStartingId(null);
         Alert.alert("Couldn't start", e?.message || String(e));
@@ -154,19 +157,22 @@ export default function OnDemandClientScreen() {
     }
   }, [router]);
 
-  return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.header}>
-        <Text style={styles.title}>ON DEMAND</Text>
-        <Text style={styles.subtitle}>Curated by your coach</Text>
-      </View>
+  // Iter196 · Vertical category list on the left instead of horizontal
+  // chips. On phones ≥ 360px wide we give the list a fixed 130px column;
+  // narrower devices fall back to a stacked layout (list on top, cards
+  // below) so we don't crush the cards.
+  const useSideList = width >= 360;
+  const listColumnWidth = 130;
+  const cardsAreaWidth = useSideList ? width - 20 * 2 - listColumnWidth - 12 : width - 20 * 2;
+  const cardWidthNew = Math.floor((cardsAreaWidth - 12) / 2);
 
-      {/* Category rail */}
+  const categoryList = (
+    <View style={useSideList ? styles.listCol : styles.listStack}>
+      <Text style={styles.listHeading}>CATEGORIES</Text>
       <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.railBody}
-        style={styles.rail}
+        style={{ flexGrow: 0 }}
+        contentContainerStyle={styles.listBody}
+        showsVerticalScrollIndicator={false}
       >
         {rail.map((c) => {
           const active = activeCategory === c.id;
@@ -174,24 +180,31 @@ export default function OnDemandClientScreen() {
             <Pressable
               key={String(c.id)}
               onPress={() => setActiveCategory(c.id as any)}
-              style={[styles.chip, active && styles.chipActive]}
-              testID={`od-rail-${c.id}`}
+              style={[styles.listRow, active && styles.listRowActive]}
+              testID={`od-cat-${c.id}`}
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
             >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                {c.label.toUpperCase()}
-              </Text>
-              <View style={[styles.chipCount, active && styles.chipCountActive]}>
-                <Text style={[styles.chipCountText, active && styles.chipCountTextActive]}>
-                  {c.count}
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.listRowLabel, active && styles.listRowLabelActive]} numberOfLines={2}>
+                  {c.label}
+                </Text>
+                <Text style={[styles.listRowCount, active && styles.listRowCountActive]}>
+                  {c.count} {c.count === 1 ? "item" : "items"}
                 </Text>
               </View>
+              {active ? (
+                <Ionicons name="chevron-forward" size={16} color="#fff" />
+              ) : null}
             </Pressable>
           );
         })}
       </ScrollView>
+    </View>
+  );
 
+  const cardsPane = (
+    <View style={{ flex: 1 }}>
       {loading ? (
         <View style={styles.centerFill}>
           <ActivityIndicator color={theme.color.brand} />
@@ -212,7 +225,7 @@ export default function OnDemandClientScreen() {
               <Ionicons name="albums-outline" size={38} color={theme.color.brand} />
               <Text style={styles.emptyTitle}>Nothing here yet</Text>
               <Text style={styles.emptyBody}>
-                Your coach hasn&apos;t published any items in this category. Pull to refresh, or tap another category above.
+                Your coach hasn&apos;t published any items in this category. Pull to refresh, or tap another category.
               </Text>
             </View>
           ) : (
@@ -222,7 +235,7 @@ export default function OnDemandClientScreen() {
                   key={it.id}
                   item={it}
                   thumbUrl={thumbUrls[it.id]}
-                  width={cardWidth}
+                  width={cardWidthNew}
                   starting={startingId === it.id}
                   onPress={() => onOpen(it)}
                 />
@@ -230,6 +243,27 @@ export default function OnDemandClientScreen() {
             </View>
           )}
         </ScrollView>
+      )}
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      <View style={styles.header}>
+        <Text style={styles.title}>ON DEMAND</Text>
+        <Text style={styles.subtitle}>Curated by your coach</Text>
+      </View>
+
+      {useSideList ? (
+        <View style={styles.splitRow}>
+          {categoryList}
+          {cardsPane}
+        </View>
+      ) : (
+        <View style={{ flex: 1 }}>
+          {categoryList}
+          {cardsPane}
+        </View>
       )}
     </SafeAreaView>
   );
@@ -306,38 +340,69 @@ const styles = StyleSheet.create({
   },
 
   rail: {
-    maxHeight: 56, flexGrow: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.color.border,
+    // Iter196 · Kept for backward compatibility with any external ref;
+    // no longer rendered — categories use the vertical list below.
+    display: "none",
   },
-  railBody: {
-    paddingHorizontal: 16, paddingVertical: 10, gap: 8, alignItems: "center",
-  },
-  chip: {
-    flexDirection: "row", alignItems: "center", gap: 8,
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: theme.color.border,
-    backgroundColor: theme.color.surface2,
-  },
-  chipActive: {
-    backgroundColor: theme.color.brand, borderColor: theme.color.brand,
-  },
-  chipText: {
-    color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 1,
-  },
-  chipTextActive: { color: "#fff" },
-  chipCount: {
-    minWidth: 20, height: 20, paddingHorizontal: 5,
-    alignItems: "center", justifyContent: "center", borderRadius: 10,
+  railBody: { display: "none" },
+
+  splitRow: { flex: 1, flexDirection: "row" },
+  listCol: {
+    width: 130,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: theme.color.border,
     backgroundColor: theme.color.surface,
+    paddingTop: 12,
+    paddingHorizontal: 10,
   },
-  chipCountActive: { backgroundColor: "rgba(255,255,255,0.25)" },
-  chipCountText: {
-    color: theme.color.textDim, fontSize: 10, fontWeight: "800",
+  listStack: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.color.border,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
-  chipCountTextActive: { color: "#fff" },
+  listHeading: {
+    color: theme.color.textDim,
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.4,
+    marginBottom: 8,
+  },
+  listBody: { paddingBottom: 8 },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 4,
+    backgroundColor: theme.color.surface2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+  },
+  listRowActive: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  listRowLabel: {
+    color: theme.color.text,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
+  listRowLabelActive: { color: "#fff" },
+  listRowCount: {
+    color: theme.color.textDim,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    marginTop: 2,
+  },
+  listRowCountActive: { color: "rgba(255,255,255,0.85)" },
 
   centerFill: { flex: 1, alignItems: "center", justifyContent: "center" },
-  grid: { paddingHorizontal: 20, paddingTop: 16 },
+  grid: { paddingHorizontal: 12, paddingTop: 12 },
   cards: {
     flexDirection: "row", flexWrap: "wrap", gap: 12,
   },

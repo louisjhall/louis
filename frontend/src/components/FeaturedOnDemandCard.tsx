@@ -65,7 +65,9 @@ export function FeaturedOnDemandCard() {
           method: "POST", body: {},
         });
         setStarting(false);
-        router.push(`/workout/${r.workout_id}/guided` as any);
+        // Iter196 · Land on the standard entry point so the client gets
+        // the Guided / Manual choice — same UX as every other workout.
+        router.push(`/workout/${r.workout_id}` as any);
       } catch (e: any) {
         setStarting(false);
         Alert.alert("Couldn't start", e?.message || String(e));

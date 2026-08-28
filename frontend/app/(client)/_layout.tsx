@@ -31,9 +31,12 @@ export default function ClientLayout() {
         tabBar={(props) => <PremiumTabBar {...props} />}
         screenOptions={{ headerShown: false }}
       >
+        {/* Iter191 — Bottom nav order: Today · Nutrition · On Demand · Calendar · Base · Profile.
+            The Tabs.Screen declaration order defines the visible order in <PremiumTabBar />. */}
         <Tabs.Screen name="home"      options={{ title: "Today" }} />
-        <Tabs.Screen name="calendar"  options={{ title: "Calendar" }} />
         <Tabs.Screen name="nutrition" options={{ title: "Nutrition" }} />
+        <Tabs.Screen name="on-demand" options={{ title: "On Demand" }} />
+        <Tabs.Screen name="calendar"  options={{ title: "Calendar" }} />
         <Tabs.Screen name="base"      options={{ title: "Base" }} />
         <Tabs.Screen name="profile"   options={{ title: "Profile" }} />
         {/* Messages route still exists — hidden from the bar, opened via CoachChatBubble */}

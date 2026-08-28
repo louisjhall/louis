@@ -18,6 +18,8 @@ const NAV: { path: string; label: string; icon: any; testId: string; adminOnly?:
   { path: "/(coach)/clients",   label: "Clients",          icon: "people-outline",       testId: "desktop-nav-clients" },
   { path: "/(coach)/calendar",  label: "Calendar",         icon: "calendar-outline",     testId: "desktop-nav-calendar" },
   { path: "/(coach)/library",   label: "Library",          icon: "barbell-outline",      testId: "desktop-nav-library" },
+  // Iter191 · On Demand content library — coach management entry.
+  { path: "/(coach)/on-demand", label: "On Demand",        icon: "play-circle-outline",  testId: "desktop-nav-on-demand" },
   // Iter184 · Auto-Media pinned in primary sidebar — surfaces the Bulk
   // Primary-Image + YouTube Video Finder actions from any coach screen
   // without requiring the coach to first navigate into Library. Fixes the

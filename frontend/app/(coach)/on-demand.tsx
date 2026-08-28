@@ -1,0 +1,1035 @@
+/**
+ * Coach · On Demand — Stage 1 management screen.
+ *
+ * Foundation-only:
+ *   • List all On Demand items with filters (type + published state).
+ *   • Create / edit / delete items across the three content types
+ *     (workout · video · audio).
+ *   • Manage the shared category + tag taxonomy.
+ *   • Toggle publish state per item.
+ *
+ * No member-facing browse UI, no premium gating, no analytics — those
+ * land in Stage 2. Everything here writes through the new
+ * `/api/on-demand/*` endpoints; nothing shares state with the existing
+ * workout / programme / library screens.
+ */
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  View, Text, Pressable, TextInput, ScrollView, StyleSheet,
+  ActivityIndicator, Modal, Alert, Image, Switch, Platform,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system";
+import { theme } from "@/src/lib/theme";
+import { api } from "@/src/lib/api";
+import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
+
+/* ---------------------------------------------------------------------- */
+/* Types                                                                   */
+/* ---------------------------------------------------------------------- */
+
+type ContentType = "workout" | "video" | "audio";
+
+type Category = { id: string; name: string; slug: string };
+type Tag      = { id: string; name: string; slug: string };
+
+type Item = {
+  id: string;
+  title: string;
+  description?: string;
+  content_type: ContentType;
+  category_id: string | null;
+  tag_ids: string[];
+  duration_seconds: number | null;
+  thumbnail_storage_key?: string | null;
+  media_storage_key?: string | null;
+  media_mime?: string | null;
+  media_size_bytes?: number | null;
+  published: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+type MediaPayload = { file_b64: string; file_mime?: string; file_name?: string };
+
+type EditorState = {
+  mode: "create" | "edit";
+  item?: Item;
+  title: string;
+  description: string;
+  content_type: ContentType;
+  category_id: string | null;
+  tag_ids: string[];
+  duration_seconds: string;      // string in the input, coerced on save
+  published: boolean;
+  thumbnail?: MediaPayload;
+  thumbnailPreviewUri?: string;
+  media?: MediaPayload;
+  mediaFileLabel?: string;       // "workout.json (12 KB)" or filename
+  workout_json?: any;
+};
+
+/* ---------------------------------------------------------------------- */
+/* Screen                                                                  */
+/* ---------------------------------------------------------------------- */
+
+export default function CoachOnDemandScreen() {
+  const bottomPad = useBottomSafePad();
+
+  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<Item[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+
+  const [filterType, setFilterType] = useState<"all" | ContentType>("all");
+  const [filterPublished, setFilterPublished] = useState<"all" | "published" | "draft">("all");
+
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [taxonomyOpen, setTaxonomyOpen] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [it, cats, tgs] = await Promise.all([
+        api<{ items: Item[] }>("/on-demand/coach/items"),
+        api<{ categories: Category[] }>("/on-demand/categories"),
+        api<{ tags: Tag[] }>("/on-demand/tags"),
+      ]);
+      setItems(it.items || []);
+      setCategories(cats.categories || []);
+      setTags(tgs.tags || []);
+    } catch (e: any) {
+      Alert.alert("Failed to load", e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const filtered = useMemo(() => items.filter((i) => {
+    if (filterType !== "all" && i.content_type !== filterType) return false;
+    if (filterPublished === "published" && !i.published) return false;
+    if (filterPublished === "draft" && i.published) return false;
+    return true;
+  }), [items, filterType, filterPublished]);
+
+  /* --- Editor open helpers --- */
+  const openCreate = () => setEditor({
+    mode: "create",
+    title: "",
+    description: "",
+    content_type: "workout",
+    category_id: null,
+    tag_ids: [],
+    duration_seconds: "",
+    published: false,
+  });
+
+  const openEdit = async (id: string) => {
+    try {
+      const r = await api<{ item: any }>(`/on-demand/coach/items/${id}`);
+      const it = r.item as Item & { workout_json?: any };
+      setEditor({
+        mode: "edit",
+        item: it,
+        title: it.title,
+        description: it.description || "",
+        content_type: it.content_type,
+        category_id: it.category_id || null,
+        tag_ids: it.tag_ids || [],
+        duration_seconds: it.duration_seconds != null ? String(it.duration_seconds) : "",
+        published: it.published,
+        workout_json: it.workout_json,
+        mediaFileLabel: it.content_type === "workout"
+          ? (it.workout_json ? "workout.json (loaded)" : undefined)
+          : (it.media_storage_key ? "media (loaded)" : undefined),
+      });
+    } catch (e: any) {
+      Alert.alert("Failed to open", e?.message || String(e));
+    }
+  };
+
+  const togglePublish = async (it: Item) => {
+    try {
+      await api(`/on-demand/coach/items/${it.id}/publish`, {
+        method: "POST",
+        body: { published: !it.published },
+      });
+      setItems((rows) => rows.map((r) => r.id === it.id ? { ...r, published: !it.published } : r));
+    } catch (e: any) {
+      Alert.alert("Publish failed", e?.message || String(e));
+    }
+  };
+
+  const deleteItem = (it: Item) => {
+    Alert.alert("Delete item?", `"${it.title}" will be removed permanently.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        try {
+          await api(`/on-demand/coach/items/${it.id}`, { method: "DELETE" });
+          setItems((rows) => rows.filter((r) => r.id !== it.id));
+        } catch (e: any) {
+          Alert.alert("Delete failed", e?.message || String(e));
+        }
+      }},
+    ]);
+  };
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>ON DEMAND</Text>
+          <Text style={styles.subtitle}>Coach content library · Stage 1</Text>
+        </View>
+        <Pressable
+          onPress={() => setTaxonomyOpen(true)}
+          style={styles.headerBtn}
+          testID="od-manage-taxonomy"
+        >
+          <Ionicons name="pricetags-outline" size={16} color={theme.color.text} />
+          <Text style={styles.headerBtnText}>TAXONOMY</Text>
+        </Pressable>
+        <Pressable
+          onPress={openCreate}
+          style={[styles.headerBtn, styles.headerBtnPrimary]}
+          testID="od-create-item"
+        >
+          <Ionicons name="add" size={18} color="#fff" />
+          <Text style={[styles.headerBtnText, { color: "#fff" }]}>NEW</Text>
+        </Pressable>
+      </View>
+
+      {/* Filters */}
+      <View style={styles.filterRow}>
+        <FilterChip
+          label="ALL"           active={filterType === "all"}      onPress={() => setFilterType("all")} />
+        <FilterChip
+          label="WORKOUTS"      active={filterType === "workout"}  onPress={() => setFilterType("workout")} />
+        <FilterChip
+          label="VIDEOS"        active={filterType === "video"}    onPress={() => setFilterType("video")} />
+        <FilterChip
+          label="AUDIO"         active={filterType === "audio"}    onPress={() => setFilterType("audio")} />
+        <View style={{ flex: 1 }} />
+        <FilterChip
+          label={filterPublished === "all" ? "STATE: ALL"
+               : filterPublished === "published" ? "PUBLISHED" : "DRAFTS"}
+          active
+          onPress={() => setFilterPublished((s) =>
+            s === "all" ? "published" : s === "published" ? "draft" : "all"
+          )}
+        />
+      </View>
+
+      {loading ? (
+        <View style={styles.centerFill}>
+          <ActivityIndicator color={theme.color.brand} />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: bottomPad + 24, paddingHorizontal: 16, paddingTop: 8 }}
+        >
+          {filtered.length === 0 ? (
+            <View style={styles.emptyBox} testID="od-empty">
+              <Ionicons name="albums-outline" size={38} color={theme.color.brand} />
+              <Text style={styles.emptyTitle}>No items yet</Text>
+              <Text style={styles.emptyBody}>
+                Tap NEW to add your first workout, video or audio piece.
+                Nothing is visible to clients until you publish it.
+              </Text>
+            </View>
+          ) : (
+            filtered.map((it) => (
+              <ItemRow
+                key={it.id}
+                item={it}
+                categoryName={categories.find((c) => c.id === it.category_id)?.name || null}
+                onEdit={() => openEdit(it.id)}
+                onPublish={() => togglePublish(it)}
+                onDelete={() => deleteItem(it)}
+              />
+            ))
+          )}
+        </ScrollView>
+      )}
+
+      {editor ? (
+        <ItemEditorModal
+          state={editor}
+          categories={categories}
+          tags={tags}
+          onClose={() => setEditor(null)}
+          onSaved={() => { setEditor(null); reload(); }}
+        />
+      ) : null}
+
+      {taxonomyOpen ? (
+        <TaxonomyModal
+          categories={categories}
+          tags={tags}
+          onClose={() => { setTaxonomyOpen(false); reload(); }}
+        />
+      ) : null}
+    </SafeAreaView>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Item row                                                                */
+/* ---------------------------------------------------------------------- */
+
+function ItemRow({
+  item, categoryName, onEdit, onPublish, onDelete,
+}: {
+  item: Item;
+  categoryName: string | null;
+  onEdit: () => void;
+  onPublish: () => void;
+  onDelete: () => void;
+}) {
+  const icon: any = item.content_type === "workout" ? "barbell-outline"
+                  : item.content_type === "video"   ? "videocam-outline"
+                  : "headset-outline";
+  const durMin = item.duration_seconds ? Math.round(item.duration_seconds / 60) : null;
+  return (
+    <View style={styles.row} testID={`od-item-${item.id}`}>
+      <View style={styles.rowIconBox}>
+        <Ionicons name={icon} size={22} color={theme.color.brand} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.rowTitle} numberOfLines={2}>{item.title}</Text>
+        <View style={styles.rowMetaLine}>
+          <Text style={styles.rowMeta}>{item.content_type.toUpperCase()}</Text>
+          {categoryName ? <Text style={styles.rowMeta}> · {categoryName}</Text> : null}
+          {durMin != null ? <Text style={styles.rowMeta}> · {durMin} min</Text> : null}
+        </View>
+      </View>
+      <Pressable onPress={onPublish} style={[styles.pubPill, item.published ? styles.pubPillOn : styles.pubPillOff]}>
+        <Text style={[styles.pubPillText, item.published ? { color: "#fff" } : { color: theme.color.textDim }]}>
+          {item.published ? "LIVE" : "DRAFT"}
+        </Text>
+      </Pressable>
+      <Pressable onPress={onEdit} hitSlop={8} style={styles.iconBtn} testID={`od-edit-${item.id}`}>
+        <Ionicons name="create-outline" size={20} color={theme.color.text} />
+      </Pressable>
+      <Pressable onPress={onDelete} hitSlop={8} style={styles.iconBtn} testID={`od-delete-${item.id}`}>
+        <Ionicons name="trash-outline" size={20} color={theme.color.brand} />
+      </Pressable>
+    </View>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Filter chip                                                             */
+/* ---------------------------------------------------------------------- */
+
+function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.chip, active && styles.chipActive]}
+      testID={`od-filter-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+    >
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Editor modal                                                            */
+/* ---------------------------------------------------------------------- */
+
+function ItemEditorModal({
+  state: initial, categories, tags, onClose, onSaved,
+}: {
+  state: EditorState;
+  categories: Category[];
+  tags: Tag[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const bottomPad = useBottomSafePad();
+  const [state, setState] = useState<EditorState>(initial);
+  const [saving, setSaving] = useState(false);
+
+  const setField = <K extends keyof EditorState>(k: K, v: EditorState[K]) => setState((s) => ({ ...s, [k]: v }));
+
+  const pickThumbnail = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ type: "image/*", copyToCacheDirectory: true });
+      if (res.canceled) return;
+      const a = res.assets[0];
+      const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: "base64" });
+      const mime = a.mimeType || "image/jpeg";
+      setField("thumbnail", { file_b64: b64, file_mime: mime, file_name: a.name });
+      setField("thumbnailPreviewUri", a.uri);
+    } catch (e: any) {
+      Alert.alert("Pick failed", e?.message || String(e));
+    }
+  };
+
+  const pickMedia = async () => {
+    const isWorkout = state.content_type === "workout";
+    const isVideo = state.content_type === "video";
+    const type = isWorkout ? "application/json" : isVideo ? "video/*" : "audio/*";
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ type, copyToCacheDirectory: true });
+      if (res.canceled) return;
+      const a = res.assets[0];
+      if (isWorkout) {
+        const raw = await FileSystem.readAsStringAsync(a.uri, { encoding: "utf8" });
+        let parsed: any;
+        try { parsed = JSON.parse(raw); }
+        catch (e: any) { Alert.alert("Invalid JSON", e?.message || String(e)); return; }
+        setField("workout_json", parsed);
+        setField("mediaFileLabel", `${a.name} (${prettySize(a.size)})`);
+      } else {
+        const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: "base64" });
+        setField("media", { file_b64: b64, file_mime: a.mimeType || (isVideo ? "video/mp4" : "audio/mpeg"), file_name: a.name });
+        setField("mediaFileLabel", `${a.name} (${prettySize(a.size)})`);
+      }
+    } catch (e: any) {
+      Alert.alert("Pick failed", e?.message || String(e));
+    }
+  };
+
+  const toggleTag = (tagId: string) => {
+    setField("tag_ids", state.tag_ids.includes(tagId)
+      ? state.tag_ids.filter((t) => t !== tagId)
+      : [...state.tag_ids, tagId]);
+  };
+
+  const save = async () => {
+    if (!state.title.trim()) { Alert.alert("Title required"); return; }
+    if (state.mode === "create") {
+      if (state.content_type === "workout" && !state.workout_json) {
+        Alert.alert("Workout JSON required", "Pick a JSON file for this workout item.");
+        return;
+      }
+      if (state.content_type !== "workout" && !state.media) {
+        Alert.alert(`${state.content_type === "video" ? "Video" : "Audio"} file required`);
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      const payload: any = {
+        title: state.title.trim(),
+        description: state.description.trim(),
+        content_type: state.content_type,
+        category_id: state.category_id,
+        tag_ids: state.tag_ids,
+        duration_seconds: state.duration_seconds ? Number(state.duration_seconds) : null,
+        published: state.published,
+      };
+      if (state.thumbnail) payload.thumbnail = state.thumbnail;
+      if (state.media) payload.media = state.media;
+      if (state.workout_json) payload.workout_json = state.workout_json;
+
+      if (state.mode === "create") {
+        await api("/on-demand/coach/items", { method: "POST", body: payload });
+      } else if (state.item) {
+        // Editing: content_type is immutable server-side; don't send it back.
+        delete payload.content_type;
+        await api(`/on-demand/coach/items/${state.item.id}`, { method: "PATCH", body: payload });
+      }
+      onSaved();
+    } catch (e: any) {
+      Alert.alert("Save failed", e?.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const typeLocked = state.mode === "edit";
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalScrim}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{state.mode === "create" ? "New item" : "Edit item"}</Text>
+            <Pressable onPress={onClose} hitSlop={10} testID="od-editor-close">
+              <Ionicons name="close" size={24} color={theme.color.text} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad + 100 }}>
+            {/* Content type */}
+            <Text style={styles.label}>CONTENT TYPE</Text>
+            <View style={styles.segRow}>
+              {(["workout", "video", "audio"] as ContentType[]).map((t) => (
+                <Pressable
+                  key={t}
+                  disabled={typeLocked}
+                  onPress={() => setField("content_type", t)}
+                  style={[
+                    styles.segBtn,
+                    state.content_type === t && styles.segBtnActive,
+                    typeLocked && { opacity: 0.5 },
+                  ]}
+                  testID={`od-type-${t}`}
+                >
+                  <Text style={[styles.segText, state.content_type === t && styles.segTextActive]}>
+                    {t.toUpperCase()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            {typeLocked ? (
+              <Text style={styles.hint}>Content type is fixed after creation.</Text>
+            ) : null}
+
+            {/* Title / description */}
+            <Text style={styles.label}>TITLE</Text>
+            <TextInput
+              style={styles.input}
+              value={state.title}
+              onChangeText={(v) => setField("title", v)}
+              placeholder="e.g. Layover Hotel Mobility"
+              placeholderTextColor={theme.color.textDim}
+              testID="od-editor-title"
+            />
+
+            <Text style={styles.label}>DESCRIPTION</Text>
+            <TextInput
+              style={[styles.input, styles.textarea]}
+              value={state.description}
+              onChangeText={(v) => setField("description", v)}
+              multiline
+              numberOfLines={4}
+              placeholder="Short blurb clients will see on the card"
+              placeholderTextColor={theme.color.textDim}
+              testID="od-editor-desc"
+            />
+
+            {/* Category */}
+            <Text style={styles.label}>CATEGORY</Text>
+            <View style={styles.chipsWrap}>
+              <Pressable
+                onPress={() => setField("category_id", null)}
+                style={[styles.chip, state.category_id === null && styles.chipActive]}
+              >
+                <Text style={[styles.chipText, state.category_id === null && styles.chipTextActive]}>NONE</Text>
+              </Pressable>
+              {categories.map((c) => (
+                <Pressable
+                  key={c.id}
+                  onPress={() => setField("category_id", c.id)}
+                  style={[styles.chip, state.category_id === c.id && styles.chipActive]}
+                >
+                  <Text style={[styles.chipText, state.category_id === c.id && styles.chipTextActive]}>
+                    {c.name}
+                  </Text>
+                </Pressable>
+              ))}
+              {categories.length === 0 ? (
+                <Text style={styles.hint}>No categories yet — add some in TAXONOMY.</Text>
+              ) : null}
+            </View>
+
+            {/* Tags */}
+            <Text style={styles.label}>TAGS</Text>
+            <View style={styles.chipsWrap}>
+              {tags.map((t) => {
+                const active = state.tag_ids.includes(t.id);
+                return (
+                  <Pressable
+                    key={t.id}
+                    onPress={() => toggleTag(t.id)}
+                    style={[styles.chip, active && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{t.name}</Text>
+                  </Pressable>
+                );
+              })}
+              {tags.length === 0 ? (
+                <Text style={styles.hint}>No tags yet — add some in TAXONOMY.</Text>
+              ) : null}
+            </View>
+
+            {/* Duration */}
+            <Text style={styles.label}>DURATION (SECONDS)</Text>
+            <TextInput
+              style={styles.input}
+              value={state.duration_seconds}
+              onChangeText={(v) => setField("duration_seconds", v.replace(/[^0-9]/g, ""))}
+              placeholder="Optional — e.g. 900 for 15 min"
+              placeholderTextColor={theme.color.textDim}
+              keyboardType="number-pad"
+              testID="od-editor-duration"
+            />
+
+            {/* Thumbnail */}
+            <Text style={styles.label}>THUMBNAIL</Text>
+            <Pressable onPress={pickThumbnail} style={styles.pickerBtn} testID="od-editor-pick-thumb">
+              {state.thumbnailPreviewUri ? (
+                <Image source={{ uri: state.thumbnailPreviewUri }} style={styles.thumbPreview} />
+              ) : (
+                <>
+                  <Ionicons name="image-outline" size={20} color={theme.color.brand} />
+                  <Text style={styles.pickerBtnText}>Choose image</Text>
+                </>
+              )}
+            </Pressable>
+
+            {/* Media / workout JSON */}
+            <Text style={styles.label}>
+              {state.content_type === "workout" ? "WORKOUT JSON" : state.content_type === "video" ? "VIDEO FILE" : "AUDIO FILE"}
+            </Text>
+            <Pressable onPress={pickMedia} style={styles.pickerBtn} testID="od-editor-pick-media">
+              <Ionicons
+                name={state.content_type === "workout" ? "document-outline"
+                    : state.content_type === "video"   ? "videocam-outline"
+                    :                                    "headset-outline"}
+                size={20} color={theme.color.brand}
+              />
+              <Text style={styles.pickerBtnText}>{state.mediaFileLabel || "Choose file"}</Text>
+            </Pressable>
+            {state.mode === "edit" && !state.media && state.content_type !== "workout" ? (
+              <Text style={styles.hint}>Leave blank to keep the existing file.</Text>
+            ) : null}
+
+            {/* Publish switch */}
+            <View style={styles.pubRow}>
+              <Text style={styles.label}>PUBLISHED</Text>
+              <Switch
+                value={state.published}
+                onValueChange={(v) => setField("published", v)}
+                testID="od-editor-publish-toggle"
+              />
+            </View>
+          </ScrollView>
+
+          <View style={[styles.modalFooter, { paddingBottom: bottomPad + 12 }]}>
+            <Pressable onPress={onClose} style={styles.footerBtn} disabled={saving}>
+              <Text style={styles.footerBtnText}>CANCEL</Text>
+            </Pressable>
+            <Pressable
+              onPress={save}
+              style={[styles.footerBtn, styles.footerBtnPrimary]}
+              disabled={saving}
+              testID="od-editor-save"
+            >
+              {saving ? <ActivityIndicator color="#fff" />
+                      : <Text style={[styles.footerBtnText, { color: "#fff" }]}>SAVE</Text>}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Taxonomy modal — create/rename/delete categories + tags                 */
+/* ---------------------------------------------------------------------- */
+
+function TaxonomyModal({
+  categories, tags, onClose,
+}: { categories: Category[]; tags: Tag[]; onClose: () => void }) {
+  const bottomPad = useBottomSafePad();
+  const [cats, setCats] = useState(categories);
+  const [tgs, setTgs] = useState(tags);
+  const [newCat, setNewCat] = useState("");
+  const [newTag, setNewTag] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const addCategory = async () => {
+    if (!newCat.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api<{ category: Category }>("/on-demand/coach/categories", {
+        method: "POST", body: { name: newCat.trim() },
+      });
+      if (!cats.find((c) => c.id === r.category.id)) setCats((s) => [...s, r.category]);
+      setNewCat("");
+    } catch (e: any) {
+      Alert.alert("Add failed", e?.message || String(e));
+    } finally { setBusy(false); }
+  };
+
+  const deleteCategory = (c: Category) => {
+    Alert.alert("Delete category?", `"${c.name}" will be detached from all items.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        try {
+          await api(`/on-demand/coach/categories/${c.id}`, { method: "DELETE" });
+          setCats((s) => s.filter((x) => x.id !== c.id));
+        } catch (e: any) { Alert.alert("Delete failed", e?.message || String(e)); }
+      }},
+    ]);
+  };
+
+  const addTag = async () => {
+    if (!newTag.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api<{ tag: Tag }>("/on-demand/coach/tags", {
+        method: "POST", body: { name: newTag.trim() },
+      });
+      if (!tgs.find((t) => t.id === r.tag.id)) setTgs((s) => [...s, r.tag]);
+      setNewTag("");
+    } catch (e: any) {
+      Alert.alert("Add failed", e?.message || String(e));
+    } finally { setBusy(false); }
+  };
+
+  const deleteTag = (t: Tag) => {
+    Alert.alert("Delete tag?", `"${t.name}" will be removed from all items.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        try {
+          await api(`/on-demand/coach/tags/${t.id}`, { method: "DELETE" });
+          setTgs((s) => s.filter((x) => x.id !== t.id));
+        } catch (e: any) { Alert.alert("Delete failed", e?.message || String(e)); }
+      }},
+    ]);
+  };
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalScrim}>
+        <View style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Manage taxonomy</Text>
+            <Pressable onPress={onClose} hitSlop={10} testID="od-taxonomy-close">
+              <Ionicons name="close" size={24} color={theme.color.text} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: bottomPad + 24 }}>
+            {/* Categories */}
+            <Text style={styles.sectionHeader}>CATEGORIES</Text>
+            <View style={styles.addRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginRight: 8 }]}
+                value={newCat}
+                onChangeText={setNewCat}
+                placeholder="New category name"
+                placeholderTextColor={theme.color.textDim}
+                testID="od-tax-new-cat"
+              />
+              <Pressable onPress={addCategory} disabled={busy} style={styles.miniPrimary} testID="od-tax-add-cat">
+                <Text style={{ color: "#fff", fontWeight: "800", letterSpacing: 1 }}>ADD</Text>
+              </Pressable>
+            </View>
+            {cats.map((c) => (
+              <View key={c.id} style={styles.taxRow}>
+                <Text style={styles.taxRowName}>{c.name}</Text>
+                <Pressable onPress={() => deleteCategory(c)} hitSlop={8} testID={`od-tax-del-cat-${c.id}`}>
+                  <Ionicons name="trash-outline" size={18} color={theme.color.brand} />
+                </Pressable>
+              </View>
+            ))}
+            {cats.length === 0 ? <Text style={styles.hint}>No categories yet.</Text> : null}
+
+            {/* Tags */}
+            <Text style={[styles.sectionHeader, { marginTop: 22 }]}>TAGS</Text>
+            <View style={styles.addRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginRight: 8 }]}
+                value={newTag}
+                onChangeText={setNewTag}
+                placeholder="New tag name"
+                placeholderTextColor={theme.color.textDim}
+                testID="od-tax-new-tag"
+              />
+              <Pressable onPress={addTag} disabled={busy} style={styles.miniPrimary} testID="od-tax-add-tag">
+                <Text style={{ color: "#fff", fontWeight: "800", letterSpacing: 1 }}>ADD</Text>
+              </Pressable>
+            </View>
+            {tgs.map((t) => (
+              <View key={t.id} style={styles.taxRow}>
+                <Text style={styles.taxRowName}>{t.name}</Text>
+                <Pressable onPress={() => deleteTag(t)} hitSlop={8} testID={`od-tax-del-tag-${t.id}`}>
+                  <Ionicons name="trash-outline" size={18} color={theme.color.brand} />
+                </Pressable>
+              </View>
+            ))}
+            {tgs.length === 0 ? <Text style={styles.hint}>No tags yet.</Text> : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Helpers                                                                 */
+/* ---------------------------------------------------------------------- */
+
+function prettySize(bytes?: number | null) {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Styles                                                                  */
+/* ---------------------------------------------------------------------- */
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: theme.color.surface },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.color.border,
+    gap: 8,
+  },
+  title: {
+    color: theme.color.text,
+    fontSize: 20,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  subtitle: {
+    color: theme.color.textDim,
+    fontSize: 11,
+    letterSpacing: 1,
+    marginTop: 2,
+  },
+  headerBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: theme.color.surface2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+  },
+  headerBtnPrimary: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  headerBtnText: {
+    color: theme.color.text,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.color.border,
+  },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+  },
+  chipActive: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  chipText: {
+    color: theme.color.text,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+  },
+  chipTextActive: { color: "#fff" },
+  centerFill: { flex: 1, alignItems: "center", justifyContent: "center" },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    marginBottom: 10,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+    gap: 10,
+  },
+  rowIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1,
+    borderColor: theme.color.brand,
+  },
+  rowTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700" },
+  rowMetaLine: { flexDirection: "row", marginTop: 2, flexWrap: "wrap" },
+  rowMeta: {
+    color: theme.color.textDim,
+    fontSize: 11,
+    letterSpacing: 0.5,
+  },
+  pubPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  pubPillOn: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  pubPillOff: {
+    backgroundColor: theme.color.surface,
+    borderColor: theme.color.border,
+  },
+  pubPillText: { fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  iconBtn: { padding: 6 },
+  emptyBox: {
+    alignItems: "center",
+    padding: 32,
+    marginTop: 32,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+  },
+  emptyTitle: { color: theme.color.text, fontSize: 18, fontWeight: "800", marginTop: 10 },
+  emptyBody: { color: theme.color.text, fontSize: 13, lineHeight: 20, marginTop: 8, textAlign: "center", opacity: 0.85 },
+
+  // Modal
+  modalScrim: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: theme.color.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "94%",
+    // On Android + web, ensure the modal doesn't overflow off-screen.
+    ...Platform.select({ web: { maxHeight: "94vh" as any }, default: {} }),
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.color.border,
+  },
+  modalTitle: { flex: 1, color: theme.color.text, fontSize: 18, fontWeight: "800", letterSpacing: 0.5 },
+
+  label: {
+    color: theme.color.textDim,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  hint: {
+    color: theme.color.textDim,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  input: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: theme.color.text,
+    backgroundColor: theme.color.surface2,
+    fontSize: 15,
+  },
+  textarea: { minHeight: 88, textAlignVertical: "top" },
+  segRow: { flexDirection: "row", gap: 8 },
+  segBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+  },
+  segBtnActive: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  segText: { color: theme.color.text, fontSize: 12, fontWeight: "800", letterSpacing: 1 },
+  segTextActive: { color: "#fff" },
+  chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  pickerBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+    backgroundColor: theme.color.surface2,
+  },
+  pickerBtnText: { color: theme.color.text, fontSize: 14, fontWeight: "600" },
+  thumbPreview: { width: 60, height: 60, borderRadius: 8 },
+  pubRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 20,
+  },
+  modalFooter: {
+    flexDirection: "row",
+    padding: 12,
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.color.border,
+    backgroundColor: theme.color.surface,
+  },
+  footerBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: "center",
+    borderRadius: 12,
+    backgroundColor: theme.color.surface2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.color.border,
+  },
+  footerBtnPrimary: {
+    backgroundColor: theme.color.brand,
+    borderColor: theme.color.brand,
+  },
+  footerBtnText: { color: theme.color.text, fontSize: 13, fontWeight: "800", letterSpacing: 1 },
+
+  // Taxonomy
+  sectionHeader: {
+    color: theme.color.text,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+    marginBottom: 8,
+  },
+  addRow: { flexDirection: "row", alignItems: "center" },
+  miniPrimary: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: theme.color.brand,
+  },
+  taxRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.color.border,
+  },
+  taxRowName: { color: theme.color.text, fontSize: 14 },
+});

@@ -1,0 +1,45 @@
+{
+  "summary": "Backend-only test of the new On Demand content library (Stage 1). Wrote /app/backend/tests/test_on_demand_library.py with 43 pytest test cases covering categories, tags, item validation, item CRUD (workout/video/audio), coach list filters, PATCH (content_type immutability, workout_json guarded to workout only, thumbnail/media replace), publish toggle, public visibility rules (coach vs client on unpublished), presigned media-url + thumbnail-url endpoints, category/tag deletion cascade to items, and item deletion. 42 passed, 1 skipped (constructing a non-workout item with no media is not possible via the public API surface, so `item_has_no_media` on media-url couldn't be exercised — flagged for follow-up but not a blocker). No 5xx errors, no serialization/ObjectId issues observed. R2 driver live — uploads, presigns and replacement flows all worked end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/on-demand/items/{id}/media-url", "issue": "The `item_has_no_media` 404 branch cannot be reached via public API — workout items short-circuit to 400 and video/audio require media at create time and PATCH never clears media_storage_key. Consider adding coverage via a direct DB mutation in tests, or expose a way to clear media."},
+      {"endpoint": "PATCH /api/on-demand/coach/items/{id}", "issue": "Passing `content_type` in the body is silently ignored because it isn't on ItemPatchBody. Behaviour is correct (immutable) but a hint/warning log would help API consumers who might expect an error."},
+      {"endpoint": "DELETE /api/on-demand/coach/categories/{id}", "issue": "No 404 test path failed; but response body does not surface count of items detached (nice-to-have for coach UI)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_on_demand_library.py",
+    "/app/test_reports/pytest/on_demand_results.xml"
+  ],
+  "action_items": [
+    "Consider extending PATCH to allow clearing media (set media=null) so the 'item_has_no_media' branch on /media-url is reachable; then add a matching test.",
+    "Optional: return item counts touched by category/tag delete in the response for coach UX."
+  ],
+  "critical_code_review_comments": [
+    "feature_on_demand.py is 546 lines — well-scoped, single-purpose, and under the 700-line soft cap. No refactor needed.",
+    "Payload validation happens BEFORE any R2 write in create — good, avoids orphan bytes.",
+    "PATCH correctly performs best-effort R2 cleanup on old key when replacing thumbnail/media with a different extension.",
+    "workout_json is stripped from coach list results via projection ({workout_json: 0}) — verified working.",
+    "content_type is enforced immutable by simply not exposing it on ItemPatchBody — clean approach.",
+    "All responses correctly exclude MongoDB _id (verified across list, get, create, patch endpoints).",
+    "Idempotent category/tag creation via slug matching works with whitespace + case variants — verified with `TEST_Dup_xxxx` vs `  TEST_DUP_XXXX  `.",
+    "Client role is properly rejected from /coach/* endpoints (401/403).",
+    "Presigned URLs returned with mime + expires_in + driver fields; TTL is 30 minutes as coded."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_on_demand_library.py (new test file, 43 test cases)"
+  ],
+  "success_rate": {"backend": "100% (42/42 executed, 1 skipped by design)", "frontend": "N/A — not in scope for Stage 1"},
+  "seed_data_creation": "Tests create their own TEST_-prefixed categories, tags, and items and tear them down in a module-scoped fixture. Verified via list endpoints — no lingering rows after run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Endpoint surface covered by /app/backend/tests/test_on_demand_library.py. When Stage 2 (client browse/playback UI) lands, extend the same file with member-facing filters and playback wiring. The one skipped test (`test_item_without_media_returns_404_on_media_url`) documents an unreachable branch — either add a way to clear media in PATCH or remove that 404 branch as dead code.",
+  "rca_of_issue": "N/A — no failures found."
+}

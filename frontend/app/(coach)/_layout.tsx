@@ -42,6 +42,11 @@ export default function CoachLayout() {
       <Tabs.Screen name="changelog" options={{ href: null }} />
       <Tabs.Screen name="library-legacy" options={{ href: null }} />
       <Tabs.Screen name="crew-base" options={{ href: null }} />
+      {/* Iter191 · On Demand content library — coach management screen.
+          Hidden from mobile tabs (6-tab bar is already full); reachable via
+          the desktop sidebar and direct URL. Stage 2 will expose an entry
+          from the coach home dashboard. */}
+      <Tabs.Screen name="on-demand" options={{ href: null }} />
     </Tabs>
   );
 }

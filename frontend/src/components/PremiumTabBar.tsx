@@ -27,11 +27,12 @@ type IconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 // Iter 122 — client bottom navigation swaps MESSAGES → BASE (Aviation
 // crew community). Messages moves to the floating <CoachChatBubble />.
 const TAB_META: Record<string, { label: string; icon: IconName; iconActive?: IconName; custom?: "base" }> = {
-  home:      { label: "TODAY",     icon: "lightning-bolt-outline",   iconActive: "lightning-bolt"          },
-  calendar:  { label: "CALENDAR",  icon: "calendar-blank-outline",   iconActive: "calendar-blank"          },
-  nutrition: { label: "NUTRITION", icon: "silverware-fork-knife",    iconActive: "silverware-fork-knife"   },
-  base:      { label: "BASE",      icon: "account-group-outline",    iconActive: "account-group",   custom: "base" },
-  profile:   { label: "PROFILE",   icon: "account-circle-outline",   iconActive: "account-circle"          },
+  home:        { label: "TODAY",     icon: "lightning-bolt-outline",   iconActive: "lightning-bolt"          },
+  nutrition:   { label: "NUTRITION", icon: "silverware-fork-knife",    iconActive: "silverware-fork-knife"   },
+  "on-demand": { label: "ON DEMAND", icon: "play-circle-outline",      iconActive: "play-circle"             },
+  calendar:    { label: "CALENDAR",  icon: "calendar-blank-outline",   iconActive: "calendar-blank"          },
+  base:        { label: "BASE",      icon: "account-group-outline",    iconActive: "account-group",   custom: "base" },
+  profile:     { label: "PROFILE",   icon: "account-circle-outline",   iconActive: "account-circle"          },
 };
 
 // Iter 82 — unread badge (relocated to floating CoachChatBubble in Iter 122).

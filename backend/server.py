@@ -29,7 +29,7 @@ import bcrypt
 import httpx
 import jwt
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, Request, status
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Header, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -13747,18 +13747,74 @@ def _transcode_webm_to_mp4_sync(webm_bytes: bytes) -> bytes:
             pass
 
 
+def _remux_to_mp4_sync(src_bytes: bytes, src_ext: str) -> bytes:
+    """Fast path — copy streams into an MP4 container WITHOUT re-encoding.
+
+    Uses `ffmpeg -c copy -movflags +faststart`. Succeeds only when the
+    source video/audio codecs are already MP4-compatible (H.264 + AAC,
+    which some browsers use inside a WebM wrapper; QuickTime .mov is
+    usually already H.264 too). Raises `RuntimeError` on any failure so
+    the caller can fall back to a full re-encode.
+    """
+    import subprocess
+    import imageio_ffmpeg
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    suffix = f".{src_ext}" if src_ext else ".bin"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tin, \
+         tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tout:
+        in_path, out_path = tin.name, tout.name
+        tin.write(src_bytes)
+        tin.flush()
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg, "-y", "-loglevel", "error",
+                "-i", in_path,
+                "-c", "copy",
+                "-movflags", "+faststart",
+                out_path,
+            ],
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or b"").decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"remux failed (rc={proc.returncode}): {err}")
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            Path(in_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            Path(out_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _remux_or_reencode_sync(src_bytes: bytes, src_ext: str) -> tuple[bytes, str]:
+    """Try the fast remux path first; fall back to a full re-encode.
+
+    Returns `(mp4_bytes, method)` where `method` is "remux" or "reencode"
+    for logging/observability.
+    """
+    try:
+        return _remux_to_mp4_sync(src_bytes, src_ext), "remux"
+    except Exception as e:
+        logger.info("remux fast path failed (%s) — falling back to full re-encode", e)
+        return _transcode_webm_to_mp4_sync(src_bytes), "reencode"
+
+
 async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dict:
     """Persist a coach video via the abstracted storage driver so it survives
     server restarts and container churn.
 
-    Iter 155 — routed through `storage.py`. When `R2_*` env vars are set,
-    `storage` is the R2 driver and bytes land in the CrewFit R2 bucket.
-    Falls back to the on-disk driver in dev.
-
-    Iter190 — Incoming WebM (Chrome/Firefox MediaRecorder default) is
-    transcoded to MP4 (H.264/AAC, +faststart) before storage so native
-    iOS/Android players can play the file without a compatibility shim.
-    QuickTime .mov is left alone — iOS players handle it natively.
+    Iter197 — Uploads are now synchronous only for **writing the raw
+    bytes**. The heavy WebM→MP4 transcode has moved to a background
+    task (`_process_coach_video_bg`) so `POST /coach/videos` can return
+    an HTTP 202 within seconds even on a 67 MB recording. The caller is
+    responsible for spawning that background task after inserting the
+    record with `status: "processing"`.
 
     Returns::
 
@@ -13769,41 +13825,103 @@ async def _save_coach_video(video_bytes: bytes, mime: str, video_id: str) -> dic
             "mime":        str,   # normalised content type
         }
 
-    The caller is responsible for writing `storage_key` into the
-    `db.weekly_videos` document alongside `file_url` so the download route
-    can look the bytes back up.
+    The caller writes `storage_key` (and status) into the
+    `db.weekly_videos` document; the file endpoint reads back through
+    the storage driver.
     """
-    ext = "mp4"
-    content_type = "video/mp4"
     lower = (mime or "").lower()
     if "webm" in lower:
-        # Transcode WebM → MP4 in a worker thread so the event loop stays hot.
-        try:
-            loop = asyncio.get_running_loop()
-            video_bytes = await loop.run_in_executor(
-                None, _transcode_webm_to_mp4_sync, video_bytes,
-            )
-            ext, content_type = "mp4", "video/mp4"
-        except Exception:
-            logger.exception("webm→mp4 transcode failed for %s — falling back to raw webm", video_id)
-            ext, content_type = "webm", "video/webm"
+        ext, content_type = "webm", "video/webm"
     elif "quicktime" in lower or "mov" in lower:
         ext, content_type = "mov", "video/quicktime"
-    # Import locally so we don't perturb the top-of-file import block; the
-    # module is otherwise unused in server.py.
+    elif "mp4" in lower or not mime:
+        ext, content_type = "mp4", "video/mp4"
+    else:
+        # Unknown mime — trust the caller and default to mp4 extension.
+        ext, content_type = "mp4", mime or "video/mp4"
+    # Local import — the module is otherwise unused in server.py.
     from storage import storage
     storage_key = f"coach_videos/{video_id}.{ext}"
     await storage.write_bytes(storage_key, video_bytes, content_type=content_type)
-    # ALSO mirror to the legacy on-disk directory when the active driver is
-    # the disk one (idempotent — write_bytes has already done this). For
-    # cloud drivers we skip this, since restart-persistence is guaranteed
-    # by the object store and we don't want to waste ephemeral pod disk.
     return {
         "file_url": f"/api/coach/videos/{video_id}/file",
         "storage_key": storage_key,
         "ext": ext,
         "mime": content_type,
     }
+
+
+async def _process_coach_video_bg(video_id: str) -> None:
+    """Background task — remux/re-encode a raw WebM upload to MP4 and
+    flip the `weekly_videos` doc to `status="recorded"`.
+
+    Idempotent: if the doc already has an MP4 storage_key, this is a
+    no-op. If any step fails, the doc is updated with
+    `status="processing_failed"` and a truncated error message so the
+    coach can see what went wrong. The original raw bytes are always
+    preserved (either as the source key or under `legacy_source_key`)
+    so we can retry manually.
+    """
+    from storage import storage as _s
+    try:
+        doc = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0})
+        if not doc:
+            logger.warning("bg-transcode: video %s no longer exists", video_id)
+            return
+        src_key = doc.get("storage_key")
+        src_ext = (doc.get("file_ext") or "").lower()
+        if not src_key:
+            logger.warning("bg-transcode: video %s has no storage_key", video_id)
+            return
+        # Already MP4 — flip status and exit without touching R2.
+        if src_ext == "mp4":
+            await db.weekly_videos.update_one(
+                {"id": video_id},
+                {"$set": {"status": "recorded", "processed_at": now_iso()}},
+            )
+            return
+
+        raw = await _s.read_bytes(src_key)
+        if not raw:
+            raise RuntimeError(f"empty source bytes at {src_key}")
+
+        loop = asyncio.get_running_loop()
+        mp4_bytes, method = await loop.run_in_executor(
+            None, _remux_or_reencode_sync, raw, src_ext or "webm",
+        )
+        logger.info(
+            "bg-transcode: video %s converted via %s (%d bytes → %d bytes)",
+            video_id, method, len(raw), len(mp4_bytes),
+        )
+
+        new_key = f"coach_videos/{video_id}.mp4"
+        await _s.write_bytes(new_key, mp4_bytes, content_type="video/mp4")
+
+        set_updates: dict[str, Any] = {
+            "storage_key": new_key,
+            "file_ext": "mp4",
+            "file_mime": "video/mp4",
+            "status": "recorded",
+            "processed_at": now_iso(),
+            "processing_method": method,
+        }
+        # Preserve the original source key for rollback / debugging.
+        if src_key and src_key != new_key:
+            set_updates["legacy_source_key"] = src_key
+        await db.weekly_videos.update_one({"id": video_id}, {"$set": set_updates})
+    except Exception as e:
+        logger.exception("bg-transcode failed for %s", video_id)
+        try:
+            await db.weekly_videos.update_one(
+                {"id": video_id},
+                {"$set": {
+                    "status": "processing_failed",
+                    "processing_error": str(e)[:500],
+                    "processed_at": now_iso(),
+                }},
+            )
+        except Exception:
+            logger.exception("bg-transcode: failed to record failure state for %s", video_id)
 
 
 class CoachVideoCreateBody(BaseModel):
@@ -13820,79 +13938,243 @@ class CoachVideoCreateBody(BaseModel):
     video_kind: Optional[str] = None
 
 
-@api.post("/coach/videos")
-async def coach_create_video(body: CoachVideoCreateBody, coach: dict = Depends(require_role("coach"))):
-    video_kind = (body.video_kind or "weekly").strip().lower()
+async def _persist_coach_video_and_attach(
+    *,
+    coach_id: str,
+    user_id: str,
+    script: str,
+    check_in_id: Optional[str],
+    video_kind: str,
+    duration_seconds: Optional[int],
+    raw_bytes: Optional[bytes],
+    file_mime: Optional[str],
+    file_url_override: Optional[str],
+) -> dict:
+    """Shared writer used by both the multipart and legacy JSON code
+    paths on `POST /coach/videos`. Returns the freshly-inserted doc."""
     if video_kind not in {"weekly", "welcome"}:
         raise HTTPException(400, "video_kind must be one of 'weekly' or 'welcome'")
+
     ci = None
-    if body.check_in_id:
-        ci = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0})
+    if check_in_id:
+        ci = await db.check_ins.find_one({"id": check_in_id}, {"_id": 0})
         if not ci and video_kind == "weekly":
             raise HTTPException(404, "check_in not found")
     elif video_kind == "weekly":
         raise HTTPException(400, "check_in_id is required for weekly videos")
+
     video_id = new_id()
-    file_url = body.file_url
+    file_url: Optional[str] = file_url_override
     storage_key: Optional[str] = None
     file_ext: Optional[str] = None
-    file_mime: Optional[str] = None
-    if body.file_b64 and not file_url:
+    file_mime_out: Optional[str] = None
+    initial_status = "draft"
+
+    if raw_bytes and not file_url_override:
         try:
-            raw = base64.b64decode(body.file_b64.split(",")[-1])
-            saved = await _save_coach_video(raw, body.file_mime or "video/mp4", video_id)
+            saved = await _save_coach_video(raw_bytes, file_mime or "video/mp4", video_id)
             file_url = saved["file_url"]
             storage_key = saved["storage_key"]
             file_ext = saved["ext"]
-            file_mime = saved["mime"]
+            file_mime_out = saved["mime"]
+            # Iter197 · The transcode is now async — if the raw upload is
+            # already an MP4 we can flip to "recorded" immediately (the
+            # background task's early-return handles the DB flip harmlessly).
+            # Otherwise the doc lands in "processing" and the client polls
+            # until the bg task promotes it to "recorded".
+            initial_status = "recorded" if file_ext == "mp4" else "processing"
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(400, f"invalid file_b64: {e}")
+            raise HTTPException(400, f"invalid video bytes: {e}")
+    elif file_url_override:
+        # External URL — nothing to transcode; treat as ready.
+        initial_status = "recorded"
+
     doc = {
         "id": video_id,
-        "user_id": body.user_id,
-        "coach_id": coach["id"],
-        "check_in_id": body.check_in_id,
+        "user_id": user_id,
+        "coach_id": coach_id,
+        "check_in_id": check_in_id,
         "video_kind": video_kind,
-        "script": body.script,
+        "script": script,
         "file_url": file_url,
         "storage_key": storage_key,
         "file_ext": file_ext,
-        "file_mime": file_mime,
+        "file_mime": file_mime_out,
         "thumbnail_url": None,
-        "duration_seconds": body.duration_seconds,
-        "status": "draft" if not file_url else "recorded",
+        "duration_seconds": duration_seconds,
+        "status": initial_status,
         "created_at": now_iso(),
         "sent_at": None,
         "watched_at": None,
     }
     await db.weekly_videos.insert_one(doc)
+
+    # Iter197 · Spawn the transcode background task for WebM / MOV / any
+    # non-mp4 upload. The task is a no-op if the source is already MP4,
+    # but firing it unconditionally when we have raw bytes keeps the
+    # code simple and lets us handle unexpected extensions gracefully.
+    if raw_bytes and storage_key and file_ext != "mp4":
+        _spawn_bg(_process_coach_video_bg(video_id))
+
     # Iter186+ · Generate a 3-5 bullet summary for EVERY video (welcome
     # + weekly) — client screen renders these under the player. Fires
-    # in the background so upload latency isn't affected. `_spawn_bg`
-    # holds a strong ref so Python's GC can't drop the task under load.
-    if body.script:
+    # in the background so upload latency isn't affected.
+    if script:
         try:
             from feature_welcome_video_summary import stamp_welcome_summary
-            _spawn_bg(stamp_welcome_summary(db, video_id, body.script))
+            _spawn_bg(stamp_welcome_summary(db, video_id, script))
         except Exception:
             logger.exception("video-summary bg spawn failed for %s", video_id)
+
     # Iter 145 — prevent orphan uploads: only attach to a check_in that
-    # doesn't already have a SENT video. If the check_in already has a
-    # different sent video, this becomes a new draft attached but the
-    # sent record stays authoritative.
-    # (Skipped for welcome videos — they are not check-in scoped.)
-    if body.check_in_id and video_kind == "weekly":
-        ci_row = await db.check_ins.find_one({"id": body.check_in_id}, {"_id": 0, "weekly_video_status": 1})
+    # doesn't already have a SENT video.
+    if check_in_id and video_kind == "weekly":
+        ci_row = await db.check_ins.find_one({"id": check_in_id}, {"_id": 0, "weekly_video_status": 1})
         current_status = str((ci_row or {}).get("weekly_video_status") or "")
         if current_status != "sent":
             set_updates = {"weekly_video_id": video_id, "weekly_video_status": doc["status"]}
             if file_url:
                 set_updates["weekly_video_uploaded_at"] = doc["created_at"]
-            await db.check_ins.update_one({"id": body.check_in_id}, {"$set": set_updates})
+            await db.check_ins.update_one({"id": check_in_id}, {"$set": set_updates})
     doc.pop("_id", None)
+    return doc
+
+
+@api.post("/coach/videos", status_code=202)
+async def coach_create_video(
+    request: Request,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Create (or attach) a coach video.
+
+    Iter197 · Supports two upload shapes:
+
+      * **Multipart (preferred)** — `multipart/form-data` with a `file`
+        part carrying the raw bytes plus `user_id`, `script`,
+        `duration_seconds`, `video_kind`, `check_in_id` form fields. The
+        bytes stream to R2 as-is; a background task then remuxes /
+        re-encodes to MP4 and flips `status` to `"recorded"`.
+      * **JSON (legacy)** — `application/json` with the previous
+        `file_b64` / `file_url` body shape. Kept for older mobile
+        builds that haven't shipped the multipart client yet.
+
+    In both cases we return **HTTP 202** — the video record is created
+    immediately, but the file may still be in `status: "processing"`.
+    The client should poll `GET /coach/videos/{id}/status` until the
+    status becomes `"recorded"` before enabling the SEND action.
+    """
+    content_type = (request.headers.get("content-type") or "").lower()
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        user_id = str(form.get("user_id") or "").strip()
+        script = str(form.get("script") or "")
+        if not user_id:
+            raise HTTPException(400, "user_id is required")
+        video_kind = str(form.get("video_kind") or "weekly").strip().lower()
+        check_in_id_raw = form.get("check_in_id")
+        check_in_id = str(check_in_id_raw).strip() if check_in_id_raw not in (None, "", "null", "undefined") else None
+        dur_raw = form.get("duration_seconds")
+        try:
+            duration_seconds = int(dur_raw) if dur_raw not in (None, "", "null") else None
+        except Exception:
+            duration_seconds = None
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(400, "file part is required in the multipart upload")
+        # Stream the upload into a temp file so we never hold the full
+        # blob in Python heap — matters for 60-100 MB coach recordings.
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".upload") as tmp:
+                tmp_path = tmp.name
+                total = 0
+                while True:
+                    chunk = await upload.read(1024 * 1024)  # 1 MB chunks
+                    if not chunk:
+                        break
+                    tmp.write(chunk)
+                    total += len(chunk)
+                    if total > MAX_COACH_VIDEO_BYTES:
+                        raise HTTPException(413, f"video too large ({total} > {MAX_COACH_VIDEO_BYTES} bytes)")
+            with open(tmp_path, "rb") as f:
+                raw = f.read()
+        finally:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                await upload.close()
+            except Exception:
+                pass
+        if not raw:
+            raise HTTPException(400, "empty file upload")
+
+        file_mime = getattr(upload, "content_type", None) or str(form.get("file_mime") or "") or "video/webm"
+
+        doc = await _persist_coach_video_and_attach(
+            coach_id=coach["id"],
+            user_id=user_id,
+            script=script,
+            check_in_id=check_in_id,
+            video_kind=video_kind,
+            duration_seconds=duration_seconds,
+            raw_bytes=raw,
+            file_mime=file_mime,
+            file_url_override=None,
+        )
+        return {"video": doc}
+
+    # --- Legacy JSON path ---
+    try:
+        body_raw = await request.json()
+    except Exception:
+        raise HTTPException(400, "expected multipart/form-data or JSON body")
+    try:
+        body = CoachVideoCreateBody(**body_raw)
+    except Exception as e:
+        raise HTTPException(422, f"invalid JSON body: {e}")
+    raw: Optional[bytes] = None
+    if body.file_b64 and not body.file_url:
+        try:
+            raw = base64.b64decode(body.file_b64.split(",")[-1])
+        except Exception as e:
+            raise HTTPException(400, f"invalid file_b64: {e}")
+    doc = await _persist_coach_video_and_attach(
+        coach_id=coach["id"],
+        user_id=body.user_id,
+        script=body.script,
+        check_in_id=body.check_in_id,
+        video_kind=(body.video_kind or "weekly").strip().lower(),
+        duration_seconds=body.duration_seconds,
+        raw_bytes=raw,
+        file_mime=body.file_mime,
+        file_url_override=body.file_url,
+    )
     return {"video": doc}
+
+
+# Defensive 512 MB cap on the multipart body — well above a 15-minute HD
+# webm recording (~120-180 MB) but low enough to keep abuse bounded.
+MAX_COACH_VIDEO_BYTES = 512 * 1024 * 1024
+
+
+@api.get("/coach/videos/{video_id}/status")
+async def coach_video_status(video_id: str, coach: dict = Depends(require_role("coach"))):
+    """Polling endpoint — the coach teleprompter frontend calls this
+    after receiving the 202 from `POST /coach/videos` until the doc's
+    `status` becomes `"recorded"`. Sends are gated on that transition.
+    """
+    doc = await db.weekly_videos.find_one(
+        {"id": video_id},
+        {"_id": 0, "id": 1, "status": 1, "file_ext": 1, "file_mime": 1,
+         "processing_error": 1, "processed_at": 1, "processing_method": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "video not found")
+    return doc
 
 
 @api.post("/coach/videos/{video_id}/send")
@@ -13905,6 +14187,14 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
     # creating another message record.
     if v.get("status") == "sent" and v.get("sent_at"):
         return {"ok": True, "sent_at": v["sent_at"], "already_sent": True}
+    # Iter197 · Sending is gated on the transcode having finished. When
+    # the frontend polls `/status` correctly it should never hit this,
+    # but defence-in-depth: never enqueue a client message pointing at
+    # a file that isn't playable yet.
+    if v.get("status") == "processing":
+        raise HTTPException(409, "video is still processing — please wait for status='recorded'")
+    if v.get("status") == "processing_failed":
+        raise HTTPException(422, f"video failed to process: {v.get('processing_error') or 'unknown error'}")
     if not v.get("file_url"):
         raise HTTPException(400, "video has no uploaded file — cannot send")
     now = now_iso()

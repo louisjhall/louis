@@ -322,56 +322,65 @@ export default function Teleprompter() {
 
   const sendVideo = async () => {
     if (!recordingBlob || !(recordingBlob instanceof Blob)) return;
-    // Iter186 · Reset progress state before we begin.
+    // Iter197 · Reset progress state before we begin.
     setUploadError(null);
     setUploadPct(0);
     setUploadBytes(recordingBlob.size || 0);
     setPhase("sending");
 
     // Timeout guard so the UI can never sit on "Uploading…" indefinitely.
-    // If the K8s ingress silently drops an in-flight large upload the
-    // fetch/XHR would otherwise hang forever.
     let didTimeout = false;
     const timeoutHandle = setTimeout(() => {
       didTimeout = true;
     }, UPLOAD_TIMEOUT_MS);
 
     try {
-      // Convert blob to base64 (data URL — server strips the prefix).
-      const reader = new FileReader();
-      const b64: string = await new Promise((resolve, reject) => {
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Could not read the recording — please retake."));
-        reader.readAsDataURL(recordingBlob);
-      });
-
-      // Iter 156 — Welcome Video Phase 2.
-      const body: Record<string, any> = {
-        user_id: ci.user_id,
-        script,
-        file_b64: b64,
-        file_mime: "video/webm",
-        duration_seconds: elapsed,
-      };
+      // Iter197 · Send as multipart/form-data — no base64 memory copy.
+      // The server saves the raw bytes then returns HTTP 202 with a
+      // `status:"processing"` record; we poll `/status` below until it
+      // transitions to `"recorded"` before firing SEND.
+      const form = new FormData();
+      form.append("user_id", String(ci.user_id));
+      form.append("script", String(script || ""));
+      form.append("duration_seconds", String(elapsed || 0));
+      form.append("file_mime", recordingBlob.type || "video/webm");
       if (isWelcome) {
-        body.video_kind = "welcome";
+        form.append("video_kind", "welcome");
       } else if (!isWelcomeMode) {
-        body.check_in_id = id;
+        form.append("video_kind", "weekly");
+        form.append("check_in_id", String(id));
       }
+      // Name the file so the server sees a proper filename in the
+      // multipart part — some backends fall over without it.
+      form.append(
+        "file",
+        recordingBlob as any,
+        `coach-video-${Date.now()}.webm`,
+      );
 
-      // Iter186 · Web path uses XMLHttpRequest for real upload-progress
-      // events + explicit timeout. Native falls back to fetch (base64 is
-      // already in memory; native builds are the rare path today).
-      const v = await postVideoWithProgress(body, {
+      const v = await postVideoWithProgress(form, {
         onProgress: (pct: number) => setUploadPct(pct),
         timeoutMs: UPLOAD_TIMEOUT_MS,
       });
 
       if (didTimeout) throw new Error("Upload timed out — please retry.");
 
-      // Second call — announce the send to the client. Small payload,
-      // no progress needed; falls under the same timeout guard.
-      await api<any>(`/coach/videos/${v.video.id}/send`, { method: "POST", body: {} });
+      const videoId: string | undefined = v?.video?.id;
+      if (!videoId) throw new Error("Server did not return a video id.");
+
+      // Iter197 · Poll the status endpoint until the transcode finishes
+      // (or we hit the same overall timeout). `recorded` = playable file
+      // in R2 and safe to send; `processing_failed` = surface the error.
+      const readyStatus = await pollVideoStatus(videoId, {
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+        onTick: () => { if (didTimeout) throw new Error("Processing timed out — please retry."); },
+      });
+      if (readyStatus === "processing_failed") {
+        throw new Error("Server couldn't process the recording — please retake and try again.");
+      }
+
+      // Announce the send now that the file is guaranteed playable.
+      await api<any>(`/coach/videos/${videoId}/send`, { method: "POST", body: {} });
 
       clearTimeout(timeoutHandle);
       Alert.alert(
@@ -641,15 +650,18 @@ export default function Teleprompter() {
 
 function fmt(sec: number): string { const m = Math.floor(sec / 60); const s = sec % 60; return `${m}:${String(s).padStart(2, "0")}`; }
 
-// Iter186 · Upload helper with real progress + timeout. Uses XHR on web
+// Iter197 · Upload helper with real progress + timeout. Uses XHR on web
 // (fetch has no upload-progress API), falls back to fetch elsewhere.
 // Kept inside this file because it's only used by the teleprompter and
 // mirrors the /coach/videos POST semantics exactly.
+//
+// Body is now `FormData` (multipart/streaming) — we intentionally do NOT
+// set `Content-Type` on the XHR because the browser will fill in the
+// correct `multipart/form-data; boundary=...` header for us.
 async function postVideoWithProgress(
-  body: Record<string, any>,
+  body: FormData,
   { onProgress, timeoutMs }: { onProgress: (pct: number) => void; timeoutMs: number },
 ): Promise<any> {
-  // Resolve auth + base URL from the shared api helper.
   const token = await getToken();
   const API_BASE_URL = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/$/, "") + "/api";
   const url = `${API_BASE_URL}/coach/videos`;
@@ -659,7 +671,7 @@ async function postVideoWithProgress(
       try {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", url, true);
-        xhr.setRequestHeader("Content-Type", "application/json");
+        // NOTE: do NOT set Content-Type; the browser adds the boundary.
         if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
         xhr.timeout = timeoutMs;
         xhr.upload.onprogress = (evt: ProgressEvent) => {
@@ -670,6 +682,9 @@ async function postVideoWithProgress(
         };
         xhr.onload = () => {
           try {
+            // Iter197 · The backend now returns HTTP 202 (Accepted) when
+            // the video is queued for background processing. Treat both
+            // 200-series and 202 as success.
             if (xhr.status >= 200 && xhr.status < 300) {
               onProgress(100);
               const j = xhr.responseText ? JSON.parse(xhr.responseText) : {};
@@ -689,30 +704,31 @@ async function postVideoWithProgress(
         xhr.onerror = () => reject(new Error("Network error — please retry."));
         xhr.ontimeout = () => reject(new Error(`Upload timed out after ${Math.round(timeoutMs / 60_000)} min.`));
         xhr.onabort  = () => reject(new Error("Upload aborted."));
-        xhr.send(JSON.stringify(body));
+        xhr.send(body);
       } catch (e: any) {
         reject(e);
       }
     });
   }
 
-  // Native fallback — fetch + AbortController. No upload progress but
-  // still gets the same timeout guarantee.
+  // Native fallback — fetch + AbortController. FormData is supported by
+  // React Native's fetch on both iOS and Android.
   const controller = new AbortController();
   const abortHandle = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // Deliberately no Content-Type — fetch adds the correct
+        // multipart boundary.
       },
-      body: JSON.stringify(body),
+      body: body as any,
       signal: controller.signal,
     });
     clearTimeout(abortHandle);
     onProgress(100);
-    if (!res.ok) {
+    if (!res.ok && res.status !== 202) {
       let msg = `HTTP ${res.status}`;
       try { const j = await res.json(); msg = j?.detail || msg; } catch { /* ignore */ }
       throw new Error(String(msg));
@@ -722,6 +738,43 @@ async function postVideoWithProgress(
     clearTimeout(abortHandle);
     if (e?.name === "AbortError") throw new Error(`Upload timed out after ${Math.round(timeoutMs / 60_000)} min.`);
     throw e;
+  }
+}
+
+/**
+ * Poll `GET /api/coach/videos/{id}/status` until the doc's status is
+ * either `"recorded"` (playable, safe to send) or `"processing_failed"`
+ * (surface the error). Returns the terminal status string.
+ *
+ * The poll cadence backs off from 1 s → 3 s so tiny videos flip almost
+ * immediately without hammering the endpoint on longer transcodes.
+ */
+async function pollVideoStatus(
+  videoId: string,
+  { timeoutMs, onTick }: { timeoutMs: number; onTick?: () => void },
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let delay = 1000;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (onTick) onTick();
+    let doc: any;
+    try {
+      doc = await api<any>(`/coach/videos/${videoId}/status`);
+    } catch (e: any) {
+      // Transient network hiccup — keep polling until deadline.
+      if (Date.now() > deadline) throw e;
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(3000, delay + 500);
+      continue;
+    }
+    const s = String(doc?.status || "");
+    if (s === "recorded" || s === "processing_failed") return s;
+    if (Date.now() > deadline) {
+      throw new Error(`Processing timed out after ${Math.round(timeoutMs / 60_000)} min.`);
+    }
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(3000, delay + 500);
   }
 }
 

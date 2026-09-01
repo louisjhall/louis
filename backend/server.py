@@ -167,6 +167,20 @@ app = FastAPI(title="CrewFit V1.5")
 api = APIRouter(prefix="/api")
 
 
+# Iter200 · Deploy pipeline health check.
+# Kubernetes/liveness probes call `GET /health` (root, not `/api/health`).
+# Must be unauthenticated and MUST return 200 so the Publish flow
+# considers the backend healthy and promotes the new build.
+@app.get("/health")
+async def _root_health() -> dict:
+    return {"ok": True, "service": "crewfit-backend"}
+
+
+@app.get("/api/health")
+async def _api_health() -> dict:
+    return {"ok": True, "service": "crewfit-backend"}
+
+
 # ------------------------------------------------------------------
 # Auth
 # ------------------------------------------------------------------
@@ -12075,7 +12089,7 @@ async def seed():
             "role": "coach",
             "is_admin": True,
             "is_primary_coach": True,
-            "password_hash": hash_pw("Louis123!"),
+            "password_hash": hash_pw(os.getenv("SEED_LOUIS_PASSWORD", "Louis123!")),
             "created_at": now_iso(),
             "onboarded": True,
             "coach_id": None,
@@ -12164,7 +12178,7 @@ async def seed():
         legacy_id = new_id()
         await db.users.insert_one({
             "id": legacy_id, "email": legacy_coach_email, "name": "Legacy Coach (archived)", "role": "coach",
-            "password_hash": hash_pw("Coach123!"), "created_at": now_iso(),
+            "password_hash": hash_pw(os.getenv("SEED_COACH_PASSWORD", "Coach123!")), "created_at": now_iso(),
             "onboarded": True, "coach_id": None,
             "is_primary_coach": False,
             "status": "archived",
@@ -12185,7 +12199,7 @@ async def seed():
     if not await db.users.find_one({"email": client_email}):
         await db.users.insert_one({
             "id": new_id(), "email": client_email, "name": "Alex Rivera",
-            "role": "client", "password_hash": hash_pw("Client123!"),
+            "role": "client", "password_hash": hash_pw(os.getenv("SEED_CLIENT_PASSWORD", "Client123!")),
             "created_at": now_iso(), "onboarded": True, "coach_id": coach_id,
             "profile": {
                 "airline": "Skyline Air", "position": "First Officer",

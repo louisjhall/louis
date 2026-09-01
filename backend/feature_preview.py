@@ -101,7 +101,7 @@ async def preview_exit(user: dict = Depends(current_user)):
 # ---------------------------------------------------------------------------
 
 DEMO_EMAIL = "demo.pilot@crewfit.com"
-DEMO_PASSWORD = "Demo123!"
+DEMO_PASSWORD = os.getenv("PREVIEW_DEMO_PASSWORD", "Demo123!")
 
 
 @api.post("/coach/preview/demo-seed")
@@ -255,10 +255,14 @@ async def preview_new_client(coach: dict = Depends(require_admin())):
     email = f"preview-newclient-{stamp}@crewfit.local"
     uid = new_id()
     now = now_iso()
+    # Iter200 · Random unloggable password. This is a throwaway 24h
+    # preview account that is impersonated via token immediately below,
+    # so the caller never needs to know the password.
+    import secrets as _sec
     await db.users.insert_one({
         "id": uid, "email": email,
         "name": "New Client Preview", "role": "client",
-        "password_hash": hash_pw("Preview123!"),
+        "password_hash": hash_pw(_sec.token_urlsafe(32)),
         "created_at": now, "onboarded": False, "coach_id": None,
         "age_confirmed": True, "age_confirmed_at": now,
         "profile": {},

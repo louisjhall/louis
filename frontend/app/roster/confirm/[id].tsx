@@ -563,104 +563,16 @@ export default function RosterConfirm() {
           </Text>
         )}
 
-        {/* Traffic-light overview — only shown when the parser produced
-            labels. Client-friendly wording only ("Louis will keep it light",
-            never "AI" / "auto"). */}
-        {(() => {
-          const counts = { green: 0, amber: 0, red: 0, black: 0 };
-          for (const d of pending.days) {
-            const c = (d as any).training_colour as keyof typeof counts | undefined;
-            if (c && counts[c] !== undefined) counts[c] += 1;
-          }
-          const total = counts.green + counts.amber + counts.red + counts.black;
-          if (total === 0) return null;
-          return (
-            <View style={styles.tlOverview} testID="rc-traffic-overview">
-              <Text style={styles.tlOverviewLabel}>THIS ROSTER</Text>
-              <View style={styles.tlOverviewRow}>
-                {counts.green > 0 && (
-                  <View style={styles.tlOverviewChip}>
-                    <View style={[styles.tlDot, styles.tlGreen]} />
-                    <Text style={styles.tlOverviewT}>{counts.green} great training day{counts.green === 1 ? "" : "s"}</Text>
-                  </View>
-                )}
-                {counts.amber > 0 && (
-                  <View style={styles.tlOverviewChip}>
-                    <View style={[styles.tlDot, styles.tlAmber]} />
-                    <Text style={styles.tlOverviewT}>{counts.amber} lighter/moderate day{counts.amber === 1 ? "" : "s"}</Text>
-                  </View>
-                )}
-                {counts.red > 0 && (
-                  <View style={styles.tlOverviewChip}>
-                    <View style={[styles.tlDot, styles.tlRed]} />
-                    <Text style={styles.tlOverviewT}>{counts.red} recovery-focused day{counts.red === 1 ? "" : "s"}</Text>
-                  </View>
-                )}
-                {counts.black > 0 && (
-                  <View style={styles.tlOverviewChip}>
-                    <View style={[styles.tlDot, styles.tlBlack]} />
-                    <Text style={styles.tlOverviewT}>{counts.black} need your check</Text>
-                  </View>
-                )}
-              </View>
-            </View>
-          );
-        })()}
+        {/* Iter200-c · "THIS ROSTER" traffic-light summary removed per
+            spec — the review screen now goes straight from the period
+            and duties header into the day-by-day cards. */}
       </View>
 
       <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: bottomPad }}>
-        {/* Iter 83 · Tool 1: Bulk-shift banner (auto-hide once dismissed) */}
-        {!shiftBannerDismissed && (
-          <View style={styles.shiftBanner} testID="rc-shift-banner">
-            <View style={styles.shiftHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.shiftTitle}>Whole roster off by a day?</Text>
-                <Text style={styles.shiftSub}>
-                  If Wed&apos;s duty is actually on Thu (or vice-versa), shift everything in one tap.
-                </Text>
-              </View>
-              <Pressable
-                testID="rc-shift-dismiss"
-                onPress={() => setShiftBannerDismissed(true)}
-                hitSlop={12}
-              >
-                <Ionicons name="close" size={18} color={theme.color.textMuted} />
-              </Pressable>
-            </View>
-            <View style={styles.shiftBtnRow}>
-              <Pressable
-                testID="rc-shift-back"
-                onPress={() => doShift("back")}
-                disabled={shifting}
-                style={[styles.shiftBtn, shifting && { opacity: 0.55 }]}
-              >
-                {shifting ? (
-                  <ActivityIndicator color={theme.color.brand} size="small" />
-                ) : (
-                  <>
-                    <Ionicons name="arrow-back" size={14} color={theme.color.brand} />
-                    <Text style={styles.shiftBtnT}>SHIFT BACK 1 DAY</Text>
-                  </>
-                )}
-              </Pressable>
-              <Pressable
-                testID="rc-shift-forward"
-                onPress={() => doShift("forward")}
-                disabled={shifting}
-                style={[styles.shiftBtn, shifting && { opacity: 0.55 }]}
-              >
-                {shifting ? (
-                  <ActivityIndicator color={theme.color.brand} size="small" />
-                ) : (
-                  <>
-                    <Text style={styles.shiftBtnT}>SHIFT FORWARD 1 DAY</Text>
-                    <Ionicons name="arrow-forward" size={14} color={theme.color.brand} />
-                  </>
-                )}
-              </Pressable>
-            </View>
-          </View>
-        )}
+        {/* Iter200-c · "Whole roster off by a day?" bulk-shift banner
+            removed per spec — bulk shifting can still be triggered
+            programmatically via `doShift()` if needed, but it no
+            longer appears on the customer review screen. */}
 
         {/* Iter 83 · Tool 2: Swap-mode active indicator */}
         {swapFromDate && (

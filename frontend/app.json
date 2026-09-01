@@ -12,7 +12,8 @@
     "updates": {
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/a45061a8-b916-4184-9e9a-9d0eb134a9b3"
     },
     "ios": {
       "supportsTablet": false,
@@ -98,6 +99,12 @@
       "expo-video"
     ],
     "assetBundlePatterns": ["**/*"],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a45061a8-b916-4184-9e9a-9d0eb134a9b3"
+      }
+    },
     "experiments": {
       "typedRoutes": true
     }

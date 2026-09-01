@@ -14170,11 +14170,53 @@ async def coach_video_status(video_id: str, coach: dict = Depends(require_role("
     doc = await db.weekly_videos.find_one(
         {"id": video_id},
         {"_id": 0, "id": 1, "status": 1, "file_ext": 1, "file_mime": 1,
-         "processing_error": 1, "processed_at": 1, "processing_method": 1},
+         "processing_error": 1, "processed_at": 1, "processing_method": 1,
+         # Iter198 · Include the auto-generated summary bullets so the
+         # coach's review UI can show them the moment the transcode
+         # finishes without another round-trip.
+         "script_summary": 1},
     )
     if not doc:
         raise HTTPException(404, "video not found")
     return doc
+
+
+class CoachVideoSummaryBody(BaseModel):
+    summary: list[str]
+
+
+@api.patch("/coach/videos/{video_id}/summary")
+async def coach_video_update_summary(
+    video_id: str,
+    body: CoachVideoSummaryBody,
+    coach: dict = Depends(require_role("coach")),
+):
+    """Persist the coach's edited bullet summary before hitting SEND.
+
+    Iter198 · The auto-generated bullets are surfaced by the status
+    endpoint (above); the coach can review + edit them; this endpoint
+    saves the final version so `weekly_videos.script_summary` becomes
+    the single source of truth for both the client's video detail
+    screen AND the message thread (see `coach_send_video`).
+    """
+    v = await db.weekly_videos.find_one({"id": video_id}, {"_id": 0, "coach_id": 1})
+    if not v:
+        raise HTTPException(404, "video not found")
+    # Coach-only — never let a client mutate their own coach's summary.
+    if v.get("coach_id") and v["coach_id"] != coach["id"]:
+        raise HTTPException(403, "not your video")
+    cleaned: list[str] = []
+    for line in (body.summary or []):
+        s = str(line or "").strip()
+        if s:
+            cleaned.append(s[:400])   # per-bullet safety cap
+        if len(cleaned) >= 12:        # sanity cap on total bullets
+            break
+    await db.weekly_videos.update_one(
+        {"id": video_id},
+        {"$set": {"script_summary": cleaned, "summary_edited_at": now_iso()}},
+    )
+    return {"ok": True, "summary": cleaned}
 
 
 @api.post("/coach/videos/{video_id}/send")
@@ -14220,17 +14262,31 @@ async def coach_send_video(video_id: str, coach: dict = Depends(require_role("co
         logger.exception("weekly video notify failed")
     # Create client-facing message record
     is_welcome = v.get("video_kind") == "welcome"
+    # Iter198 · Copy the (coach-reviewed) bullet summary onto the
+    # message record so it renders inline in the client's thread under
+    # the video card. We ALSO fold the bullets into `body` as a bullet
+    # list so simple text renderers pick them up — the video-detail
+    # screen still reads them from `weekly_videos.script_summary`.
+    summary_bullets = [
+        str(x).strip() for x in (v.get("script_summary") or []) if str(x or "").strip()
+    ]
+    base_body = (
+        "Your coach recorded a welcome video for you."
+        if is_welcome else
+        "Your weekly coaching review is ready."
+    )
+    if summary_bullets:
+        body_text = base_body + "\n\n" + "\n".join(f"• {b}" for b in summary_bullets)
+    else:
+        body_text = base_body
     await db.messages.insert_one({
         "id": new_id(),
         "from_id": coach["id"],
         "to_id": v["user_id"],
         "kind": "welcome_video" if is_welcome else "weekly_video",
         "video_id": video_id,
-        "body": (
-            "Your coach recorded a welcome video for you."
-            if is_welcome else
-            "Your weekly coaching review is ready."
-        ),
+        "body": body_text,
+        "summary_bullets": summary_bullets,
         "created_at": now,
         "read_at": None,
     })

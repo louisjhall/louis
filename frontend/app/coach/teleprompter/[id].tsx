@@ -9,7 +9,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, Alert, Platform, TextInput,
+  View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView, Alert, Platform, TextInput, Modal,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,7 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api, getToken } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
-type Phase = "idle" | "countdown" | "recording" | "preview" | "sending";
+type Phase = "idle" | "countdown" | "recording" | "preview" | "sending" | "review";
 
 // Iter 145 — slower default (was 40 px/s). Coach explicitly asked for a
 // substantially slower default. Persisted per-coach via AsyncStorage.
@@ -42,6 +42,10 @@ const FONT_SIZE_STORAGE_KEY = "crewfit.teleprompter.fontsize";
 // silently dropped an in-flight large upload, the sendVideo() call hung
 // forever and the UI stayed on "Uploading…" with no error path.
 const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+
+// Iter198 · Persist the coach's chosen camera so they don't have to
+// reselect between recording sessions.
+const CAMERA_ID_STORAGE_KEY = "crewfit.teleprompter.camera_device_id";
 
 export default function Teleprompter() {
   // Iter 162 · The teleprompter now handles two entry paths:
@@ -90,6 +94,19 @@ export default function Teleprompter() {
   // Iter 162 · defaults to true when the route was opened via the welcome
   // path so the toggle is already on when the coach arrives.
   const [isWelcome, setIsWelcome] = useState<boolean>(isWelcomeMode);
+  // Iter198 · Camera selector state — list of available video-input
+  // devices + currently selected id (persisted).
+  const [cameras, setCameras] = useState<{ deviceId: string; label: string }[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
+  const [cameraPickerOpen, setCameraPickerOpen] = useState<boolean>(false);
+  // Iter198 · Post-record summary review — bullets pulled from
+  // `weekly_videos.script_summary` (auto-generated) and edited by the
+  // coach before sending. `pendingVideoId` is the id returned by the
+  // 202 upload, waiting to be transitioned through review + send.
+  const [pendingVideoId, setPendingVideoId] = useState<string | null>(null);
+  const [summaryBullets, setSummaryBullets] = useState<string[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState<boolean>(false);
+  const [summarySaving, setSummarySaving] = useState<boolean>(false);
   const currentOffset = useRef(0);   // manual-scroll aware offset
 
   const videoRef = useRef<any>(null);              // preview
@@ -222,19 +239,82 @@ export default function Teleprompter() {
     finally { setSavingScript(false); }
   }, [id, isWelcomeMode]);
 
-  // Set up camera stream (web + expo web)
+  // Iter198 · Camera setup — request permission first (needed to
+  // populate device labels on Chrome/Safari), then enumerate the video
+  // inputs, restore the previously-chosen deviceId (or default to the
+  // first camera), and open a stream on it. Switching cameras from the
+  // picker below simply calls `startCameraStream(newId)`.
+  const startCameraStream = useCallback(async (deviceId: string | null) => {
+    if (Platform.OS !== "web") return;
+    // Stop any previous stream first — you can't hold two open at once
+    // for the same device on most browsers.
+    try {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch { /* ignore */ }
+    streamRef.current = null;
+    const videoConstraints: MediaTrackConstraints = deviceId
+      ? { deviceId: { exact: deviceId }, width: 640, height: 480 }
+      : { width: 640, height: 480, facingMode: "user" };
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints,
+        audio: true,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play?.();
+      }
+      setPermissionOk(true);
+      // Track which id we actually got (browser may substitute if the
+      // exact one is unavailable). Persist it for next session.
+      const track = stream.getVideoTracks?.()[0];
+      const settings: any = track?.getSettings?.() || {};
+      const activeId: string | undefined = settings?.deviceId || (deviceId || undefined);
+      if (activeId) {
+        setSelectedCameraId(activeId);
+        try { await AsyncStorage.setItem(CAMERA_ID_STORAGE_KEY, activeId); } catch { /* ignore */ }
+      }
+    } catch (e: any) {
+      Alert.alert("Camera unavailable", e?.message || "Could not open the selected camera.");
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (Platform.OS === "web") {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: "user" }, audio: true });
-          if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-          streamRef.current = stream;
-          if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play?.(); }
-          setPermissionOk(true);
+          // Kick off an initial permission request so device labels
+          // are populated in the enumerate call below.
+          const preview = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          if (cancelled) { preview.getTracks().forEach((t) => t.stop()); return; }
+          preview.getTracks().forEach((t) => t.stop());
         } catch (e: any) {
           Alert.alert("Camera permission required", e?.message || "Please allow camera + microphone access.");
+          return;
+        }
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices
+            .filter((d) => d.kind === "videoinput")
+            .map((d, i) => ({
+              deviceId: d.deviceId,
+              label: d.label || `Camera ${i + 1}`,
+            }));
+          if (cancelled) return;
+          setCameras(videoInputs);
+          // Restore last-used camera or default to the first available.
+          let chosen: string | null = null;
+          try {
+            const stored = await AsyncStorage.getItem(CAMERA_ID_STORAGE_KEY);
+            if (stored && videoInputs.some((v) => v.deviceId === stored)) chosen = stored;
+          } catch { /* ignore */ }
+          if (!chosen && videoInputs.length > 0) chosen = videoInputs[0].deviceId;
+          setSelectedCameraId(chosen);
+          await startCameraStream(chosen);
+        } catch (e: any) {
+          Alert.alert("Camera error", e?.message || "Could not enumerate cameras.");
         }
       } else {
         // Native builds require expo-camera; skipped in dev preview.
@@ -247,7 +327,15 @@ export default function Teleprompter() {
       if (scrollTimer.current) clearInterval(scrollTimer.current);
       if (elapsedTimer.current) clearInterval(elapsedTimer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const chooseCamera = useCallback(async (deviceId: string) => {
+    setCameraPickerOpen(false);
+    if (deviceId === selectedCameraId) return;
+    setSelectedCameraId(deviceId);
+    await startCameraStream(deviceId);
+  }, [selectedCameraId, startCameraStream]);
 
   const startCountdown = () => {
     if (!permissionOk) { Alert.alert("Camera not ready", "Grant camera + microphone access first."); return; }
@@ -379,17 +467,25 @@ export default function Teleprompter() {
         throw new Error("Server couldn't process the recording — please retake and try again.");
       }
 
-      // Announce the send now that the file is guaranteed playable.
-      await api<any>(`/coach/videos/${videoId}/send`, { method: "POST", body: {} });
-
+      // Iter198 · Move to the review phase — coach reviews + edits the
+      // auto-generated bullet summary before we fire the actual send.
       clearTimeout(timeoutHandle);
-      Alert.alert(
-        "Sent!",
-        isWelcome
-          ? `Welcome video delivered to ${ci.user_name}.`
-          : `Weekly video delivered to ${ci.user_name}.`,
-      );
-      router.back();
+      setPendingVideoId(videoId);
+      setPhase("review");
+      // Fetch the current summary (may already be populated by the bg
+      // task; if not, poll a few times before falling back to empty).
+      setSummaryLoading(true);
+      let bullets: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        try {
+          const s = await api<any>(`/coach/videos/${videoId}/status`);
+          const cur = Array.isArray(s?.script_summary) ? s.script_summary : [];
+          if (cur.length > 0) { bullets = cur.map(String); break; }
+        } catch { /* keep polling */ }
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+      setSummaryBullets(bullets);
+      setSummaryLoading(false);
     } catch (e: any) {
       clearTimeout(timeoutHandle);
       // Iter186 · Never leave the UI on a permanent spinner. Land back
@@ -407,6 +503,43 @@ export default function Teleprompter() {
       setPhase("preview");
     }
   };
+
+  // Iter198 · Fire the actual send once the coach has reviewed / edited
+  // the bullet summary. Saves the edited bullets to the video doc first,
+  // then hits `/send` which stamps them onto the client's message body.
+  const confirmSend = useCallback(async () => {
+    if (!pendingVideoId) return;
+    try {
+      setSummarySaving(true);
+      // Save the coach's edited bullets first (server strips blanks +
+      // caps length). Skipped only if the array is truly empty — the
+      // client thread still gets the video, just no bullets underneath.
+      const cleaned = summaryBullets.map((b) => String(b || "").trim()).filter(Boolean);
+      await api<any>(`/coach/videos/${pendingVideoId}/summary`, {
+        method: "PATCH", body: { summary: cleaned },
+      });
+      await api<any>(`/coach/videos/${pendingVideoId}/send`, { method: "POST", body: {} });
+      Alert.alert(
+        "Sent!",
+        isWelcome
+          ? `Welcome video delivered to ${ci?.user_name || "your client"}.`
+          : `Weekly video delivered to ${ci?.user_name || "your client"}.`,
+      );
+      router.back();
+    } catch (e: any) {
+      Alert.alert("Send failed", e?.message || String(e));
+    } finally {
+      setSummarySaving(false);
+    }
+  }, [pendingVideoId, summaryBullets, isWelcome, ci, router]);
+
+  const updateBullet = (i: number, next: string) => {
+    setSummaryBullets((rows) => rows.map((b, idx) => (idx === i ? next : b)));
+  };
+  const removeBullet = (i: number) => {
+    setSummaryBullets((rows) => rows.filter((_, idx) => idx !== i));
+  };
+  const addBullet = () => setSummaryBullets((rows) => [...rows, ""]);
 
   return (
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
@@ -600,10 +733,28 @@ export default function Teleprompter() {
           </View>
         )}
         {phase === "idle" && (
-          <Pressable onPress={startCountdown} style={styles.recordBtn} testID="record-start">
-            <View style={styles.recordCircle} />
-            <Text style={styles.recordT}>RECORD</Text>
-          </Pressable>
+          <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+            {Platform.OS === "web" && cameras.length > 0 ? (
+              <Pressable
+                onPress={() => setCameraPickerOpen(true)}
+                style={styles.camPickBtn}
+                testID="camera-picker-open"
+                accessibilityLabel="Choose camera"
+              >
+                <Ionicons name="camera-reverse-outline" size={16} color={theme.color.text} />
+                <Text style={styles.camPickT} numberOfLines={1}>
+                  {(cameras.find((c) => c.deviceId === selectedCameraId)?.label || "Camera")
+                    .replace(/\s*\([0-9a-f:]+\)\s*$/, "")
+                    .slice(0, 22)}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={theme.color.textDim} />
+              </Pressable>
+            ) : null}
+            <Pressable onPress={startCountdown} style={styles.recordBtn} testID="record-start">
+              <View style={styles.recordCircle} />
+              <Text style={styles.recordT}>RECORD</Text>
+            </Pressable>
+          </View>
         )}
         {phase === "recording" && (
           <Pressable onPress={stopRecording} style={styles.stopBtn} testID="record-stop">
@@ -643,7 +794,136 @@ export default function Teleprompter() {
             </Text>
           </View>
         )}
+        {phase === "review" && (
+          /* Iter198 · Post-record summary review. Coach reviews & edits
+              the auto-generated bullet summary; on SEND we PATCH the
+              edited summary and hit /send so the client's message
+              thread receives both the video and the bullets underneath. */
+          <View style={styles.reviewCard} testID="summary-review-card">
+            <Text style={styles.reviewH}>REVIEW SUMMARY</Text>
+            <Text style={styles.reviewHint}>
+              Your client will see these bullets under the video in their message thread. Edit anything you&apos;d rather word differently, then hit SEND.
+            </Text>
+            {summaryLoading ? (
+              <View style={{ paddingVertical: 20, alignItems: "center" }}>
+                <ActivityIndicator color={theme.color.brand} />
+                <Text style={styles.reviewHint}>Generating summary…</Text>
+              </View>
+            ) : (
+              <View style={{ gap: 8, marginTop: 8 }}>
+                {summaryBullets.length === 0 ? (
+                  <Text style={styles.reviewHint}>
+                    No bullets generated. Add one below, or hit SEND to deliver the video without a summary.
+                  </Text>
+                ) : (
+                  summaryBullets.map((b, i) => (
+                    <View key={i} style={styles.bulletRow}>
+                      <Text style={styles.bulletDot}>•</Text>
+                      <TextInput
+                        value={b}
+                        onChangeText={(t) => updateBullet(i, t)}
+                        style={styles.bulletInput}
+                        multiline
+                        placeholder="Edit bullet…"
+                        placeholderTextColor={theme.color.textMuted}
+                        testID={`summary-bullet-${i}`}
+                      />
+                      <Pressable onPress={() => removeBullet(i)} hitSlop={8} testID={`summary-remove-${i}`}>
+                        <Ionicons name="close-circle" size={20} color={theme.color.red} />
+                      </Pressable>
+                    </View>
+                  ))
+                )}
+                <Pressable onPress={addBullet} style={styles.addBulletBtn} testID="summary-add">
+                  <Ionicons name="add" size={16} color={theme.color.brand} />
+                  <Text style={styles.addBulletT}>ADD BULLET</Text>
+                </Pressable>
+              </View>
+            )}
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+              <Pressable
+                onPress={() => { setPendingVideoId(null); setSummaryBullets([]); setPhase("preview"); }}
+                style={styles.retakeBtn}
+                testID="review-cancel"
+                disabled={summarySaving}
+              >
+                <Ionicons name="chevron-back" size={16} color={theme.color.brand} />
+                <Text style={styles.retakeT}>BACK</Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmSend}
+                style={styles.sendBtn}
+                testID="review-send"
+                disabled={summarySaving || summaryLoading}
+              >
+                {summarySaving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="send" size={16} color="#fff" />
+                    <Text style={styles.sendT}>SEND TO CLIENT</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
       </View>
+
+      {/* Iter198 · Camera picker modal — web only. Lists every video
+          input the browser reports; tapping one switches the live
+          preview stream and persists the choice for next session. */}
+      {Platform.OS === "web" ? (
+        <Modal
+          visible={cameraPickerOpen}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setCameraPickerOpen(false)}
+        >
+          <Pressable
+            onPress={() => setCameraPickerOpen(false)}
+            style={styles.camModalScrim}
+            testID="camera-picker-scrim"
+          >
+            <Pressable style={styles.camModalCard} onPress={(e) => e.stopPropagation?.()}>
+              <Text style={styles.camModalH}>CHOOSE CAMERA</Text>
+              <Text style={styles.camModalHint}>
+                Your choice is remembered for future sessions.
+              </Text>
+              {cameras.map((c, i) => {
+                const active = c.deviceId === selectedCameraId;
+                return (
+                  <Pressable
+                    key={c.deviceId || String(i)}
+                    onPress={() => chooseCamera(c.deviceId)}
+                    style={[styles.camRow, active && styles.camRowActive]}
+                    testID={`camera-option-${i}`}
+                  >
+                    <Ionicons
+                      name={active ? "radio-button-on" : "radio-button-off"}
+                      size={18}
+                      color={active ? theme.color.brand : theme.color.textDim}
+                    />
+                    <Text style={[styles.camRowT, active && { color: theme.color.text }]} numberOfLines={2}>
+                      {c.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              {cameras.length === 0 ? (
+                <Text style={styles.camModalHint}>No cameras detected.</Text>
+              ) : null}
+              <Pressable
+                onPress={() => setCameraPickerOpen(false)}
+                style={styles.camModalClose}
+                testID="camera-picker-close"
+              >
+                <Text style={styles.camModalCloseT}>DONE</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -884,4 +1164,88 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: theme.color.red,
   },
   uploadErrT: { color: theme.color.text, fontSize: 12, lineHeight: 17, flex: 1 },
+
+  // Iter198 · Camera picker button + modal
+  camPickBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+    maxWidth: 220,
+  },
+  camPickT: {
+    color: theme.color.text, fontSize: 11, fontWeight: "800", letterSpacing: 0.6,
+  },
+  camModalScrim: {
+    flex: 1, backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+  },
+  camModalCard: {
+    backgroundColor: theme.color.surface,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    padding: 20, gap: 8,
+    borderTopWidth: 1, borderTopColor: theme.color.border,
+  },
+  camModalH: {
+    color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 1.5,
+  },
+  camModalHint: {
+    color: theme.color.textMuted, fontSize: 12, marginBottom: 6,
+  },
+  camRow: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 12, paddingHorizontal: 10, borderRadius: 8,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  camRowActive: { borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
+  camRowT: {
+    color: theme.color.text, fontSize: 13, fontWeight: "700", flex: 1,
+  },
+  camModalClose: {
+    marginTop: 12, paddingVertical: 12, alignItems: "center",
+    borderRadius: 10, backgroundColor: theme.color.brand,
+  },
+  camModalCloseT: { color: "#fff", fontWeight: "900", letterSpacing: 1 },
+
+  // Iter198 · Summary review card
+  reviewCard: {
+    alignSelf: "stretch",
+    padding: 14, borderRadius: 12,
+    backgroundColor: theme.color.surface,
+    borderWidth: 1, borderColor: theme.color.border,
+    gap: 6,
+  },
+  reviewH: {
+    color: theme.color.brand, fontSize: 12, fontWeight: "900", letterSpacing: 1.5,
+  },
+  reviewHint: {
+    color: theme.color.textMuted, fontSize: 12, lineHeight: 17,
+  },
+  bulletRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: 8,
+    padding: 10, borderRadius: 8,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  bulletDot: {
+    color: theme.color.brand, fontSize: 18, fontWeight: "900", lineHeight: 20,
+    paddingTop: 2,
+  },
+  bulletInput: {
+    flex: 1, color: theme.color.text, fontSize: 13, lineHeight: 19,
+    minHeight: 20, paddingVertical: 0,
+    ...(Platform.OS === "web" ? ({ outlineStyle: "none" } as any) : {}),
+  },
+  addBulletBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8,
+    backgroundColor: theme.color.brandTint,
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  addBulletT: {
+    color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1,
+  },
 });

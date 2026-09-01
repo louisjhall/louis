@@ -47,8 +47,22 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
 - `GET /coach/videos/{id}/file` now emits `Accept-Ranges: bytes` and honours `Range: bytes=start-end` (single-range, incl. suffix ranges) with proper 206/416 responses so native iOS/Android <video> players can seek/stream.
 - Migration script `/app/backend/scripts/migrate_coach_videos_webm_to_mp4.py` retro-actively converts existing WebM videos in R2 to MP4, preserves the WebM originals under `legacy_webm_key`, and stamps `migrated_to_mp4_at` for idempotent re-runs. Supports `--dry-run` and `--limit N`.
 
-## Iter200 — Universal roster classifier + Review Roster UX cleanup
-- New file `parsers/roster_normalizer.py` — shared post-parse layer runs across ALL airlines after LLM extraction. Fixes:
+## Iter200-b — Parser tightening + Review Roster card redesign
+- **Backend / roster_normalizer.py**:
+  • Second-pass `_dedupe` runs AFTER classification (not just before) — collapses same-date twins where the LLM emitted both a turnaround AND a layover_arrival row.
+  • Dedupe now prefers rows that already resolved to a real duty type over bare `layover` rows.
+  • Blank days with no destination city and no pairing evidence → `rest_day` (not `needs_review`, not fictional layover).
+  • Early-morning-departure rule: any first sector departing 00:00–05:00 with <8h ground time at the outstation → both outbound AND return legs downgraded to `night_flight`.
+  • Customer labels rewritten to user's spec: plain type names only (`Night flight`, `Layover — Karachi`, `Rest day`, `Standby 06:00–14:00`, `Flying day — AUH → DXB`). Never parser jargon. Never "Layover in None".
+- **Frontend / roster/confirm/[id].tsx**:
+  • Day card redesigned: 40px icon on the LEFT + label + report/off times to the right, single traffic-light dot on the far right.
+  • `_dayTypeIcon()` maps every internal type to a single Ionicon: night_flight→moon, turnaround/flight→airplane, layover→bed, rest_day→sunny, standby→time, sim→school, annual_leave→briefcase, sickness→medkit.
+  • Report time now shown PROMINENTLY on every card that has one.
+  • Debug tokens expanded (added "blank column", "layover inference").
+  • Equipment pill continues to gate on confirmed layover with resolved city only.
+- **New tests**: `test_second_pass_dedupe_collapses_turnaround_plus_layover_arrival`, `test_early_morning_departure_below_8h_is_night_flight`, `test_customer_labels_are_plain_human`. All 17 normalizer tests + 32 legacy tests green.
+
+
   • Night flights crossing midnight → now `night_flight`, not layover.
   • OFF/rest days from source → preserved (no fictional layovers).
   • Home-based standby → equipment `any` (was leaking `hotel_or_bodyweight`).

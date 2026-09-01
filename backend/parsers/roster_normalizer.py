@@ -372,53 +372,62 @@ def _standby_window(day: dict) -> str:
 
 
 def _customer_label(day: dict) -> str:
-    """Human-friendly one-line label for the Review Roster card.
+    """Iter200-b · Human-friendly one-line label per user's spec.
+
+    RULES (from user):
+      • Plain type names ONLY: "Night flight", "Layover", "Rest day",
+        "Standby", "Flying day". Never parser type names.
+      • Layover cards show city when available: "Layover — Karachi".
+        If no city: "Layover" only. Never "Layover in None".
+      • Standby cards show the window when available:
+        "Standby 06:00–14:00". Otherwise just "Standby".
+      • Route (short) is shown alongside where it exists, e.g.
+        "Flying day — AUH → DXB", kept SHORT.
 
     NEVER mentions internal parser types like 'midnight_crossing_return'
-    or 'layover_full'. NEVER produces 'Layover in None'."""
+    or 'layover_full'. NEVER produces 'Layover in None'.
+    """
     internal = (day.get("day_type") or "").lower()
     route = _route_str(day)
     city = day.get("layover_city")
 
-    if internal == "day_off":
-        return "Day off"
-    if internal == "home_day":
-        return "Home day"
+    if internal in ("day_off", "home_day"):
+        return "Rest day"
     if internal == "rest_day":
         return "Rest day"
     if internal == "standby":
         win = _standby_window(day)
-        return f"Standby{'  ·  ' + win if win else ''}"
+        return f"Standby {win}" if win else "Standby"
     if internal == "sim_training":
-        return "Simulator / training"
+        return "Simulator"
     if internal == "annual_leave":
         return "Annual leave"
     if internal == "sickness":
-        return "Sick / off-sick"
+        return "Off sick"
     if internal == "needs_review":
         return "Needs your check"
 
     if internal == "night_flight":
         return f"Night flight — {route}" if route else "Night flight"
     if internal == "turnaround":
-        return f"Flying — {route}" if route else "Flying"
+        return f"Flying day — {route}" if route else "Flying day"
     if internal == "flight" or internal == "multi_sector_flight":
-        return f"Flying — {route}" if route else "Flying"
+        return f"Flying day — {route}" if route else "Flying day"
 
     if internal == "flight_to_layover":
         if city:
-            return f"Flying — {route} · Layover in {city}" if route else f"Flying to {city}"
-        return "Flying — Away from base · location TBC"
+            return f"Layover — {city}"
+        return "Layover"
     if internal == "return_from_layover":
         if city:
-            return f"{city} layover → fly home"
-        return "Return leg — location TBC"
+            return f"Layover — {city} → home"
+        return "Return home"
     if internal == "layover_day":
         if city:
-            return f"Layover day in {city}"
-        return "Away from base · location TBC"
+            return f"Layover — {city}"
+        return "Layover"
     if internal == "overnight_flight":
-        return f"Overnight flight — {route}" if route else "Overnight flight"
+        return f"Night flight — {route}" if route else "Night flight"
 
     # Fallback — keep raw
     return day.get("day_type") or "Duty"
@@ -444,8 +453,30 @@ def _month_clip(days: list[dict], mrange: Optional[tuple[str, str]]) -> tuple[li
 
 
 def _dedupe(days: list[dict]) -> tuple[list[dict], int]:
-    """Collapse duplicate dates. When two rows share a date, prefer the
-    one with more sectors, else the higher confidence, else the first."""
+    """Collapse duplicate dates.
+
+    Preference order when two rows share a date:
+      1. A row that resolves to a duty (turnaround / night_flight /
+         flight / flight_to_layover) beats a bare 'layover' row from
+         the LLM — this fixes the specific bug where the LLM emitted a
+         same-date `layover_arrival` alongside the already-resolved
+         turnaround.
+      2. More sectors wins.
+      3. Higher confidence wins.
+      4. Otherwise the first row wins.
+    """
+    _DUTY_TYPES_PREFERRED = {
+        "turnaround", "night_flight", "flight", "multi_sector_flight",
+        "flight_to_layover", "return_from_layover", "overnight_flight",
+        "standby", "day_off", "rest_day", "home_day", "sim_training",
+        "annual_leave",
+    }
+
+    def _rank(d: dict) -> tuple:
+        dt = (d.get("day_type") or "").lower()
+        already_normalized = 1 if dt in _DUTY_TYPES_PREFERRED else 0
+        return (already_normalized, len(_flights(d)), float(d.get("confidence", 0.5)))
+
     by_date: dict[str, dict] = {}
     dupes = 0
     for d in days:
@@ -454,10 +485,7 @@ def _dedupe(days: list[dict]) -> tuple[list[dict], int]:
             continue
         if k in by_date:
             dupes += 1
-            existing = by_date[k]
-            score_new = (len(_flights(d)), float(d.get("confidence", 0.5)))
-            score_old = (len(_flights(existing)), float(existing.get("confidence", 0.5)))
-            if score_new > score_old:
+            if _rank(d) > _rank(by_date[k]):
                 by_date[k] = d
         else:
             by_date[k] = d
@@ -551,11 +579,18 @@ def normalize_roster(
 
         # --- 5d) Flights / layovers / turnarounds
         if not fs and src not in ("layover",):
-            # No sectors and no explicit layover token — needs_review
+            # No sectors and no explicit layover token.
+            # Iter200-b · Blank day with no destination city and no
+            # pairing evidence → classify as rest day (per user spec).
+            # A truly ambiguous blank day that we CAN'T resolve to a
+            # nearby pairing still becomes a rest day here; the
+            # downstream layover-day rule (lower down) will reclassify
+            # to layover_day only when prev and next sectors both prove
+            # outstation rest at the same city.
             if src == "unknown":
-                d["day_type"] = "needs_review"
-                d["confidence"] = min(float(d.get("confidence", 0.4)), 0.4)
-                _flag_review(d, audit, reason="No sectors and no clear duty code")
+                d["day_type"] = "rest_day"
+                d["home_or_away"] = "home"
+                _set_equipment(d, "any")
             continue
 
         # We have sectors OR the source called it a layover.
@@ -624,6 +659,31 @@ def normalize_roster(
 
         # Ended away — is it a genuine layover?
         if ended_away and fs:
+            # Iter200-b · Early-morning-departure rule.
+            # If the FIRST sector of THIS day departs between 00:00 and
+            # 05:00 AND the previous day (which must have ended at the
+            # same outstation) had a ground gap < 8h, this is the
+            # RETURN leg of a night turnaround, not a fresh layover
+            # departure. Downgrade both days to night_flight.
+            first_dep = _parse_hhmm((fs[0] or {}).get("dep"))
+            if first_dep is not None and first_dep[0] < 5:
+                prev = days[i - 1] if i > 0 else None
+                if (prev and _end_airport(prev) and _end_airport(prev) == start
+                        and _flights(prev)):
+                    gap_back = _ground_hours(prev, d)
+                    if gap_back is not None and gap_back < MIN_LAYOVER_GROUND_HOURS:
+                        # Downgrade the previous outbound day AND this
+                        # return day to night_flight.
+                        prev["day_type"] = "night_flight"
+                        prev.pop("layover_city", None)
+                        _set_equipment(prev, "any")
+                        prev["_normalized"] = True
+                        d["day_type"] = "night_flight"
+                        d.pop("layover_city", None)
+                        _set_equipment(d, "any")
+                        d["_normalized"] = True
+                        audit["downgraded_midnight_crossings"] += 1
+                        continue
             # Rule: layover requires next duty from same outstation on a
             # LATER calendar day AND gap >= floor.
             genuine_layover = False
@@ -728,11 +788,26 @@ def normalize_roster(
                 d["layover_city"] = prev.get("layover_city")
                 _set_equipment(d, "hotel_or_bodyweight")
                 continue
-            # Otherwise: blank day, no resolved pairing → needs_review
-            d["day_type"] = "needs_review"
-            d["confidence"] = min(float(d.get("confidence", 0.4)), 0.4)
-            _flag_review(d, audit, reason="Blank day — cannot confidently classify")
+            # Iter200-b · Blank day with NO destination city and no
+            # resolved pairing — classify as a rest day (safer default
+            # than needs_review, and matches the user's spec that "a
+            # blank day must never be promoted to a layover day when no
+            # destination city is present").
+            d["day_type"] = "rest_day"
+            d["home_or_away"] = "home"
+            _set_equipment(d, "any")
             continue
+
+    # Iter200-b · SECOND-PASS DEDUPE — the LLM occasionally emits both a
+    # `turnaround` row AND a `layover_arrival` row for the same date.
+    # The first-pass dedupe (before classification) can't tell which is
+    # more authoritative because neither has been normalized yet. Now
+    # that classification has run, we know which rows resolved to real
+    # duties and can safely collapse any remaining same-date twins.
+    _pre = len(days)
+    days, dupes2 = _dedupe(days)
+    if dupes2:
+        audit["deduped_dates"] += dupes2
 
     # 6) Presenter pass — populate customer-facing client_label + strip
     # raw parser notes so the customer never sees them.

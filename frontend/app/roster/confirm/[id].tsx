@@ -144,11 +144,33 @@ const _DEBUG_NOTE_TOKENS = [
   "blank day inside", "out-of-base pairing", "arrow marker",
   "inferred layover", "started as overnight", "continuation block",
   "midnight_crossing", "not a layover.", "→ inferred",
+  "blank column", "layover inference",
 ];
 function _isDebugNote(text?: string | null): boolean {
   if (!text) return false;
   const lo = text.toLowerCase();
   return _DEBUG_NOTE_TOKENS.some((t) => lo.includes(t));
+}
+
+// Iter200-b · Single-glance icon per day type. Simple, one colour,
+// consistent size — driven by the day's internal `day_type`. Ionicons
+// only (already imported), no external assets.
+type IonName = React.ComponentProps<typeof Ionicons>["name"];
+function _dayTypeIcon(rawType?: string | null): IonName {
+  const dt = (rawType || "").toLowerCase();
+  if (dt === "night_flight" || dt === "overnight_flight") return "moon-outline";
+  if (dt === "turnaround" || dt === "flight" || dt === "multi_sector_flight")
+    return "airplane-outline";
+  if (dt === "flight_to_layover" || dt === "return_from_layover" || dt === "layover_day")
+    return "bed-outline";
+  if (dt === "day_off" || dt === "home_day" || dt === "rest_day")
+    return "sunny-outline";
+  if (dt === "standby") return "time-outline";
+  if (dt === "sim_training") return "school-outline";
+  if (dt === "annual_leave") return "briefcase-outline";
+  if (dt === "sickness") return "medkit-outline";
+  if (dt === "needs_review") return "alert-circle-outline";
+  return "ellipsis-horizontal-circle-outline";
 }
 
 export default function RosterConfirm() {
@@ -692,15 +714,35 @@ export default function RosterConfirm() {
                   </View>
                 ) : null}
               </View>
-              <Text style={styles.cardType} numberOfLines={1}>
-                {/* Iter200 · Always prefer the normalizer's customer-friendly
-                    label. Falls back to a sanitised day_type only if no
-                    label was produced (backwards-compat with old rosters). */}
-                {d.client_label || _prettyDayType(d.day_type) || "Unknown"}
-              </Text>
-              {/* Traffic-light chip (kept as-is, coach-voice) */}
-              {d.training_colour ? (
-                <View style={styles.labelRow}>
+
+              {/* Iter200-b · Icon + label + report time row. Single
+                  icon on the left communicates the day type at a
+                  glance; label and time sit to the right. */}
+              <View style={styles.cardRow}>
+                <View style={styles.cardIconWrap}>
+                  <Ionicons
+                    name={_dayTypeIcon(d.day_type)}
+                    size={22}
+                    color={theme.color.text}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardType} numberOfLines={1}>
+                    {/* Always prefer the normalizer's customer-friendly label. */}
+                    {d.client_label || _prettyDayType(d.day_type) || "Unknown"}
+                  </Text>
+                  {d.report_time ? (
+                    <Text style={styles.cardReportTime} numberOfLines={1}>
+                      Report {d.report_time}
+                      {d.duty_end_time ? `  ·  Off ${d.duty_end_time}` : ""}
+                    </Text>
+                  ) : d.duty_end_time ? (
+                    <Text style={styles.cardReportTime} numberOfLines={1}>
+                      Off {d.duty_end_time}
+                    </Text>
+                  ) : null}
+                </View>
+                {d.training_colour ? (
                   <View style={[
                     styles.tlDot,
                     d.training_colour === "green" && styles.tlGreen,
@@ -708,16 +750,16 @@ export default function RosterConfirm() {
                     d.training_colour === "red" && styles.tlRed,
                     d.training_colour === "black" && styles.tlBlack,
                   ]} />
-                </View>
-              ) : null}
+                ) : null}
+              </View>
+
               {/* Iter200 · Equipment pill ONLY shows for confirmed layovers
                   with a resolved city — never for standby, OFF, home, or
-                  ambiguous days. Prevents the "Standby → Hotel/bodyweight"
-                  leak. */}
+                  ambiguous days. */}
               {(() => {
                 const eq = d.equipment_assumption || "";
                 const dt = (d.day_type || "").toLowerCase();
-                const isLayoverType = dt.includes("layover") || dt === "flight_to_layover" || dt === "return_from_layover" || dt === "layover_day";
+                const isLayoverType = dt === "flight_to_layover" || dt === "return_from_layover" || dt === "layover_day";
                 const hasCity = !!(d.layover_city && d.layover_city !== "None");
                 const isHotel = eq === "hotel_or_bodyweight" || eq === "hotel_or_bodyweight_only";
                 if (!isHotel || !isLayoverType || !hasCity) return null;
@@ -728,13 +770,6 @@ export default function RosterConfirm() {
                   </View>
                 );
               })()}
-              {(d.report_time || d.duty_end_time) ? (
-                <Text style={styles.cardMeta} numberOfLines={1}>
-                  {d.report_time ? `Report ${d.report_time}` : ""}
-                  {d.report_time && d.duty_end_time ? " · " : ""}
-                  {d.duty_end_time ? `Off ${d.duty_end_time}` : ""}
-                </Text>
-              ) : null}
               {/* Iter200 · Raw parser notes hidden from customer view.
                   The normalizer strips internal notes on the backend, but
                   we belt-and-brace here too. Only show notes that look
@@ -742,12 +777,6 @@ export default function RosterConfirm() {
               {d.notes && !_isDebugNote(d.notes) ? (
                 <Text style={styles.cardNotes} numberOfLines={2}>{d.notes}</Text>
               ) : null}
-
-              {/* Iter200 · QUICK_CHIPS and SWAP moved into the Edit modal.
-                  The default card now shows only what a customer needs to
-                  read: date, one clean label, training colour, times, and
-                  a single EDIT button. Chips + Swap remain fully available
-                  via the Edit modal below. */}
 
               <View style={styles.cardActions}>
                 {needs ? (
@@ -984,6 +1013,23 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
   cardDate: { color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5, fontWeight: "700" },
   cardType: { color: theme.color.text, fontSize: 15, fontWeight: "800", marginTop: 2 },
+  cardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 6,
+  },
+  cardIconWrap: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.color.bgAlt || "rgba(255,255,255,0.06)",
+  },
+  cardReportTime: {
+    color: theme.color.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: "500",
+  },
   cardSub: { color: theme.color.textMuted, fontSize: 12, marginTop: 2 },
   cardMeta: { color: theme.color.textDim, fontSize: 11, marginTop: 2 },
   cardNotes: { color: theme.color.textMuted, fontSize: 11, marginTop: 4, fontStyle: "italic" },

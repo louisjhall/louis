@@ -64,6 +64,7 @@ def test_case_1_same_day_turnaround_is_not_layover():
     assert d.get("layover_city") is None
     assert d["equipment_assumption"] == "any"
     assert "AUH → KBL → AUH" in d["client_label"]
+    assert d["client_label"].startswith("Flying day")
 
 
 # ---------- 2. Overnight turnaround crossing midnight ----------------------
@@ -115,6 +116,7 @@ def test_case_3_genuine_layover():
     assert d1["day_type"] == "flight_to_layover"
     assert d1["layover_city"] == "CMB"
     assert d1["equipment_assumption"] == "hotel_or_bodyweight"
+    assert d1["client_label"] == "Layover — CMB"
     assert d2["day_type"] == "return_from_layover"
     assert "CMB" in d2["client_label"]
 
@@ -161,7 +163,7 @@ def test_case_5_off_days_preserved():
     assert _by_date(out, "2026-09-05")["day_type"] == "day_off"
     assert _by_date(out, "2026-09-06")["day_type"] == "day_off"
     assert _by_date(out, "2026-09-05").get("layover_city") is None
-    assert _by_date(out, "2026-09-05")["client_label"] == "Day off"
+    assert _by_date(out, "2026-09-05")["client_label"] == "Rest day"
 
 
 # ---------- 6. Standby at home base ----------------------------------------
@@ -194,18 +196,17 @@ def test_case_7_standby_crossing_midnight():
 
 # ---------- 8. Blank / ambiguous day → needs_review ------------------------
 
-def test_case_8_blank_ambiguous_day_needs_review():
-    """Blank day with no surrounding pairing evidence must not invent
-       a layover."""
+def test_case_8_blank_ambiguous_day_becomes_rest_day():
+    """Iter200-b · Blank day with no city context and no pairing evidence
+       is classified as a rest day (not invented as a layover)."""
     days = [
         _day("2026-09-09", "Unknown/Needs Confirmation"),
     ]
     out = normalize_roster(days, home_base="AUH")["days"]
     d = out[0]
-    assert d["day_type"] == "needs_review"
-    assert d.get("needs_review") is True
-    assert d["confidence"] <= 0.5
-    assert d["client_label"] == "Needs your check"
+    assert d["day_type"] == "rest_day"
+    assert d["client_label"] == "Rest day"
+    assert d.get("layover_city") is None
 
 
 # ---------- 9. Month boundary look-ahead → clipped -------------------------
@@ -245,6 +246,49 @@ def test_case_10_duplicate_dates_deduped():
     assert len(out["days"][0]["flights"]) == 1
     assert out["days"][0]["flights"][0]["from"] == "AUH"
     assert out["days"][0]["flights"][0]["to"] == "LHR"
+
+
+def test_second_pass_dedupe_collapses_turnaround_plus_layover_arrival():
+    """Iter200-b · Second-pass dedupe: LLM sometimes emits a turnaround
+       row AND a layover_arrival row for the same date. After normalization
+       we must keep ONE row, and it must be the turnaround."""
+    days = [
+        _day("2026-09-15", "Turnaround Duty",
+             flights=[_flt("AUH", "KHI", "08:00", "10:00"),
+                      _flt("KHI", "AUH", "11:00", "13:00")],
+             confidence=0.85),
+        # LLM's phantom "second half" duplicate for the same date
+        _day("2026-09-15", "Layover Arrival Day",
+             layover_city="KHI", confidence=0.4),
+    ]
+    out = normalize_roster(days, home_base="AUH")
+    assert len(out["days"]) == 1, f"expected 1 row, got {len(out['days'])}"
+    kept = out["days"][0]
+    assert kept["day_type"] == "turnaround"
+    assert kept.get("layover_city") is None
+    assert kept["client_label"].startswith("Flying day")
+
+
+def test_early_morning_departure_below_8h_is_night_flight():
+    """Iter200-b · Duty departs 03:55 with only 1h45 ground time at the
+       outstation → night flight, not layover."""
+    days = [
+        _day("2026-09-02", "Layover Arrival Day",
+             flights=[_flt("AUH", "JAI", "21:05", "02:10")],
+             report_time="19:50", duty_end_time="02:10",
+             layover_city="JAI"),
+        _day("2026-09-03", "Layover Departure Day",
+             flights=[_flt("JAI", "AUH", "03:55", "06:00")],
+             report_time="03:00", duty_end_time="06:30",
+             layover_city="JAI"),
+    ]
+    out = normalize_roster(days, home_base="AUH")["days"]
+    d1 = _by_date(out, "2026-09-02")
+    d2 = _by_date(out, "2026-09-03")
+    assert d1["day_type"] == "night_flight"
+    assert d2["day_type"] == "night_flight"
+    assert d1.get("layover_city") is None
+    assert d2.get("layover_city") is None
 
 
 # ---------- 11. Genuine layover across airline formats ---------------------
@@ -308,6 +352,35 @@ def test_layover_in_none_downgraded():
     # customer label MUST NOT contain "Layover in None"
     assert "None" not in d["client_label"]
     assert d["client_label"] == "Needs your check"
+
+
+def test_customer_labels_are_plain_human():
+    """Iter200-b · Verify all key labels match the user's spec exactly."""
+    days = [
+        _day("2026-09-01", "Night Flight",
+             flights=[_flt("AUH", "JAI", "22:00", "01:00")]),
+        _day("2026-09-02", "Layover Arrival Day",
+             flights=[_flt("JAI", "AUH", "03:00", "05:00")]),
+        _day("2026-09-03", "Turnaround Duty",
+             flights=[_flt("AUH", "DXB", "08:00", "09:30"),
+                      _flt("DXB", "AUH", "10:30", "12:00")]),
+        _day("2026-09-04", "Rest Day"),
+        _day("2026-09-05", "Standby",
+             report_time="06:00", duty_end_time="14:00"),
+    ]
+    out = normalize_roster(days, home_base="AUH")["days"]
+    labels = {d["date"]: d["client_label"] for d in out}
+    # Plain, human, no parser jargon
+    for lbl in labels.values():
+        for token in ("layover_", "flight_to_", "return_from_", "midnight_crossing",
+                      "day_off", "rest_day", "needs_review"):
+            assert token not in lbl.lower(), f"raw type in label: {lbl}"
+    # Specific expectations
+    assert "AUH → DXB → AUH" in labels["2026-09-03"]
+    assert labels["2026-09-03"].startswith("Flying day")
+    assert labels["2026-09-04"] == "Rest day"
+    assert labels["2026-09-05"].startswith("Standby")
+    assert "06:00" in labels["2026-09-05"] and "14:00" in labels["2026-09-05"]
 
 
 # ---------- Bonus: standby with hotel_or_bodyweight leak fixed on any air --

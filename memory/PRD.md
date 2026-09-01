@@ -47,6 +47,28 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
 - `GET /coach/videos/{id}/file` now emits `Accept-Ranges: bytes` and honours `Range: bytes=start-end` (single-range, incl. suffix ranges) with proper 206/416 responses so native iOS/Android <video> players can seek/stream.
 - Migration script `/app/backend/scripts/migrate_coach_videos_webm_to_mp4.py` retro-actively converts existing WebM videos in R2 to MP4, preserves the WebM originals under `legacy_webm_key`, and stamps `migrated_to_mp4_at` for idempotent re-runs. Supports `--dry-run` and `--limit N`.
 
+## Iter200 — Universal roster classifier + Review Roster UX cleanup
+- New file `parsers/roster_normalizer.py` — shared post-parse layer runs across ALL airlines after LLM extraction. Fixes:
+  • Night flights crossing midnight → now `night_flight`, not layover.
+  • OFF/rest days from source → preserved (no fictional layovers).
+  • Home-based standby → equipment `any` (was leaking `hotel_or_bodyweight`).
+  • "Layover in None" → downgraded to `needs_review`.
+  • Month-boundary look-ahead → clipped.
+  • Duplicate-date rows → collapsed (richest wins).
+  • Multi-base airlines (BA LHR+LGW, EK DXB) via fresh-duty-start heuristic.
+- Wired into `roster_upload_and_generate` + legacy `roster_extract` endpoints.
+- Frontend Review Roster:
+  • Customer labels: "Night flight — X → Y", "Layover in CMB", "Day off", "Standby 06:00–14:00" — never raw types.
+  • Removed QUICK_CHIPS row from default day card (moved corrections into Edit modal).
+  • Moved SWAP button from default card into Edit modal.
+  • Equipment pill "Hotel / bodyweight" now only shows for confirmed layovers with a resolved city.
+  • Simplified overlap panel copy: "REPLACE EXISTING ROSTER" / "UPDATE CHANGED DAYS" / "KEEP BOTH FOR COACH REVIEW".
+  • Top summary copy: "🟢 X great · 🟠 Y lighter · 🔴 Z recovery-focused".
+  • Debug notes hidden from customer view (whitelist filter in _isDebugNote).
+- 14 new regression tests in `tests/test_roster_normalizer.py` covering all 12 acceptance cases (same-day / overnight turnaround / genuine layover / multi-day / OFF preservation / standby / month boundary / dedupe / cross-airline).
+- Real acceptance run: `scripts/acceptance_september_etihad.py` produces side-by-side old-vs-new for the Sept PDF.
+- Future uploads only — no DB reprocessing of historical rosters.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

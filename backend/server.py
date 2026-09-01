@@ -5220,6 +5220,16 @@ async def roster_extract(body: RosterExtractBody, user: dict = Depends(current_u
                  "day_type": "Home Day", "flights": [], "notes": "auto-generated",
                  "confidence": 0.2} for i in range(7)]
 
+    # Iter200 · Universal normalization — same layer used by the primary
+    # upload flow. Keeps behaviour consistent for anyone still on this
+    # legacy synchronous endpoint.
+    try:
+        from parsers.roster_normalizer import normalize_roster
+        _nres = normalize_roster(days, home_base=None, month_range=None)
+        days = _nres["days"]
+    except Exception:
+        logger.exception("legacy roster_extract: normalizer failed (non-fatal)")
+
     # sort and score
     days.sort(key=lambda d: d.get("date") or "")
     for d in days:
@@ -5621,6 +5631,58 @@ async def roster_upload_and_generate(body: RosterUploadGenerateBody, user: dict 
                     )
             except Exception:
                 logger.exception("day-of-week sanity check failed (non-fatal)")
+
+            # Iter200 · UNIVERSAL post-parse normalization.
+            # Runs across every airline path. Fixes:
+            #   • night flight crossing midnight mis-classified as layover
+            #   • OFF/standby preserved (no fictional layovers)
+            #   • standby equipment leak (always 'any' at home)
+            #   • "Layover in None" — downgraded to needs_review
+            #   • month-boundary look-ahead clipped
+            #   • duplicate-date protection
+            # Any day with insufficient evidence is flagged needs_review
+            # rather than confidently invented.
+            try:
+                from parsers.roster_normalizer import normalize_roster
+                # Try to infer the coverage month from the printed dates.
+                mrange = None
+                _dates = [d.get("date") for d in days if d.get("date")]
+                if _dates:
+                    _dates_sorted = sorted(_dates)
+                    _lo = _dates_sorted[0]
+                    _hi = _dates_sorted[-1]
+                    # If the printed range spans MORE than one calendar
+                    # month (e.g. 01/09 → 01/10), clip to the most
+                    # populated month rather than the widest range.
+                    from collections import Counter as _Counter
+                    _month_counts = _Counter(dt[:7] for dt in _dates_sorted)
+                    _dominant_month, _dom_n = _month_counts.most_common(1)[0]
+                    if _dom_n / max(1, len(_dates_sorted)) >= 0.7:
+                        # >=70% of days are in one month → clip look-ahead
+                        _ym = _dominant_month  # "YYYY-MM"
+                        _y, _m = int(_ym[:4]), int(_ym[5:7])
+                        # last day of that month
+                        if _m == 12:
+                            _last_day = datetime(_y + 1, 1, 1) - timedelta(days=1)
+                        else:
+                            _last_day = datetime(_y, _m + 1, 1) - timedelta(days=1)
+                        mrange = (f"{_ym}-01", _last_day.date().isoformat())
+                # Home-base hint: user profile carries a home base occasionally.
+                _hb_hint = (user.get("profile") or {}).get("home_base") if isinstance(user.get("profile"), dict) else None
+                _nres = normalize_roster(days, home_base=_hb_hint, month_range=mrange)
+                days = _nres["days"]
+                _audit = _nres["audit"]
+                logger.info(
+                    "[roster:%s] normalizer audit: clipped=%d deduped=%d night_downgrades=%d "
+                    "preserved_off=%d fixed_standby=%d flagged=%d fixed_layover_in_none=%d",
+                    job_id,
+                    _audit["clipped_month_boundary"], _audit["deduped_dates"],
+                    _audit["downgraded_midnight_crossings"], _audit["preserved_off_days"],
+                    _audit["fixed_standby_equipment"], _audit["flagged_needs_review"],
+                    _audit["fixed_layover_in_none"],
+                )
+            except Exception:
+                logger.exception("universal roster normalizer failed (non-fatal, keeping raw days)")
 
             for d in days:
                 d.setdefault("flights", [])

@@ -630,12 +630,17 @@ def _post_process(days: list[ParsedDay]) -> list[ParsedDay]:
                 open_city = None
                 continue
             # Blank day inside a pairing => layover day.
+            # (Structured parser: an "off" cell here is the etihad
+            # parser's placeholder for a blank column between two
+            # resolved sectors — this IS the pairing's middle rest day.
+            # The universal normalizer in `roster_normalizer.py` provides
+            # a second layer of protection at the roster level to catch
+            # any case where OFF should have been preserved.)
             if not d.sectors and d.day_type in ("off", "unknown"):
                 d.day_type = "layover_day"
                 d.is_layover_day = True
                 d.layover_city = open_city
                 d.training_impact = "amber"
-                d.notes.append(f"Blank day inside an out-of-base pairing → inferred layover in {open_city}.")
                 d.parse_confidence = min(d.parse_confidence, 0.75)
                 d.needs_client_review = True
                 continue

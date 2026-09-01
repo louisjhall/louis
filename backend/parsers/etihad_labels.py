@@ -138,7 +138,11 @@ def decide_day(day, prev_decision: Optional[DayDecision] = None) -> DayDecision:
         dec.training_colour = "amber"
         dec.recommended = ["mobility", "bodyweight", "easy_run", "steps_only", "hotel_strength"]
         dec.blocked = ["long_run", "intervals", "main_strength"]
-        dec.equipment = "hotel_or_bodyweight"
+        # Iter200 · Home-based standby must NOT inherit hotel equipment
+        # assumptions. Only outstation/airport standby (which we cannot
+        # detect at this stage) would need "hotel_or_bodyweight". Default
+        # to "any" so the client trains at home like any other day.
+        dec.equipment = "any"
         dec.reason = "On standby — light/short session in case you're called."
         return _apply_chain(dec, prev_decision)
 

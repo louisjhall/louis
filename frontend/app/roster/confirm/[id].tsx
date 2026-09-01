@@ -96,6 +96,61 @@ function fmtDate(iso?: string | null) {
   }
 }
 
+// Iter200 · Customer-friendly presenter fallback.
+// The backend normalizer populates `client_label` for every day — but
+// older rosters (or ones from a code path we haven't rewired) may still
+// send raw internal day types. Map those to plain English so the
+// customer never sees `midnight_crossing_flight` / `layover_full` /
+// `flight_to_layover` etc.
+const _DAY_TYPE_PRETTY: Record<string, string> = {
+  day_off: "Day off",
+  home_day: "Home day",
+  rest_day: "Rest day",
+  standby: "Standby",
+  sim_training: "Simulator / training",
+  annual_leave: "Annual leave",
+  sickness: "Sick / off-sick",
+  night_flight: "Night flight",
+  turnaround: "Flying",
+  flight: "Flying",
+  multi_sector_flight: "Flying (multi-sector)",
+  flight_to_layover: "Flying to layover",
+  return_from_layover: "Return from layover",
+  layover_day: "Layover day",
+  overnight_flight: "Overnight flight",
+  needs_review: "Needs your check",
+  unknown: "Needs your check",
+  "unknown/needs confirmation": "Needs your check",
+  // legacy LLM types (map any that leak through)
+  "layover arrival day": "Flying to layover",
+  "layover full day": "Layover day",
+  "layover departure day": "Return from layover",
+  "turnaround duty": "Flying",
+  "long-haul turnaround": "Flying (long-haul)",
+  "short-haul turnaround": "Flying",
+  "home day": "Home day",
+};
+
+function _prettyDayType(raw?: string | null): string {
+  if (!raw) return "";
+  const key = raw.toLowerCase().trim();
+  if (_DAY_TYPE_PRETTY[key]) return _DAY_TYPE_PRETTY[key];
+  // Snake_case → Title Case fallback so `some_new_type` reads as "Some new type"
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Iter200 · Filter debug/parser notes out of the customer view.
+const _DEBUG_NOTE_TOKENS = [
+  "blank day inside", "out-of-base pairing", "arrow marker",
+  "inferred layover", "started as overnight", "continuation block",
+  "midnight_crossing", "not a layover.", "→ inferred",
+];
+function _isDebugNote(text?: string | null): boolean {
+  if (!text) return false;
+  const lo = text.toLowerCase();
+  return _DEBUG_NOTE_TOKENS.some((t) => lo.includes(t));
+}
+
 export default function RosterConfirm() {
   const { id, on_behalf_of } = useLocalSearchParams<{ id: string; on_behalf_of?: string }>();
   // When a coach opens this screen from the workspace, on_behalf_of=clientId.
@@ -393,12 +448,11 @@ export default function RosterConfirm() {
             <View style={styles.overlapHeaderRow}>
               <Ionicons name="alert-circle" size={18} color={theme.color.warn || "#e5a337"} />
               <Text style={styles.overlapTitle} numberOfLines={2}>
-                You already have {pending.overlap.overlapping_dates.length} day
-                {pending.overlap.overlapping_dates.length === 1 ? "" : "s"} covered by another roster
+                You already have a roster for these dates
               </Text>
             </View>
             <Text style={styles.overlapSub}>
-              What would you like to do with this new roster?
+              What would you like to do?
             </Text>
             <View style={styles.overlapBtnCol}>
               <Pressable
@@ -409,8 +463,8 @@ export default function RosterConfirm() {
               >
                 <Ionicons name="swap-vertical" size={14} color="#fff" />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.overlapBtnT}>REPLACE THE OLDER ROSTER</Text>
-                  <Text style={styles.overlapBtnSub}>The new one becomes your active plan.</Text>
+                  <Text style={styles.overlapBtnT}>REPLACE EXISTING ROSTER</Text>
+                  <Text style={styles.overlapBtnSub}>Use this new roster instead.</Text>
                 </View>
               </Pressable>
               <Pressable
@@ -422,10 +476,10 @@ export default function RosterConfirm() {
                 <Ionicons name="git-merge" size={14} color={theme.color.text} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.overlapBtnT, { color: theme.color.text }]}>
-                    MERGE THE CHANGES IN
+                    UPDATE CHANGED DAYS
                   </Text>
                   <Text style={[styles.overlapBtnSub, { color: theme.color.textMuted }]}>
-                    Keep the existing plan and update only the changed days.
+                    Keep your current roster and update changes.
                   </Text>
                 </View>
               </Pressable>
@@ -438,10 +492,10 @@ export default function RosterConfirm() {
                 <Ionicons name="albums" size={14} color={theme.color.text} />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.overlapBtnT, { color: theme.color.text }]}>
-                    KEEP BOTH — LOUIS WILL REVIEW
+                    KEEP BOTH FOR COACH REVIEW
                   </Text>
                   <Text style={[styles.overlapBtnSub, { color: theme.color.textMuted }]}>
-                    We store both versions and Louis picks the correct one.
+                    Louis will check which version is correct.
                   </Text>
                 </View>
               </Pressable>
@@ -505,19 +559,19 @@ export default function RosterConfirm() {
                 {counts.green > 0 && (
                   <View style={styles.tlOverviewChip}>
                     <View style={[styles.tlDot, styles.tlGreen]} />
-                    <Text style={styles.tlOverviewT}>{counts.green} full session{counts.green === 1 ? "" : "s"}</Text>
+                    <Text style={styles.tlOverviewT}>{counts.green} great training day{counts.green === 1 ? "" : "s"}</Text>
                   </View>
                 )}
                 {counts.amber > 0 && (
                   <View style={styles.tlOverviewChip}>
                     <View style={[styles.tlDot, styles.tlAmber]} />
-                    <Text style={styles.tlOverviewT}>{counts.amber} moderated</Text>
+                    <Text style={styles.tlOverviewT}>{counts.amber} lighter/moderate day{counts.amber === 1 ? "" : "s"}</Text>
                   </View>
                 )}
                 {counts.red > 0 && (
                   <View style={styles.tlOverviewChip}>
                     <View style={[styles.tlDot, styles.tlRed]} />
-                    <Text style={styles.tlOverviewT}>{counts.red} recovery day{counts.red === 1 ? "" : "s"}</Text>
+                    <Text style={styles.tlOverviewT}>{counts.red} recovery-focused day{counts.red === 1 ? "" : "s"}</Text>
                   </View>
                 )}
                 {counts.black > 0 && (
@@ -638,44 +692,42 @@ export default function RosterConfirm() {
                   </View>
                 ) : null}
               </View>
-              <Text style={styles.cardType} numberOfLines={1}>{d.day_type || "Unknown"}</Text>
-              {/* Parser-generated client label + traffic-light chip.
-                  Coach-voice only — never mentions AI/auto/generated. */}
-              {d.client_label ? (
+              <Text style={styles.cardType} numberOfLines={1}>
+                {/* Iter200 · Always prefer the normalizer's customer-friendly
+                    label. Falls back to a sanitised day_type only if no
+                    label was produced (backwards-compat with old rosters). */}
+                {d.client_label || _prettyDayType(d.day_type) || "Unknown"}
+              </Text>
+              {/* Traffic-light chip (kept as-is, coach-voice) */}
+              {d.training_colour ? (
                 <View style={styles.labelRow}>
-                  {d.training_colour ? (
-                    <View style={[
-                      styles.tlDot,
-                      d.training_colour === "green" && styles.tlGreen,
-                      d.training_colour === "amber" && styles.tlAmber,
-                      d.training_colour === "red" && styles.tlRed,
-                      d.training_colour === "black" && styles.tlBlack,
-                    ]} />
-                  ) : null}
-                  <Text style={styles.clientLabelT} numberOfLines={1}>
-                    {d.client_label}
-                  </Text>
+                  <View style={[
+                    styles.tlDot,
+                    d.training_colour === "green" && styles.tlGreen,
+                    d.training_colour === "amber" && styles.tlAmber,
+                    d.training_colour === "red" && styles.tlRed,
+                    d.training_colour === "black" && styles.tlBlack,
+                  ]} />
                 </View>
               ) : null}
-              {d.equipment_assumption && d.equipment_assumption !== "any" ? (
-                <View style={styles.eqPill}>
-                  <Ionicons name="barbell-outline" size={10} color={theme.color.textMuted} />
-                  <Text style={styles.eqPillT}>
-                    {d.equipment_assumption === "hotel_or_bodyweight"
-                      || d.equipment_assumption === "hotel_or_bodyweight_only"
-                      ? "Hotel / bodyweight"
-                      : d.equipment_assumption === "needs_confirmation"
-                      ? "Equipment TBC"
-                      : d.equipment_assumption.replace(/_/g, " ")}
-                  </Text>
-                </View>
-              ) : null}
-              {d.layover_city ? (
-                <Text style={styles.cardSub} numberOfLines={1}>
-                  {d.layover_city}
-                  {typeof d.layover_nights === "number" && d.layover_nights > 0 ? ` · ${d.layover_nights}n` : ""}
-                </Text>
-              ) : null}
+              {/* Iter200 · Equipment pill ONLY shows for confirmed layovers
+                  with a resolved city — never for standby, OFF, home, or
+                  ambiguous days. Prevents the "Standby → Hotel/bodyweight"
+                  leak. */}
+              {(() => {
+                const eq = d.equipment_assumption || "";
+                const dt = (d.day_type || "").toLowerCase();
+                const isLayoverType = dt.includes("layover") || dt === "flight_to_layover" || dt === "return_from_layover" || dt === "layover_day";
+                const hasCity = !!(d.layover_city && d.layover_city !== "None");
+                const isHotel = eq === "hotel_or_bodyweight" || eq === "hotel_or_bodyweight_only";
+                if (!isHotel || !isLayoverType || !hasCity) return null;
+                return (
+                  <View style={styles.eqPill}>
+                    <Ionicons name="barbell-outline" size={10} color={theme.color.textMuted} />
+                    <Text style={styles.eqPillT}>Hotel / bodyweight</Text>
+                  </View>
+                );
+              })()}
               {(d.report_time || d.duty_end_time) ? (
                 <Text style={styles.cardMeta} numberOfLines={1}>
                   {d.report_time ? `Report ${d.report_time}` : ""}
@@ -683,29 +735,19 @@ export default function RosterConfirm() {
                   {d.duty_end_time ? `Off ${d.duty_end_time}` : ""}
                 </Text>
               ) : null}
-              {d.notes ? <Text style={styles.cardNotes} numberOfLines={2}>{d.notes}</Text> : null}
+              {/* Iter200 · Raw parser notes hidden from customer view.
+                  The normalizer strips internal notes on the backend, but
+                  we belt-and-brace here too. Only show notes that look
+                  customer-friendly (short and no parser jargon). */}
+              {d.notes && !_isDebugNote(d.notes) ? (
+                <Text style={styles.cardNotes} numberOfLines={2}>{d.notes}</Text>
+              ) : null}
 
-              {/* Iter 83 · Tool 3: Inline quick-chip day-type change (hidden in swap mode to reduce noise) */}
-              {!swapFromDate && (
-                <View style={styles.quickChipsRow}>
-                  {QUICK_CHIPS.map((c) => {
-                    const active = (d.day_type || "").toLowerCase().startsWith(c.key.toLowerCase().split(" ")[0]);
-                    const busy = quickChipBusy === d.date;
-                    return (
-                      <Pressable
-                        key={c.key}
-                        testID={`rc-quick-${d.date}-${c.key}`}
-                        onPress={(e) => { e.stopPropagation(); setDayTypeQuick(d.date, c.key); }}
-                        disabled={busy}
-                        style={[styles.quickChip, active && styles.quickChipActive, busy && { opacity: 0.5 }]}
-                      >
-                        <Ionicons name={c.icon} size={11} color={active ? "#fff" : theme.color.textMuted} />
-                        <Text style={[styles.quickChipT, active && { color: "#fff" }]}>{c.label}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              )}
+              {/* Iter200 · QUICK_CHIPS and SWAP moved into the Edit modal.
+                  The default card now shows only what a customer needs to
+                  read: date, one clean label, training colour, times, and
+                  a single EDIT button. Chips + Swap remain fully available
+                  via the Edit modal below. */}
 
               <View style={styles.cardActions}>
                 {needs ? (
@@ -718,18 +760,9 @@ export default function RosterConfirm() {
                   </Pressable>
                 ) : null}
                 <Pressable
-                  testID={`rc-swap-${d.date}`}
-                  onPress={(e) => { e.stopPropagation(); setSwapFromDate(d.date); }}
-                  style={styles.swapMini}
-                  disabled={!!swapFromDate}
-                >
-                  <Ionicons name="swap-horizontal" size={13} color={theme.color.brand} />
-                  <Text style={styles.swapMiniText}>SWAP</Text>
-                </Pressable>
-                <Pressable
                   testID={`rc-edit-${d.date}`}
                   onPress={(e) => { e.stopPropagation(); setEditorDate(d.date); }}
-                  style={styles.editMini}
+                  style={[styles.editMini, { flex: 1 }]}
                 >
                   <Ionicons name="create-outline" size={13} color={theme.color.text} />
                   <Text style={styles.editMiniText}>EDIT</Text>
@@ -768,12 +801,18 @@ export default function RosterConfirm() {
         day={editorDay}
         onClose={() => setEditorDate(null)}
         onChange={(patch) => editorDay && updateDay(editorDay.date, patch)}
+        onStartSwap={() => {
+          if (editorDay) {
+            setSwapFromDate(editorDay.date);
+            setEditorDate(null);
+          }
+        }}
       />
     </SafeAreaView>
   );
 }
 
-function DayEditor({ day, onClose, onChange }: { day: Day | null; onClose: () => void; onChange: (patch: Partial<Day>) => void }) {
+function DayEditor({ day, onClose, onChange, onStartSwap }: { day: Day | null; onClose: () => void; onChange: (patch: Partial<Day>) => void; onStartSwap: () => void }) {
   return (
     <Modal visible={!!day} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalScrim}>
@@ -868,6 +907,19 @@ function DayEditor({ day, onClose, onChange }: { day: Day | null; onClose: () =>
                 placeholderTextColor={theme.color.textDim}
                 multiline
               />
+
+              {/* Iter200 · Swap-with-another-day tool, moved from the
+                  default card into the Edit modal. The rare customer who
+                  needs it can still swap two days' contents, but it no
+                  longer clutters every card. */}
+              <Pressable
+                testID="rc-editor-swap"
+                onPress={onStartSwap}
+                style={styles.editorSwapBtn}
+              >
+                <Ionicons name="swap-horizontal" size={14} color={theme.color.brand} />
+                <Text style={styles.editorSwapT}>SWAP WITH ANOTHER DAY</Text>
+              </Pressable>
             </ScrollView>
 
             <Pressable testID="rc-editor-done" onPress={onClose} style={styles.editorDone}>
@@ -1027,6 +1079,14 @@ const styles = StyleSheet.create({
   row2: { flexDirection: "row", gap: theme.space.md },
   editorDone: { marginTop: theme.space.md, backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: theme.radius.md, alignItems: "center" },
   editorDoneText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 13 },
+  editorSwapBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    marginTop: theme.space.md, paddingVertical: 12, borderRadius: theme.radius.md,
+    borderWidth: 1, borderColor: theme.color.brand, backgroundColor: "transparent",
+  },
+  editorSwapT: {
+    color: theme.color.brand, fontWeight: "800", letterSpacing: 1.5, fontSize: 12,
+  },
   // Parser client label + traffic light chip
   labelRow: {
     flexDirection: "row",

@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "CrewFit",
-    "slug": "crewfit",
+    "slug": "flight-fit-plans",
     "version": "1.0.23",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -99,6 +99,7 @@
       "expo-video"
     ],
     "assetBundlePatterns": ["**/*"],
+    "owner": "emergent-em-user-7c115504-6ebe-46bf-8733-17fbca174bfd",
     "extra": {
       "router": {},
       "eas": {

@@ -33,6 +33,14 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 from datetime import date, timedelta
 
+# Iter199 · Shared "is this dwell time long enough to be a hotel layover?"
+# gate — extracted into parsers.common_layover so every airline parser
+# (Etihad, Emirates, BA, …) can share exactly the same classifier.
+from parsers.common_layover import (
+    MIN_LAYOVER_GROUND_HOURS,
+    outstation_ground_hours,
+)
+
 
 # ---------------------------------------------------------------------------
 # Small typed structures.
@@ -55,7 +63,7 @@ class ParsedDay:
     weekday: Optional[str] = None
     raw_column_text: str = ""
 
-    day_type: str = "unknown"               # off | rest | rostered_off | standby | flight | multi_sector_flight | flight_to_layover | layover_day | return_from_layover | overnight_flight | turnaround | unknown
+    day_type: str = "unknown"               # off | rest | rostered_off | standby | flight | multi_sector_flight | flight_to_layover | layover_day | return_from_layover | overnight_flight | turnaround | midnight_crossing_flight | midnight_crossing_return | short_turn | unknown
 
     report_time: Optional[str] = None
     release_time: Optional[str] = None
@@ -498,24 +506,113 @@ def _parse_day(iso_date: str, weekday: Optional[str], tokens: list[str]) -> Pars
 # ---------------------------------------------------------------------------
 
 def _post_process(days: list[ParsedDay]) -> list[ParsedDay]:
-    """Apply structural rules across days: layover inference + overnight merge."""
-    # Overnight continuation: if day N starts with ↓ and day N-1 ends out-of-base,
-    # treat day N-1 + N as one duty. Attach day N's sectors to a shared pairing.
+    """Apply structural rules across days: layover inference + overnight merge.
+
+    Iter199 · Every "this is a layover" verdict is now gated on the
+    actual outstation dwell time via
+    ``parsers.common_layover.outstation_ground_hours``. A ↓-arrow
+    continuation or an out-of-base end no longer implies a hotel stay
+    on its own — we require ≥ ``MIN_LAYOVER_GROUND_HOURS`` at the
+    outstation before opening a layover pairing. When the gap is
+    below the floor the day pair is stamped with the new
+    ``midnight_crossing_flight`` / ``midnight_crossing_return`` /
+    ``short_turn`` types instead, and no ``layover_city`` is set so
+    downstream copy (calendar labels, coach summary, notifications)
+    never markets a hotel that didn't happen.
+
+    Fallback: when the helper returns ``None`` (unparseable times) we
+    keep the legacy permissive behaviour — biasing to false-positive is
+    safer than silently converting a genuine layover.
+    """
+    # ------------------------------------------------------------------
+    # Pass 1 — overnight (↓) continuation from prev day.
+    # ------------------------------------------------------------------
     for i, d in enumerate(days):
         if d.is_overnight and i > 0 and days[i - 1].is_out_of_base:
             prev = days[i - 1]
+            gap = outstation_ground_hours(prev, d)
+            # Below-floor OR the prev already stamped as an overnight
+            # continuation (arrow at end of prev's column) → treat both
+            # halves as one duty that crossed midnight, NOT a layover.
+            if gap is not None and gap < MIN_LAYOVER_GROUND_HOURS:
+                prev.day_type = "midnight_crossing_flight"
+                prev.notes.append(
+                    f"Duty crosses midnight; ~{gap:.1f}h at {prev.end_location} — not a layover."
+                )
+                # d is the return half — either lands back at AUH or
+                # continues elsewhere. Only stamp as a "return" when it
+                # actually gets home; otherwise keep it as a crossing.
+                if d.sectors and d.end_location == "AUH":
+                    d.day_type = "midnight_crossing_return"
+                    d.notes.append(
+                        f"Return leg of a midnight-crossing duty from {prev.date} "
+                        f"(~{gap:.1f}h at {prev.end_location})."
+                    )
+                else:
+                    d.day_type = "midnight_crossing_flight"
+                    d.notes.append(
+                        f"Started as overnight from {prev.date}; ~{gap:.1f}h at {prev.end_location}."
+                    )
+                # Fatigue impact — both halves are red.
+                prev.training_impact = "red"
+                d.training_impact = "red"
+                # Belt & braces: layover_city MUST stay None.
+                prev.layover_city = None
+                d.layover_city = None
+                continue
+
+            # Legacy path — either the gap is >= floor (real layover)
+            # or unknown (fall back to permissive behaviour).
             prev.day_type = "overnight_flight"
             prev.notes.append(f"Continues into next day ({d.date}).")
-            # Merge d's sectors into prev? Keep them on d as well but flag as
-            # continuation. We DON'T re-write d's date, but we mark it clearly.
             d.day_type = "return_from_layover" if (d.sectors and d.end_location == "AUH") else "overnight_flight"
             d.notes.append(f"Started as overnight from {prev.date}.")
 
-    # Layover inference: track open out-of-base pairings across the month.
+    # ------------------------------------------------------------------
+    # Pass 2 — layover inference across contiguous out-of-base days.
+    # ------------------------------------------------------------------
     open_since: Optional[int] = None
     open_city: Optional[str] = None
     for i, d in enumerate(days):
-        if d.is_out_of_base and open_since is None and d.day_type in ("flight", "multi_sector_flight", "overnight_flight"):
+        # Iter199 · Skip days that Pass 1 already resolved as midnight-
+        # crossing — they must NOT open a layover pairing.
+        if d.day_type in ("midnight_crossing_flight", "midnight_crossing_return"):
+            continue
+
+        if d.is_out_of_base and open_since is None and d.day_type in (
+            "flight", "multi_sector_flight", "overnight_flight",
+        ):
+            # Gate the pairing open on actual dwell time at the outstation.
+            # Peek at the next day (if any) that has a sector starting at
+            # d.end_location.
+            nxt = days[i + 1] if i + 1 < len(days) else None
+            gap = outstation_ground_hours(d, nxt)
+            if gap is not None and gap < MIN_LAYOVER_GROUND_HOURS:
+                # Sub-classify: crossed-midnight vs same-day short-turn.
+                # Fatigue impact is red either way; layover_city stays None.
+                arr_hh = _extract_last_arrival_hour(d)
+                is_crossing = arr_hh is not None and arr_hh < 6      # arrived early AM
+                d.day_type = "midnight_crossing_flight" if is_crossing else "short_turn"
+                d.notes.append(
+                    f"Out-of-base end at {d.end_location} but only ~{gap:.1f}h "
+                    f"before the next departure — not a layover."
+                )
+                d.training_impact = "red"
+                d.layover_city = None
+                # If the return leg is on the same day (rare) we're done;
+                # otherwise tag next day's return so it doesn't get called
+                # a "return_from_layover".
+                if nxt is not None and nxt.day_type not in (
+                    "midnight_crossing_return", "midnight_crossing_flight",
+                ) and nxt.sectors and nxt.end_location == "AUH":
+                    nxt.day_type = "midnight_crossing_return"
+                    nxt.layover_city = None
+                    nxt.training_impact = "red"
+                    nxt.notes.append(
+                        f"Return leg of a short-turn/midnight-crossing from {d.date}."
+                    )
+                continue
+            # Real layover — open pairing as before.
             open_since = i
             open_city = d.end_location
             d.day_type = d.day_type if d.day_type == "overnight_flight" else "flight_to_layover"
@@ -544,6 +641,27 @@ def _post_process(days: list[ParsedDay]) -> list[ParsedDay]:
                 continue
 
     return days
+
+
+def _extract_last_arrival_hour(d: ParsedDay) -> Optional[int]:
+    """Small helper for Pass 2 sub-classification — returns the hour
+    (0-23) of the last sector's arrival on ``d``. Used to distinguish
+    "midnight-crossing" from same-day "short_turn"."""
+    if not d.sectors:
+        return None
+    last = d.sectors[-1]
+    txt = getattr(last, "arrival_time", None) or d.release_time
+    if not txt:
+        return None
+    s = str(txt).replace("↓", "").replace("↑", "").strip()
+    if ":" in s:
+        try:
+            return int(s.split(":", 1)[0])
+        except ValueError:
+            return None
+    if len(s) == 4 and s.isdigit():
+        return int(s[:2])
+    return None
 
 
 # ---------------------------------------------------------------------------

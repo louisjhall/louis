@@ -1,0 +1,31 @@
+{
+  "summary": "Iter200 backend regression PASSED: 7/7 tests green. Verified GET /api/videos/welcome-for-me priority order (weekly > welcome-with-grace > null) across 5 cases, and notify_weekly_video_ready() now writes the new action_url format ('/video/{video_id}' when video_id passed, '/(client)/home' when omitted).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter200_welcome_pill_and_notification_url.py",
+    "/app/test_reports/pytest/iter200_welcome_pill.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "feature_notifications.notify_weekly_video_ready correctly branches action_url on presence of video_id — confirmed by direct call + read-back from db.notifications.",
+    "server.py:14547 videos_welcome_for_me priority order (weekly first with no grace, welcome fallback with 24h grace) matches spec — verified with motor-inserted fixtures for all 5 cases."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter200_welcome_pill_and_notification_url.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "N/A (not tested per request)"},
+  "seed_data_creation": "Tests insert/delete their own weekly_videos and notifications rows scoped to client@crewfit.com (user 0b0651e2). An autouse module fixture snapshots the client's existing weekly_videos rows on entry, wipes them for the tests, and restores them on teardown. Notification test rows use unique dedupe_keys prefixed 'TEST_iter200_' or the empty-video_id key which is also cleaned before/after each test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The test file uses a shared/persistent event loop (via _get_shared_loop()) because server.py's module-level Motor client (db) is bound to the first asyncio loop it sees. Creating fresh loops per test caused 'Event loop is closed' errors on the second notify call. The test also does `import server` before `from feature_notifications import notify_weekly_video_ready` to avoid a circular-import failure with feature_standby. Cosmetic 'Task was destroyed but it is pending' + 'cannot schedule new futures after shutdown' warnings appear at pytest teardown from server.py background bootstraps — they are harmless and do NOT affect test results.",
+  "rca_of_issue": "N/A — both changes are implemented correctly per spec."
+}

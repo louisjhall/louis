@@ -490,7 +490,7 @@ async def notify_weekly_video_ready(
         user_id, "weekly_video_ready",
         title,
         body,
-        action_url="/(client)/videos" if not video_id else f"/(client)/videos?v={video_id}",
+        action_url=f"/video/{video_id}" if video_id else "/(client)/home",
         related_id=video_id,
         dedupe_key=f"weekly_video::{video_id or ''}",
     )

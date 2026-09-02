@@ -1,18 +1,24 @@
 /**
- * WelcomeVideoBanner — surfaces a "watch your welcome video" card on the
- * client home screen when the coach has recorded and sent a welcome video.
+ * WelcomeVideoBanner — surfaces a "watch your coach's video" pill on the
+ * client home screen.
  *
- * Iter 156 (Welcome Video Phase 2). Iter 165 · Persistence overhaul:
+ * Iter 156 · Original — welcome video only.
+ * Iter 165 · Persistence — welcome video sticky for 24 h after first view.
+ * Iter 200 · Check-in takeover:
+ *   Once the coach has sent a check-in (weekly) video, the pill is
+ *   permanently taken over by the LATEST check-in video. Subsequent
+ *   check-ins replace the previous one in place. The welcome video is
+ *   never surfaced separately once a check-in exists — the backend
+ *   `/videos/welcome-for-me` endpoint now returns whichever video
+ *   belongs in the pill.
+ *
+ * Behaviour:
  *   1. Fetches `/videos/welcome-for-me` on mount and on focus.
- *   2. Renders nothing when the endpoint returns `{video: null}`
- *      (backend now returns the row while unwatched AND for a 24-hour
- *      grace period after first view — the client no longer decides
- *      when to hide it).
- *   3. On tap: navigates to `/video/{id}` WITHOUT firing a status flip.
- *      The mark-viewed flip only happens when the player itself reports
- *      the video has been fully watched (inside video/[id].tsx). This
- *      keeps the banner visible if the client dismisses the player
- *      accidentally.
+ *   2. Renders nothing when the endpoint returns `{video: null}`.
+ *   3. Renders welcome-video copy when `video_kind === "welcome"`.
+ *   4. Renders check-in copy when `video_kind === "weekly"`.
+ *   5. On tap: navigates to `/video/{id}`. The mark-viewed flip happens
+ *      only when the player itself reports the video was fully watched.
  */
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
@@ -21,24 +27,25 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
-type WelcomeVideo = {
+type HomePillVideo = {
   id: string;
   script?: string;
   duration_seconds?: number | null;
   watched_at?: string | null;
   sent_at?: string | null;
   status?: string | null;
+  video_kind?: string | null;
 };
 
 export function WelcomeVideoBanner() {
   const router = useRouter();
-  const [video, setVideo] = useState<WelcomeVideo | null>(null);
+  const [video, setVideo] = useState<HomePillVideo | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ video: WelcomeVideo | null }>("/videos/welcome-for-me");
+      const r = await api<{ video: HomePillVideo | null }>("/videos/welcome-for-me");
       setVideo(r?.video || null);
-    } catch { /* silent — welcome video is optional */ }
+    } catch { /* silent — pill is optional */ }
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -48,17 +55,34 @@ export function WelcomeVideoBanner() {
   if (!video) return null;
 
   const onWatch = () => {
-    // Iter 165 · Do NOT mark viewed on tap — that flip now happens only
-    // when the player reports full watch (see video/[id].tsx). Just open
-    // the player. If the user dismisses the player without finishing, the
-    // banner stays visible so they can come back to it.
+    // The mark-viewed flip happens only when the player reports full
+    // watch (see video/[id].tsx). Just open the player here.
     router.push(`/video/${video.id}` as any);
   };
 
   const durHint = typeof video.duration_seconds === "number" && video.duration_seconds > 0
     ? `${Math.max(1, Math.round(video.duration_seconds / 60))} min`
     : null;
-  const isReturn = !!video.watched_at; // seen at least once, still in 24h grace
+
+  const kind = (video.video_kind || "welcome").toLowerCase();
+  const isCheckIn = kind === "weekly";
+  const isReturn = !!video.watched_at;
+
+  let eyebrow: string;
+  let title: string;
+  if (isCheckIn) {
+    // Check-in / weekly review video — persistent pill.
+    eyebrow = isReturn ? "LATEST CHECK-IN" : "NEW · CHECK-IN VIDEO";
+    title = isReturn
+      ? "Rewatch your coach's check-in video"
+      : "Your coach sent you a check-in video";
+  } else {
+    // Welcome video (only surfaced before the first check-in exists).
+    eyebrow = isReturn ? "PICK UP WHERE YOU LEFT OFF" : "NEW · WELCOME";
+    title = isReturn
+      ? "Rewatch your welcome video"
+      : "Your coach recorded you a welcome video";
+  }
 
   return (
     <Pressable style={styles.card} onPress={onWatch} testID="welcome-video-banner">
@@ -66,10 +90,8 @@ export function WelcomeVideoBanner() {
         <Ionicons name="videocam" size={22} color="#fff" />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.eyebrow}>{isReturn ? "PICK UP WHERE YOU LEFT OFF" : "NEW · WELCOME"}</Text>
-        <Text style={styles.title}>
-          {isReturn ? "Rewatch your welcome video" : "Your coach recorded you a welcome video"}
-        </Text>
+        <Text style={styles.eyebrow}>{eyebrow}</Text>
+        <Text style={styles.title}>{title}</Text>
         <Text style={styles.sub}>
           {durHint ? `Tap to watch · ${durHint}` : "Tap to watch"}
         </Text>

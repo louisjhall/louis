@@ -14546,19 +14546,43 @@ async def videos_for_me(user: dict = Depends(current_user)):
 
 @api.get("/videos/welcome-for-me")
 async def videos_welcome_for_me(user: dict = Depends(current_user)):
-    """Iter 155 — return the current welcome video for the caller.
+    """Return the video to show in the client home pill.
 
-    Iter 165 — Persistence rules:
-      * Return the video while it is unwatched (`status: "sent"`).
-      * ALSO return the video for 24 hours after first view so a client
-        who accidentally closed it can find it again.
-      * After the grace period expires the endpoint returns `video: null`
-        and the banner disappears permanently.
+    Iter 155 — original: welcome video (unwatched only).
+    Iter 165 — added 24 h grace period after first view.
+    Iter 200 — NEW: once the coach has sent a *check-in* (weekly) video
+    the pill is permanently taken over by the latest check-in. The
+    welcome video is no longer surfaced from this endpoint after the
+    first check-in exists — subsequent check-ins simply replace the
+    previous one in the same pill (no grace cutoff, no auto-hide).
 
-    Iter188 · Same lazy self-heal as the list endpoint — welcome videos
-    created before the summary generator got backfilled will now spawn
-    their bullets on first open.
+    Resolution order:
+      1. Latest sent/viewed check-in (weekly) video → surface it.
+      2. Otherwise, welcome video while unwatched OR inside 24 h grace.
+      3. Otherwise, `{video: null}` and the banner hides.
+
+    Iter188 · Lazy summary self-heal preserved.
     """
+    # (1) Prefer the most recent check-in (weekly) video — persistent pill.
+    checkin = await db.weekly_videos.find_one(
+        {
+            "user_id": user["id"],
+            "video_kind": "weekly",
+            "status": {"$in": ["sent", "viewed"]},
+        },
+        {"_id": 0},
+        sort=[("sent_at", -1)],
+    )
+    if checkin:
+        try:
+            if not checkin.get("script_summary") and (checkin.get("script") or "").strip():
+                from feature_welcome_video_summary import stamp_welcome_summary
+                _spawn_bg(stamp_welcome_summary(db, checkin["id"], checkin.get("script") or ""))
+        except Exception:
+            logger.exception("lazy video-summary spawn (welcome-for-me: checkin) failed")
+        return {"video": checkin}
+
+    # (2) Fall back to welcome video with the existing grace-period rules.
     grace_cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
     row = await db.weekly_videos.find_one(
         {

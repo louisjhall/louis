@@ -83,6 +83,26 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
 - Real acceptance run: `scripts/acceptance_september_etihad.py` produces side-by-side old-vs-new for the Sept PDF.
 - Future uploads only — no DB reprocessing of historical rosters.
 
+## Iter200 — Home pill takeover + notification deep-link fix (2026-06)
+- **Weekly video notification deep-link**: `notify_weekly_video_ready` now sets
+  `action_url = "/video/{video_id}"` when a video_id is supplied, and
+  `"/(client)/home"` as fallback. Previously pointed to `/(client)/videos`
+  which did not resolve to the correct in-app player route.
+- **Home pill takeover**: `GET /api/videos/welcome-for-me` now returns
+  whichever video belongs in the client home pill:
+  1. Latest weekly / check-in video (`video_kind=weekly`, `status ∈ {sent, viewed}`)
+     — no grace cutoff, persistent pill.
+  2. Otherwise, the welcome video with the pre-existing 24 h grace rule.
+  3. Otherwise `{"video": null}` and the banner hides.
+  Once the coach sends the first check-in video the welcome video is no
+  longer surfaced from this endpoint — it is permanently taken over by
+  the latest check-in, and every subsequent check-in replaces the
+  previous one in the same pill.
+- Frontend `WelcomeVideoBanner` reworked to render check-in copy
+  (`NEW · CHECK-IN VIDEO` / `LATEST CHECK-IN`) when `video_kind === "weekly"`
+  and preserve welcome-video copy otherwise.
+- 7 backend regression tests (`tests/test_iter200_welcome_pill_and_notification_url.py`) — all pass.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

@@ -266,7 +266,26 @@ def _infer_home_base(days: list[dict], hint: Optional[str]) -> set[str]:
             continue
         s = s.upper()
         all_starts[s] = all_starts.get(s, 0) + 1
-        # A fresh duty = previous day was NOT a flight/layover-adjacent
+
+        # Walk backwards over blank / layover-middle days to find the
+        # PREVIOUS day that had actual flight sectors. If that last
+        # flight ended at the SAME airport we're starting from, this is
+        # a continuation of a layover pairing (return leg), NOT a fresh
+        # duty from a home base.
+        prev_flight_day = None
+        for lb in range(i - 1, -1, -1):
+            if _flights(days[lb]):
+                prev_flight_day = days[lb]
+                break
+        prev_ended_here = (
+            prev_flight_day is not None
+            and _end_airport(prev_flight_day) == s
+        )
+        # A fresh duty is one where either:
+        #   - there is no prior flight (start of roster / first duty), OR
+        #   - the prior flight ended somewhere OTHER than here.
+        # Additionally the DIRECTLY prior day should not itself be a
+        # duty (has_flight or explicitly a layover-middle).
         prev = days[i - 1] if i > 0 else None
         prev_has_flight = bool(_flights(prev)) if prev else False
         prev_is_layover_middle = (
@@ -276,6 +295,8 @@ def _infer_home_base(days: list[dict], hint: Optional[str]) -> set[str]:
                  "layover_full", "layover_full_day", "layover rest",
                  "layover_rest")
         )
+        if prev_ended_here:
+            continue  # continuation of a pairing — never counts as fresh
         if not prev_has_flight and not prev_is_layover_middle:
             fresh_starts[s] = fresh_starts.get(s, 0) + 1
 
@@ -372,24 +393,42 @@ def _standby_window(day: dict) -> str:
 
 
 def _customer_label(day: dict) -> str:
-    """Iter200-b · Human-friendly one-line label per user's spec.
+    """Iter200-b/g · Human-friendly one-line label per user's spec.
 
-    RULES (from user):
+    RULES:
       • Plain type names ONLY: "Night flight", "Layover", "Rest day",
         "Standby", "Flying day". Never parser type names.
+      • Report time between 00:00 and 05:00 → always "Night flight" (overrides
+        "Flying day" / "Heavy flying day" that other layers might set).
       • Layover cards show city when available: "Layover — Karachi".
         If no city: "Layover" only. Never "Layover in None".
       • Standby cards show the window when available:
         "Standby 06:00–14:00". Otherwise just "Standby".
       • Route (short) is shown alongside where it exists, e.g.
         "Flying day — AUH → DXB", kept SHORT.
-
-    NEVER mentions internal parser types like 'midnight_crossing_return'
-    or 'layover_full'. NEVER produces 'Layover in None'.
+      • "Return from layover" is shown as "Return flight — ROUTE".
+      • "Flying to layover" is shown as "Layover".
     """
     internal = (day.get("day_type") or "").lower()
     route = _route_str(day)
     city = day.get("layover_city")
+
+    # Iter200-g · Early-morning report rule: any duty with a sector
+    # departing between 00:00 and 05:00 must display as "Night flight",
+    # overriding stale "Flying day" / "Heavy flying day" labels.
+    # Applied BEFORE the internal-type switch so it wins uniformly.
+    # EXCEPT for resolved layover types — a genuine layover trip
+    # (AUH → CMB → hotel → AUH) still reads as "Layover — CMB" even
+    # if the outbound sector left at 01:10.
+    fs = _flights(day)
+    _LAYOVER_LIKE = {"flight_to_layover", "return_from_layover", "layover_day"}
+    _NON_FLIGHT = {"standby", "day_off", "home_day", "rest_day",
+                   "sim_training", "annual_leave", "sickness", "needs_review"}
+    if fs and internal not in _LAYOVER_LIKE and internal not in _NON_FLIGHT:
+        first_dep_hhmm = (fs[0] or {}).get("dep") or day.get("report_time")
+        first_dep = _parse_hhmm(first_dep_hhmm)
+        if first_dep is not None and first_dep[0] < 5:
+            return f"Night flight — {route}" if route else "Night flight"
 
     if internal in ("day_off", "home_day"):
         return "Rest day"
@@ -415,13 +454,15 @@ def _customer_label(day: dict) -> str:
         return f"Flying day — {route}" if route else "Flying day"
 
     if internal == "flight_to_layover":
+        # Iter200-g · Renamed from "Flying to layover" → "Layover".
         if city:
             return f"Layover — {city}"
         return "Layover"
     if internal == "return_from_layover":
-        if city:
-            return f"Layover — {city} → home"
-        return "Return home"
+        # Iter200-g · Renamed from "Return from layover" → "Return flight".
+        if route:
+            return f"Return flight — {route}"
+        return "Return flight"
     if internal == "layover_day":
         if city:
             return f"Layover — {city}"
@@ -577,16 +618,42 @@ def normalize_roster(
             _set_equipment(d, "any")
             continue
 
+        # Iter200-g · A blank day (no sectors) sitting BETWEEN a
+        # resolved flight_to_layover (or prior layover_day) and a
+        # future return leg from the same outstation must be classified
+        # as a layover_day, regardless of what the LLM labelled it
+        # (unknown / rest / flying day / blank column). This runs
+        # BEFORE the generic rest_day fallback so it wins uniformly.
+        if not fs:
+            prev = days[i - 1] if i > 0 else None
+            prev_type = (prev or {}).get("day_type") if prev else None
+            prev_end_airport = _end_airport(prev) if prev else None
+            prev_city = (prev or {}).get("layover_city") if prev else None
+            if prev_type in ("flight_to_layover", "layover_day"):
+                match_airport = prev_end_airport
+                if not match_airport and prev_type == "layover_day":
+                    for lb in range(i - 1, -1, -1):
+                        if days[lb].get("day_type") == "flight_to_layover":
+                            match_airport = _end_airport(days[lb])
+                            break
+                has_return = False
+                if match_airport:
+                    for k in range(i + 1, len(days)):
+                        if _start_airport(days[k]) == match_airport:
+                            has_return = True
+                            break
+                if has_return:
+                    d["day_type"] = "layover_day"
+                    d["layover_city"] = prev_city or match_airport
+                    _set_equipment(d, "hotel_or_bodyweight")
+                    d["_normalized"] = True
+                    continue
+
         # --- 5d) Flights / layovers / turnarounds
         if not fs and src not in ("layover",):
             # No sectors and no explicit layover token.
             # Iter200-b · Blank day with no destination city and no
             # pairing evidence → classify as rest day (per user spec).
-            # A truly ambiguous blank day that we CAN'T resolve to a
-            # nearby pairing still becomes a rest day here; the
-            # downstream layover-day rule (lower down) will reclassify
-            # to layover_day only when prev and next sectors both prove
-            # outstation rest at the same city.
             if src == "unknown":
                 d["day_type"] = "rest_day"
                 d["home_or_away"] = "home"
@@ -864,6 +931,14 @@ _INTERNAL_NOTE_TOKENS = (
     "midnight_crossing",
     "→ inferred",
     "not a layover.",
+    # Iter200-g · Additional debug/parser strings that must never
+    # leak to the customer.
+    "flight continues into next day",
+    "marker detected",
+    "continues into next day",
+    "overnight continuation from previous day",
+    "blank column",
+    "layover inference",
 )
 
 

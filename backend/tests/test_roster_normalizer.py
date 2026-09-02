@@ -354,6 +354,60 @@ def test_layover_in_none_downgraded():
     assert d["client_label"] == "Needs your check"
 
 
+def test_early_morning_report_displays_as_night_flight():
+    """Iter200-g · A flight with report/dep between 00:00 and 05:00 must
+       display as 'Night flight', overriding 'Flying day' / 'Heavy flying
+       day' labels — UNLESS the day is a resolved layover."""
+    # A turnaround AUH → KHI → AUH that departs at 03:30 → Night flight
+    days = [
+        _day("2026-09-10", "Turnaround Duty",
+             flights=[_flt("AUH", "KHI", "03:30", "05:00"),
+                      _flt("KHI", "AUH", "06:00", "07:30")],
+             report_time="02:30", duty_end_time="08:00"),
+    ]
+    out = normalize_roster(days, home_base="AUH")["days"]
+    assert out[0]["client_label"].startswith("Night flight")
+
+
+def test_blank_day_between_arrival_and_departure_is_layover_day():
+    """Iter200-g · A blank day (no sectors, source unknown or Flying day)
+       sitting between a resolved flight_to_layover and a return flight
+       from the same outstation must be classified as layover_day."""
+    days = [
+        _day("2026-09-20", "Layover Arrival Day",
+             flights=[_flt("LHR", "JFK", "12:00", "15:00")],
+             layover_city="JFK", report_time="11:00", duty_end_time="15:00"),
+        # LLM emitted this blank middle day as "Flying day" by mistake
+        _day("2026-09-21", "Flying day", flights=[]),
+        _day("2026-09-22", "Layover Departure Day",
+             flights=[_flt("JFK", "LHR", "20:00", "08:00")],
+             layover_city="JFK"),
+    ]
+    out = normalize_roster(days, home_base="LHR")["days"]
+    mid = _by_date(out, "2026-09-21")
+    assert mid["day_type"] == "layover_day"
+    assert mid["layover_city"] == "JFK"
+    assert mid["client_label"] == "Layover — JFK"
+
+
+def test_labels_use_new_terminology():
+    """Iter200-g · 'Flying to layover' renamed to 'Layover', 'Return from
+       layover' renamed to 'Return flight'."""
+    days = [
+        _day("2026-09-01", "Layover Arrival Day",
+             flights=[_flt("AUH", "SYD", "10:00", "06:00")],
+             layover_city="SYD", report_time="09:00"),
+        _day("2026-09-02", "Layover Full Day"),
+        _day("2026-09-03", "Layover Departure Day",
+             flights=[_flt("SYD", "AUH", "22:00", "06:00")],
+             layover_city="SYD"),
+    ]
+    out = normalize_roster(days, home_base="AUH")["days"]
+    assert out[0]["client_label"] == "Layover — SYD"
+    assert out[2]["client_label"] == "Return flight — SYD → AUH"
+
+
+
 def test_source_labelled_night_flight_never_becomes_layover():
     """Iter200-d · Source label 'Night Flight' explicitly. Regardless of
        whether the sector crosses midnight or what the LLM otherwise

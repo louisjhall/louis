@@ -103,32 +103,34 @@ function fmtDate(iso?: string | null) {
 // customer never sees `midnight_crossing_flight` / `layover_full` /
 // `flight_to_layover` etc.
 const _DAY_TYPE_PRETTY: Record<string, string> = {
-  day_off: "Day off",
-  home_day: "Home day",
+  day_off: "Rest day",
+  home_day: "Rest day",
   rest_day: "Rest day",
   standby: "Standby",
-  sim_training: "Simulator / training",
+  sim_training: "Simulator",
   annual_leave: "Annual leave",
-  sickness: "Sick / off-sick",
+  sickness: "Off sick",
   night_flight: "Night flight",
-  turnaround: "Flying",
-  flight: "Flying",
-  multi_sector_flight: "Flying (multi-sector)",
-  flight_to_layover: "Flying to layover",
-  return_from_layover: "Return from layover",
-  layover_day: "Layover day",
-  overnight_flight: "Overnight flight",
+  turnaround: "Flying day",
+  flight: "Flying day",
+  multi_sector_flight: "Flying day",
+  // Iter200-g · Renamed per spec.
+  flight_to_layover: "Layover",
+  return_from_layover: "Return flight",
+  layover_day: "Layover",
+  overnight_flight: "Night flight",
   needs_review: "Needs your check",
   unknown: "Needs your check",
   "unknown/needs confirmation": "Needs your check",
   // legacy LLM types (map any that leak through)
-  "layover arrival day": "Flying to layover",
-  "layover full day": "Layover day",
-  "layover departure day": "Return from layover",
-  "turnaround duty": "Flying",
-  "long-haul turnaround": "Flying (long-haul)",
-  "short-haul turnaround": "Flying",
-  "home day": "Home day",
+  "layover arrival day": "Layover",
+  "layover full day": "Layover",
+  "layover departure day": "Return flight",
+  "turnaround duty": "Flying day",
+  "long-haul turnaround": "Flying day",
+  "short-haul turnaround": "Flying day",
+  "night flight": "Night flight",
+  "overnight flight": "Night flight",
 };
 
 function _prettyDayType(raw?: string | null): string {
@@ -145,6 +147,11 @@ const _DEBUG_NOTE_TOKENS = [
   "inferred layover", "started as overnight", "continuation block",
   "midnight_crossing", "not a layover.", "→ inferred",
   "blank column", "layover inference",
+  // Iter200-g · Additional strings that must never appear on member cards.
+  "flight continues into next day",
+  "marker detected",
+  "continues into next day",
+  "overnight continuation from previous day",
 ];
 function _isDebugNote(text?: string | null): boolean {
   if (!text) return false;
@@ -193,6 +200,17 @@ function _regenerateClientLabel(d: Day): string {
     return "";
   })();
 
+  // Iter200-g · Early-morning report rule — same logic as backend.
+  // Doesn't override resolved layover types.
+  const firstDep: string = flights.length ? (flights[0].dep || d.report_time || "") : (d.report_time || "");
+  const firstDepH = firstDep && /^\d{1,2}:/.test(firstDep) ? parseInt(firstDep.slice(0, 2), 10) : NaN;
+  const isEarlyMorning = !Number.isNaN(firstDepH) && firstDepH < 5 && flights.length > 0;
+  const layoverLike = ["flight_to_layover", "return_from_layover", "layover_day"];
+  const nonFlightTypes = ["standby", "day_off", "home_day", "rest_day", "sim_training", "annual_leave", "sickness", "needs_review"];
+  if (isEarlyMorning && !layoverLike.includes(internal) && !nonFlightTypes.includes(internal)) {
+    return route ? `Night flight — ${route}` : "Night flight";
+  }
+
   if (internal === "day_off" || internal === "home_day" || internal === "rest_day") return "Rest day";
   if (internal === "standby") return win ? `Standby ${win}` : "Standby";
   if (internal === "sim_training") return "Simulator";
@@ -203,10 +221,11 @@ function _regenerateClientLabel(d: Day): string {
     return route ? `Night flight — ${route}` : "Night flight";
   if (internal === "turnaround" || internal === "flight" || internal === "multi_sector_flight")
     return route ? `Flying day — ${route}` : "Flying day";
+  // Iter200-g · Renamed labels.
   if (internal === "flight_to_layover")
     return city ? `Layover — ${city}` : "Layover";
   if (internal === "return_from_layover")
-    return city ? `Layover — ${city} → home` : "Return home";
+    return route ? `Return flight — ${route}` : "Return flight";
   if (internal === "layover_day")
     return city ? `Layover — ${city}` : "Layover";
   return _prettyDayType(d.day_type) || "Duty";

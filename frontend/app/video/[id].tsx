@@ -12,6 +12,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { VideoView, useVideoPlayer } from "expo-video";
+import { setAudioModeAsync } from "expo-audio";
 import { api, API_BASE } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
@@ -56,6 +57,12 @@ export default function ClientVideo() {
     } catch { /* ignore */ } finally { setLoading(false); }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // Ensure the video plays audio even when the iPhone silent switch is on.
+  // Mirrors the on-demand audio player behaviour (see on-demand/[id]/audio.tsx).
+  useEffect(() => {
+    setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
+  }, []);
 
   // Resolve the relative `file_url` (`/api/coach/videos/{id}/file`) against
   // the API_BASE so expo-video can fetch it from the pod / R2 endpoint.

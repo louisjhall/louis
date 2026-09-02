@@ -837,9 +837,10 @@ function DayEditor({ day, onClose, onChange, onStartSwap }: { day: Day | null; o
               </Pressable>
             </View>
             <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 520 }}>
-              {/* Iter200-d · Flight-details summary at the top of the
+              {/* Iter200-d/e · Flight-details summary at the top of the
                   Edit modal so the member always sees exactly what's on
-                  the day before choosing/confirming a new duty type. */}
+                  the day before choosing/confirming a new duty type.
+                  Renders per-leg data from day.flights[]. */}
               {day ? (
                 <View style={styles.editorSummary} testID="rc-editor-summary">
                   <View style={styles.editorSummaryRow}>
@@ -852,17 +853,40 @@ function DayEditor({ day, onClose, onChange, onStartSwap }: { day: Day | null; o
                       {day.client_label || _prettyDayType(day.day_type) || "—"}
                     </Text>
                   </View>
+
+                  {/* Per-leg flight breakdown — route, flight number, times. */}
                   {(day.flights || []).length > 0 ? (
-                    <View>
-                      {(day.flights || []).map((f, i) => (
-                        <Text key={i} style={styles.editorSummarySub} numberOfLines={1}>
-                          {f.from} → {f.to}
-                          {f.dep ? `  ·  Dep ${f.dep}` : ""}
-                          {f.arr ? `  ·  Arr ${f.arr}` : ""}
-                        </Text>
-                      ))}
+                    <View style={styles.editorLegList}>
+                      {(day.flights || []).map((f: any, i: number) => {
+                        const num = f.flight_number || f.flight_no || f.number || f.fnum;
+                        const dep = f.dep || f.departure_time;
+                        const arr = f.arr || f.arrival_time;
+                        return (
+                          <View key={i} style={styles.editorLegRow}>
+                            <Ionicons
+                              name="airplane-outline"
+                              size={13}
+                              color={theme.color.textMuted}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.editorLegRoute} numberOfLines={1}>
+                                {f.from || "?"} → {f.to || "?"}
+                                {num ? `   ·   ${num}` : ""}
+                              </Text>
+                              {(dep || arr) ? (
+                                <Text style={styles.editorLegTimes} numberOfLines={1}>
+                                  {dep ? `Dep ${dep}` : ""}
+                                  {dep && arr ? "   ·   " : ""}
+                                  {arr ? `Arr ${arr}` : ""}
+                                </Text>
+                              ) : null}
+                            </View>
+                          </View>
+                        );
+                      })}
                     </View>
                   ) : null}
+
                   {(day.report_time || day.duty_end_time || day.layover_city) ? (
                     <Text style={styles.editorSummarySub} numberOfLines={2}>
                       {day.report_time ? `Report ${day.report_time}` : ""}
@@ -878,10 +902,12 @@ function DayEditor({ day, onClose, onChange, onStartSwap }: { day: Day | null; o
               <Text style={styles.editorLabel}>DUTY TYPE</Text>
               <View style={styles.dutyGrid}>
                 {DUTY_TYPES.map((t) => {
-                  // Iter200-d · Highlight the chip that matches either
-                  // the legacy chip key OR its internal-type mapping,
-                  // so the correct duty stays "active" after we swap
-                  // to normalizer output.
+                  // Iter200-d/e · Highlight the chip that matches the
+                  // day's INTERNAL type (what the normalizer emits),
+                  // not the raw chip key. Fixes the case where the
+                  // backend now stores `flight_to_layover` but the
+                  // chip key is "Layover" — the chip should still
+                  // appear selected.
                   const cur = (day?.day_type || "").toLowerCase();
                   const internalForKey = _chipKeyToInternal(t.key).toLowerCase();
                   const active = cur === t.key.toLowerCase() || cur === internalForKey;
@@ -1176,6 +1202,25 @@ const styles = StyleSheet.create({
     color: theme.color.textMuted,
     fontSize: 12,
     marginTop: 2,
+  },
+  editorLegList: {
+    marginTop: 6,
+    gap: 6,
+  },
+  editorLegRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  editorLegRoute: {
+    color: theme.color.text,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  editorLegTimes: {
+    color: theme.color.textMuted,
+    fontSize: 11,
+    marginTop: 1,
   },
   editorSwapBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,

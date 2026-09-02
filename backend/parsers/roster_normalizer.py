@@ -877,4 +877,40 @@ def _looks_like_internal_note(text: str) -> bool:
 __all__ = [
     "MIN_LAYOVER_GROUND_HOURS",
     "normalize_roster",
+    "refresh_client_label",
 ]
+
+
+def refresh_client_label(day: dict) -> str:
+    """Regenerate ONLY the customer-facing `client_label` for a single
+    day without re-running classification. Use this from the PATCH
+    handler so a user-confirmed pick (e.g. member manually chose
+    Layover on a Flying Day) is respected — we don't re-classify, we
+    only refresh the label the customer sees.
+
+    Also translates legacy chip keys ("Layover", "Flight", "Off", ...)
+    to the internal type vocabulary so downstream code (icons, generator,
+    burden math) stays consistent.
+    """
+    raw = (day.get("day_type") or "").strip().lower()
+    _CHIP_TO_INTERNAL = {
+        "flight": "turnaround",
+        "flight (turnaround)": "turnaround",
+        "direct flight": "flight",
+        "direct": "flight",
+        "layover": "flight_to_layover",
+        "standby": "standby",
+        "off": "day_off",
+        "off duty": "day_off",
+        "home": "home_day",
+        "sim / training": "sim_training",
+        "sim": "sim_training",
+        "sick": "sickness",
+        "annual leave": "annual_leave",
+        "unknown/needs confirmation": "needs_review",
+        "not sure yet": "needs_review",
+    }
+    if raw in _CHIP_TO_INTERNAL:
+        day["day_type"] = _CHIP_TO_INTERNAL[raw]
+    day["client_label"] = _customer_label(day)
+    return day["client_label"]

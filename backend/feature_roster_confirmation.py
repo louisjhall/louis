@@ -186,6 +186,60 @@ def _apply_day_defaults(days: list[dict]) -> list[dict]:
 
 async def _persist_pending_roster(user_id: str, days: list[dict], source_filename: str, raw: str, job_id: str) -> dict:
     days = _apply_day_defaults(days)
+
+    # Iter200-e · Run the UNIVERSAL post-parse normalizer on the coach
+    # upload path too, so:
+    #   • duplicate same-date rows are collapsed (post-classification)
+    #   • night flights are never misclassified as layovers
+    #   • blank days without a destination city become rest days
+    #   • standby / OFF are preserved cleanly
+    #   • customer-facing `client_label` is populated for EVERY day
+    # This mirrors the behaviour of the older upload endpoints so all
+    # roster paths (client self-upload, coach upload, ingest webhook)
+    # produce identically-shaped data.
+    try:
+        from parsers.roster_normalizer import normalize_roster
+        # Try to infer coverage month from parsed dates to clip any
+        # look-ahead rows (e.g. an Oct-1 column on a Sept roster).
+        mrange = None
+        _dates = sorted([d.get("date") for d in days if d.get("date")])
+        if _dates:
+            from collections import Counter as _Counter
+            _month_counts = _Counter(dt[:7] for dt in _dates)
+            _dominant_month, _dom_n = _month_counts.most_common(1)[0]
+            if _dom_n / max(1, len(_dates)) >= 0.7:
+                _y, _m = int(_dominant_month[:4]), int(_dominant_month[5:7])
+                if _m == 12:
+                    from datetime import datetime as _dt, timedelta as _td
+                    _last = _dt(_y + 1, 1, 1) - _td(days=1)
+                else:
+                    from datetime import datetime as _dt, timedelta as _td
+                    _last = _dt(_y, _m + 1, 1) - _td(days=1)
+                mrange = (f"{_dominant_month}-01", _last.date().isoformat())
+        _hb_hint = None
+        try:
+            _u = await db.users.find_one({"id": user_id}, {"_id": 0, "profile": 1})
+            _hb_hint = ((_u or {}).get("profile") or {}).get("home_base")
+        except Exception:
+            _hb_hint = None
+        _nres = normalize_roster(days, home_base=_hb_hint, month_range=mrange)
+        days = _nres["days"]
+        logger.info(
+            "[persist_pending:%s] normalizer audit: clipped=%d deduped=%d "
+            "night_downgrades=%d preserved_off=%d fixed_standby=%d "
+            "flagged=%d fixed_layover_in_none=%d",
+            job_id,
+            _nres["audit"]["clipped_month_boundary"],
+            _nres["audit"]["deduped_dates"],
+            _nres["audit"]["downgraded_midnight_crossings"],
+            _nres["audit"]["preserved_off_days"],
+            _nres["audit"]["fixed_standby_equipment"],
+            _nres["audit"]["flagged_needs_review"],
+            _nres["audit"]["fixed_layover_in_none"],
+        )
+    except Exception:
+        logger.exception("universal roster normalizer failed on persist path (non-fatal)")
+
     first = days[0]["date"] if days else None
     last = days[-1]["date"] if days else None
 
@@ -934,6 +988,18 @@ async def roster_pending_patch(
                 d["_confirmed_by_user"] = True
             elif prior.get("_confirmed_by_user"):
                 d["_confirmed_by_user"] = True
+
+    # Iter200-e · Refresh the customer-facing `client_label` on EVERY
+    # edited day (not just Etihad-parser days). We use the presenter-only
+    # helper rather than the full normalizer so a user-confirmed manual
+    # pick (e.g. member forced Layover on a Flying Day) is preserved —
+    # we don't want to auto-re-classify their choice.
+    try:
+        from parsers.roster_normalizer import refresh_client_label
+        for _d in incoming:
+            refresh_client_label(_d)
+    except Exception:
+        logger.exception("client_label refresh in PATCH failed (non-fatal)")
 
     review_flags = {"low_confidence_count": sum(1 for d in incoming if _needs_review(d))}
     updates = {

@@ -657,6 +657,26 @@ def normalize_roster(
             _set_equipment(d, "any")
             continue
 
+        # Iter200-d · Explicit night-flight safety net.
+        # If the SOURCE explicitly labelled the day "Night flight" /
+        # "Overnight" / "Red-eye" and there are sectors, always classify
+        # as night_flight regardless of what the calendar-date crossing
+        # looks like. Prevents any downstream branch from re-classifying
+        # a labelled night flight as a layover.
+        _src_lc = (d.get("day_type") or "").lower()
+        _is_source_night = fs and (
+            "night flight" in _src_lc
+            or "overnight" in _src_lc
+            or "red-eye" in _src_lc
+            or "red eye" in _src_lc
+        )
+        if _is_source_night:
+            d["day_type"] = "night_flight"
+            d.pop("layover_city", None)
+            _set_equipment(d, "any")
+            d["_normalized"] = True
+            continue
+
         # Ended away — is it a genuine layover?
         if ended_away and fs:
             # Iter200-b · Early-morning-departure rule.

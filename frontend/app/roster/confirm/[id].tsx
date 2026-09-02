@@ -152,6 +152,66 @@ function _isDebugNote(text?: string | null): boolean {
   return _DEBUG_NOTE_TOKENS.some((t) => lo.includes(t));
 }
 
+// Iter200-d · Map the chip labels the user picks in the Edit modal
+// (title-case, legacy keys) to the internal type vocabulary the backend
+// normalizer uses. Ensures the card icon + label update instantly.
+function _chipKeyToInternal(raw?: string | null): string {
+  const k = (raw || "").toLowerCase().trim();
+  if (!k) return "unknown";
+  if (k === "flight" || k === "flight (turnaround)") return "turnaround";
+  if (k === "direct flight" || k === "direct") return "flight";
+  if (k === "layover") return "flight_to_layover";
+  if (k === "standby") return "standby";
+  if (k === "off" || k === "off duty") return "day_off";
+  if (k === "home") return "home_day";
+  if (k === "sim / training" || k === "sim") return "sim_training";
+  if (k === "sick" || k === "sickness") return "sickness";
+  if (k === "annual leave") return "annual_leave";
+  if (k === "unknown/needs confirmation" || k === "not sure yet") return "needs_review";
+  // If already an internal type, pass through unchanged.
+  return k.replace(/\s+/g, "_");
+}
+
+// Iter200-d · Client-side mirror of the backend `_customer_label` in
+// parsers/roster_normalizer.py. Called after the user changes a day so
+// the card updates instantly rather than after the next server sync.
+function _regenerateClientLabel(d: Day): string {
+  const internal = (d.day_type || "").toLowerCase();
+  const flights = (d as any).flights || [];
+  const parts: string[] = [];
+  if (flights.length) {
+    parts.push(flights[0].from);
+    for (const f of flights) parts.push(f.to);
+  }
+  const route = parts.filter(Boolean).join(" → ");
+  const city = d.layover_city || "";
+  const win = (() => {
+    const s = (d as any).standby_start_time || d.report_time || "";
+    const e = (d as any).standby_end_time || d.duty_end_time || "";
+    if (s && e) return `${s}–${e}`;
+    if (s) return `from ${s}`;
+    return "";
+  })();
+
+  if (internal === "day_off" || internal === "home_day" || internal === "rest_day") return "Rest day";
+  if (internal === "standby") return win ? `Standby ${win}` : "Standby";
+  if (internal === "sim_training") return "Simulator";
+  if (internal === "annual_leave") return "Annual leave";
+  if (internal === "sickness") return "Off sick";
+  if (internal === "needs_review") return "Needs your check";
+  if (internal === "night_flight" || internal === "overnight_flight")
+    return route ? `Night flight — ${route}` : "Night flight";
+  if (internal === "turnaround" || internal === "flight" || internal === "multi_sector_flight")
+    return route ? `Flying day — ${route}` : "Flying day";
+  if (internal === "flight_to_layover")
+    return city ? `Layover — ${city}` : "Layover";
+  if (internal === "return_from_layover")
+    return city ? `Layover — ${city} → home` : "Return home";
+  if (internal === "layover_day")
+    return city ? `Layover — ${city}` : "Layover";
+  return _prettyDayType(d.day_type) || "Duty";
+}
+
 // Iter200-b · Single-glance icon per day type. Simple, one colour,
 // consistent size — driven by the day's internal `day_type`. Ionicons
 // only (already imported), no external assets.
@@ -239,11 +299,22 @@ export default function RosterConfirm() {
       if (!p) return p;
       return {
         ...p,
-        days: p.days.map((d) =>
-          d.date === date
-            ? { ...d, ...patch, _confirmed_by_user: true, _needs_review: false }
-            : d,
-        ),
+        days: p.days.map((d) => {
+          if (d.date !== date) return d;
+          const merged: Day = { ...d, ...patch, _confirmed_by_user: true, _needs_review: false } as Day;
+          // Iter200-d · When the user changes the day_type via the Edit
+          // modal, the incoming key is the chip label (e.g. "Layover",
+          // "Flight", "Off"). Translate to the internal type the
+          // normalizer would have emitted, and regenerate the customer
+          // label so the card updates immediately without waiting for
+          // a server round-trip.
+          if (patch.day_type !== undefined) {
+            const internal = _chipKeyToInternal(patch.day_type as string);
+            merged.day_type = internal;
+            merged.client_label = _regenerateClientLabel(merged);
+          }
+          return merged;
+        }),
       };
     });
   };
@@ -766,10 +837,54 @@ function DayEditor({ day, onClose, onChange, onStartSwap }: { day: Day | null; o
               </Pressable>
             </View>
             <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 520 }}>
+              {/* Iter200-d · Flight-details summary at the top of the
+                  Edit modal so the member always sees exactly what's on
+                  the day before choosing/confirming a new duty type. */}
+              {day ? (
+                <View style={styles.editorSummary} testID="rc-editor-summary">
+                  <View style={styles.editorSummaryRow}>
+                    <Ionicons
+                      name={_dayTypeIcon(day.day_type)}
+                      size={18}
+                      color={theme.color.text}
+                    />
+                    <Text style={styles.editorSummaryT} numberOfLines={2}>
+                      {day.client_label || _prettyDayType(day.day_type) || "—"}
+                    </Text>
+                  </View>
+                  {(day.flights || []).length > 0 ? (
+                    <View>
+                      {(day.flights || []).map((f, i) => (
+                        <Text key={i} style={styles.editorSummarySub} numberOfLines={1}>
+                          {f.from} → {f.to}
+                          {f.dep ? `  ·  Dep ${f.dep}` : ""}
+                          {f.arr ? `  ·  Arr ${f.arr}` : ""}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : null}
+                  {(day.report_time || day.duty_end_time || day.layover_city) ? (
+                    <Text style={styles.editorSummarySub} numberOfLines={2}>
+                      {day.report_time ? `Report ${day.report_time}` : ""}
+                      {day.report_time && day.duty_end_time ? "  ·  " : ""}
+                      {day.duty_end_time ? `Off ${day.duty_end_time}` : ""}
+                      {(day.report_time || day.duty_end_time) && day.layover_city ? "  ·  " : ""}
+                      {day.layover_city ? `Destination ${day.layover_city}` : ""}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+
               <Text style={styles.editorLabel}>DUTY TYPE</Text>
               <View style={styles.dutyGrid}>
                 {DUTY_TYPES.map((t) => {
-                  const active = (day?.day_type || "").toLowerCase() === t.key.toLowerCase();
+                  // Iter200-d · Highlight the chip that matches either
+                  // the legacy chip key OR its internal-type mapping,
+                  // so the correct duty stays "active" after we swap
+                  // to normalizer output.
+                  const cur = (day?.day_type || "").toLowerCase();
+                  const internalForKey = _chipKeyToInternal(t.key).toLowerCase();
+                  const active = cur === t.key.toLowerCase() || cur === internalForKey;
                   return (
                     <Pressable
                       key={t.key}
@@ -1037,6 +1152,31 @@ const styles = StyleSheet.create({
   row2: { flexDirection: "row", gap: theme.space.md },
   editorDone: { marginTop: theme.space.md, backgroundColor: theme.color.brand, paddingVertical: 14, borderRadius: theme.radius.md, alignItems: "center" },
   editorDoneText: { color: "#fff", fontWeight: "800", letterSpacing: 1.5, fontSize: 13 },
+  editorSummary: {
+    padding: theme.space.md,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1,
+    borderColor: theme.color.border,
+    marginBottom: theme.space.md,
+  },
+  editorSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 6,
+  },
+  editorSummaryT: {
+    color: theme.color.text,
+    fontSize: 14,
+    fontWeight: "700",
+    flex: 1,
+  },
+  editorSummarySub: {
+    color: theme.color.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
   editorSwapBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
     marginTop: theme.space.md, paddingVertical: 12, borderRadius: theme.radius.md,

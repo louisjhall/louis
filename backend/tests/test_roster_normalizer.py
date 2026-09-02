@@ -354,6 +354,26 @@ def test_layover_in_none_downgraded():
     assert d["client_label"] == "Needs your check"
 
 
+def test_source_labelled_night_flight_never_becomes_layover():
+    """Iter200-d · Source label 'Night Flight' explicitly. Regardless of
+       whether the sector crosses midnight or what the LLM otherwise
+       claims, a night-flight-labelled day with sectors must stay a
+       night_flight, never a layover."""
+    days = [
+        _day("2026-09-14", "Night Flight",
+             flights=[_flt("AUH", "LHR", "23:30", "05:00")],
+             layover_city="LHR",  # LLM accidentally left this populated
+             report_time="22:00", duty_end_time="05:30"),
+    ]
+    out = normalize_roster(days, home_base="AUH")["days"]
+    d = out[0]
+    assert d["day_type"] == "night_flight"
+    assert d.get("layover_city") is None
+    assert d["equipment_assumption"] == "any"
+    assert d["client_label"].startswith("Night flight")
+
+
+
 def test_customer_labels_are_plain_human():
     """Iter200-b · Verify all key labels match the user's spec exactly."""
     days = [

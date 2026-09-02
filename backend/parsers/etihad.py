@@ -717,31 +717,47 @@ def to_crewfit_days(pr: ParseResult) -> list[dict]:
     #   family, busy, rest, custom
     # Any other value is treated as "unknown" by the plan generator, causing
     # sessions to be skipped. Map every Etihad-parser type to a valid one.
+    # Iter200-h · Emit CANONICAL internal type names that the universal
+    # normalizer + presenter both understand. Previously we used the
+    # legacy "layover_arrival" / "layover_full" / "layover_departure"
+    # strings which caused downstream code to fall back to raw
+    # placeholder labels ("layover_arrival") on the customer card.
     _MAP = {
-        "off": "home_day",              # OFF day at base
-        "rest": "rest",
-        "rostered_off": "home_day",     # ROFF = rostered off, treat as free/home day
+        "off": "day_off",
+        "rest": "rest_day",
+        "rostered_off": "day_off",
         "standby": "standby",
-        "flight": "turnaround",         # single-sector day, usually AUH→X→AUH
+        "flight": "turnaround",
         "multi_sector_flight": "turnaround",
-        "flight_to_layover": "layover_arrival",
-        "layover_day": "layover_full",  # inferred blank day inside a pairing
-        "return_from_layover": "layover_departure",
-        "overnight_flight": "layover_arrival",  # starts at base, ends out
+        "flight_to_layover": "flight_to_layover",
+        "layover_day": "layover_day",
+        "return_from_layover": "return_from_layover",
+        "overnight_flight": "night_flight",
         "turnaround": "turnaround",
-        "unknown": "custom",            # blocks auto-gen until confirmed
+        "unknown": "unknown",
     }
     out: list[dict] = []
     for d in pr.days:
         flights = []
         for s in d.sectors:
+            # Iter200-h · Emit sectors with the canonical field names
+            # (from/to/dep/arr/flight_number) that both the universal
+            # normalizer and the frontend card expect. Previously we
+            # used origin/destination/dep_time/arr_time which meant
+            # routes never rendered on cards downstream.
             flights.append({
                 "flight_number": s.flight_number,
+                "from": s.origin,
+                "to": s.destination,
+                "dep": s.departure_time,
+                "arr": s.arrival_time,
+                "aircraft": s.aircraft,
+                # legacy aliases (kept for any downstream code that
+                # still reads the old names)
                 "origin": s.origin,
                 "destination": s.destination,
                 "dep_time": s.departure_time,
                 "arr_time": s.arrival_time,
-                "aircraft": s.aircraft,
             })
         out.append({
             "date": d.date,
@@ -749,6 +765,7 @@ def to_crewfit_days(pr: ParseResult) -> list[dict]:
             "day_type": _MAP.get(d.day_type, "unknown"),
             "report_time": d.report_time,
             "release_time": d.release_time,
+            "duty_end_time": d.release_time,
             "standby_start": d.standby_start,
             "standby_end": d.standby_end,
             "layover_city": d.layover_city,
@@ -760,7 +777,12 @@ def to_crewfit_days(pr: ParseResult) -> list[dict]:
             "is_layover_day": d.is_layover_day,
             "training_impact": d.training_impact,
             "confidence": d.parse_confidence,
-            "notes": " ".join(d.notes) if d.notes else None,
+            # Iter200-h · notes are internal parser context — never
+            # customer-facing. Persist under `_internal_notes` so audit
+            # tooling can still inspect them, but leave the outward-
+            # facing `notes` field empty so nothing leaks to the card.
+            "notes": "",
+            "_internal_notes": " ".join(d.notes) if d.notes else None,
             "warnings": d.warnings,
             "needs_review": d.needs_client_review or d.needs_coach_review,
             "source": "etihad_parser_v1",

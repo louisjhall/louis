@@ -262,30 +262,62 @@ async def _persist_pending_roster(user_id: str, days: list[dict], source_filenam
                 s.date = d.get("date")
                 s.weekday = d.get("weekday")
                 s.day_type_raw = d.get("day_type")
+                # Iter200-h · The Etihad parser now emits canonical
+                # internal types (`day_off`, `flight_to_layover`, ...).
+                # This shim maps them to whatever key decide_day() /
+                # etihad_labels.py expects internally. Include the
+                # legacy names too so old rosters in the DB still work.
                 s.day_type = {
+                    # canonical → labeller vocabulary
+                    "day_off": "off",
                     "home_day": "off",
-                    "rest": "rest",
+                    "rest_day": "rest",
                     "standby": "standby",
+                    "flight_to_layover": "flight_to_layover",
+                    "layover_day": "layover_day",
+                    "return_from_layover": "return_from_layover",
+                    "turnaround": "turnaround",
+                    "flight": "turnaround",
+                    "night_flight": "flight_to_layover",
+                    "sim_training": "custom",
+                    "annual_leave": "off",
+                    "needs_review": "custom",
+                    # legacy names from older rosters
+                    "off": "off",
+                    "rest": "rest",
+                    "rostered_off": "off",
                     "layover_arrival": "flight_to_layover",
                     "layover_full": "layover_day",
                     "layover_departure": "return_from_layover",
-                    "turnaround": "turnaround",
                     "custom": "unknown",
                 }.get(s.day_type_raw, "flight")
                 s.report_time = d.get("report_time")
                 s.release_time = d.get("release_time")
+                # Iter200-h · Pass through the layover_city and sector list
+                # already resolved by the parser + normalizer, so the
+                # analytical output (equipment / colour / etc.) matches
+                # what the customer sees on the card.
                 s.layover_city = d.get("layover_city")
                 s.sectors = [type("S", (), sec)() for sec in (d.get("flights") or [])]
                 s.sector_count = len(s.sectors)
                 s.is_turnaround = bool(d.get("is_turnaround"))
                 s.is_out_of_base = bool(d.get("is_out_of_base"))
-                s.end_location = None
-                s.start_location = None
+                # Populate start/end from the first/last sector so
+                # decide_day() sees the real geography instead of None.
+                _fs_raw = d.get("flights") or []
+                s.end_location = (_fs_raw[-1].get("to") if _fs_raw else None)
+                s.start_location = (_fs_raw[0].get("from") if _fs_raw else None)
                 s.standby_start = d.get("standby_start")
                 s.standby_end = d.get("standby_end")
                 dec = decide_day(s, prev)
                 d["label"] = dec.label
-                d["client_label"] = dec.client_label
+                # Iter200-h · DO NOT overwrite `client_label` here — the
+                # universal normalizer already produced a corrected
+                # customer-facing label (e.g. "Night flight — AUH → JAI",
+                # "Layover — CMB"). decide_day() emits legacy strings
+                # like "Heavy flying day" that we no longer want to
+                # surface. Keep decide_day for analytical fields only.
+                # d["client_label"] intentionally left untouched.
                 d["training_colour"] = dec.training_colour
                 d["recommended"] = dec.recommended
                 d["blocked"] = dec.blocked
@@ -310,6 +342,23 @@ async def _persist_pending_roster(user_id: str, days: list[dict], source_filenam
             label_summary["label_counts"] = dict(Counter(x.label for x in decisions_out))
     except Exception:
         logger.exception("Etihad label enrichment failed — continuing without labels")
+
+    # Iter200-h · Belt-and-braces: after ALL enrichment layers have
+    # run, re-apply the presenter so the customer-facing client_label
+    # always matches the normalizer's output (never a stale
+    # "Heavy flying day" / "Flying to layover" style string). Also
+    # strips residual debug notes server-side so nothing needs
+    # frontend-side filtering.
+    try:
+        from parsers.roster_normalizer import refresh_client_label, _looks_like_internal_note
+        for _d in days:
+            refresh_client_label(_d)
+            _notes = _d.get("notes") or ""
+            if _notes and _looks_like_internal_note(_notes):
+                _d["_internal_notes"] = _notes
+                _d["notes"] = ""
+    except Exception:
+        logger.exception("post-enrichment label/notes cleanup failed (non-fatal)")
 
     # ---- Emirates label enrichment ----
     # Emirates parser output already carries training_colour +

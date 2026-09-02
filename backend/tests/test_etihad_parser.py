@@ -201,11 +201,17 @@ def test_august_standby_pattern():
 # ---------------------------------------------------------------------------
 
 def test_crewfit_output_uses_valid_day_types():
-    """to_crewfit_days must only produce values from server.py VALID_DAY_TYPES."""
+    """to_crewfit_days must only produce values from the canonical CrewFit
+    internal type vocabulary (post-Iter200-h)."""
     valid = {
-        "home_day", "turnaround", "layover_arrival", "layover_full", "layover_departure",
-        "standby", "reserve", "simulator", "annual_leave", "holiday", "sick", "injury",
-        "family", "busy", "rest", "custom",
+        # canonical internal types the universal normalizer emits
+        "day_off", "rest_day", "home_day", "turnaround", "flight",
+        "night_flight", "flight_to_layover", "layover_day",
+        "return_from_layover", "standby", "reserve", "sim_training",
+        "annual_leave", "sickness", "holiday", "sick", "injury",
+        "family", "busy", "rest", "custom", "unknown", "multi_sector_flight",
+        # legacy names still accepted for backwards-compat with old rosters
+        "layover_arrival", "layover_full", "layover_departure",
     }
     for pdf in ("pietro_july.pdf", "pietro_august.pdf"):
         pr = parse_etihad_pdf(_load(pdf))
@@ -219,7 +225,8 @@ def test_crewfit_output_preserves_confidence_and_review_flags():
     out = to_crewfit_days(pr)
     aug12 = next(d for d in out if d["date"] == "2026-08-12")
     assert aug12["needs_review"] is True
-    assert aug12["day_type"] == "custom"  # unknown -> custom
+    # Iter200-h · canonical name is `unknown` (was legacy `custom`)
+    assert aug12["day_type"] == "unknown"
 
 
 if __name__ == "__main__":

@@ -710,10 +710,25 @@ def normalize_roster(
                     _set_equipment(d, "hotel_or_bodyweight")
                     d["_normalized"] = True
                     continue
-            # No pairing evidence — flag for review rather than invent
-            d["day_type"] = "needs_review"
-            d["confidence"] = 0.35
-            _flag_review(d, audit, reason="Layover claimed but pairing cannot be resolved")
+            # Iter200-h · The source called it a layover but there is
+            # no destination city AND no pairing evidence. Per user
+            # spec: "Do not promote a blank day to a layover day when
+            # no destination city is present — classify it as a rest
+            # day instead." This is safer than needs_review because it
+            # produces a usable card for the customer (a rest day is a
+            # sensible default when the parser was ambiguous).
+            if not d.get("layover_city"):
+                d["day_type"] = "rest_day"
+                d["home_or_away"] = "home"
+                _set_equipment(d, "any")
+                d.pop("needs_review", None)
+                continue
+            # We have a stated layover_city but no pairing — trust the
+            # source and keep it as a layover_day, just with reduced
+            # confidence so the review screen flags it.
+            d["day_type"] = "layover_day"
+            _set_equipment(d, "hotel_or_bodyweight")
+            d["confidence"] = min(float(d.get("confidence", 0.6)), 0.6)
             continue
 
         # Same-day roundtrip HOME → X → HOME → turnaround (never layover)

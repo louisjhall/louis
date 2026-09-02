@@ -472,22 +472,50 @@ export default function RosterConfirm() {
     }
   };
 
+  const goBack = () => {
+    // Iter200-f · Back should navigate to the previous screen only.
+    // No delete, no confirmation. If there's nothing in history (e.g.
+    // deep-linked into this screen) fall back to the upload screen.
+    try {
+      if (router.canGoBack?.()) {
+        router.back();
+      } else {
+        router.replace("/roster-upload");
+      }
+    } catch {
+      router.replace("/roster-upload");
+    }
+  };
+
   const discard = () => {
+    // Iter200-f · DISCARD cancels the roster upload — deletes the
+    // pending roster on the backend and returns the member to the
+    // upload screen. Alert.alert works on native but is silently
+    // dropped in some web builds, so fall back to window.confirm().
+    const doDelete = async () => {
+      try {
+        if (pending?.id) {
+          await api(`/roster/pending/${pending.id}${qs}`, { method: "DELETE" });
+        }
+      } catch {}
+      router.replace("/roster-upload");
+    };
+    if (Platform.OS === "web") {
+      const ok =
+        typeof window !== "undefined" && typeof window.confirm === "function"
+          ? window.confirm(
+              "Discard this roster? The parsed roster will be deleted. You can upload again.",
+            )
+          : true;
+      if (ok) void doDelete();
+      return;
+    }
     Alert.alert(
       "Discard this roster?",
       "The parsed roster will be deleted. You can upload again.",
       [
         { text: "Keep reviewing", style: "cancel" },
-        {
-          text: "Discard",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await api(`/roster/pending/${pending?.id}${qs}`, { method: "DELETE" });
-            } catch {}
-            router.replace("/roster-upload");
-          },
-        },
+        { text: "Discard", style: "destructive", onPress: () => void doDelete() },
       ],
     );
   };
@@ -513,11 +541,21 @@ export default function RosterConfirm() {
   return (
     <SafeAreaView style={styles.root} edges={["top"]}>
       <View style={styles.header}>
-        <Pressable testID="rc-back" onPress={discard}>
+        <Pressable
+          testID="rc-back"
+          onPress={goBack}
+          hitSlop={16}
+          style={styles.headerBtn}
+        >
           <Ionicons name="chevron-back" size={26} color={theme.color.text} />
         </Pressable>
         <Text style={styles.headerTitle}>REVIEW ROSTER</Text>
-        <Pressable testID="rc-discard" onPress={discard}>
+        <Pressable
+          testID="rc-discard"
+          onPress={discard}
+          hitSlop={16}
+          style={styles.headerBtn}
+        >
           <Text style={styles.discard}>DISCARD</Text>
         </Pressable>
       </View>
@@ -1027,6 +1065,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: theme.color.border,
   },
   headerTitle: { color: theme.color.text, fontSize: 14, fontWeight: "800", letterSpacing: 2 },
+  headerBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   discard: { color: theme.color.textMuted, fontSize: 11, fontWeight: "700", letterSpacing: 1.5 },
   summary: {
     paddingHorizontal: theme.space.lg, paddingVertical: theme.space.md,

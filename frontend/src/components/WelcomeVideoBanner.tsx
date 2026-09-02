@@ -72,10 +72,8 @@ export function WelcomeVideoBanner() {
   let title: string;
   if (isCheckIn) {
     // Check-in / weekly review video — persistent pill.
-    eyebrow = isReturn ? "LATEST CHECK-IN" : "NEW · CHECK-IN VIDEO";
-    title = isReturn
-      ? "Rewatch your coach's check-in video"
-      : "Your coach sent you a check-in video";
+    eyebrow = isReturn ? "LATEST CHECK-IN" : "NEW · CHECK-IN";
+    title = "Check-in from your coach";
   } else {
     // Welcome video (only surfaced before the first check-in exists).
     eyebrow = isReturn ? "PICK UP WHERE YOU LEFT OFF" : "NEW · WELCOME";

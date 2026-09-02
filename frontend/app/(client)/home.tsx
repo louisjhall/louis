@@ -942,8 +942,13 @@ export default function Home() {
             }}
           />
 
-          {/* Missed sessions live in the action zone — they need action */}
-          {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null}
+          {/* Iter200-i · Missed-session notification banners disabled
+              entirely per user request. The MissedSessionsCard render
+              is commented out at the source; the feature flag defaults
+              are also OFF (see appConfig.tsx and feature_app_config.py)
+              as a second layer of protection. Recovery logic itself is
+              retained on the backend for future use. */}
+          {/* {missedFlag ? <MissedSessionsCard refreshKey={activityRefreshKey} /> : null} */}
 
           {/* ── Block 3: Daily Rituals — iter168 · consolidates HabitToday,
               DualSession, WeeklyCheckin and WeeklyReview into ONE

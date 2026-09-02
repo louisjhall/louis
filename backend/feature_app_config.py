@@ -52,7 +52,7 @@ DEFAULT_FLAGS: dict[str, dict[str, Any]] = {
     "first_day_workout_choice_enabled":    {"value": True,  "description": '"Start Today Or Prepare First?" screen for new clients.'},
     "whatsapp_support_enabled":            {"value": True,  "description": "Show WhatsApp support buttons on failure states."},
     "beta_banner_enabled":                 {"value": True,  "description": "Show the 'Private beta' banner in-app."},
-    "missed_workout_recovery_enabled":     {"value": True,  "description": "Client-facing recovery flow for missed workouts."},
+    "missed_workout_recovery_enabled":     {"value": False, "description": "Client-facing recovery flow for missed workouts. Iter200-i · disabled per user request — banners are entirely suppressed."},
     "timezone_card_enabled":               {"value": True,  "description": "Timezone card at top of client home."},
     "calendar_scroll_enabled":             {"value": True,  "description": "±60 day scrollable calendar on home."},
     "dual_session_enabled":                {"value": True,  "description": "Short-haul dual-session (airport activation + hotel evening) suggestions."},

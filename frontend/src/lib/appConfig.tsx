@@ -29,7 +29,12 @@ const SAFE_DEFAULTS: ConfigShape = {
     first_day_workout_choice_enabled: true,
     whatsapp_support_enabled: true,
     beta_banner_enabled: true,
-    missed_workout_recovery_enabled: true,
+    // Iter200-i · Missed-session notification banners disabled per user
+    // request. Set to `false` here so `useFlag()` returns false and the
+    // MissedSessionsCard never mounts. Backend override in
+    // `feature_app_config.py` is also flipped OFF so any DB-backed
+    // remote config respects this default.
+    missed_workout_recovery_enabled: false,
     timezone_card_enabled: true,
     calendar_scroll_enabled: true,
   },

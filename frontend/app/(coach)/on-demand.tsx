@@ -21,7 +21,6 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
@@ -439,7 +438,20 @@ function ItemEditorModal({
       const res = await DocumentPicker.getDocumentAsync({ type, copyToCacheDirectory: true });
       if (res.canceled) return;
       const a = res.assets[0];
-      const b64 = await FileSystem.readAsStringAsync(a.uri, { encoding: "base64" });
+      // Iter200 · Use the same web-safe helper as pickThumbnail — plain
+      // `FileSystem.readAsStringAsync` on WEB silently returns empty for
+      // the blob URIs DocumentPicker hands back, so we were uploading
+      // 0-byte media files to R2. `fileUriToBase64` uses the
+      // fetch → blob → FileReader.readAsDataURL pattern that works on
+      // both native and web.
+      const b64 = await fileUriToBase64(a.uri);
+      if (!b64) {
+        Alert.alert(
+          "Pick failed",
+          `Could not read the selected ${isVideo ? "video" : "audio"} file. Please try a different file.`,
+        );
+        return;
+      }
       setField("media", { file_b64: b64, file_mime: a.mimeType || (isVideo ? "video/mp4" : "audio/mpeg"), file_name: a.name });
       setField("mediaFileLabel", `${a.name} (${prettySize(a.size)})`);
     } catch (e: any) {
@@ -536,7 +548,7 @@ function ItemEditorModal({
         Alert.alert("Workout JSON required", "Paste a valid workout JSON in the text box below.");
         return;
       }
-      if (state.content_type !== "workout" && !state.media) {
+      if (state.content_type !== "workout" && !state.media?.file_b64) {
         Alert.alert(`${state.content_type === "video" ? "Video" : "Audio"} file required`);
         return;
       }

@@ -612,6 +612,7 @@ async def ex_list(
     used_tomorrow: bool = False, approved_only: bool = False,
     needs_review: bool = False, in_progress: bool = False,
     needs_media: bool = False,
+    on_demand_imports: bool = False,
     limit: int = 200, _: dict = Depends(current_user),
 ):
     query: dict = {}
@@ -621,6 +622,15 @@ async def ex_list(
     if status: query["status"] = status
     if approved_only: query["status"] = {"$in": ["Approved", "Live"]}
     if used_tomorrow: query["used_in_tomorrow_workouts_count"] = {"$gt": 0}
+    # Iter200 · On-Demand imports filter — surface every exercise whose
+    # `request_history` contains a reason stamped by the bulk-import
+    # endpoint (`on_demand_bulk_import:{item_id}` and its
+    # `_missing_media` sibling). Lets the coach isolate the 100-workout
+    # import from the rest of the demand queue.
+    if on_demand_imports:
+        query["request_history.reason"] = {
+            "$regex": r"^on_demand_bulk_import:",
+        }
     # Iter 140f — Phase A: absorb Demand Queue into Exercise Library UI.
     # No schema change; these are just view filters over the existing
     # `exercises_v2` statuses + content_status flags.

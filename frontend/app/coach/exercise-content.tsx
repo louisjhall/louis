@@ -87,6 +87,10 @@ const FILTERS: { key: string; label: string; q: Record<string, string | boolean>
   { key: "tomorrow", label: "TOMORROW", q: { used_tomorrow: true } },
   { key: "missing", label: "MISSING", q: { missing_content: true } },
   { key: "approved", label: "APPROVED", q: { approved_only: true } },
+  // Iter200 · Surface only exercises stamped by the On-Demand bulk
+  // importer (`on_demand_bulk_import:*`). Lets the coach triage the
+  // 100-workout import without it drowning other requests.
+  { key: "on_demand_imports", label: "ON DEMAND IMPORTS", q: { on_demand_imports: true } },
 ];
 
 export default function ExerciseContentScreen() {

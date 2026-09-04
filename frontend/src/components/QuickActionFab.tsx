@@ -5,8 +5,9 @@
  * client tab. Tapping expands exactly TWO shortcut chips:
  *   🍽️  Log a Meal    → /nutrition/pick  (nutrition menu that already
  *                        surfaces Photo Scan / Food Search / Manual Log)
- *   🏋️  Start Workout → today's workout list (or the calendar if no
- *                        workout is scheduled today)
+ *   🏋️  Start Workout → today's workout list (or the On Demand library
+ *                        if no workout is scheduled today — never the
+ *                        calendar, per Iter200 user request)
  *
  * PIXEL-PERFECT ALIGNMENT (Iter177):
  *   QuickActionFab      right: 14   width: 60   → centre-x = 14 + 30 = 44
@@ -91,7 +92,10 @@ export function QuickActionFab() {
         if (todayWorkoutId) {
           router.push(`/workout/${todayWorkoutId}/list` as any);
         } else {
-          router.push("/(client)/calendar" as any);
+          // Iter200 · Per user request — never fall back to the calendar
+          // when there's no planned workout for today. Send the member
+          // to the On Demand library so they can still get a workout in.
+          router.push("/(client)/on-demand" as any);
         }
       },
     },

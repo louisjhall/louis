@@ -31,6 +31,7 @@ import { useRouter } from "expo-router";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
+import { resolveThumbnail } from "@/src/lib/onDemandThumbnails";
 
 type ContentType = "workout" | "video" | "audio";
 
@@ -44,6 +45,7 @@ type Item = {
   tag_ids: string[];
   duration_seconds: number | null;
   thumbnail_storage_key?: string | null;
+  thumbnail_filename?: string | null;
   published: boolean;
 };
 
@@ -375,13 +377,18 @@ function ContentCard({
       disabled={starting}
     >
       <View style={styles.thumbWrap}>
-        {thumbUrl ? (
-          <Image source={{ uri: thumbUrl }} style={styles.thumb} />
-        ) : (
-          <View style={styles.thumbFallback}>
-            <Ionicons name={badgeIcon} size={30} color={theme.color.brand} />
-          </View>
-        )}
+        {(() => {
+          // Iter200 · Prefer the bundled thumbnail (fast, offline-safe).
+          // Falls back to the R2 presigned URL, then to a themed placeholder.
+          const bundled = resolveThumbnail(item.thumbnail_filename || null);
+          if (bundled) return <Image source={bundled} style={styles.thumb} />;
+          if (thumbUrl) return <Image source={{ uri: thumbUrl }} style={styles.thumb} />;
+          return (
+            <View style={styles.thumbFallback}>
+              <Ionicons name={badgeIcon} size={30} color={theme.color.brand} />
+            </View>
+          );
+        })()}
         <View style={styles.badge}>
           <Ionicons name={badgeIcon} size={11} color="#fff" />
           <Text style={styles.badgeText}>{badge}</Text>

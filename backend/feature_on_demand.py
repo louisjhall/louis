@@ -135,9 +135,12 @@ class ItemBody(BaseModel):
     tag_ids: list[str] = Field(default_factory=list)
     duration_seconds: Optional[int] = Field(default=None, ge=0, le=60 * 60 * 6)
     thumbnail: Optional[ItemMedia] = None
+    thumbnail_filename: Optional[str] = None          # Iter200 · bundled asset filename (e.g. `w-001.jpg`)
     media: Optional[ItemMedia] = None                 # video / audio bytes
     workout_json: Optional[dict[str, Any]] = None     # workout content
     published: bool = False
+    external_ref: Optional[str] = None                # Iter200 · idempotent bulk-import key
+    equipment: list[str] = Field(default_factory=list)  # Iter200 · normalised equipment list
 
 
 class ItemPatchBody(BaseModel):
@@ -147,9 +150,12 @@ class ItemPatchBody(BaseModel):
     tag_ids: Optional[list[str]] = None
     duration_seconds: Optional[int] = Field(default=None, ge=0, le=60 * 60 * 6)
     thumbnail: Optional[ItemMedia] = None
+    thumbnail_filename: Optional[str] = None
     media: Optional[ItemMedia] = None
     workout_json: Optional[dict[str, Any]] = None
     published: Optional[bool] = None
+    external_ref: Optional[str] = None
+    equipment: Optional[list[str]] = None
 
 
 class PublishBody(BaseModel):
@@ -367,12 +373,15 @@ async def od_coach_create_item(body: ItemBody, coach: dict = Depends(require_rol
         "thumbnail_storage_key": (thumb_meta or {}).get("storage_key"),
         "thumbnail_mime":        (thumb_meta or {}).get("mime"),
         "thumbnail_ext":         (thumb_meta or {}).get("ext"),
+        "thumbnail_filename":    (body.thumbnail_filename or None),
         "media_storage_key":     (media_meta or {}).get("storage_key"),
         "media_mime":            (media_meta or {}).get("mime"),
         "media_ext":             (media_meta or {}).get("ext"),
         "media_size_bytes":      (media_meta or {}).get("size_bytes"),
         "workout_json": body.workout_json if body.content_type == "workout" else None,
         "published": bool(body.published),
+        "external_ref": body.external_ref or None,
+        "equipment": list(dict.fromkeys(body.equipment or [])),
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "created_by": coach["id"],
@@ -572,6 +581,282 @@ async def od_item_thumbnail_url(item_id: str, user: dict = Depends(current_user)
 
 
 logger.info("feature_on_demand: /on-demand/* endpoints registered")
+
+
+# ---------------------------------------------------------------------------
+# Iter200 · Bulk import — taxonomy ensure + multi-item create
+# ---------------------------------------------------------------------------
+
+class TaxonomyEnsureBody(BaseModel):
+    """Upsert-by-name/slug taxonomy resolver.
+
+    Any category / tag whose slug does not exist yet is created; existing
+    ones are returned unchanged. Response contains fully-resolved ID maps
+    keyed by both slug and (lower-cased) name so callers can dereference
+    with whichever the source of truth had.
+    """
+    categories: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+async def _ensure_categories(names: list[str], coach_id: str) -> dict[str, dict]:
+    """Ensure every name in ``names`` exists as a category. Returns
+    ``{slug: doc, name_lower: doc}`` merged so callers can look up either."""
+    out: dict[str, dict] = {}
+    for raw in names:
+        if not raw or not raw.strip():
+            continue
+        name = raw.strip()
+        slug = _slugify(name)
+        existing = await db.on_demand_categories.find_one({"slug": slug}, {"_id": 0})
+        if existing:
+            out[slug] = existing
+            out[name.lower()] = existing
+            continue
+        doc = {
+            "id": new_id(),
+            "name": name,
+            "slug": slug,
+            "created_at": now_iso(),
+            "created_by": coach_id,
+        }
+        await db.on_demand_categories.insert_one(doc)
+        doc.pop("_id", None)
+        out[slug] = doc
+        out[name.lower()] = doc
+    return out
+
+
+async def _ensure_tags(names: list[str], coach_id: str) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for raw in names:
+        if not raw or not raw.strip():
+            continue
+        name = raw.strip()
+        slug = _slugify(name)
+        existing = await db.on_demand_tags.find_one({"slug": slug}, {"_id": 0})
+        if existing:
+            out[slug] = existing
+            out[name.lower()] = existing
+            continue
+        doc = {
+            "id": new_id(),
+            "name": name,
+            "slug": slug,
+            "created_at": now_iso(),
+            "created_by": coach_id,
+        }
+        await db.on_demand_tags.insert_one(doc)
+        doc.pop("_id", None)
+        out[slug] = doc
+        out[name.lower()] = doc
+    return out
+
+
+@api.post("/on-demand/coach/taxonomy/ensure")
+async def od_coach_taxonomy_ensure(
+    body: TaxonomyEnsureBody, coach: dict = Depends(require_role("coach")),
+):
+    """Idempotent upsert of categories + tags. Safe to call from an
+    import script before it POSTs items so slugs are already resolvable.
+
+    Response shape:
+        {
+          "categories": [{id, name, slug}, ...],   # union of existing+new
+          "tags":       [{id, name, slug}, ...],
+          "created":    {"categories": [slugs], "tags": [slugs]},
+        }
+    """
+    # Snapshot which slugs existed before so we can report which ones we
+    # actually created (useful for the import script's summary).
+    incoming_cat_slugs = [_slugify(n) for n in body.categories if n and n.strip()]
+    incoming_tag_slugs = [_slugify(n) for n in body.tags if n and n.strip()]
+    pre_cats = {
+        r["slug"]
+        for r in await db.on_demand_categories.find(
+            {"slug": {"$in": incoming_cat_slugs}}, {"_id": 0, "slug": 1},
+        ).to_list(1000)
+    }
+    pre_tags = {
+        r["slug"]
+        for r in await db.on_demand_tags.find(
+            {"slug": {"$in": incoming_tag_slugs}}, {"_id": 0, "slug": 1},
+        ).to_list(1000)
+    }
+    cat_map = await _ensure_categories(body.categories, coach["id"])
+    tag_map = await _ensure_tags(body.tags, coach["id"])
+    cats_unique = {doc["id"]: doc for doc in cat_map.values()}.values()
+    tags_unique = {doc["id"]: doc for doc in tag_map.values()}.values()
+    return {
+        "categories": list(cats_unique),
+        "tags": list(tags_unique),
+        "created": {
+            "categories": [s for s in incoming_cat_slugs if s not in pre_cats],
+            "tags":       [s for s in incoming_tag_slugs if s not in pre_tags],
+        },
+    }
+
+
+class BulkItem(BaseModel):
+    """One workout row for the bulk-import endpoint.
+
+    Only ``title`` + ``workout_json`` are strictly required — everything
+    else is optional and the endpoint fills defaults defensively.
+    """
+    title: str = Field(..., min_length=1, max_length=140)
+    description: Optional[str] = Field(default="", max_length=4000)
+    category_slug: Optional[str] = None
+    tag_slugs: list[str] = Field(default_factory=list)
+    duration_seconds: Optional[int] = Field(default=None, ge=0, le=60 * 60 * 6)
+    workout_json: dict[str, Any]
+    thumbnail_filename: Optional[str] = None
+    published: bool = False
+    external_ref: Optional[str] = None
+    equipment: list[str] = Field(default_factory=list)
+
+
+class BulkItemsBody(BaseModel):
+    items: list[BulkItem]
+    default_published: bool = False    # global default (per-item value wins)
+
+
+@api.post("/on-demand/coach/items/bulk")
+async def od_coach_bulk_create(
+    body: BulkItemsBody, coach: dict = Depends(require_role("coach")),
+):
+    """Bulk create on-demand workout items.
+
+    Behaviour:
+      * Every item is validated up-front. If ANY item fails structural
+        validation we still process the rest — invalid rows land in
+        ``errors[]`` with an index + reason.
+      * Category / tag slugs are resolved to IDs via the existing
+        taxonomy collections. Missing slugs → the row lands in
+        ``errors[]`` (call `/taxonomy/ensure` first to auto-create).
+      * ``external_ref`` deduplicates: if a doc with the same ref already
+        exists the row lands in ``skipped[]`` (never overwrites; use the
+        PATCH endpoint if you want to overwrite).
+      * All items land as DRAFTS (``published=false``) unless the row
+        itself sets ``published=true`` OR ``default_published=true`` is
+        passed. This matches the "review before publish" workflow.
+    """
+    if not body.items:
+        return {"created": [], "skipped": [], "errors": []}
+
+    # Preload taxonomy so we don't hit the DB per row.
+    cats = await db.on_demand_categories.find({}, {"_id": 0}).to_list(1000)
+    tags = await db.on_demand_tags.find({}, {"_id": 0}).to_list(1000)
+    cat_by_slug = {c["slug"]: c["id"] for c in cats}
+    tag_by_slug = {t["slug"]: t["id"] for t in tags}
+
+    # Preload existing external_refs for dedupe.
+    incoming_refs = [it.external_ref for it in body.items if it.external_ref]
+    existing_refs: set[str] = set()
+    if incoming_refs:
+        rows = await db.on_demand_items.find(
+            {"external_ref": {"$in": incoming_refs}}, {"_id": 0, "external_ref": 1},
+        ).to_list(1000)
+        existing_refs = {r["external_ref"] for r in rows if r.get("external_ref")}
+
+    created: list[dict] = []
+    skipped: list[dict] = []
+    errors: list[dict] = []
+
+    for idx, item in enumerate(body.items):
+        # (1) External_ref dedupe — skip cleanly, not an error.
+        if item.external_ref and item.external_ref in existing_refs:
+            skipped.append({"index": idx, "external_ref": item.external_ref, "reason": "duplicate_external_ref"})
+            continue
+
+        # (2) Category / tag resolution.
+        cat_id: Optional[str] = None
+        if item.category_slug:
+            slug = _slugify(item.category_slug)
+            cat_id = cat_by_slug.get(slug)
+            if not cat_id:
+                errors.append({"index": idx, "title": item.title, "reason": f"unknown_category_slug: {slug}"})
+                continue
+        tag_ids: list[str] = []
+        missing_tag: Optional[str] = None
+        for ts in item.tag_slugs:
+            slug = _slugify(ts)
+            tid = tag_by_slug.get(slug)
+            if not tid:
+                missing_tag = slug
+                break
+            tag_ids.append(tid)
+        if missing_tag:
+            errors.append({"index": idx, "title": item.title, "reason": f"unknown_tag_slug: {missing_tag}"})
+            continue
+
+        # (3) Workout JSON sanity — must be a dict-shaped envelope.
+        if not isinstance(item.workout_json, dict) or not item.workout_json:
+            errors.append({"index": idx, "title": item.title, "reason": "workout_json_must_be_non_empty_dict"})
+            continue
+
+        # (4) Build the doc + insert.
+        item_id = new_id()
+        # per-item published flag wins; else the batch default.
+        published_final = bool(item.published) or bool(body.default_published)
+        doc = {
+            "id": item_id,
+            "title": item.title.strip(),
+            "description": (item.description or "").strip(),
+            "content_type": "workout",
+            "category_id": cat_id,
+            "tag_ids": list(dict.fromkeys(tag_ids)),
+            "duration_seconds": item.duration_seconds,
+            "thumbnail_storage_key": None,
+            "thumbnail_mime": None,
+            "thumbnail_ext": None,
+            "thumbnail_filename": item.thumbnail_filename or None,
+            "media_storage_key": None,
+            "media_mime": None,
+            "media_ext": None,
+            "media_size_bytes": None,
+            "workout_json": item.workout_json,
+            "published": published_final,
+            "external_ref": item.external_ref or None,
+            "equipment": list(dict.fromkeys(item.equipment or [])),
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+            "created_by": coach["id"],
+        }
+        try:
+            await db.on_demand_items.insert_one(doc)
+        except Exception as e:
+            errors.append({"index": idx, "title": item.title, "reason": f"insert_failed: {e}"})
+            continue
+
+        # Remember this ref so a same-batch duplicate is skipped too.
+        if item.external_ref:
+            existing_refs.add(item.external_ref)
+
+        created.append({
+            "index": idx,
+            "id": item_id,
+            "title": doc["title"],
+            "external_ref": doc["external_ref"],
+            "published": doc["published"],
+            "category_id": doc["category_id"],
+            "thumbnail_filename": doc["thumbnail_filename"],
+        })
+
+    logger.info(
+        "on_demand.bulk_import complete: created=%d skipped=%d errors=%d",
+        len(created), len(skipped), len(errors),
+    )
+    return {
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+        "summary": {
+            "total_in": len(body.items),
+            "created":  len(created),
+            "skipped":  len(skipped),
+            "errors":   len(errors),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

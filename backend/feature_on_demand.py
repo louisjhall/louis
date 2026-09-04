@@ -718,6 +718,136 @@ class BulkItem(BaseModel):
 class BulkItemsBody(BaseModel):
     items: list[BulkItem]
     default_published: bool = False    # global default (per-item value wins)
+    enqueue_media: bool = True         # Iter200 · resolve exercises + queue media on import
+
+
+def _extract_exercise_names_from_envelope(env: dict) -> dict[str, list[str]]:
+    """Walk a `WorkoutEnvelopeItem`-shaped `workout_json` and return
+    ``{"warmup": [names], "main": [names], "cooldown": [names]}``.
+
+    Group blocks (superset / circuit / EMOM / AMRAP / etc.) are flattened
+    so every `items[*].ref.name` is surfaced individually. Single main
+    exercises pass through as-is. Empty / missing refs are silently
+    skipped.
+    """
+    def _name_of(row: dict) -> Optional[str]:
+        r = (row or {}).get("ref") or {}
+        n = (r.get("name") or "").strip()
+        return n or None
+
+    def _flat_names(rows: list) -> list[str]:
+        out: list[str] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            if row.get("kind") == "group":
+                for member in row.get("items") or []:
+                    n = _name_of(member)
+                    if n:
+                        out.append(n)
+            else:
+                n = _name_of(row)
+                if n:
+                    out.append(n)
+        return out
+
+    return {
+        "warmup":   _flat_names(env.get("warmup") or []),
+        "main":     _flat_names(env.get("exercises") or []),
+        "cooldown": _flat_names(env.get("cooldown") or []),
+    }
+
+
+async def _enqueue_media_for_ondemand_item(
+    item_id: str,
+    workout_json: dict,
+    coach: dict,
+) -> dict:
+    """Iter200 · Resolve every exercise NAME inside a freshly-inserted
+    on-demand item to an `exercises_v2` id (creating draft library rows
+    for anything missing), then run the standard media-queue scan so
+    exercises lacking image/video are queued for coach review.
+
+    Wrapped in try/except at every step — a media-queue failure NEVER
+    fails the import (matches the contract in `feature_media_queue.py`).
+
+    Returns a small telemetry dict for the bulk-import report:
+        {"resolved": N, "drafts_created": M, "queued_missing_media": K}
+    """
+    telemetry = {"resolved": 0, "drafts_created": 0, "queued_missing_media": 0}
+    if not isinstance(workout_json, dict):
+        return telemetry
+    try:
+        from feature_media_queue import (
+            resolve_or_draft_exercise,
+            scan_media_queue_for_sections,
+        )
+    except Exception:
+        logger.exception("on_demand.bulk: cannot import feature_media_queue")
+        return telemetry
+
+    names_by_section = _extract_exercise_names_from_envelope(workout_json)
+    # Cache name→id so duplicate names inside the same workout only hit
+    # the resolver once (also keeps draft counters honest).
+    name_to_id: dict[str, Optional[str]] = {}
+    # We need to know which resolves resulted in a NEWLY-created draft
+    # so the telemetry counter is meaningful — the resolver itself is
+    # idempotent so a repeat call just returns the existing id.
+    pre_existing_ids: set[str] = set()
+
+    resolved_sections: dict[str, list[dict]] = {"warmup": [], "main": [], "cooldown": []}
+    for section, names in names_by_section.items():
+        for name in names:
+            if name in name_to_id:
+                xid = name_to_id[name]
+            else:
+                # Pre-check whether the library row exists so we can
+                # count "drafts_created" accurately.
+                try:
+                    row = await db.exercises_v2.find_one(
+                        {"exercise_name": {"$regex": f"^{name}$", "$options": "i"}},
+                        {"_id": 0, "id": 1},
+                    )
+                    existed = bool(row)
+                    if row:
+                        pre_existing_ids.add(row["id"])
+                except Exception:
+                    existed = False
+                try:
+                    xid = await resolve_or_draft_exercise(
+                        name,
+                        user=coach,
+                        reason=f"on_demand_bulk_import:{item_id}",
+                        workout_id=None,  # on-demand items don't live in db.workouts yet
+                    )
+                except Exception:
+                    logger.exception(
+                        "on_demand.bulk: resolve_or_draft_exercise failed for %s",
+                        name,
+                    )
+                    xid = None
+                name_to_id[name] = xid
+                if xid and not existed:
+                    telemetry["drafts_created"] += 1
+            if xid:
+                telemetry["resolved"] += 1
+                resolved_sections[section].append({"exercise_id": xid, "name": name})
+
+    # Now run the media-queue scan against every resolved id — this is
+    # what actually files "please generate image/video for this row"
+    # requests for library rows that are still bare.
+    try:
+        queued = await scan_media_queue_for_sections(
+            coach,
+            resolved_sections,
+            workout_id=None,
+            reason=f"on_demand_bulk_import:{item_id}",
+        )
+        telemetry["queued_missing_media"] = len(queued or [])
+    except Exception:
+        logger.exception("on_demand.bulk: scan_media_queue_for_sections failed for %s", item_id)
+
+    return telemetry
 
 
 @api.post("/on-demand/coach/items/bulk")
@@ -832,6 +962,21 @@ async def od_coach_bulk_create(
         if item.external_ref:
             existing_refs.add(item.external_ref)
 
+        # Iter200 · Push the workout's exercises into the media queue so
+        # library drafts get created + missing media is queued for coach
+        # review BEFORE any member starts the workout. Wrapped tight — a
+        # media-queue failure never fails the import.
+        media_telemetry = {"resolved": 0, "drafts_created": 0, "queued_missing_media": 0}
+        if body.enqueue_media:
+            try:
+                media_telemetry = await _enqueue_media_for_ondemand_item(
+                    item_id, item.workout_json, coach,
+                )
+            except Exception:
+                logger.exception(
+                    "on_demand.bulk: media enqueue failed for %s (non-fatal)", item_id,
+                )
+
         created.append({
             "index": idx,
             "id": item_id,
@@ -840,12 +985,19 @@ async def od_coach_bulk_create(
             "published": doc["published"],
             "category_id": doc["category_id"],
             "thumbnail_filename": doc["thumbnail_filename"],
+            "media_queue": media_telemetry,
         })
 
     logger.info(
         "on_demand.bulk_import complete: created=%d skipped=%d errors=%d",
         len(created), len(skipped), len(errors),
     )
+    # Iter200 · aggregate media-queue telemetry across all created rows.
+    mq_totals = {
+        "resolved":              sum((c.get("media_queue") or {}).get("resolved", 0) for c in created),
+        "drafts_created":        sum((c.get("media_queue") or {}).get("drafts_created", 0) for c in created),
+        "queued_missing_media":  sum((c.get("media_queue") or {}).get("queued_missing_media", 0) for c in created),
+    }
     return {
         "created": created,
         "skipped": skipped,
@@ -855,6 +1007,7 @@ async def od_coach_bulk_create(
             "created":  len(created),
             "skipped":  len(skipped),
             "errors":   len(errors),
+            "media_queue": mq_totals,
         },
     }
 

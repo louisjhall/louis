@@ -354,6 +354,11 @@ async def main() -> int:
         print(f"  created  : {s.get('created')}")
         print(f"  skipped  : {s.get('skipped')}")
         print(f"  errors   : {s.get('errors')}")
+        mq = s.get("media_queue") or {}
+        if mq:
+            print(f"  media    : resolved={mq.get('resolved',0)} "
+                  f"new_drafts={mq.get('drafts_created',0)} "
+                  f"queued_missing_media={mq.get('queued_missing_media',0)}")
         if report.get("errors"):
             print("\n--- Errors ---")
             for e in report["errors"]:

@@ -24,6 +24,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
+import { confirm as uxConfirm } from "@/src/lib/ux";
 
 /* ---------------------------------------------------------------------- */
 /* Types                                                                   */
@@ -194,17 +195,27 @@ export default function CoachOnDemandScreen() {
   };
 
   const deleteItem = (it: Item) => {
-    Alert.alert("Delete item?", `"${it.title}" will be removed permanently.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-        try {
-          await api(`/on-demand/coach/items/${it.id}`, { method: "DELETE" });
-          setItems((rows) => rows.filter((r) => r.id !== it.id));
-        } catch (e: any) {
-          Alert.alert("Delete failed", e?.message || String(e));
-        }
-      }},
-    ]);
+    // Iter200 · Use the cross-platform `confirm()` helper — React-Native-Web
+    // 0.21's `Alert.alert(title, msg, buttons)` renders no buttons on WEB,
+    // so the destructive callback never fired and the bin button appeared
+    // to do nothing on the coach dashboard (which runs on web via
+    // DesktopShell). `confirm()` falls back to a real modal / native alert.
+    (async () => {
+      const ok = await uxConfirm({
+        title: "Delete item?",
+        message: `"${it.title}" will be removed permanently.`,
+        confirmLabel: "Delete",
+        cancelLabel: "Cancel",
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        await api(`/on-demand/coach/items/${it.id}`, { method: "DELETE" });
+        setItems((rows) => rows.filter((r) => r.id !== it.id));
+      } catch (e: any) {
+        Alert.alert("Delete failed", e?.message || String(e));
+      }
+    })();
   };
 
   return (

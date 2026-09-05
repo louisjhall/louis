@@ -118,6 +118,27 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
   with a signed URL that streams a real JPEG.
 - Idempotent — safe to re-run.
 
+## Iter200 · Full-size thumbnail purge + re-import (Jun 2026)
+- The first R2 backfill mirrored 4×4 / 8×8 stub JPEGs from the
+  build-time asset dir, so cards rendered as blank tiles (image
+  loaded successfully but the source was ≤ 631 bytes).
+- Cleaned up via `scripts/clear_on_demand_r2_thumbnails.py` (deletes
+  every R2 key + `$unset`s the DB field) then re-uploaded the
+  coach's `CrewFit_103_Thumbnails_FINAL.zip` through
+  `POST /on-demand/coach/thumbnails/bulk-upload`. All 103 images
+  written · 0 skipped · dimensions 1024×1024 or 1254×1254
+  (175–376 KB each) · R2 keys mirrored · DB re-backfilled.
+- Hardened the upload endpoint with a minimum-size gate:
+  reject if `< 50 KB` (`file_too_small`),
+  reject if `< 600×400 px` (`image_too_small`),
+  reject if SOF unreadable (`jpeg_dimensions_unreadable`). Response
+  now includes `written_meta[]` (`filename`, `width`, `height`,
+  `size_bytes`) so future audits are one call away.
+- Coach management screen (`app/(coach)/on-demand.tsx`) now fetches
+  `/thumbnail-url` lazily per visible row and renders an `<Image>`
+  inside the icon box, so both coach and client screens display the
+  R2 artwork.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

@@ -128,6 +128,18 @@ export default function WorkoutDetail() {
     );
   }, [view]);
 
+  // Iter200 · On-Demand workouts in Aviation Mobility or Recovery & Low
+  // Energy are themselves the "recovery" choice — showing FULL/LIGHTER/
+  // RECOVERY chips on top of them makes no sense. Suppress the variant
+  // row entirely for these two categories only; everything else keeps
+  // the standard traffic-light selector.
+  const isMobilityOrRecoveryOnDemand = useMemo(() => {
+    const src = String((w as any)?.source || "").toLowerCase();
+    if (src !== "on_demand") return false;
+    const slug = String((w as any)?.on_demand_category_slug || "").toLowerCase();
+    return slug === "aviation-mobility" || slug === "recovery-low-energy";
+  }, [w]);
+
   // Fire-and-forget: log the selected variant for coach dashboards.
   const pickVariant = useCallback((next: VariantKey) => {
     setVariant(next);
@@ -382,7 +394,7 @@ export default function WorkoutDetail() {
           </View>
         ) : null}
 
-        {!isCoach && !editing && !isRestDay && variants && (
+        {!isCoach && !editing && !isRestDay && !isMobilityOrRecoveryOnDemand && variants && (
           <View style={styles.variantRow} testID="variant-row">
             {(Object.keys(VARIANT_LABELS) as VariantKey[]).map((k) => {
               const meta = VARIANT_LABELS[k];
@@ -407,7 +419,7 @@ export default function WorkoutDetail() {
             })}
           </View>
         )}
-        {!isCoach && variant !== "green" && view._variant_intensity_note ? (
+        {!isCoach && !isMobilityOrRecoveryOnDemand && variant !== "green" && view._variant_intensity_note ? (
           <View style={styles.variantNote}>
             <Ionicons name="information-circle" size={14} color={VARIANT_LABELS[variant].color} />
             <Text style={styles.variantNoteText}>{view._variant_intensity_note}</Text>

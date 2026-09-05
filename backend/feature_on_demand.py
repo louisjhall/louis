@@ -1273,7 +1273,7 @@ def _flatten_main_block(block: dict) -> list[dict]:
     return rows
 
 
-def _hydrate_on_demand_workout(item: dict, user_id: str) -> dict:
+def _hydrate_on_demand_workout(item: dict, user_id: str, category_slug: Optional[str] = None) -> dict:
     """Build a `db.workouts` doc from an On Demand workout item.
 
     Accepts the workout JSON in either shape:
@@ -1283,6 +1283,11 @@ def _hydrate_on_demand_workout(item: dict, user_id: str) -> dict:
     The output doc mirrors what the programme importer writes (`source`,
     `approved`, `manual_lock`, timestamps) so the rest of the app treats
     it identically to any other coach-authored workout.
+
+    Iter200 · Stamps `on_demand_category_slug` so the client workout
+    screen can key off it (used to hide the FULL/LIGHTER/RECOVERY
+    variant selector for Aviation Mobility and Recovery & Low Energy
+    workouts — those are already a recovery choice).
     """
     wjson = item.get("workout_json") or {}
     if isinstance(wjson.get("workouts"), list) and wjson["workouts"]:
@@ -1326,6 +1331,7 @@ def _hydrate_on_demand_workout(item: dict, user_id: str) -> dict:
         # first-class workout — no extra approval step required.
         "source": "on_demand",
         "on_demand_item_id": item["id"],
+        "on_demand_category_slug": category_slug,
         "manual_lock": True,
         "approved": True,
         "approved_at": now_str,
@@ -1355,7 +1361,17 @@ async def od_start_workout(item_id: str, user: dict = Depends(current_user)):
     if not item.get("workout_json"):
         raise HTTPException(400, "item_missing_workout_json")
 
-    doc = _hydrate_on_demand_workout(item, user["id"])
+    # Iter200 · Look up the category slug so the hydrated workout doc
+    # carries it. The client workout screen keys off this to hide the
+    # variant selector for Aviation Mobility and Recovery & Low Energy.
+    category_slug: Optional[str] = None
+    cat_id = item.get("category_id")
+    if cat_id:
+        cat = await db.on_demand_categories.find_one({"id": cat_id}, {"_id": 0, "slug": 1})
+        if cat:
+            category_slug = cat.get("slug")
+
+    doc = _hydrate_on_demand_workout(item, user["id"], category_slug=category_slug)
     await db.workouts.insert_one(doc)
     return {"workout_id": doc["id"], "date": doc["date"]}
 

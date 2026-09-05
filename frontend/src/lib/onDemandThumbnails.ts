@@ -2,13 +2,15 @@
  * On-Demand thumbnail asset map — Iter200 bulk-import.
  *
  * Metro / Expo can only bundle `require()` calls with LITERAL paths, so
- * we generate 100 static requires here (one per workout slot). The
- * import script writes `thumbnail_filename` = `w-001.jpg` .. `w-100.jpg`
+ * we generate 103 static requires here (one per workout slot). The
+ * import script writes `thumbnail_filename` = `w-001.jpg` .. `w-103.jpg`
  * on each on-demand item; the client looks up the bundled asset by that
  * filename via `resolveThumbnail`.
  *
  * To swap in real artwork: drop the JPG (same filename) into
  * `frontend/assets/on-demand-thumbnails/` — Metro rebuilds automatically.
+ *
+ * Bumped from 100 → 103 to cover the 103-workout FINAL import.
  */
 import type { ImageSourcePropType } from "react-native";
 
@@ -113,6 +115,9 @@ const map: Record<string, ImageSourcePropType> = {
   "w-098.jpg": require("../../assets/on-demand-thumbnails/w-098.jpg"),
   "w-099.jpg": require("../../assets/on-demand-thumbnails/w-099.jpg"),
   "w-100.jpg": require("../../assets/on-demand-thumbnails/w-100.jpg"),
+  "w-101.jpg": require("../../assets/on-demand-thumbnails/w-101.jpg"),
+  "w-102.jpg": require("../../assets/on-demand-thumbnails/w-102.jpg"),
+  "w-103.jpg": require("../../assets/on-demand-thumbnails/w-103.jpg"),
 };
 
 export function resolveThumbnail(filename?: string | null): ImageSourcePropType | null {
@@ -120,5 +125,5 @@ export function resolveThumbnail(filename?: string | null): ImageSourcePropType 
   return map[filename] || null;
 }
 
-export const THUMBNAIL_COUNT = 100;
+export const THUMBNAIL_COUNT = 103;
 

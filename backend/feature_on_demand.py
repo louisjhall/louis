@@ -602,6 +602,45 @@ _THUMBNAIL_FILENAME_RE = re.compile(r"^w-\d{3}\.jpe?g$", re.IGNORECASE)
 _THUMBNAIL_MAX_FILES = 500          # generous — 100 workouts + slack
 _THUMBNAIL_MAX_BYTES_PER = 5 * 1024 * 1024   # 5 MB per file
 _THUMBNAIL_MAX_ZIP_BYTES = 200 * 1024 * 1024  # 200 MB total (decoded zip)
+# Iter200 · Minimum size gate — earlier bulk imports accidentally
+# uploaded 4×4 / 8×8 pixel stub JPEGs from the build-time asset dir,
+# which surfaced as "blank" cards after the R2 fetch. Anything smaller
+# than 600×400 or 50 KB is rejected up-front so those never make it
+# into R2 again. Numbers match the coach handoff spec.
+_THUMBNAIL_MIN_WIDTH_PX = 600
+_THUMBNAIL_MIN_HEIGHT_PX = 400
+_THUMBNAIL_MIN_BYTES = 50 * 1024
+
+
+def _read_jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Return `(width, height)` for a JPEG payload without spinning up
+    Pillow — we already know the byte-stream is JPEG-tagged (guarded
+    upstream) so we just walk the SOF markers. Returns None when the
+    marker isn't found (corrupt file).
+    """
+    i = 2
+    n = len(data)
+    while i < n - 8:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        # SOF0..SOF15 excluding DHT/JPG/DAC — those carry image dims.
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            try:
+                h = int.from_bytes(data[i + 5:i + 7], "big")
+                w = int.from_bytes(data[i + 7:i + 9], "big")
+                return (w, h)
+            except Exception:
+                return None
+        try:
+            seg_len = int.from_bytes(data[i + 2:i + 4], "big")
+        except Exception:
+            return None
+        if seg_len < 2:
+            return None
+        i += 2 + seg_len
+    return None
 
 
 class ThumbnailZipBody(BaseModel):
@@ -639,6 +678,10 @@ async def od_coach_thumbnails_bulk_upload(
 
     written: list[str] = []
     skipped: list[dict] = []
+    # Iter200 · Per-file metadata so callers can eyeball dimensions +
+    # size without having to fetch every R2 object. Same order as
+    # `written` — index i in each list refers to the same JPEG.
+    written_meta: list[dict] = []
     # Iter200 · Persistent R2 mirror. The pod filesystem is wiped on
     # redeploy (fresh git checkout), so we ALSO upload each thumbnail to
     # R2 and return a `{filename → storage_key}` map. The bulk items
@@ -683,11 +726,48 @@ async def od_coach_thumbnails_bulk_upload(
             skipped.append({"filename": info.filename, "reason": "not_a_jpeg_payload"})
             continue
 
+        # Iter200 · Size + dimension gate. Anything smaller than
+        # 50 KB or 600×400 is treated as a stub / placeholder image
+        # and rejected — the earlier build-time assets contained
+        # 4×4 stubs that rendered blank when signed from R2.
+        if len(data) < _THUMBNAIL_MIN_BYTES:
+            skipped.append({
+                "filename": info.filename,
+                "reason": (
+                    f"file_too_small ({len(data)} bytes; "
+                    f"minimum {_THUMBNAIL_MIN_BYTES})"
+                ),
+            })
+            continue
+        dims = _read_jpeg_dimensions(data)
+        if dims is None:
+            skipped.append({
+                "filename": info.filename,
+                "reason": "jpeg_dimensions_unreadable",
+            })
+            continue
+        w, h = dims
+        if w < _THUMBNAIL_MIN_WIDTH_PX or h < _THUMBNAIL_MIN_HEIGHT_PX:
+            skipped.append({
+                "filename": info.filename,
+                "reason": (
+                    f"image_too_small ({w}x{h}; minimum "
+                    f"{_THUMBNAIL_MIN_WIDTH_PX}x{_THUMBNAIL_MIN_HEIGHT_PX})"
+                ),
+            })
+            continue
+
         dest = os.path.join(_THUMBNAIL_TARGET_DIR, normalised)
         try:
             with open(dest, "wb") as fh:
                 fh.write(data)
             written.append(normalised)
+            written_meta.append({
+                "filename": normalised,
+                "width": w,
+                "height": h,
+                "size_bytes": len(data),
+            })
         except Exception as e:
             skipped.append({"filename": info.filename, "reason": f"write_failed: {e}"})
             continue
@@ -712,10 +792,14 @@ async def od_coach_thumbnails_bulk_upload(
     )
     return {
         "written": sorted(written),
+        "written_meta": sorted(written_meta, key=lambda m: m["filename"]),
         "skipped": skipped,
         "storage_keys": storage_keys,
         "target_dir": _THUMBNAIL_TARGET_DIR,
         "total_files_in_zip": len(entries),
+        "min_width": _THUMBNAIL_MIN_WIDTH_PX,
+        "min_height": _THUMBNAIL_MIN_HEIGHT_PX,
+        "min_bytes": _THUMBNAIL_MIN_BYTES,
         "note": (
             "Metro bundles this directory at build time — new files appear "
             "in dev preview immediately but the R2 mirror is what makes "

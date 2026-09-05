@@ -25,6 +25,7 @@ import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { useBottomSafePad } from "@/src/lib/useBottomSafePad";
 import { confirm as uxConfirm } from "@/src/lib/ux";
+import { BulkImportOnDemandModal } from "@/src/components/BulkImportOnDemandModal";
 
 /* ---------------------------------------------------------------------- */
 /* Types                                                                   */
@@ -91,6 +92,7 @@ export default function CoachOnDemandScreen() {
 
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   // Iter193 · Currently-pinned featured item (or null when nothing pinned).
   const [featuredId, setFeaturedId] = useState<string | null>(null);
 
@@ -234,6 +236,14 @@ export default function CoachOnDemandScreen() {
           <Text style={styles.headerBtnText}>TAXONOMY</Text>
         </Pressable>
         <Pressable
+          onPress={() => setBulkImportOpen(true)}
+          style={styles.headerBtn}
+          testID="od-bulk-import-open"
+        >
+          <Ionicons name="cloud-upload-outline" size={16} color={theme.color.text} />
+          <Text style={styles.headerBtnText}>BULK IMPORT</Text>
+        </Pressable>
+        <Pressable
           onPress={openCreate}
           style={[styles.headerBtn, styles.headerBtnPrimary]}
           testID="od-create-item"
@@ -313,6 +323,13 @@ export default function CoachOnDemandScreen() {
           categories={categories}
           tags={tags}
           onClose={() => { setTaxonomyOpen(false); reload(); }}
+        />
+      ) : null}
+
+      {bulkImportOpen ? (
+        <BulkImportOnDemandModal
+          onClose={() => setBulkImportOpen(false)}
+          onImported={() => { setBulkImportOpen(false); reload(); }}
         />
       ) : null}
     </SafeAreaView>

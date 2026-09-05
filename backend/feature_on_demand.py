@@ -30,7 +30,10 @@ Media delivery contract:
 from __future__ import annotations
 
 import base64
+import io
+import os
 import re
+import zipfile
 from typing import Any, Optional
 
 from fastapi import Depends, HTTPException
@@ -586,6 +589,117 @@ logger.info("feature_on_demand: /on-demand/* endpoints registered")
 # ---------------------------------------------------------------------------
 # Iter200 · Bulk import — taxonomy ensure + multi-item create
 # ---------------------------------------------------------------------------
+
+# Where the coach bulk-import endpoint writes unzipped thumbnails. Metro
+# picks these up at BUILD time — new files only reach deployed builds
+# after a redeploy. Kept configurable so tests / other environments can
+# override without touching code.
+_THUMBNAIL_TARGET_DIR = os.environ.get(
+    "ONDEMAND_THUMBNAIL_DIR",
+    "/app/frontend/assets/on-demand-thumbnails",
+)
+_THUMBNAIL_FILENAME_RE = re.compile(r"^w-\d{3}\.jpe?g$", re.IGNORECASE)
+_THUMBNAIL_MAX_FILES = 500          # generous — 100 workouts + slack
+_THUMBNAIL_MAX_BYTES_PER = 5 * 1024 * 1024   # 5 MB per file
+_THUMBNAIL_MAX_ZIP_BYTES = 200 * 1024 * 1024  # 200 MB total (decoded zip)
+
+
+class ThumbnailZipBody(BaseModel):
+    """Base64-encoded zip payload from the coach bulk-import modal."""
+    zip_b64: str
+
+
+@api.post("/on-demand/coach/thumbnails/bulk-upload")
+async def od_coach_thumbnails_bulk_upload(
+    body: ThumbnailZipBody, coach: dict = Depends(require_role("coach")),
+):
+    """Unzip a coach-supplied zip into the on-demand thumbnails asset
+    dir. Every file inside the zip MUST match ``w-\\d{3}\\.jpg`` (case-
+    insensitive; a ``.jpeg`` variant is normalised to ``.jpg``). Anything
+    else is rejected up-front — protects against path traversal and
+    stray thumbnails.
+
+    Metro bundles this directory at BUILD time so the coach still needs
+    to redeploy for the new thumbnails to appear in shipped builds. The
+    response surfaces this note verbatim so the UI can echo it.
+    """
+    raw = _decode_b64(body.zip_b64)
+    if len(raw) > _THUMBNAIL_MAX_ZIP_BYTES:
+        raise HTTPException(413, f"zip_too_large ({len(raw)} > {_THUMBNAIL_MAX_ZIP_BYTES})")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(raw), "r")
+    except zipfile.BadZipFile as e:
+        raise HTTPException(400, f"invalid_zip: {e}")
+
+    entries = [i for i in zf.infolist() if not i.is_dir()]
+    if len(entries) > _THUMBNAIL_MAX_FILES:
+        raise HTTPException(413, f"too_many_files_in_zip ({len(entries)} > {_THUMBNAIL_MAX_FILES})")
+
+    os.makedirs(_THUMBNAIL_TARGET_DIR, exist_ok=True)
+
+    written: list[str] = []
+    skipped: list[dict] = []
+    for info in entries:
+        # (a) Strip any leading directories the zip might carry; we only
+        # care about the basename. This also blocks trivial path traversal
+        # like `../../etc/passwd` — the split takes the tail component
+        # so any `..` gets discarded.
+        basename = os.path.basename(info.filename.replace("\\", "/"))
+        if not basename or basename.startswith("."):
+            skipped.append({"filename": info.filename, "reason": "empty_or_hidden"})
+            continue
+
+        # (b) Enforce the filename convention up-front. Normalise `.jpeg`
+        # → `.jpg` and lower-case so the on-disk names always match the
+        # `thumbnail_filename` slot the client uses (`resolveThumbnail`).
+        lower = basename.lower()
+        if not _THUMBNAIL_FILENAME_RE.match(lower):
+            skipped.append({"filename": info.filename, "reason": "filename_does_not_match_w-NNN.jpg"})
+            continue
+        normalised = re.sub(r"\.jpeg$", ".jpg", lower)
+
+        # (c) Size guard per-file.
+        if info.file_size > _THUMBNAIL_MAX_BYTES_PER:
+            skipped.append({"filename": info.filename, "reason": f"file_too_large ({info.file_size} > {_THUMBNAIL_MAX_BYTES_PER})"})
+            continue
+
+        # (d) Read + write.
+        try:
+            data = zf.read(info)
+        except Exception as e:
+            skipped.append({"filename": info.filename, "reason": f"unreadable: {e}"})
+            continue
+        # Sanity-check the first two bytes so we don't accept a PNG
+        # masquerading as .jpg — Metro's build-time parser would still
+        # reject it later, so we fail fast here.
+        if not data.startswith(b"\xff\xd8"):
+            skipped.append({"filename": info.filename, "reason": "not_a_jpeg_payload"})
+            continue
+
+        dest = os.path.join(_THUMBNAIL_TARGET_DIR, normalised)
+        try:
+            with open(dest, "wb") as fh:
+                fh.write(data)
+            written.append(normalised)
+        except Exception as e:
+            skipped.append({"filename": info.filename, "reason": f"write_failed: {e}"})
+
+    logger.info(
+        "on_demand.thumbnails_bulk_upload: %d written / %d skipped (target=%s)",
+        len(written), len(skipped), _THUMBNAIL_TARGET_DIR,
+    )
+    return {
+        "written": sorted(written),
+        "skipped": skipped,
+        "target_dir": _THUMBNAIL_TARGET_DIR,
+        "total_files_in_zip": len(entries),
+        "note": (
+            "Metro bundles this directory at build time. New thumbnails "
+            "appear in the current dev preview immediately but require a "
+            "redeploy to reach production builds."
+        ),
+    }
+
 
 class TaxonomyEnsureBody(BaseModel):
     """Upsert-by-name/slug taxonomy resolver.

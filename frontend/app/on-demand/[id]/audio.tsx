@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from "expo-audio";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { api } from "@/src/lib/api";
 import { theme } from "@/src/lib/theme";
 
@@ -79,6 +80,24 @@ export default function OnDemandAudioScreen() {
   const currentTime = status?.currentTime || 0;
   const playing = !!status?.playing;
   const progressPct = duration > 0 ? Math.min(1, Math.max(0, currentTime / duration)) : 0;
+
+  // Iter200 · Keep the screen awake ONLY while audio is actually
+  // playing. Meditation and guided-audio sessions were putting the
+  // phone to sleep mid-session; now the display stays on until the
+  // member pauses / seeks-and-pauses / leaves the screen. On unmount
+  // we always release so we never accidentally hold the wake-lock
+  // beyond the session.
+  useEffect(() => {
+    const tag = `on-demand-audio:${id ?? "unknown"}`;
+    if (playing) {
+      activateKeepAwakeAsync(tag).catch(() => {});
+    } else {
+      deactivateKeepAwake(tag);
+    }
+    return () => {
+      deactivateKeepAwake(tag);
+    };
+  }, [playing, id]);
 
   const togglePlay = useCallback(() => {
     if (!player) return;

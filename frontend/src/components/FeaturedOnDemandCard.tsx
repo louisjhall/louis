@@ -14,7 +14,7 @@
  * underlying workout has hundreds of exercises.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator, Alert } from "react-native";
+import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { theme } from "@/src/lib/theme";
@@ -33,7 +33,7 @@ export function FeaturedOnDemandCard() {
   const router = useRouter();
   const [item, setItem] = useState<FeaturedItem | null>(null);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
+  const [starting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -56,22 +56,14 @@ export function FeaturedOnDemandCard() {
 
   useEffect(() => { load(); }, [load]);
 
-  const onOpen = useCallback(async () => {
+  const onOpen = useCallback(() => {
     if (!item) return;
     if (item.content_type === "workout") {
-      try {
-        setStarting(true);
-        const r = await api<{ workout_id: string }>(`/on-demand/items/${item.id}/start-workout`, {
-          method: "POST", body: {},
-        });
-        setStarting(false);
-        // Iter196 · Land on the standard entry point so the client gets
-        // the Guided / Manual choice — same UX as every other workout.
-        router.push(`/workout/${r.workout_id}` as any);
-      } catch (e: any) {
-        setStarting(false);
-        Alert.alert("Couldn't start", e?.message || String(e));
-      }
+      // Iter200 · Do NOT call `/start-workout` here — that would mutate
+      // today's calendar before the member has confirmed. Route to the
+      // preview screen; the workout row is only created when the member
+      // taps START on the preview.
+      router.push(`/on-demand/${item.id}/workout` as any);
       return;
     }
     if (item.content_type === "video") {

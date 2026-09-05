@@ -103,6 +103,21 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
   and preserve welcome-video copy otherwise.
 - 7 backend regression tests (`tests/test_iter200_welcome_pill_and_notification_url.py`) — all pass.
 
+## Iter200 · R2 thumbnail backfill (this fix — Jun 2026)
+- Ran `/app/backend/scripts/backfill_on_demand_r2_thumbnails.py` — a
+  one-shot backfill that reads every local
+  `/app/frontend/assets/on-demand-thumbnails/w-XXX.jpg`, uploads it
+  to R2 under `on_demand/thumbnails/bulk/w-XXX.jpg`, and stamps
+  `thumbnail_storage_key` on the matching `on_demand_items` doc.
+- Root cause: ~100 items were bulk-imported BEFORE the R2 mirror
+  code shipped, so their DB rows had `thumbnail_filename` set but
+  no `thumbnail_storage_key`. Metro's on-disk copies get wiped on
+  redeploy → client fell through to placeholder.
+- Verified end-to-end: 100/100 items now carry a valid R2 key; the
+  `/on-demand/items/{id}/thumbnail-url` endpoint returns HTTP 200
+  with a signed URL that streams a real JPEG.
+- Idempotent — safe to re-run.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

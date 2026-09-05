@@ -25,7 +25,6 @@ import { Ionicons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { theme } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
-import { confirm as uxConfirm } from "@/src/lib/ux";
 
 const CANONICAL_CATEGORIES = [
   "Strength & Gym",
@@ -210,6 +209,8 @@ export function BulkImportOnDemandModal({
   // Step 2
   const [publishNow, setPublishNow] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importStep, setImportStep] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [report, setReport] = useState<any | null>(null);
   const [thumbReport, setThumbReport] = useState<any | null>(null);
 
@@ -258,39 +259,60 @@ export function BulkImportOnDemandModal({
 
   const canProceed = !!parseResult && !!zipB64 && totalItems > 0;
 
-  const goToConfirm = useCallback(async () => {
-    // Extra guard — warn if the number of workouts is not the classic 100.
-    if (parseResult && parseResult.items.length !== 100) {
-      const ok = await uxConfirm({
-        title: `Import ${parseResult.items.length} workouts?`,
-        message: "We expected 100. Continue anyway?",
-        confirmLabel: "Continue",
-      });
-      if (!ok) return;
-    }
+  const goToConfirm = useCallback(() => {
+    // Iter200 · No `uxConfirm` here — nested `<Modal>` inside our own
+    // `<Modal>` doesn't handle button clicks reliably on RN-Web 0.21
+    // (the inner dialog renders but events are absorbed by the outer
+    // scrim, so the promise never resolves and Step 2 never opens).
+    // The item count is prominently shown in both the Step 1 preview
+    // and the Step 2 summary card, so the extra confirmation adds
+    // nothing besides breakage.
     setStep(2);
-  }, [parseResult]);
+  }, []);
 
   const runImport = useCallback(async () => {
-    if (!parseResult || !zipB64) return;
+    // Guardrails that used to fail silently — surface a clear inline
+    // error instead of returning quietly.
+    if (!parseResult) {
+      setImportError("No workouts parsed. Go back and pick a JSON file first.");
+      return;
+    }
+    if (!zipB64) {
+      setImportError("No thumbnails uploaded. Go back and pick a zip first.");
+      return;
+    }
     setImporting(true);
-    setReport(null); setThumbReport(null);
+    setImportError(null);
+    setReport(null);
+    setThumbReport(null);
     try {
       // (1) Ensure the 8 canonical categories exist.
+      setImportStep("Ensuring categories exist…");
+      console.log("[BulkImport] step 1: taxonomy/ensure");
       await api("/on-demand/coach/taxonomy/ensure", {
         method: "POST",
         body: { categories: CANONICAL_CATEGORIES, tags: [] },
       });
 
-      // (2) Upload the thumbnails zip.
+      // (2) Upload the thumbnails zip. This can be tens of megabytes;
+      // give the coach a heads-up if it's unusually large.
+      const zipMb = Math.round((zipB64.length * 0.75) / 1024 / 1024);
+      setImportStep(
+        zipMb > 20
+          ? `Uploading thumbnails (~${zipMb} MB) — this can take a minute…`
+          : "Uploading thumbnails…",
+      );
+      console.log(`[BulkImport] step 2: thumbnails/bulk-upload (~${zipMb} MB base64)`);
       const tr = await api<any>("/on-demand/coach/thumbnails/bulk-upload", {
         method: "POST",
         body: { zip_b64: zipB64 },
       });
+      console.log("[BulkImport] thumbnails written:", tr);
       setThumbReport(tr);
 
-      // (3) POST workouts to the bulk endpoint. Strip `category_display` —
-      // the endpoint only needs `category_slug`.
+      // (3) POST workouts to the bulk endpoint.
+      setImportStep(`Creating ${parseResult.items.length} workouts…`);
+      console.log(`[BulkImport] step 3: items/bulk (${parseResult.items.length} items)`);
       const payload = {
         default_published: !!publishNow,
         items: parseResult.items.map((it) => ({
@@ -307,9 +329,17 @@ export function BulkImportOnDemandModal({
         })),
       };
       const r = await api<any>("/on-demand/coach/items/bulk", { method: "POST", body: payload });
+      console.log("[BulkImport] items/bulk report:", r);
       setReport(r);
+      setImportStep(null);
     } catch (e: any) {
-      Alert.alert("Import failed", e?.message || String(e));
+      // RN-Web's Alert.alert can silently fail on some builds. Surface
+      // the error inline in the modal AND log to console so the coach
+      // (and devtools) always have visibility.
+      const msg = e?.message || String(e);
+      console.error("[BulkImport] failed:", e);
+      setImportError(msg);
+      setImportStep(null);
     } finally {
       setImporting(false);
     }
@@ -434,6 +464,28 @@ export function BulkImportOnDemandModal({
                     dev preview immediately but require a REDEPLOY to reach production builds.
                   </Text>
                 </View>
+
+                {/* PROGRESS — visible only while an import is running. */}
+                {importing && importStep ? (
+                  <View style={styles.progressBox} testID="od-bulk-progress">
+                    <ActivityIndicator color={theme.color.brand} />
+                    <Text style={styles.progressText}>{importStep}</Text>
+                  </View>
+                ) : null}
+
+                {/* INLINE ERROR — replaces the flaky Alert.alert. */}
+                {importError ? (
+                  <View style={styles.errorBox} testID="od-bulk-error">
+                    <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.errorTitle}>Import failed</Text>
+                      <Text style={styles.errorText}>{importError}</Text>
+                      <Text style={styles.errorHint}>
+                        Open the browser devtools console for the full stack trace.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
 
                 {/* REPORT */}
                 {report ? (
@@ -609,6 +661,24 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: "rgba(245,158,11,0.35)",
   },
   noteText: { color: theme.color.text, fontSize: 11, lineHeight: 16, flex: 1 },
+
+  progressBox: {
+    marginTop: 18, padding: 14, borderRadius: 10,
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  progressText: { color: theme.color.text, fontSize: 12, fontWeight: "700", flex: 1 },
+
+  errorBox: {
+    marginTop: 18, padding: 12, borderRadius: 10,
+    flexDirection: "row", gap: 8, alignItems: "flex-start",
+    backgroundColor: "rgba(239,68,68,0.10)",
+    borderWidth: 1, borderColor: "rgba(239,68,68,0.45)",
+  },
+  errorTitle: { color: "#EF4444", fontSize: 12, fontWeight: "900", letterSpacing: 1 },
+  errorText: { color: theme.color.text, fontSize: 12, lineHeight: 17, marginTop: 3 },
+  errorHint: { color: theme.color.textMuted, fontSize: 10, lineHeight: 15, marginTop: 6, fontStyle: "italic" },
 
   reportBox: {
     marginTop: 20, padding: 14, borderRadius: 12,

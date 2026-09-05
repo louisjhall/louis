@@ -97,7 +97,6 @@ export default function OnDemandClientScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
-  const [startingId, setStartingId] = useState<string | null>(null);
 
   const reload = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -200,17 +199,10 @@ export default function OnDemandClientScreen() {
 
   const onOpen = useCallback(async (item: Item) => {
     if (item.content_type === "workout") {
-      try {
-        setStartingId(item.id);
-        const r = await api<{ workout_id: string }>(`/on-demand/items/${item.id}/start-workout`, {
-          method: "POST", body: {},
-        });
-        setStartingId(null);
-        router.push(`/workout/${r.workout_id}` as any);
-      } catch (e: any) {
-        setStartingId(null);
-        Alert.alert("Couldn't start", e?.message || String(e));
-      }
+      // Iter200 · Do NOT call `/start-workout` here — that mutates the
+      // member's calendar. Route to the preview screen; the workout row
+      // is only created when the member explicitly taps START.
+      router.push(`/on-demand/${item.id}/workout` as any);
       return;
     }
     if (item.content_type === "video") {
@@ -301,7 +293,7 @@ export default function OnDemandClientScreen() {
               item={it}
               thumbUrl={thumbUrls[it.id]}
               width={cardWidthNew}
-              starting={startingId === it.id}
+              starting={false}
               onPress={() => onOpen(it)}
             />
           ))}

@@ -12,6 +12,7 @@ import { usePreview } from "@/src/lib/preview";
 import { theme } from "@/src/lib/theme";
 import { CrewFitLogo } from "@/src/components/Logo";
 import { PUBLIC_URLS } from "@/src/lib/publicUrls";
+import { SocialButtons, useEmergentAuthCallback } from "@/src/components/SocialButtons";
 
 // Iter 94t — Login hero shows airline crew in uniform (pilot walking through
 // airport with roller bag) to match the "crew, not civilian" brand feel.
@@ -35,6 +36,11 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Iter200 · Watch for the Emergent OAuth callback on this screen —
+  // when the user returns from auth.emergentagent.com with a
+  // ``session_id`` on the URL we exchange it and land straight in
+  // the app. The root-layout gate handles the actual navigation.
+  useEmergentAuthCallback();
 
   const submit = async () => {
     setErr(null);
@@ -141,6 +147,13 @@ export default function Login() {
                   <Text style={styles.ctaText}>SIGN IN</Text>
                 )}
               </Pressable>
+
+              {/* Iter200 · Google + Apple sign-in. Google is available
+                * on every platform; Apple auto-hides on non-iOS and
+                * on iOS < 13. Neither button changes the destination
+                * screen — the root-layout gate redirects to home the
+                * moment auth state resolves. */}
+              <SocialButtons busy={loading} ctaCopy="Sign in" />
 
               {/* Forgot Password — routes to a simple support screen. Once a
                 * public email-based reset flow is wired (Resend integration),

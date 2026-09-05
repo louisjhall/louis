@@ -46,6 +46,15 @@ interface AuthCtx {
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   setUser: (u: UserT | null) => void;
+  // Iter200 — social sign-in. Both return the same shape as
+  // login/signup so the caller can just `await` and let the
+  // root-layout gate handle navigation.
+  loginWithEmergentSession: (sessionId: string) => Promise<UserT>;
+  loginWithApple: (payload: {
+    identity_token: string;
+    given_name?: string | null;
+    family_name?: string | null;
+  }) => Promise<UserT>;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -134,8 +143,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(me);
   };
 
+  // Iter200 · Emergent Auth (Google broker). Frontend redirects the
+  // user to auth.emergentagent.com and lands back with a one-time
+  // ``session_id`` on the URL. We POST it to our backend, which
+  // exchanges it against Emergent, upserts the user and mints a
+  // CrewFit JWT — exact same shape as /auth/login returns.
+  const loginWithEmergentSession = async (sessionId: string) => {
+    const r = await api<{ token: string; user: UserT }>(
+      "/auth/oauth/emergent-session",
+      { method: "POST", body: { session_id: sessionId }, noAuth: true },
+    );
+    await setToken(r.token);
+    setUser(r.user);
+    registerForPush(r.user.id).catch(() => {});
+    return r.user;
+  };
+
+  // Iter200 · Apple Sign-In (iOS only). Frontend calls
+  // expo-apple-authentication which returns an RS256-signed identity
+  // token from Apple. Our backend verifies signature + aud + iss and
+  // returns the same {token, user} shape.
+  const loginWithApple = async (payload: {
+    identity_token: string;
+    given_name?: string | null;
+    family_name?: string | null;
+  }) => {
+    const r = await api<{ token: string; user: UserT }>(
+      "/auth/oauth/apple",
+      {
+        method: "POST",
+        body: {
+          identity_token: payload.identity_token,
+          given_name: payload.given_name || undefined,
+          family_name: payload.family_name || undefined,
+        },
+        noAuth: true,
+      },
+    );
+    await setToken(r.token);
+    setUser(r.user);
+    registerForPush(r.user.id).catch(() => {});
+    return r.user;
+  };
+
   return (
-    <Ctx.Provider value={{ user, loading, login, signup, logout, refresh, setUser }}>
+    <Ctx.Provider value={{
+      user, loading, login, signup, logout, refresh, setUser,
+      loginWithEmergentSession, loginWithApple,
+    }}>
       {children}
     </Ctx.Provider>
   );

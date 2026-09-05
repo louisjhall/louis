@@ -23,6 +23,7 @@ import { useAuth } from "@/src/lib/auth";
 import { theme } from "@/src/lib/theme";
 import { toast } from "@/src/lib/ux";
 import { PUBLIC_URLS } from "@/src/lib/publicUrls";
+import { SocialButtons, useEmergentAuthCallback } from "@/src/components/SocialButtons";
 
 type Sex = "male" | "female" | "other" | "prefer_not_to_say";
 const SEX_OPTIONS: { key: Sex; label: string }[] = [
@@ -76,6 +77,11 @@ export default function Signup() {
   // down before the root stack renders training-setup/home).
   const [transitioning, setTransitioning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Iter200 · Same OAuth callback watcher as the login screen —
+  // users may tap "Sign in with Google" from signup too, and the
+  // redirect will land back here. Root layout handles routing on
+  // success.
+  useEmergentAuthCallback();
 
   const canSubmit =
     !!firstName.trim() &&
@@ -191,6 +197,13 @@ export default function Signup() {
 
           <Text style={styles.title}>CREATE ACCOUNT</Text>
           <Text style={styles.sub}>Louis will review your setup and build your programme.</Text>
+
+          {/* Iter200 · Fast path — social sign-in above the fold so
+            * users returning via Google/Apple don't have to fill the
+            * whole form. On success the root-layout gate routes them
+            * to their home screen (assessment for new clients, home
+            * for existing). */}
+          <SocialButtons busy={loading} ctaCopy="Sign up" />
 
           {/* ============================= YOU ============================= */}
           <Text style={styles.section}>1 · YOU</Text>

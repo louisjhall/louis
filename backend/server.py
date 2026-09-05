@@ -14991,6 +14991,14 @@ try:
 except Exception:
     logger.exception("feature_password_reset failed to register")
 
+# Iter200 — OAuth sign-in (Emergent Google + Apple).
+try:
+    from feature_oauth import register as _oauth_register
+    _oauth_register(api, db, make_token=make_token, new_id=new_id, clean_doc=clean_doc)
+    logger.info("feature_oauth: /auth/oauth/emergent-session + /auth/oauth/apple registered")
+except Exception:
+    logger.exception("feature_oauth failed to register")
+
 app.include_router(api)
 
 

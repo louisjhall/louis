@@ -173,6 +173,43 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
   `50db23fa-94f9-450f-bfec-187435cbeff3`), token consumed, password
   updated, single-use enforced, login with new password works.
 
+## Iter200 · OAuth sign-in — Emergent Google + Apple (Jun 2026)
+- New backend feature `/app/backend/feature_oauth.py` — two endpoints,
+  both mint a JWT via the existing ``make_token()`` helper so
+  ``current_user()`` needs zero changes:
+  * `POST /api/auth/oauth/emergent-session` — exchanges a one-time
+    ``session_id`` from ``auth.emergentagent.com`` against Emergent's
+    ``session-data`` API (X-Session-ID header), upserts the user by
+    (`emergent_google`, email), returns ``{token, user}``.
+    In-process de-dupe on the last 32 session_ids so React strict-mode
+    double-mounts + native deep-link double-fires don't 401.
+  * `POST /api/auth/oauth/apple` — verifies the Apple identity token
+    against Apple's JWKS (RS256, cached 1h). Checks
+    ``iss=https://appleid.apple.com``, ``aud=net.crewfit.app`` (env
+    override via ``APPLE_AUDIENCE``), and ``exp``. Upserts by
+    (``apple``, ``sub``) with email fallback since Apple only reveals
+    email on the FIRST sign-in.
+- User model gains a `oauth_providers[]` array — additive, never
+  overwrites `name`, `role`, or `photo_base64`. Auto-assigns new
+  clients to Louis (same as `/auth/signup`).
+- Frontend:
+  * New `SocialButtons.tsx` — Google button (all platforms, white with
+    logo) + Apple button (iOS only, via
+    ``AppleAuthentication.AppleAuthenticationButton`` per HIG).
+  * `useEmergentAuthCallback()` hook mounted on both login and signup
+    screens — reads ``session_id`` from URL hash/query on web and from
+    ``Linking.getInitialURL()`` + ``addEventListener('url', …)`` on
+    native, guards against double-fire via a module-level Set, cleans
+    the URL only on success.
+  * `AuthContext` gains ``loginWithEmergentSession()`` and
+    ``loginWithApple()`` — same ``{token, user}`` shape as
+    email/password login, so the root-layout gate handles navigation
+    unchanged.
+- Config: `app.json` sets ``ios.usesAppleSignIn = true`` and adds
+  ``expo-apple-authentication`` + ``expo-web-browser`` config plugins.
+  A native rebuild is required before Apple sign-in works on device —
+  Expo Go / Web preview will only exercise the Google flow.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

@@ -309,6 +309,11 @@ export function BulkImportOnDemandModal({
       });
       console.log("[BulkImport] thumbnails written:", tr);
       setThumbReport(tr);
+      // Iter200 · The backend mirrors each JPEG to R2 and returns a
+      // `{filename → storage_key}` map. We stitch that onto every item
+      // below so the on-demand cards render even after a fresh
+      // deployment wipes the pod filesystem.
+      const storageKeys: Record<string, string> = (tr && tr.storage_keys) || {};
 
       // (3) POST workouts to the bulk endpoint.
       setImportStep(`Creating ${parseResult.items.length} workouts…`);
@@ -324,6 +329,7 @@ export function BulkImportOnDemandModal({
           duration_seconds: it.duration_seconds,
           workout_json: it.workout_json,
           thumbnail_filename: it.thumbnail_filename,
+          thumbnail_storage_key: storageKeys[it.thumbnail_filename] || null,
           equipment: it.equipment,
           published: !!publishNow,
         })),

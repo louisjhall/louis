@@ -31,6 +31,7 @@ type Item = {
   duration_seconds?: number | null;
   content_type: string;
   thumbnail_filename?: string | null;
+  thumbnail_storage_key?: string | null;
   workout_json?: any;
   equipment?: string[];
   category_id?: string | null;
@@ -53,6 +54,11 @@ export default function OnDemandWorkoutPreview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  // Iter200 · R2 presigned URL for the persistent thumbnail — resolved
+  // lazily when the item is loaded. Preferred over the bundled asset so
+  // this screen keeps working after a fresh deploy wipes the pod
+  // filesystem.
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +66,12 @@ export default function OnDemandWorkoutPreview() {
     try {
       const r = await api<{ item: Item }>(`/on-demand/items/${id}`);
       setItem(r.item);
+      if (r.item?.thumbnail_storage_key) {
+        try {
+          const u = await api<{ url: string }>(`/on-demand/items/${id}/thumbnail-url`);
+          if (u?.url) setThumbUrl(u.url);
+        } catch { /* fall through to bundle / placeholder */ }
+      }
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -98,7 +110,7 @@ export default function OnDemandWorkoutPreview() {
   const mainCount = useMemo(() => _flatCount(wj.exercises || []), [wj]);
   const cooldownCount = useMemo(() => _flatCount(wj.cooldown || []), [wj]);
 
-  const thumb = resolveThumbnail(item?.thumbnail_filename || null);
+  const bundledThumb = resolveThumbnail(item?.thumbnail_filename || null);
 
   return (
     <SafeAreaView style={styles.root} edges={["top", "bottom"]}>
@@ -123,8 +135,10 @@ export default function OnDemandWorkoutPreview() {
         <>
           <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
             <View style={styles.thumbWrap}>
-              {thumb ? (
-                <Image source={thumb} style={styles.thumb} resizeMode="cover" />
+              {thumbUrl ? (
+                <Image source={{ uri: thumbUrl }} style={styles.thumb} resizeMode="cover" />
+              ) : bundledThumb ? (
+                <Image source={bundledThumb} style={styles.thumb} resizeMode="cover" />
               ) : (
                 <View style={styles.thumbFallback}>
                   <Ionicons name="barbell" size={44} color={theme.color.brand} />

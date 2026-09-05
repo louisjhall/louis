@@ -370,11 +370,15 @@ function ContentCard({
     >
       <View style={styles.thumbWrap}>
         {(() => {
-          // Iter200 · Prefer the bundled thumbnail (fast, offline-safe).
-          // Falls back to the R2 presigned URL, then to a themed placeholder.
+          // Iter200 · Priority order:
+          //   1. R2 presigned URL (survives redeploys — set for bulk-
+          //      imported items and coach-uploaded thumbnails)
+          //   2. Bundled asset (fast, offline — used when only
+          //      `thumbnail_filename` is set with no storage key)
+          //   3. Themed placeholder icon.
+          if (thumbUrl) return <Image source={{ uri: thumbUrl }} style={styles.thumb} />;
           const bundled = resolveThumbnail(item.thumbnail_filename || null);
           if (bundled) return <Image source={bundled} style={styles.thumb} />;
-          if (thumbUrl) return <Image source={{ uri: thumbUrl }} style={styles.thumb} />;
           return (
             <View style={styles.thumbFallback}>
               <Ionicons name={badgeIcon} size={30} color={theme.color.brand} />

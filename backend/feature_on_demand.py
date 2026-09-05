@@ -639,6 +639,13 @@ async def od_coach_thumbnails_bulk_upload(
 
     written: list[str] = []
     skipped: list[dict] = []
+    # Iter200 · Persistent R2 mirror. The pod filesystem is wiped on
+    # redeploy (fresh git checkout), so we ALSO upload each thumbnail to
+    # R2 and return a `{filename → storage_key}` map. The bulk items
+    # endpoint stamps this on the on-demand item as
+    # `thumbnail_storage_key`, and the client falls back to the R2
+    # presigned URL when the bundled asset is a placeholder.
+    storage_keys: dict[str, str] = {}
     for info in entries:
         # (a) Strip any leading directories the zip might carry; we only
         # care about the basename. This also blocks trivial path traversal
@@ -663,7 +670,7 @@ async def od_coach_thumbnails_bulk_upload(
             skipped.append({"filename": info.filename, "reason": f"file_too_large ({info.file_size} > {_THUMBNAIL_MAX_BYTES_PER})"})
             continue
 
-        # (d) Read + write.
+        # (d) Read + write to pod filesystem for the dev preview.
         try:
             data = zf.read(info)
         except Exception as e:
@@ -683,20 +690,36 @@ async def od_coach_thumbnails_bulk_upload(
             written.append(normalised)
         except Exception as e:
             skipped.append({"filename": info.filename, "reason": f"write_failed: {e}"})
+            continue
+
+        # (e) Mirror to R2 so the thumbnail survives redeploy. If R2 is
+        # unavailable we still return the local write — the pod-file
+        # bundle path is a valid dev preview fallback.
+        try:
+            key = f"on_demand/thumbnails/bulk/{normalised}"
+            await _storage.storage.write_bytes(key, data, content_type="image/jpeg")
+            storage_keys[normalised] = key
+        except Exception as e:
+            logger.exception(
+                "on_demand.thumbnails_bulk_upload: R2 mirror failed for %s: %s",
+                normalised, e,
+            )
+            # Don't fail the request — local file write already succeeded.
 
     logger.info(
-        "on_demand.thumbnails_bulk_upload: %d written / %d skipped (target=%s)",
-        len(written), len(skipped), _THUMBNAIL_TARGET_DIR,
+        "on_demand.thumbnails_bulk_upload: %d written / %d skipped / %d mirrored to R2 (target=%s)",
+        len(written), len(skipped), len(storage_keys), _THUMBNAIL_TARGET_DIR,
     )
     return {
         "written": sorted(written),
         "skipped": skipped,
+        "storage_keys": storage_keys,
         "target_dir": _THUMBNAIL_TARGET_DIR,
         "total_files_in_zip": len(entries),
         "note": (
-            "Metro bundles this directory at build time. New thumbnails "
-            "appear in the current dev preview immediately but require a "
-            "redeploy to reach production builds."
+            "Metro bundles this directory at build time — new files appear "
+            "in dev preview immediately but the R2 mirror is what makes "
+            "thumbnails survive a production redeploy."
         ),
     }
 
@@ -824,6 +847,7 @@ class BulkItem(BaseModel):
     duration_seconds: Optional[int] = Field(default=None, ge=0, le=60 * 60 * 6)
     workout_json: dict[str, Any]
     thumbnail_filename: Optional[str] = None
+    thumbnail_storage_key: Optional[str] = None   # Iter200 · R2 fallback that survives redeploys
     published: bool = False
     external_ref: Optional[str] = None
     equipment: list[str] = Field(default_factory=list)
@@ -1050,9 +1074,9 @@ async def od_coach_bulk_create(
             "category_id": cat_id,
             "tag_ids": list(dict.fromkeys(tag_ids)),
             "duration_seconds": item.duration_seconds,
-            "thumbnail_storage_key": None,
-            "thumbnail_mime": None,
-            "thumbnail_ext": None,
+            "thumbnail_storage_key": item.thumbnail_storage_key,
+            "thumbnail_mime": "image/jpeg" if item.thumbnail_storage_key else None,
+            "thumbnail_ext": "jpg" if item.thumbnail_storage_key else None,
             "thumbnail_filename": item.thumbnail_filename or None,
             "media_storage_key": None,
             "media_mime": None,

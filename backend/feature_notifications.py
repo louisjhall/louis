@@ -340,6 +340,31 @@ async def _tick_roster_and_workout_reminders() -> None:
                                                             action_url="/roster-upload",
                                                             related_id=roster.get("id"),
                                                             dedupe_key=dedupe)
+                                # Iter200 — Mirror the 7/3/expired
+                                # thresholds via Resend so clients who
+                                # ignore in-app push still get a nudge.
+                                # 1-day threshold intentionally skipped
+                                # (push is enough; email would feel spammy).
+                                if delta in (7, 3) or delta < 0:
+                                    email_threshold = (
+                                        "expired" if delta < 0
+                                        else f"expiring_{delta}"
+                                    )
+                                    try:
+                                        from emailer import send_roster_expiring_email
+                                        await send_roster_expiring_email(
+                                            recipient=u.get("email") or "",
+                                            user_id=u["id"],
+                                            roster_id=str(roster.get("id") or ""),
+                                            threshold=email_threshold,
+                                            days_remaining=delta,
+                                            display_name=u.get("name"),
+                                        )
+                                    except Exception:
+                                        # Never let email failure kill
+                                        # the reminder tick — push
+                                        # already went out above.
+                                        pass
 
             # ---- Workout reminder ----
             if settings.get("workouts", True) and not in_quiet:

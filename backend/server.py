@@ -1071,6 +1071,19 @@ async def signup(body: SignupBody):
         pass
     await db.users.insert_one(u)
     token = make_token(u["id"], u["role"])
+    # Iter200 — Fire-and-forget welcome email via Resend. NEVER block or
+    # fail the signup on a transient email hiccup: schedule the send on
+    # the running loop and return the freshly-minted session immediately.
+    try:
+        import asyncio as _asyncio
+        from emailer import send_welcome_email
+        _asyncio.create_task(send_welcome_email(
+            recipient=u["email"],
+            user_id=u["id"],
+            display_name=u.get("name"),
+        ))
+    except Exception:
+        logger.exception("signup: failed to schedule welcome email for %s", u.get("email"))
     clean_doc(u)
     u.pop("password_hash", None)
     return {"token": token, "user": u}
@@ -14969,6 +14982,14 @@ try:
     _logtype_register(api, db, require_role)
 except Exception:
     logger.exception("feature_logging_type_override failed to register")
+
+# Iter200 — Public self-serve password reset (Resend transactional email).
+try:
+    from feature_password_reset import register as _pw_reset_register
+    _pw_reset_register(api, db, hash_pw=hash_pw, make_token=make_token)
+    logger.info("feature_password_reset: /auth/forgot-password + /auth/reset-password registered")
+except Exception:
+    logger.exception("feature_password_reset failed to register")
 
 app.include_router(api)
 

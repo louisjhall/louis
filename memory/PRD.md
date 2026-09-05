@@ -139,6 +139,40 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
   inside the icon box, so both coach and client screens display the
   R2 artwork.
 
+## Iter200 · Resend transactional emails (Jun 2026)
+- New module `/app/backend/emailer.py` — thin async wrapper around the
+  Resend Python SDK with three templates: `send_password_reset_email`,
+  `send_welcome_email`, `send_roster_expiring_email`. Every send
+  carries an idempotency key so retries don't duplicate mail; every
+  send is fail-open so a Resend hiccup never breaks the caller path.
+- New feature `/app/backend/feature_password_reset.py` registers:
+  * `POST /api/auth/forgot-password` — uniform 200 (no account
+    enumeration), rate-limit 5/email/15min + 15/IP/15min, issues a
+    48-byte URL-safe token, stores only `sha256(token)` + expiry in
+    `db.password_resets`, emails the raw token to the user.
+  * `POST /api/auth/reset-password` — verifies token (not-expired,
+    not-used, hash-matches), updates `password_hash`, invalidates all
+    `refresh_tokens` + `auth_sessions`, returns a fresh JWT for
+    auto-sign-in.
+- Signup path in `server.py` fires `send_welcome_email` fire-and-forget
+  (never blocks the response).
+- Notification loop in `feature_notifications.py` fires
+  `send_roster_expiring_email` alongside the existing push
+  notification at the 7-day, 3-day, and expired thresholds.
+- Frontend:
+  * `/(auth)/forgot-password.tsx` swapped from a mailto placeholder to
+    a real self-serve form. Success state matches the uniform backend
+    copy.
+  * New `/(auth)/reset-password.tsx` — deep-link target for the email
+    button. Handles missing token, expired token, and password
+    mismatch. On success auto-signs the user in with the fresh JWT.
+- Env: `RESEND_API_KEY`, `RESEND_FROM_EMAIL="CrewFit <noreply@crewfit.uk>"`,
+  `PUBLIC_APP_URL` added to `/app/backend/.env`. Never surfaced to the
+  frontend or logged.
+- End-to-end verified: real Resend send accepted (id
+  `50db23fa-94f9-450f-bfec-187435cbeff3`), token consumed, password
+  updated, single-use enforced, login with new password works.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

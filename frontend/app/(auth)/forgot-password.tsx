@@ -1,25 +1,19 @@
 /**
- * Forgot Password — support screen (placeholder for future self-serve reset).
+ * Forgot Password — self-serve reset via email link.
  *
  * Route: /(auth)/forgot-password
  *
- * Today: there is no public email-based password reset endpoint on the
- * backend (only the coach-authenticated `POST /coach/clients/{id}/reset-password`).
- * This screen therefore guides the client to email the CrewFit support
- * inbox — Louis reads that inbox and can trigger the coach-side reset from
- * the client admin drawer in under a minute.
- *
- * When we later wire up a real reset flow (Resend / Emergent-managed email
- * with a signed reset token), replace this file with:
- *   1. An email input,
- *   2. A "Send reset link" button that hits `/auth/request-password-reset`,
- *   3. A success message stating that a link has been emailed if the
- *      account exists (uniform response — no user enumeration).
+ * Iter200: swapped from a mailto placeholder to a real
+ * `POST /api/auth/forgot-password` call. The backend always responds
+ * with a uniform 200 message (so we don't leak whether the email is
+ * on file), and Resend delivers the reset link to the user's inbox.
+ * The link opens `/(auth)/reset-password?token=…` where the user
+ * chooses a new password.
  */
 import React, { useCallback, useState } from "react";
 import {
-  View, Text, Pressable, StyleSheet, ScrollView, Linking, Platform,
-  TextInput,
+  View, Text, Pressable, StyleSheet, ScrollView, Linking,
+  TextInput, ActivityIndicator,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -28,44 +22,40 @@ import { Ionicons } from "@expo/vector-icons";
 import { CrewFitLogo } from "@/src/components/Logo";
 import { theme } from "@/src/lib/theme";
 import { PUBLIC_URLS } from "@/src/lib/publicUrls";
+import { api } from "@/src/lib/api";
 
-const SUPPORT_EMAIL = "support@crewfit.net";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function ForgotPassword() {
   const router = useRouter();
   const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const openMail = useCallback(async () => {
-    const subject = "Password reset request";
-    const body = [
-      "Hi Louis,",
-      "",
-      "I need to reset my CrewFit password.",
-      "",
-      email ? `My email on the app: ${email}` : "My email on the app: (please add here)",
-      "",
-      "Thanks.",
-    ].join("\n");
-    const url =
-      `mailto:${SUPPORT_EMAIL}` +
-      `?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-
-    // Web browsers may block mailto — fall back to copying the address.
-    try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        // Fallback: copy to clipboard if available (web).
-        if (Platform.OS === "web" && (navigator as any)?.clipboard?.writeText) {
-          try { await (navigator as any).clipboard.writeText(SUPPORT_EMAIL); } catch {}
-        }
-      }
-    } catch {
-      /* silent — the coach's email is visible on screen anyway */
+  const onSubmit = useCallback(async () => {
+    setError(null);
+    const trimmed = email.trim().toLowerCase();
+    if (!EMAIL_RE.test(trimmed)) {
+      setError("Enter a valid email address.");
+      return;
     }
-    setSent(true);
+    setBusy(true);
+    try {
+      await api<{ message: string }>("/auth/forgot-password", {
+        method: "POST",
+        body: { email: trimmed },
+      });
+      // We deliberately trust the uniform 200 — even if the account
+      // doesn't exist the UI must show the same success state so we
+      // never leak account existence via UI copy or timing.
+      setSent(true);
+    } catch (e: any) {
+      // Network / server hiccup only lands here (4xx/5xx from api()).
+      setError(e?.message || "Something went wrong. Try again in a moment.");
+    } finally {
+      setBusy(false);
+    }
   }, [email]);
 
   return (
@@ -92,57 +82,84 @@ export default function ForgotPassword() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.h1}>Forgot your password?</Text>
-            <Text style={styles.sub}>
-              We&apos;re in private beta, so password resets are handled by your
-              coach directly. Enter your email and hit the button — it opens
-              a pre-filled message to Louis who will reset your password
-              within the day.
-            </Text>
-
-            <Text style={styles.label}>EMAIL</Text>
-            <TextInput
-              testID="forgot-email-input"
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="you@airline.com"
-              placeholderTextColor={theme.color.textDim}
-            />
-
-            <Pressable
-              testID="forgot-email-coach"
-              onPress={openMail}
-              style={({ pressed }) => [
-                styles.cta,
-                pressed && { backgroundColor: theme.color.brandDark },
-              ]}
-            >
-              <Ionicons name="mail-outline" size={16} color="#fff" />
-              <Text style={styles.ctaText}>EMAIL MY COACH</Text>
-            </Pressable>
-
-            {sent && (
-              <View style={styles.sentBox} testID="forgot-sent-box">
-                <Ionicons name="checkmark-circle" size={18} color={theme.color.green} />
-                <Text style={styles.sentText}>
-                  Message opened. If your email app didn&apos;t launch,
-                  send a note to{" "}
-                  <Text style={styles.sentEmail} selectable>{SUPPORT_EMAIL}</Text>{" "}
-                  yourself — Louis will reset your password by end of day.
+            {sent ? (
+              <View testID="forgot-sent-box">
+                <View style={styles.checkCircle}>
+                  <Ionicons name="checkmark" size={30} color="#fff" />
+                </View>
+                <Text style={styles.h1}>Check your inbox</Text>
+                <Text style={styles.sub}>
+                  If an account exists for{" "}
+                  <Text style={styles.subEmail}>{email.trim().toLowerCase()}</Text>,
+                  we&apos;ve sent a reset link. The link expires in 15
+                  minutes.
                 </Text>
+                <Text style={[styles.footNote, { marginTop: theme.space.xl }]}>
+                  Didn&apos;t get anything? Check your spam folder, then
+                  try again in a few minutes.
+                </Text>
+
+                <Pressable
+                  testID="forgot-resend"
+                  onPress={() => { setSent(false); setError(null); }}
+                  style={({ pressed }) => [
+                    styles.ctaSecondary,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={styles.ctaSecondaryText}>SEND ANOTHER LINK</Text>
+                </Pressable>
               </View>
+            ) : (
+              <>
+                <Text style={styles.h1}>Forgot your password?</Text>
+                <Text style={styles.sub}>
+                  Enter the email on your CrewFit account and we&apos;ll
+                  send a reset link. The link works once and expires in
+                  15 minutes.
+                </Text>
+
+                <Text style={styles.label}>EMAIL</Text>
+                <TextInput
+                  testID="forgot-email-input"
+                  style={styles.input}
+                  value={email}
+                  onChangeText={(t) => { setEmail(t); if (error) setError(null); }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholder="you@airline.com"
+                  placeholderTextColor={theme.color.textDim}
+                  onSubmitEditing={onSubmit}
+                  returnKeyType="send"
+                />
+
+                {error ? (
+                  <Text style={styles.errText} testID="forgot-error">{error}</Text>
+                ) : null}
+
+                <Pressable
+                  testID="forgot-submit"
+                  onPress={onSubmit}
+                  disabled={busy}
+                  style={({ pressed }) => [
+                    styles.cta,
+                    (pressed || busy) && { backgroundColor: theme.color.brandDark },
+                  ]}
+                >
+                  {busy ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="mail-outline" size={16} color="#fff" />
+                      <Text style={styles.ctaText}>SEND RESET LINK</Text>
+                    </>
+                  )}
+                </Pressable>
+              </>
             )}
 
             <View style={{ height: 20 }} />
-
-            <Text style={styles.footNote}>
-              Once we exit beta, this screen will send you an automated reset
-              link instead. Nothing to do on your side.
-            </Text>
 
             <View style={styles.publicLinksRow}>
               <Pressable
@@ -186,11 +203,19 @@ const styles = StyleSheet.create({
     borderColor: theme.color.border,
     marginTop: theme.space.xxl,
   },
+  checkCircle: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: theme.color.brand,
+    alignItems: "center", justifyContent: "center",
+    marginBottom: theme.space.md,
+    alignSelf: "flex-start",
+  },
   h1: { color: theme.color.text, fontSize: 22, fontWeight: "800" },
   sub: {
     color: theme.color.textMuted, marginTop: 6, lineHeight: 20,
     fontSize: 13,
   },
+  subEmail: { color: theme.color.text, fontWeight: "700" },
   label: {
     color: theme.color.textMuted, fontSize: 11, letterSpacing: 1.5,
     marginTop: theme.space.lg, marginBottom: theme.space.xs, fontWeight: "700",
@@ -205,6 +230,12 @@ const styles = StyleSheet.create({
     borderColor: theme.color.border,
     fontSize: 16,
   },
+  errText: {
+    color: theme.color.brand,
+    fontSize: 12,
+    marginTop: theme.space.xs,
+    fontWeight: "600",
+  },
   cta: {
     backgroundColor: theme.color.brand,
     marginTop: theme.space.xl,
@@ -214,20 +245,20 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,
+    minHeight: 48,
   },
   ctaText: { color: "#fff", fontWeight: "800", letterSpacing: 2, fontSize: 14 },
-  sentBox: {
-    marginTop: theme.space.md,
-    padding: theme.space.md,
+  ctaSecondary: {
+    marginTop: theme.space.xl,
+    paddingVertical: 12,
     borderRadius: theme.radius.md,
-    backgroundColor: "rgba(52,211,153,0.10)",
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: theme.color.green,
-    flexDirection: "row",
-    gap: 8,
+    borderColor: theme.color.border,
   },
-  sentText: { color: theme.color.text, fontSize: 12, lineHeight: 17, flex: 1 },
-  sentEmail: { color: theme.color.brand, fontWeight: "700" },
+  ctaSecondaryText: {
+    color: theme.color.textMuted, fontWeight: "700", letterSpacing: 2, fontSize: 12,
+  },
   footNote: {
     color: theme.color.textDim, fontSize: 11, lineHeight: 15,
     textAlign: "center", fontStyle: "italic",

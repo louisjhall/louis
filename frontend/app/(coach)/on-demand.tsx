@@ -95,6 +95,11 @@ export default function CoachOnDemandScreen() {
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   // Iter193 · Currently-pinned featured item (or null when nothing pinned).
   const [featuredId, setFeaturedId] = useState<string | null>(null);
+  // Iter200 · Presigned R2 thumbnail URLs, resolved lazily per visible row.
+  // Keyed by item id. Never fetched for items that don't carry a
+  // `thumbnail_storage_key`, so the ItemRow falls back to its icon glyph
+  // for video/audio uploads (which are still icon-only by design).
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -139,6 +144,32 @@ export default function CoachOnDemandScreen() {
     if (filterPublished === "draft" && i.published) return false;
     return true;
   }), [items, filterType, filterPublished]);
+
+  // Iter200 · Lazily fetch a presigned R2 URL for every filtered item that
+  // has a `thumbnail_storage_key` but hasn't been resolved yet. We don't
+  // block the render on this — the row keeps its icon fallback until the
+  // URL arrives. Failures are swallowed per-row (network hiccup on ONE
+  // signed URL shouldn't wipe out the whole list).
+  useEffect(() => {
+    const missing = filtered.filter(
+      (it) => it.thumbnail_storage_key && !thumbUrls[it.id],
+    );
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const it of missing) {
+        try {
+          const r = await api<{ url: string }>(`/on-demand/items/${it.id}/thumbnail-url`);
+          if (r?.url) next[it.id] = r.url;
+        } catch { /* per-row failure — keep icon fallback */ }
+      }
+      if (!cancelled && Object.keys(next).length > 0) {
+        setThumbUrls((prev) => ({ ...prev, ...next }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filtered, thumbUrls]);
 
   /* --- Editor open helpers --- */
   const openCreate = () => setEditor({
@@ -298,6 +329,7 @@ export default function CoachOnDemandScreen() {
                 item={it}
                 categoryName={categories.find((c) => c.id === it.category_id)?.name || null}
                 isFeatured={featuredId === it.id}
+                thumbUrl={thumbUrls[it.id]}
                 onEdit={() => openEdit(it.id)}
                 onPublish={() => togglePublish(it)}
                 onFeature={() => toggleFeatured(it)}
@@ -341,11 +373,12 @@ export default function CoachOnDemandScreen() {
 /* ---------------------------------------------------------------------- */
 
 function ItemRow({
-  item, categoryName, isFeatured, onEdit, onPublish, onFeature, onDelete,
+  item, categoryName, isFeatured, thumbUrl, onEdit, onPublish, onFeature, onDelete,
 }: {
   item: Item;
   categoryName: string | null;
   isFeatured: boolean;
+  thumbUrl?: string;
   onEdit: () => void;
   onPublish: () => void;
   onFeature: () => void;
@@ -358,7 +391,15 @@ function ItemRow({
   return (
     <View style={styles.row} testID={`od-item-${item.id}`}>
       <View style={styles.rowIconBox}>
-        <Ionicons name={icon} size={22} color={theme.color.brand} />
+        {thumbUrl ? (
+          <Image
+            source={{ uri: thumbUrl }}
+            style={styles.rowThumb}
+            testID={`od-thumb-${item.id}`}
+          />
+        ) : (
+          <Ionicons name={icon} size={22} color={theme.color.brand} />
+        )}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowTitle} numberOfLines={2}>{item.title}</Text>
@@ -1157,6 +1198,12 @@ const styles = StyleSheet.create({
     backgroundColor: theme.color.brandTint,
     borderWidth: 1,
     borderColor: theme.color.brand,
+    overflow: "hidden",
+  },
+  rowThumb: {
+    // Fill the icon box completely — border/radius come from the parent.
+    width: "100%",
+    height: "100%",
   },
   rowTitle: { color: theme.color.text, fontSize: 15, fontWeight: "700" },
   rowMetaLine: { flexDirection: "row", marginTop: 2, flexWrap: "wrap" },

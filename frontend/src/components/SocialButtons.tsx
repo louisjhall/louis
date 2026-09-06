@@ -36,6 +36,24 @@ WebBrowser.maybeCompleteAuthSession();
 
 const EMERGENT_AUTH_URL = "https://auth.emergentagent.com/";
 
+/**
+ * Iter200 · Post-auth destination — mirrors the email/password flow:
+ *   • Coach                            → /(coach)/v2-home
+ *   • FIRST-time social sign-in        → /training-setup (same route
+ *                                        the email signup form
+ *                                        `router.replace()`s to)
+ *   • Returning client                 → "/" so the root gate +
+ *                                        TrainingSetupGate route the
+ *                                        user home (or back into
+ *                                        training-setup if their
+ *                                        profile is still incomplete)
+ */
+function postAuthRoute(user: { role?: string }, created: boolean): string {
+  if ((user.role || "client") === "coach") return "/(coach)/v2-home";
+  if (created) return "/training-setup";
+  return "/";
+}
+
 function buildRedirectUrl(): string {
   if (Platform.OS === "web") {
     if (typeof window !== "undefined" && window.location) {
@@ -76,10 +94,10 @@ export function useEmergentAuthCallback() {
     if (_consumedSids.has(sid)) return;
     _consumedSids.add(sid);
     try {
-      await loginWithEmergentSession(sid);
-      // Success — auth state now has the user, root-layout gate
-      // will move the user off the login screen automatically. We
-      // still clean the URL so a refresh doesn't re-fire.
+      const r = await loginWithEmergentSession(sid);
+      // Success — auth state now has the user. Route the same way
+      // email/password does: new client → /training-setup (skip the
+      // /assessment flash), returning user → /, coach → coach home.
       if (Platform.OS === "web" && typeof window !== "undefined") {
         try {
           const u = new URL(window.location.href);
@@ -90,11 +108,12 @@ export function useEmergentAuthCallback() {
           window.history.replaceState(window.history.state, "", u.toString());
         } catch {}
       }
+      router.replace(postAuthRoute(r.user, r.created) as any);
     } catch (e: any) {
       _consumedSids.delete(sid); // let the user retry
       Alert.alert("Sign-in failed", e?.message || "Please try again.");
     }
-  }, [loginWithEmergentSession]);
+  }, [loginWithEmergentSession, router]);
 
   useEffect(() => {
     // Web: parse the current URL on mount.
@@ -140,6 +159,7 @@ export function SocialButtons({
   const [appleBusy, setAppleBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const { loginWithApple } = useAuth();
+  const router = useRouter();
 
   useEffect(() => {
     let cancelled = false;
@@ -204,12 +224,14 @@ export function SocialButtons({
         Alert.alert("Apple sign-in failed", "No identity token was returned.");
         return;
       }
-      await loginWithApple({
+      const r = await loginWithApple({
         identity_token: cred.identityToken,
         given_name: cred.fullName?.givenName || null,
         family_name: cred.fullName?.familyName || null,
       });
-      // Root-layout gate handles navigation.
+      // Same routing rules as email signup / login: first-time
+      // clients land on /training-setup; returning users go home.
+      router.replace(postAuthRoute(r.user, r.created) as any);
     } catch (e: any) {
       // ERR_CANCELED / ERR_REQUEST_CANCELED — user tapped cancel;
       // treat as no-op.
@@ -221,7 +243,7 @@ export function SocialButtons({
     } finally {
       setAppleBusy(false);
     }
-  }, [busy, appleBusy, loginWithApple]);
+  }, [busy, appleBusy, loginWithApple, router]);
 
   return (
     <View style={styles.wrap}>

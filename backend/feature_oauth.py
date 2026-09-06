@@ -61,7 +61,7 @@ _APPLE_AUDIENCE_DEFAULT = "net.crewfit.app"
 # in-process so duplicate submissions from the SAME device return the
 # cached user rather than a 401 from Emergent's second call. This is a
 # best-effort dedupe — 32 slots is plenty for a single process lifetime.
-_EMERGENT_RECENT_SIDS: dict[str, tuple[str, str]] = {}
+_EMERGENT_RECENT_SIDS: dict[str, tuple[str, str, bool]] = {}
 _EMERGENT_RECENT_MAX = 32
 
 
@@ -307,12 +307,12 @@ def register(api: APIRouter, db: Any, *, make_token, new_id, clean_doc) -> None:
         # user we already minted a JWT for and short-circuit.
         cached = _EMERGENT_RECENT_SIDS.get(sid)
         if cached:
-            token_cached, user_id = cached
+            token_cached, user_id, created_cached = cached
             user = await db.users.find_one(
                 {"id": user_id}, {"_id": 0, "password_hash": 0},
             )
             if user:
-                return {"token": token_cached, "user": user}
+                return {"token": token_cached, "user": user, "created": created_cached}
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -358,10 +358,10 @@ def register(api: APIRouter, db: Any, *, make_token, new_id, clean_doc) -> None:
         # Cache for de-dupe. LRU-ish eviction — cheap and good enough.
         if len(_EMERGENT_RECENT_SIDS) >= _EMERGENT_RECENT_MAX:
             _EMERGENT_RECENT_SIDS.pop(next(iter(_EMERGENT_RECENT_SIDS)))
-        _EMERGENT_RECENT_SIDS[sid] = (token, user["id"])
+        _EMERGENT_RECENT_SIDS[sid] = (token, user["id"], _created)
 
         clean_doc(user)
-        return {"token": token, "user": user}
+        return {"token": token, "user": user, "created": _created}
 
     # ----------------------------- Apple ------------------------------ #
 
@@ -412,4 +412,4 @@ def register(api: APIRouter, db: Any, *, make_token, new_id, clean_doc) -> None:
 
         token = make_token(user["id"], user.get("role") or "client")
         clean_doc(user)
-        return {"token": token, "user": user}
+        return {"token": token, "user": user, "created": _created}

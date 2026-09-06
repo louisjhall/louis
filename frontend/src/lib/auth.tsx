@@ -49,12 +49,12 @@ interface AuthCtx {
   // Iter200 — social sign-in. Both return the same shape as
   // login/signup so the caller can just `await` and let the
   // root-layout gate handle navigation.
-  loginWithEmergentSession: (sessionId: string) => Promise<UserT>;
+  loginWithEmergentSession: (sessionId: string) => Promise<{ user: UserT; created: boolean }>;
   loginWithApple: (payload: {
     identity_token: string;
     given_name?: string | null;
     family_name?: string | null;
-  }) => Promise<UserT>;
+  }) => Promise<{ user: UserT; created: boolean }>;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -149,14 +149,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // exchanges it against Emergent, upserts the user and mints a
   // CrewFit JWT — exact same shape as /auth/login returns.
   const loginWithEmergentSession = async (sessionId: string) => {
-    const r = await api<{ token: string; user: UserT }>(
+    const r = await api<{ token: string; user: UserT; created: boolean }>(
       "/auth/oauth/emergent-session",
       { method: "POST", body: { session_id: sessionId }, noAuth: true },
     );
     await setToken(r.token);
     setUser(r.user);
     registerForPush(r.user.id).catch(() => {});
-    return r.user;
+    return { user: r.user, created: !!r.created };
   };
 
   // Iter200 · Apple Sign-In (iOS only). Frontend calls
@@ -168,7 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     given_name?: string | null;
     family_name?: string | null;
   }) => {
-    const r = await api<{ token: string; user: UserT }>(
+    const r = await api<{ token: string; user: UserT; created: boolean }>(
       "/auth/oauth/apple",
       {
         method: "POST",
@@ -183,7 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await setToken(r.token);
     setUser(r.user);
     registerForPush(r.user.id).catch(() => {});
-    return r.user;
+    return { user: r.user, created: !!r.created };
   };
 
   return (

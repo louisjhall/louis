@@ -210,6 +210,24 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
   A native rebuild is required before Apple sign-in works on device —
   Expo Go / Web preview will only exercise the Google flow.
 
+## Iter200 · OAuth first-run routing (Jun 2026)
+- OAuth endpoints now return a `created: bool` flag so the frontend
+  can distinguish a truly new sign-in from a returning one — the
+  in-process de-dupe cache also remembers this so React strict-mode
+  double-fires stay consistent.
+- Frontend routing rules — identical to the email/password flow:
+  * **Coach** → `/(coach)/v2-home` (matches `router.replace` in the
+    email/password `login.tsx`).
+  * **First-time client** (`created: true`) → `/training-setup`
+    (matches the email-signup `router.replace` — skips the
+    `/assessment` flash and lands on the same profile-collection
+    screen every new client sees).
+  * **Returning client** → `/` (root gate + `TrainingSetupGate`
+    handle it; incomplete profiles still get bounced to
+    `/training-setup`, onboarded users land on `/(client)/home`).
+- No signup form / assessment / home screens were modified — routing
+  hint alone drives the destination.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

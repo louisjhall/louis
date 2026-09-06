@@ -19,6 +19,7 @@ import { NotificationPreferencesCard } from "@/src/components/NotificationPrefer
 import { ProfilePhotoRow } from "@/src/components/ProfilePhotoRow";
 import { PersonalImageryCard } from "@/src/components/PersonalImageryCard";
 import { ChangePasswordModal } from "@/src/components/ChangePasswordModal";
+import { MembershipTierBadge } from "@/src/components/MembershipTierBadge";
 
 /* -------------------------------------------------------------------------- */
 /*  Types                                                                     */
@@ -171,6 +172,10 @@ export default function ProfileScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>COACHING <Text style={styles.brandRed}>HEADQUARTERS</Text></Text>
           <Text style={styles.sub}>{user?.name || user?.email}</Text>
+          {/* Iter201 — tier badge + founding badge under the member's
+              name. Reads from /payments/membership-status; hides itself
+              when the user has no paid membership. */}
+          <MembershipTierBadge />
         </View>
         <Pressable testID="hq-logout" onPress={confirmLogout} style={styles.iconBtn}>
           <Ionicons name="log-out" size={18} color={theme.color.text} />
@@ -181,6 +186,24 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.body}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.color.brand} />}
       >
+        {/* Iter201 · Phase 1 Payments — Membership entry tile. Tapping
+            opens the full plans/portal screen. Kept above the accordion
+            groups so members can find billing in one glance. */}
+        <Pressable
+          testID="hq-membership-tile"
+          onPress={() => router.push("/(client)/membership" as any)}
+          style={({ pressed }) => [membershipTileStyles.tile, pressed && { opacity: 0.8 }]}
+        >
+          <View style={membershipTileStyles.icon}>
+            <Ionicons name="card-outline" size={20} color={theme.color.brand} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={membershipTileStyles.title}>Membership & Payments</Text>
+            <Text style={membershipTileStyles.sub}>View plans, manage subscription and update payment method.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={theme.color.textMuted} />
+        </Pressable>
+
         {/* Iter168 · Profile Accordions — 18 sections + CTAs reorganised
             into 4 top-level groups. All groups collapsed by default. */}
 
@@ -1303,4 +1326,23 @@ const hstyles = StyleSheet.create({
   metaChip: { color: theme.color.textDim, fontSize: 11, fontWeight: "800", letterSpacing: 1 },
   emptyCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: 10, borderWidth: 1, borderStyle: "dashed", borderColor: theme.color.brand, backgroundColor: theme.color.brandTint },
   emptyCtaT: { color: theme.color.brand, fontSize: 11, fontWeight: "900", letterSpacing: 1.5 },
+});
+
+
+// Iter201 — Membership tile at the top of the profile scroll.
+const membershipTileStyles = StyleSheet.create({
+  tile: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    padding: 16, marginHorizontal: 20, marginTop: 8, marginBottom: 20,
+    borderRadius: 12, backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  icon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: theme.color.brandTint,
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: theme.color.brand,
+  },
+  title: { color: theme.color.text, fontWeight: "800", fontSize: 14, letterSpacing: 0.2 },
+  sub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
 });

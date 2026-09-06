@@ -228,6 +228,58 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
 - No signup form / assessment / home screens were modified — routing
   hint alone drives the destination.
 
+## Iter201 · Phase 1 Payments (Stripe) — Jun 2026
+- **Backend files added** (all env-driven, no secrets logged):
+  * `feature_payments.py` — `POST /api/payments/create-checkout-session`,
+    `POST /api/payments/create-portal-session`,
+    `GET /api/payments/membership-status`.
+  * `feature_stripe_webhook.py` — `POST /api/payments/stripe-webhook`.
+    Signature-verified via `stripe.Webhook.construct_event`, idempotent
+    via unique `stripe_event_id` index on `stripe_webhook_events`.
+    Handles the six events (`checkout.session.completed`,
+    `customer.subscription.{created,updated,deleted}`, `invoice.paid`,
+    `invoice.payment_failed`).
+  * `feature_admin_memberships.py` — 3 coach mutation endpoints
+    (`set-payment-required`, `grant-complimentary`,
+    `restore-founding-eligibility`) + 2 read endpoints
+    (`overview`, `clients`) used by the Payments Centre.
+  * `feature_stripe_reconcile.py` — nightly walk of every user with a
+    `stripe_customer_id`; calls `stripe.Subscription.list(status="all")`
+    and rewrites local state (never stomping complimentary).
+- **Migration**: `scripts/migrate_memberships.py` — idempotent,
+  audits distinct `role` values before touching anything. Ran once:
+  13 client accounts flipped from `null` → `complimentary`, 2 coach
+  accounts left alone.
+- **User schema additions** (all nullable, safe to re-run):
+  membership_status, membership_tier, is_founding_member,
+  founding_eligible, founding_price_locked, trial_ends_at,
+  access_until, stripe_customer_id, payment_required_at.
+- **New collections**: `subscriptions`, `stripe_webhook_events` (both
+  indexed).
+- **Env**: 18 Stripe price IDs + `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL`
+  in `/app/backend/.env`. Three secrets still placeholder — user pastes
+  after webhook creation: `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`,
+  `STRIPE_WEBHOOK_SECRET`.
+- **Frontend files added**:
+  * `app/(client)/membership.tsx` — status card · Monthly / 3-month /
+    6-month toggle · three tier cards (Coaching visually strongest) ·
+    comparison table · "Which membership is right for me?" guide.
+    Uses static price map matching spec; Stripe remains billing truth.
+  * `app/(coach)/payments-centre.tsx` — 8-cell overview strip ·
+    search · 10 filter chips · client list with founding /
+    cancellation badges · per-row actions (Payment Req · Comp ·
+    Founding · open Stripe dashboard).
+  * `src/components/MembershipTierBadge.tsx` — muted grey for Access,
+    brand red for Coaching, muted gold for Performance, plus a
+    secondary amber Founding pill.
+- **Entry points**: "Membership & Payments" tile added to
+  `/(client)/profile.tsx`; "Payments Centre" tile added to
+  `/(coach)/profile.tsx`. Nothing else on either profile screen was
+  touched.
+- **Entitlement gate is intentionally NOT wired yet** — the spec says
+  "all three paid tiers receive identical full app access" and lists
+  restrictions as future work; Phase 1 defines the state machine only.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 

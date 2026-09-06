@@ -40,6 +40,20 @@ export default function CoachProfile() {
           <Text style={styles.bio}>{user?.profile?.bio || "Aviation fitness specialist. Building programs that survive layovers, time zones, and 4am wake-ups."}</Text>
         </View>
 
+        {/* Iter201 · Phase 1 Payments — coach access to Payments Centre. */}
+        <Pressable
+          testID="coach-payments-centre"
+          onPress={() => router.push("/(coach)/payments-centre" as any)}
+          style={({ pressed }) => [styles.paymentsTile, pressed && { opacity: 0.85 }]}
+        >
+          <Ionicons name="card-outline" size={18} color={theme.color.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.paymentsTileTitle}>Payments Centre</Text>
+            <Text style={styles.paymentsTileSub}>Membership status, complimentary access, founding eligibility.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+        </Pressable>
+
         <Pressable testID="coach-logout" onPress={confirmLogout} style={styles.logout}>
           <Text style={styles.logoutText}>LOG OUT</Text>
         </Pressable>
@@ -62,4 +76,13 @@ const styles = StyleSheet.create({
   bio: { color: theme.color.text, marginTop: 8, fontSize: 14, lineHeight: 20 },
   logout: { marginTop: theme.space.xl, padding: theme.space.md, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.red, alignItems: "center" },
   logoutText: { color: theme.color.red, fontWeight: "800", letterSpacing: 2, fontSize: 12 },
+  paymentsTile: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    padding: theme.space.md, marginTop: theme.space.lg,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  paymentsTileTitle: { color: theme.color.text, fontWeight: "800", fontSize: 14 },
+  paymentsTileSub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
 });

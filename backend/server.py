@@ -12322,6 +12322,27 @@ async def _startup():
         except Exception:
             logger.exception("startup zombie cleanup failed for %s", coll)
 
+    # Iter201 — Nightly Stripe reconciliation. Idempotent — walks every
+    # user with a stripe_customer_id and reconciles their subscription
+    # against Stripe's `list(status="all")`. Runs on a plain sleep loop
+    # inside the process because we don't own a scheduler; startup fires
+    # one run immediately (to catch webhooks missed during a redeploy)
+    # then re-runs every 24 hours.
+    try:
+        import asyncio as _asyncio
+        from feature_stripe_reconcile import reconcile_all
+        async def _stripe_reconcile_loop():
+            while True:
+                try:
+                    result = await reconcile_all(db)
+                    logger.info("stripe reconcile tick: %s", result)
+                except Exception:
+                    logger.exception("stripe reconcile tick failed")
+                await _asyncio.sleep(24 * 60 * 60)
+        _asyncio.create_task(_stripe_reconcile_loop())
+    except Exception:
+        logger.exception("stripe reconcile loop failed to start")
+
     # Iter 130e — frontend↔backend goal-key parity lint.
     # If someone ships a new option in the mobile onboarding picker
     # without adding a corresponding entry to `_GOAL_ALIASES`, log a
@@ -14998,6 +15019,28 @@ try:
     logger.info("feature_oauth: /auth/oauth/emergent-session + /auth/oauth/apple registered")
 except Exception:
     logger.exception("feature_oauth failed to register")
+
+# Iter201 — Phase 1 Payments (Stripe hosted Checkout + Portal + webhooks).
+try:
+    from feature_payments import register as _payments_register
+    _payments_register(api, db, current_user=current_user)
+    logger.info("feature_payments: checkout + portal + status endpoints registered")
+except Exception:
+    logger.exception("feature_payments failed to register")
+
+try:
+    from feature_stripe_webhook import register as _stripe_wh_register
+    _stripe_wh_register(api, db)
+    logger.info("feature_stripe_webhook: /payments/stripe-webhook registered")
+except Exception:
+    logger.exception("feature_stripe_webhook failed to register")
+
+try:
+    from feature_admin_memberships import register as _admin_memb_register
+    _admin_memb_register(api, db, require_role=require_role)
+    logger.info("feature_admin_memberships: 5 coach endpoints registered")
+except Exception:
+    logger.exception("feature_admin_memberships failed to register")
 
 app.include_router(api)
 

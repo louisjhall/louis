@@ -371,3 +371,60 @@ async def send_roster_expiring_email(
             {"name": "threshold", "value": threshold},
         ],
     )
+
+
+async def send_beta_expired_email(
+    *,
+    recipient: str,
+    user_id: str,
+    display_name: Optional[str] = None,
+    founding_eligible: bool = False,
+) -> Optional[str]:
+    """Iter202 · Phase 2A — Day 30 one-shot to a beta user whose trial has
+    just expired. Idempotency key ensures a nightly re-fire is deduped.
+    """
+    name = html.escape((display_name or "").strip() or "there")
+    app_url = html.escape(_config.public_app_url + "/(client)/membership", quote=True)
+
+    founding_para_html = ""
+    founding_para_text = ""
+    if founding_eligible:
+        founding_para_html = (
+            '<p style="color:#f7b955;line-height:22px;font-size:14px;'
+            'margin-top:14px;font-weight:600">'
+            "Your Founding Member offer is still available.</p>"
+        )
+        founding_para_text = "\n\nYour Founding Member offer is still available.\n"
+
+    inner = (
+        f'<h1 style="font-size:22px;margin:0 0 12px">Your free access has ended.</h1>'
+        f'<p style="color:#d9d9d9;line-height:22px;font-size:15px">Hi {name},</p>'
+        '<p style="color:#d9d9d9;line-height:22px;font-size:15px">'
+        "Your CrewFit beta access has ended. Your data, training "
+        "history and progress are safe — nothing has been deleted.</p>"
+        '<p style="color:#d9d9d9;line-height:22px;font-size:15px">'
+        "Choose a membership whenever you're ready to keep training.</p>"
+        f'{founding_para_html}'
+        '<p style="margin:28px 0;text-align:center">'
+        f'<a href="{app_url}" '
+        'style="display:inline-block;padding:14px 26px;background:#e11d2e;'
+        'color:#fff;border-radius:10px;font-weight:700;letter-spacing:1px;'
+        'text-decoration:none;font-size:14px">CHOOSE MEMBERSHIP</a></p>'
+    )
+    text = (
+        f"Hi {display_name or 'there'},\n\n"
+        "Your CrewFit beta access has ended. Your data, training "
+        "history and progress are safe — nothing has been deleted.\n\n"
+        "Choose a membership whenever you're ready to keep training."
+        f"{founding_para_text}"
+        f"\n\nOpen: {_config.public_app_url}"
+        + _BRAND_FOOTER
+    )
+    return await _send(
+        to=recipient,
+        subject="Your CrewFit free access has ended — your progress is waiting.",
+        html_body=_wrap_html(inner),
+        text_body=text,
+        idempotency_key=f"beta-expired::{user_id}",
+        tags=[{"name": "category", "value": "beta_expired"}],
+    )

@@ -18,6 +18,7 @@ import { AppConfigProvider } from "@/src/lib/appConfig";
 import { PreviewBanner } from "@/src/components/PreviewBanner";
 import { BetaDisclaimerGate } from "@/src/components/BetaDisclaimerGate";
 import { TrainingSetupGate } from "@/src/components/TrainingSetupGate";
+import { BetaMilestonePromptOverlay } from "@/src/components/BetaMilestonePromptOverlay";
 import { RootErrorBoundary } from "@/src/components/RootErrorBoundary";
 import { CrewFitIntroAnimation } from "@/src/components/CrewFitIntroAnimation";
 import { initSentry } from "@/src/lib/sentry";
@@ -169,6 +170,9 @@ export default function RootLayout() {
                   />
                   <BetaDisclaimerGate />
                   <TrainingSetupGate />
+                  {/* Iter202 · Phase 2A — Global beta milestone modal.
+                    * Hides itself for non-beta users and on auth routes. */}
+                  <BetaMilestonePromptOverlay />
                   <ToastHost />
                 </CrewFitIntroAnimation>
               </PreviewWiring>

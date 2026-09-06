@@ -208,6 +208,21 @@ async def current_user(authorization: Optional[str] = Header(None)) -> dict:
     u = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not u:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    # Iter202 · Phase 2A — expiry safety fallback. If the nightly beta
+    # milestone job hasn't run yet, a beta user whose `trial_ends_at` has
+    # already elapsed must be treated as `expired` immediately (never
+    # given an extra 24-hour grace due to scheduler timing). We do NOT
+    # persist the flip here — that's the nightly job's job — we merely
+    # present the correct state to every request-time consumer.
+    try:
+        from feature_beta_conversion import beta_expired_now
+        if beta_expired_now(u):
+            u["membership_status"] = "expired"
+            u["_beta_expired_by_fallback"] = True
+    except Exception:
+        # Never let this guard block auth — worst case the user gets
+        # one extra request through until the nightly runs.
+        logger.exception("current_user: beta expiry fallback failed for user=%s", u.get("id"))
     # Preview-mode claims flow through so handlers/audit can see them.
     if payload.get("preview"):
         u["_is_preview"] = True
@@ -12337,11 +12352,33 @@ async def _startup():
                     result = await reconcile_all(db)
                     logger.info("stripe reconcile tick: %s", result)
                 except Exception:
+                    # Iter202 · Isolation — a Stripe reconcile crash MUST
+                    # NOT prevent the beta milestone loop from running.
                     logger.exception("stripe reconcile tick failed")
                 await _asyncio.sleep(24 * 60 * 60)
         _asyncio.create_task(_stripe_reconcile_loop())
     except Exception:
         logger.exception("stripe reconcile loop failed to start")
+
+    # Iter202 · Phase 2A — Sibling scheduler for beta milestones. Kept
+    # deliberately SEPARATE from the Stripe reconcile loop so a payment
+    # bug can't stall conversion prompts and vice-versa. Each loop owns
+    # its own try/except.
+    try:
+        import asyncio as _asyncio
+        from feature_beta_conversion import run_beta_milestones, ensure_indexes as _beta_ensure_indexes
+        await _beta_ensure_indexes(db)
+        async def _beta_milestone_loop():
+            while True:
+                try:
+                    result = await run_beta_milestones(db)
+                    logger.info("beta milestone tick: %s", result)
+                except Exception:
+                    logger.exception("beta milestone tick failed")
+                await _asyncio.sleep(24 * 60 * 60)
+        _asyncio.create_task(_beta_milestone_loop())
+    except Exception:
+        logger.exception("beta milestone loop failed to start")
 
     # Iter 130e — frontend↔backend goal-key parity lint.
     # If someone ships a new option in the mobile onboarding picker
@@ -15041,6 +15078,14 @@ try:
     logger.info("feature_admin_memberships: 5 coach endpoints registered")
 except Exception:
     logger.exception("feature_admin_memberships failed to register")
+
+# Iter202 · Phase 2A — Beta → paid conversion layer.
+try:
+    from feature_beta_conversion import register as _beta_register
+    _beta_register(api, db, current_user=current_user, require_role=require_role, new_id=new_id)
+    logger.info("feature_beta_conversion: /beta/* + /admin/beta/* registered")
+except Exception:
+    logger.exception("feature_beta_conversion failed to register")
 
 app.include_router(api)
 

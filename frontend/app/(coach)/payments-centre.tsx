@@ -162,6 +162,20 @@ export default function PaymentsCentre() {
         contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 40 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
+        {/* Iter202 · Phase 2A — link to Beta Conversion cohort view. */}
+        <Pressable
+          testID="payments-centre-beta-tile"
+          onPress={() => router.push("/(coach)/beta-conversion" as any)}
+          style={({ pressed }) => [betaTile.tile, pressed && { opacity: 0.85 }]}
+        >
+          <Ionicons name="rocket-outline" size={18} color={theme.color.brand} />
+          <View style={{ flex: 1 }}>
+            <Text style={betaTile.title}>Beta Conversion</Text>
+            <Text style={betaTile.sub}>Track beta cohort, conversions and survey responses.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={theme.color.textMuted} />
+        </Pressable>
+
         {/* Overview strip */}
         {overview ? (
           <View style={styles.stripWrap}>
@@ -367,4 +381,17 @@ const styles = StyleSheet.create({
     minWidth: 78, alignItems: "center", justifyContent: "center",
   },
   actionBtnText: { color: theme.color.text, fontSize: 10, letterSpacing: 1.2, fontWeight: "800" },
+});
+
+// Iter202 · Phase 2A — Beta Conversion tile styles.
+const betaTile = StyleSheet.create({
+  tile: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    padding: theme.space.md, marginBottom: theme.space.lg,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.color.surface2,
+    borderWidth: 1, borderColor: theme.color.border,
+  },
+  title: { color: theme.color.text, fontWeight: "800", fontSize: 14 },
+  sub: { color: theme.color.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
 });

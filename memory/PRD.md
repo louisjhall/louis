@@ -280,6 +280,42 @@ Airline-crew fitness coaching mobile app. Client uploads a full month of flight 
   "all three paid tiers receive identical full app access" and lists
   restrictions as future work; Phase 1 defines the state machine only.
 
+## Iter202 · Phase 2A — Beta → paid conversion (Jun 2026)
+- **Backend files added**:
+  * `feature_beta_conversion.py` — `run_beta_milestones()` runner
+    (idempotent via `beta_milestone_deliveries` unique compound
+    index), `beta_expired_now()` guard, plus endpoints:
+    `GET /beta/next-prompt`, `POST /beta/milestone/dismiss`,
+    `POST /beta/survey`, `GET /beta/survey/mine`,
+    `GET /admin/beta/conversion-cohort`,
+    `GET /admin/beta/survey-results`.
+  * `emailer.py` gained `send_beta_expired_email()` (Day 30 one-shot
+    with founding-eligible tail).
+- **Server integration**:
+  * SEPARATE sibling scheduler loop for beta milestones — kept
+    isolated from the Stripe reconcile loop; each has its own
+    `try/except` so a crash in one cannot stall the other.
+  * `current_user()` gained an expiry safety fallback: beta users
+    whose `trial_ends_at` has elapsed are surfaced as `expired`
+    immediately (never persisted here — nightly job owns that).
+- **Frontend files added**:
+  * `src/components/BetaMilestonePromptOverlay.tsx` — global modal
+    mounted in `_layout.tsx`, hides itself on auth routes and for
+    non-beta users.
+  * `app/(client)/beta-survey.tsx` — 5-question survey, one
+    submission per user (server-side unique index).
+  * `app/(coach)/beta-conversion.tsx` — cohort table + survey
+    results, linked from Payments Centre.
+- **New collections**:
+  * `beta_milestone_deliveries` — unique index on
+    `(user_id, milestone)`.
+  * `beta_survey_responses` — unique index on `user_id`.
+- **Complimentary exclusion** verified end-to-end: even a
+  complimentary user with `trial_ends_at` set gets no prompt,
+  no push, no email, no cohort row.
+- **Founding eligibility** verified preserved through Day 30
+  expiry: `_flip_to_expired` only mutates `membership_status`.
+
 ## Explicitly deferred (Phase B & V2)
 Drag-and-drop calendar, web-lookup hotel gym fallback, live Apple Health / Garmin / Strava / Oura sync, MyFitnessPal, barcode scanner, payments, community, coach desktop layout, advanced analytics, multi-coach, corporate dashboard, referrals, real push delivery testing (requires deploy).
 
